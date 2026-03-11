@@ -8,6 +8,7 @@ from sciencebeam_parser.config.config import get_download_dir
 from sciencebeam_parser.external.pdfalto.wrapper import (
     PdfAltoWrapper
 )
+from sciencebeam_parser.utils.download import download_with_zip_path_support
 
 
 EXAMPLE_PDF_PATH = 'test-data/minimal-example.pdf'
@@ -19,7 +20,10 @@ def _pdfalto_wrapper(sciencebeam_parser_config: dict) -> PdfAltoWrapper:
         sciencebeam_parser_config
     ))
     pdfalto_wrapper = PdfAltoWrapper(
-        download_manager.download_if_url(sciencebeam_parser_config['pdfalto']['path'])
+        download_with_zip_path_support(
+            download_manager,
+            sciencebeam_parser_config['pdfalto']['path']
+        )
     )
     pdfalto_wrapper.ensure_executable()
     return pdfalto_wrapper
