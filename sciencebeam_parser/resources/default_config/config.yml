@@ -40,7 +40,7 @@ logging:
 download_dir: '~/.cache/sciencebeam-parser/downloads'
 
 pdfalto:
-  path: https://github.com/kermitt2/pdfalto/files/6104204/pdfalto-4b4e983413278a07bb4cc4b2836de03adc8ca6dc-dockcross-linux-64.gz
+  path: https://github.com/kermitt2/pdfalto/releases/download/v0.6.0/pdfalto-bin-linux-64.zip!/pdfalto/linux/64/pdfalto
 wapiti:
   install_source: 'https://github.com/kermitt2/Wapiti/archive/a9c25d2bcccd60f1a54a7019689bd5229e866f00.tar.gz'
 xslt:

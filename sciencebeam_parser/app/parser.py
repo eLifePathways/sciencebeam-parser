@@ -29,6 +29,7 @@ from sciencebeam_parser.processors.fulltext.models import FullTextModels
 from sciencebeam_parser.resources.xslt import TEI_TO_JATS_XSLT_FILE
 from sciencebeam_parser.transformers.doc_converter_wrapper import DocConverterWrapper
 from sciencebeam_parser.transformers.xslt import XsltTransformerWrapper
+from sciencebeam_parser.utils.download import download_with_zip_path_support
 from sciencebeam_parser.utils.lazy import LazyLoaded
 from sciencebeam_parser.utils.media_types import (
     MediaTypes
@@ -174,7 +175,10 @@ class ScienceBeamBaseParser:
             download_dir=get_download_dir(config)
         )
         self.pdfalto_wrapper = PdfAltoWrapper(
-            self.download_manager.download_if_url(config['pdfalto']['path'])
+            download_with_zip_path_support(
+                self.download_manager,
+                config['pdfalto']['path']
+            )
         )
         self.pdfalto_wrapper.ensure_executable()
         self.app_context = AppContext(
