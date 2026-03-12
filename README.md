@@ -298,13 +298,13 @@ curl --fail --show-error \
 ### Docker Usage
 
 ```bash
-docker pull elifesciences/sciencebeam-parser
+docker pull ghcr.io/elifepathways/sciencebeam-parser
 ```
 
 ```bash
 docker run --rm \
     -p 8070:8070 \
-    elifesciences/sciencebeam-parser
+    ghcr.io/elifepathways/sciencebeam-parser
 ```
 
 Note: Docker images with the tag suffix `-cv` include the dependencies required for the CV (Computer Vision) models (disabled by default).
@@ -314,10 +314,10 @@ docker run --rm \
     -p 8070:8070 \
     --env SCIENCEBEAM_PARSER__PROCESSORS__FULLTEXT__USE_CV_MODEL=true \
     --env SCIENCEBEAM_PARSER__PROCESSORS__FULLTEXT__USE_OCR_MODEL=true \
-    elifesciences/sciencebeam-parser:latest-cv
+    ghcr.io/elifepathways/sciencebeam-parser:latest-cv
 ```
 
-Non-release builds are available with the `_unstable` image suffix, e.g. `elifesciences/sciencebeam-parser_unstable`.
+Non-release builds are available with the `_unstable` image suffix, e.g. `ghcr.io/elifepathways/sciencebeam-parser_unstable`.
 
 ## See also
 

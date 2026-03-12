@@ -72,6 +72,6 @@ with sciencebeam_parser.get_new_session() as session:
 ## More Usage Examples
 
 For more usage examples see
-[sciencebeam-usage-examples](https://github.com/elifesciences/sciencebeam-usage-examples).
+[sciencebeam-usage-examples](https://github.com/eLifePathways/sciencebeam-usage-examples).
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/elifesciences/sciencebeam-usage-examples/HEAD?urlpath=tree/sciencebeam-parser)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/eLifePathways/sciencebeam-usage-examples/HEAD?urlpath=tree/sciencebeam-parser)
