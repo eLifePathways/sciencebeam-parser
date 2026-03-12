@@ -6,7 +6,7 @@
             "type": "glove",
             "lang": "en",
             "path": "data/download/glove.6B.50d.txt",
-            "url": "https://github.com/elifesciences/sciencebeam-models/releases/download/v0.0.1/glove.6B.50d.txt.xz"
+            "url": "https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/glove.6B.50d.txt.xz"
         },
         {
             "name": "glove-840B",
@@ -15,7 +15,7 @@
             "format": "vec",
             "lang": "en",
             "item": "word",
-            "url": "https://github.com/elifesciences/sciencebeam-models/releases/download/v0.0.1/glove.840B.300d.txt.xz"
+            "url": "https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/glove.840B.300d.txt.xz"
         }
     ],
     "embedding-aliases": {
