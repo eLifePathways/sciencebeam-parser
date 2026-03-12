@@ -1,6 +1,7 @@
 logging:
   # Python logging config (passed to dictConfig)
   version: 1
+  disable_existing_loggers: false
   formatters:
     default:
       format: '[%(asctime)s] %(levelname)s in %(name)s:%(lineno)s: %(message)s'
@@ -32,6 +33,8 @@ logging:
     delft:
       level: INFO
     sciencebeam_trainer_delft:
+      level: INFO
+    uvicorn:
       level: INFO
 
 # The download directory for ScienceBeam Parser resources
