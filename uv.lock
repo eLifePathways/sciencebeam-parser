@@ -1116,21 +1116,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nltk"
-version = "3.9.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "joblib" },
-    { name = "regex" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/76/3a5e4312c19a028770f86fd7c058cf9f4ec4321c6cf7526bab998a5b683c/nltk-3.9.2.tar.gz", hash = "sha256:0f409e9b069ca4177c1903c3e843eef90c7e92992fa4931ae607da6de49e1419", size = 2887629, upload-time = "2025-10-01T07:19:23.764Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/90/81ac364ef94209c100e12579629dc92bf7a709a84af32f8c551b02c07e94/nltk-3.9.2-py3-none-any.whl", hash = "sha256:1e209d2b3009110635ed9709a67a1a3e33a10f799490fa71cf4bec218c11c88a", size = 1513404, upload-time = "2025-10-01T07:19:21.648Z" },
-]
-
-[[package]]
 name = "numpy"
 version = "1.22.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2185,14 +2170,11 @@ wheels = [
 
 [[package]]
 name = "truecase"
-version = "0.0.14"
+version = "0.0.1"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nltk" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/85/06/89d0adae754d32626dcd0dcd958a1b0be295a9e084a6ecda25af6ebbcdb2/truecase-0.0.14.tar.gz", hash = "sha256:3a47b58c1724fcca7268cbeaf4056bb2c0cd041bd81f3b99a85ea263d7fc2d20", size = 28801090, upload-time = "2021-07-02T18:20:24.114Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/89/b0443ce918d8aab586b311cad3b4cbd0c39ba8b88c06c5d0ddd9d820606e/truecase-0.0.1.tar.gz", hash = "sha256:8a5a2c9409486702d82fddfe55955697657fa63bb5788bf4cf56a0c1a74a65e8", size = 28798228, upload-time = "2019-04-28T06:51:56.13Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/ec/ca9dc9ab492aebc57af351709355d74d90e2b71c2b75befd2a1bf2c5db78/truecase-0.0.14-py3-none-any.whl", hash = "sha256:80e93b9d45a430d4bce4d9fe19fe0c185976ecf244779cf92e0901531ce86ced", size = 28379904, upload-time = "2021-07-02T18:20:19.886Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/a0/fb499698c1e6c31d1345235faea9953775f322b0b30822a7f81ac543d499/truecase-0.0.1-py3-none-any.whl", hash = "sha256:45fcb259f0c18cbd22b9bdda48f9233e1a85233869dc739cb83d95dcd5eaf0c4", size = 28378458, upload-time = "2019-04-28T06:48:46.219Z" },
 ]
 
 [[package]]
