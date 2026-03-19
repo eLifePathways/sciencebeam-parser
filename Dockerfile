@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.9-bookworm AS base
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm AS base
 
 
 # shared between builder and runtime image
