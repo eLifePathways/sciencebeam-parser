@@ -2,10 +2,7 @@ import logging
 from typing import Optional, List, Tuple
 
 from sciencebeam_trainer_delft.embedding.manager import EmbeddingManager
-from sciencebeam_trainer_delft.sequence_labelling.wrapper import (
-    DEFAULT_EMBEDDINGS_PATH,
-    Sequence
-)
+from sciencebeam_trainer_delft.sequence_labelling.wrapper import Sequence
 
 from sciencebeam_parser.app.context import AppContext
 from sciencebeam_parser.models.model_impl import ModelImpl
@@ -13,6 +10,9 @@ from sciencebeam_parser.utils.lazy import LazyLoaded
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+REGISTRY_REGISTRY_PATH = 'delft/resources-registry.json'
 
 
 class DelftModelImpl(ModelImpl):
@@ -27,9 +27,8 @@ class DelftModelImpl(ModelImpl):
         )
 
     def _load_model(self) -> Sequence:
-        embedding_registry_path = DEFAULT_EMBEDDINGS_PATH
         embedding_manager = EmbeddingManager(
-            path=embedding_registry_path,
+            path=REGISTRY_REGISTRY_PATH,
             download_manager=self.app_context.download_manager
         )
         model = Sequence(
