@@ -21,7 +21,6 @@ from typing import (
 from typing_extensions import Protocol
 
 from sciencebeam_parser.document.layout_document import (
-    EMPTY_BLOCK,
     LayoutBlock,
     LayoutGraphic,
     LayoutToken
@@ -59,7 +58,7 @@ class SemanticContentWrapper(ABC):
 
 @dataclass
 class SemanticSimpleContentWrapper(SemanticContentWrapper):
-    content: LayoutBlock = EMPTY_BLOCK
+    content: LayoutBlock = field(default_factory=lambda: LayoutBlock(lines=[]))
 
     layout_block: dataclasses.InitVar[LayoutBlock] = None
 
