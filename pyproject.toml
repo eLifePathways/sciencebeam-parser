@@ -55,7 +55,7 @@ explicit = true
 include = ["sciencebeam_parser*"]
 
 [tool.setuptools.package-data]
-"sciencebeam_parser" = ["doc/*.md"]
+"sciencebeam_parser" = ["doc/*.md", "py.typed"]
 
 [tool.pytest-watcher]
 now = true
