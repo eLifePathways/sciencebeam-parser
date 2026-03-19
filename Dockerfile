@@ -22,7 +22,7 @@ RUN apt-get update \
 
 # set and check UNO_PATH, UNO_PYTHON_PATH and UNO_OFFICE_BINARY_PATH
 ENV UNO_PATH=/usr/lib/python3/dist-packages
-ENV UNO_PYTHON_PATH=/usr/local/bin/python3.9
+ENV UNO_PYTHON_PATH=/usr/local/bin/python3.11
 ENV UNO_OFFICE_BINARY_PATH=/usr/lib/libreoffice/program/soffice.bin
 RUN \
   echo "UNO_PATH: ${UNO_PATH}" \
@@ -105,8 +105,8 @@ ENV LC_ALL=C
 FROM dev AS python-dist-builder
 
 ARG python_package_version
-RUN echo "Setting version to: $version" && \
-    uv version "$python_package_version"
+RUN echo "Setting version to: $python_package_version" && \
+    if [ -n "$python_package_version" ]; then uv version "$python_package_version"; fi
 RUN python scripts/dev/update_readme.py \
     --source=./doc/python_library.md \
     --target=./doc/generated_python_library.md \
