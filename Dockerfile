@@ -111,8 +111,9 @@ RUN python scripts/dev/update_readme.py \
     --source=./doc/python_library.md \
     --target=./doc/generated_python_library.md \
     --source-base-path=doc \
-    --link-prefix=https://github.com/eLifePathways/sciencebeam-parser/blob/main
-RUN uv build && \
+    --link-prefix=https://github.com/elifesciences/sciencebeam-parser/blob/main
+RUN ls -lR sciencebeam_parser/resources &&\
+    uv build --verbose && \
     ls -l dist
 
 
