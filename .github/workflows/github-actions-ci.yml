@@ -11,11 +11,14 @@ on:
       - main
 
 env:
-  DOCKER_IMAGE_NAME: ghcr.io/elifesciences/sciencebeam-parser
+  DOCKER_IMAGE_NAME: ghcr.io/elifepathways/sciencebeam-parser
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Check out repository code
         uses: actions/checkout@v5
@@ -85,16 +88,16 @@ jobs:
             python-dist.output=type=local,dest=./dist-export
             ${{ github.event_name != 'pull_request' && 'sciencebeam-parser.output=type=registry' || '' }}
             ${{ github.event_name != 'pull_request' && 'sciencebeam-parser-cv.output=type=registry' || '' }}
-            *.cache-from+=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-builder
-            *.cache-from+=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-builder-cv
-            *.cache-from+=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-dev
-            *.cache-from+=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-runtime
-            *.cache-from+=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-runtime-cv
-            builder.cache-to=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-builder,mode=max
-            builder-cv.cache-to=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-builder-cv,mode=max
-            sciencebeam-parser-dev.cache-to=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-dev,mode=max
-            sciencebeam-parser-cv.cache-to=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-runtime,mode=max
-            sciencebeam-parser.cache-to=type=registry,ref=ghcr.io/elifesciences/sciencebeam-parser_unstable:buildcache-runtime-cv,mode=max
+            *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder
+            *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder-cv
+            *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-dev
+            *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime
+            *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime-cv
+            builder.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder,mode=max
+            builder-cv.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder-cv,mode=max
+            sciencebeam-parser-dev.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-dev,mode=max
+            sciencebeam-parser-cv.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime,mode=max
+            sciencebeam-parser.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime-cv,mode=max
           push: false
           load: false
 

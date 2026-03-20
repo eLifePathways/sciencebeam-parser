@@ -3,7 +3,7 @@ name = "sciencebeam-parser"
 version = "0.0.0"
 description = "ScienceBeam Parser, parse scientific documents."
 readme = "doc/generated_python_library.md"
-requires-python = ">=3.9,<3.10"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.124.0",
     "fsspec>=2022.1.0",
@@ -15,11 +15,11 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = [
-  "torch==1.10.1+cpu",
-  "torchvision==0.11.2+cpu"
+  "torch>=2.5.1",
+  "torchvision>=0.20.1"
 ]
 delft = [
-    "sciencebeam-trainer-delft[delft]>=0.0.34",
+    "sciencebeam-trainer-delft[delft]>=0.0.36",
 ]
 cv = [
     "layoutparser==0.3.2",
@@ -39,7 +39,7 @@ ocr = [
     "tesserocr==2.5.2",
 ]
 tf = [
-    "tensorflow==2.9.3",
+    "tensorflow>=2.17.1",
 ]
 
 [tool.uv.sources]
@@ -57,6 +57,7 @@ include = ["sciencebeam_parser*"]
 [tool.setuptools.package-data]
 "sciencebeam_parser" = [
   "doc/*.md",
+  "py.typed",
   "sciencebeam_parser/resources/default_config/*.yml",
   "sciencebeam_parser/resources/xslt/*.xsl"
 ]

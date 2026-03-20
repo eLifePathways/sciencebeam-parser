@@ -142,7 +142,7 @@ dev-build-python-readme:
 		--source=./doc/python_library.md \
 		--target=./doc/generated_python_library.md \
 		--source-base-path=doc \
-		--link-prefix=https://github.com/elifesciences/sciencebeam-parser/blob/main
+		--link-prefix=https://github.com/eLifePathways/sciencebeam-parser/blob/main
 
 
 run:

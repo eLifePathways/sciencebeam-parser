@@ -1,6 +1,7 @@
 logging:
   # Python logging config (passed to dictConfig)
   version: 1
+  disable_existing_loggers: false
   formatters:
     default:
       format: '[%(asctime)s] %(levelname)s in %(name)s:%(lineno)s: %(message)s'
@@ -33,6 +34,8 @@ logging:
       level: INFO
     sciencebeam_trainer_delft:
       level: INFO
+    uvicorn:
+      level: INFO
 
 # The download directory for ScienceBeam Parser resources
 # Note: the CV model may download resources to `~/.torch/iopath_cache`,
@@ -40,7 +43,7 @@ logging:
 download_dir: '~/.cache/sciencebeam-parser/downloads'
 
 pdfalto:
-  path: https://github.com/kermitt2/pdfalto/files/6104204/pdfalto-4b4e983413278a07bb4cc4b2836de03adc8ca6dc-dockcross-linux-64.gz
+  path: https://github.com/kermitt2/pdfalto/releases/download/v0.6.0/pdfalto-bin-linux-64.zip!/pdfalto/linux/64/pdfalto
 wapiti:
   install_source: 'https://github.com/kermitt2/Wapiti/archive/a9c25d2bcccd60f1a54a7019689bd5229e866f00.tar.gz'
 xslt:
@@ -76,30 +79,30 @@ processors:
     max_graphic_distance: 0.3
 models:
   segmentation:
-    path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-segmentation-biorxiv-10k-auto-v0.0.23-train-1966-e133.tar.gz'
+    path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-segmentation-biorxiv-10k-auto-v0.0.23-train-1966-e133.tar.gz'
     use_first_token_of_block: false
   header:
-    path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-header-biorxiv-no-word-embedding.tar.gz'
+    path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-header-biorxiv-no-word-embedding.tar.gz'
   name_header:
-    # path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/grobid-0.6.1/2021-06-21-grobid-0.6.1-name-header-no-word-embedding-no-layout-features-e800.tar.gz'
+    # path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/grobid-0.6.1/2021-06-21-grobid-0.6.1-name-header-no-word-embedding-no-layout-features-e800.tar.gz'
     path: 'https://github.com/kermitt2/grobid/raw/0.6.0/grobid-home/models/name/header'
     engine: 'wapiti'
   name_citation:
-    # path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/grobid-0.6.1/2021-06-28-grobid-0.6.1-name-citation-no-word-embedding-no-layout-features-e500.tar.gz'
+    # path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/grobid-0.6.1/2021-06-28-grobid-0.6.1-name-citation-no-word-embedding-no-layout-features-e500.tar.gz'
     path: 'https://github.com/kermitt2/grobid/raw/0.6.2/grobid-home/models/name/citation'
     engine: 'wapiti'
   affiliation_address:
-    path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-affiliation-address-biorxiv-no-word-embedding.tar.gz'
+    path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-affiliation-address-biorxiv-no-word-embedding.tar.gz'
   fulltext:
-    path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-fulltext-biorxiv-10k-auto-v0.0.21-train-1986-e159.tar.gz'
+    path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-fulltext-biorxiv-10k-auto-v0.0.21-train-1986-e159.tar.gz'
   figure:
-    path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-figure-biorxiv-10k-auto-v0.0.18-train-1865-e219.tar.gz'
+    path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-figure-biorxiv-10k-auto-v0.0.18-train-1865-e219.tar.gz'
   table:
-    path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-table-biorxiv-10k-auto-v0.0.18-train-1865-e569.tar.gz'
+    path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-table-biorxiv-10k-auto-v0.0.18-train-1865-e569.tar.gz'
   reference_segmenter:
-    path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-reference-segmenter-biorxiv-no-word-embedding.tar.gz'
+    path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-reference-segmenter-biorxiv-no-word-embedding.tar.gz'
   citation:
-    path: 'https://github.com/elifesciences/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-citation-biorxiv-no-word-embedding.tar.gz'
+    path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-citation-biorxiv-no-word-embedding.tar.gz'
 
 cv_models:
   default:
