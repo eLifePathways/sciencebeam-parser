@@ -134,6 +134,13 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen --group dev --extra delft
+        if: runner.os != 'Linux' || runner.arch != 'ARM64'
+
+      - name: Install dependencies (Linux arm64 - skip delft extras with no arm64 wheels)
+        run: |
+          uv sync --frozen --group dev
+          uv pip install "sciencebeam-trainer-delft>=0.0.36"
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
 
       - name: Run pytest
         run: uv run python -m pytest -p no:cacheprovider --ignore=tests/cv_models
