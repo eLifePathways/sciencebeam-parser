@@ -111,13 +111,15 @@ jobs:
           path: ./dist-export/dist/
 
 
-  macos-test:
+  native-test:
     strategy:
       matrix:
-        os:
-          - macos-13      # Intel x86_64
-          - macos-latest  # Apple Silicon arm64
-    runs-on: ${{ matrix.os }}
+        include:
+          - runs-on: macos-latest
+            install-poppler: brew install poppler
+          - runs-on: ubuntu-24.04-arm
+            install-poppler: sudo apt-get install -y poppler-utils
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Check out repository code
         uses: actions/checkout@v5
@@ -128,7 +130,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install poppler (required by pdf2image)
-        run: brew install poppler
+        run: ${{ matrix.install-poppler }}
 
       - name: Install dependencies
         run: uv sync --frozen --group dev --extra delft
