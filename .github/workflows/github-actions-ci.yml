@@ -111,6 +111,27 @@ jobs:
           path: ./dist-export/dist/
 
 
+  macos-test:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install poppler (required by pdf2image)
+        run: brew install poppler
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev --extra delft
+
+      - name: Run pytest
+        run: uv run python -m pytest -p no:cacheprovider
+
+
   testpypi-publish:
     if: github.ref == 'refs/heads/main'
     needs: ["build-and-test"]
