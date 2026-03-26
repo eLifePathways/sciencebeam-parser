@@ -112,7 +112,12 @@ jobs:
 
 
   macos-test:
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        os:
+          - macos-13      # Intel x86_64
+          - macos-latest  # Apple Silicon arm64
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository code
         uses: actions/checkout@v5
