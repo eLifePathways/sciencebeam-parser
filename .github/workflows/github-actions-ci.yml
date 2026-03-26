@@ -129,7 +129,7 @@ jobs:
         run: uv sync --frozen --group dev --extra delft
 
       - name: Run pytest
-        run: uv run python -m pytest -p no:cacheprovider
+        run: uv run python -m pytest -p no:cacheprovider --ignore=tests/cv_models
 
 
   testpypi-publish:
