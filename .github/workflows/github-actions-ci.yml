@@ -139,7 +139,7 @@ jobs:
       - name: Install dependencies (Linux arm64 - skip delft extras with no arm64 wheels)
         run: |
           uv sync --frozen --group dev
-          uv pip install "sciencebeam-trainer-delft>=0.0.36"
+          uv pip install "sciencebeam-trainer-delft>=0.0.36" setuptools
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
 
       - name: Run pytest
