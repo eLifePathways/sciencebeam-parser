@@ -43,7 +43,10 @@ logging:
 download_dir: '~/.cache/sciencebeam-parser/downloads'
 
 pdfalto:
-  path: https://github.com/kermitt2/pdfalto/releases/download/v0.6.0/pdfalto-bin-linux-64.zip!/pdfalto/linux/64/pdfalto
+  # path is auto-detected based on the current platform if not specified
+  # (override with an explicit URL if needed, e.g.:)
+  # path: https://github.com/kermitt2/pdfalto/releases/download/v0.6.0/pdfalto-bin-linux-64.zip!/pdfalto/linux/64/pdfalto
+  path:
 wapiti:
   install_source: 'https://github.com/kermitt2/Wapiti/archive/a9c25d2bcccd60f1a54a7019689bd5229e866f00.tar.gz'
 xslt:

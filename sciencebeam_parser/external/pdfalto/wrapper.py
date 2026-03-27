@@ -1,12 +1,34 @@
 import logging
 import os
+import platform
 import stat
+import sys
 from typing import Optional
 
 from sciencebeam_parser.utils.background_process import exec_with_logging
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+PDFALTO_VERSION = 'v0.6.0'
+_PDFALTO_BASE_URL = (
+    f'https://github.com/kermitt2/pdfalto/releases/download/{PDFALTO_VERSION}'
+)
+
+
+def get_default_pdfalto_url() -> str:
+    machine = platform.machine().lower()
+    if sys.platform == 'darwin':
+        os_name = 'mac'
+    elif sys.platform.startswith('linux'):
+        os_name = 'linux'
+    else:
+        raise RuntimeError(f'Unsupported platform: {sys.platform!r}')
+    arch = 'arm64' if machine in ('arm64', 'aarch64') else '64'
+    zip_name = f'pdfalto-bin-{os_name}-{arch}.zip'
+    internal_path = f'pdfalto/{os_name}/{arch}/pdfalto'
+    return f'{_PDFALTO_BASE_URL}/{zip_name}!/{internal_path}'
 
 
 class PdfAltoWrapper:
