@@ -120,7 +120,7 @@ jobs:
             pytest-ignore-args: --ignore=tests/cv_models
           - runs-on: ubuntu-24.04-arm
             install-poppler: sudo apt-get install -y poppler-utils
-            pytest-ignore-args: tests/external/pdfalto tests/document tests/utils tests/config tests/lookup
+            pytest-ignore-args: tests/external/pdfalto/url_test.py tests/external/pdfalto/parser_test.py tests/document tests/utils tests/config tests/lookup
     runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Check out repository code
