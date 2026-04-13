@@ -50,7 +50,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --active --frozen \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --active --frozen \
     --no-dev \
     --extra cpu \
     --extra delft
@@ -59,7 +60,8 @@ RUN uv sync --active --frozen \
 # builder-cv
 FROM builder AS builder-cv
 
-RUN uv sync --active --frozen \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --active --frozen \
     --no-dev \
     --extra cpu \
     --extra delft \
@@ -82,7 +84,8 @@ RUN apt-get update \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN uv sync --active --frozen \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --active --frozen \
     --dev \
     --extra cpu \
     --extra delft \
