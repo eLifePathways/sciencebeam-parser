@@ -15,6 +15,7 @@ from sciencebeam_parser.service.api.routers.convert import create_convert_router
 from sciencebeam_parser.service.api.routers.grobid import create_grobid_router
 from sciencebeam_parser.service.api.routers.low_level import create_low_level_router
 from sciencebeam_parser.service.api.routers.models import create_models_router
+from sciencebeam_parser.service.api.routers.status import create_status_router
 
 
 LOGGER = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def create_api_app(
     app = FastAPI()
     app.state.sciencebeam_parser = sciencebeam_parser
 
+    app.include_router(create_status_router())
     app.include_router(create_convert_router())
     app.include_router(create_grobid_router(
         fulltext_processor_config=sciencebeam_parser.fulltext_processor_config

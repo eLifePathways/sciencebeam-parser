@@ -102,6 +102,12 @@ class TestApiApp:
             response = test_client.get('/')
             assert _get_ok_json(response)
 
+    class TestIsAlive:
+        def test_should_return_true(self, test_client: TestClient):
+            response = test_client.get('/isalive')
+            assert response.status_code == 200
+            assert response.text == 'true'
+
     class TestPdfAlto:
         def test_should_reject_post_without_data(
             self,
