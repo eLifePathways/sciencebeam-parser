@@ -1,7 +1,7 @@
 import os
 import logging
 import threading
-from typing import Iterable, Optional, List, Tuple
+from typing import Iterable, Optional, List, Tuple, cast
 
 import numpy as np
 
@@ -9,8 +9,7 @@ from sciencebeam_trainer_delft.sequence_labelling.engines.wapiti import WapitiWr
 from sciencebeam_trainer_delft.utils.io import copy_file
 from sciencebeam_trainer_delft.utils.download_manager import DownloadManager
 from sciencebeam_trainer_delft.sequence_labelling.engines.wapiti_adapters import (
-    WapitiModelAdapter,
-    WapitiModel
+    WapitiModelAdapter
 )
 
 from sciencebeam_parser.app.context import AppContext
@@ -132,17 +131,17 @@ class WapitiModelImpl(ModelImpl):
             type(self).__name__, self.model_url, self._lazy_model.is_loaded
         )
 
-    def _load_model(self) -> WapitiModel:
+    def _load_model(self) -> WapitiModelAdapter:
         model = WapitiServiceModelAdapter.load_from(
             self.model_url,
             wapiti_binary_path=self.app_context.lazy_wapiti_binary_wrapper.get_binary_path(),
-            download_manager=self.app_context.download_manager
+            download_manager=cast(DownloadManager, self.app_context.download_manager)
         )
         LOGGER.info('loaded wapiti model: %r', self.model_url)
         return model
 
     @property
-    def model(self) -> WapitiModel:
+    def model(self) -> WapitiModelAdapter:
         return self._lazy_model.get()
 
     def preload(self):
@@ -155,7 +154,11 @@ class WapitiModelImpl(ModelImpl):
         output_format: Optional[str] = None
     ) -> List[List[Tuple[str, str]]]:
         model = self.model
-        result = model.tag(texts, features=features, output_format=output_format)
+        result = model.tag(
+            np.array(texts, dtype=object),
+            features=np.array(features, dtype=object),
+            output_format=output_format
+        )
         token_count = sum(len(text) for text in texts)
         LOGGER.info(
             'predicted labels using wapiti model (document count: %d, token count: %d)',

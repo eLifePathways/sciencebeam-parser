@@ -300,6 +300,7 @@ class Model(ABC, Preloadable):
         ))
         texts, features = load_data_crf_lines(data_lines)
         texts = texts.tolist()
+        features = features.tolist()
         tag_result = self.predict_labels(
             texts=texts, features=features, output_format=None
         )

@@ -152,7 +152,7 @@ class ModelResponseRouterFactory:
                 else:
                     texts = texts.tolist()
                     tag_result = self.model.predict_labels(
-                        texts=texts, features=features, output_format=None
+                        texts=texts, features=features.tolist(), output_format=None
                     )
                 LOGGER.debug('tag_result: %s', tag_result)
                 formatted_tag_result_iterable = iter_format_tag_result(
