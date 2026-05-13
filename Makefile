@@ -67,24 +67,15 @@ dev-venv: venv-create dev-install
 
 
 dev-flake8:
-	$(PYTHON) -m flake8 \
-		sciencebeam_parser \
-		tests \
-		scripts/normalize_model_data.py
+	$(PYTHON) -m flake8 sciencebeam_parser tests
 
 
 dev-pylint:
-	$(PYTHON) -m pylint \
-		sciencebeam_parser \
-		tests \
-		scripts/normalize_model_data.py
+	$(PYTHON) -m pylint sciencebeam_parser tests
 
 
 dev-mypy:
-	$(PYTHON) -m mypy --ignore-missing-imports \
-		sciencebeam_parser \
-		tests \
-		scripts/normalize_model_data.py
+	$(PYTHON) -m mypy --ignore-missing-imports sciencebeam_parser tests
 
 
 dev-lint: dev-flake8 dev-pylint dev-mypy
@@ -263,44 +254,36 @@ ci-build-all:
 
 fetch-grobid-model-data: .require-COMPARE_PDF
 	mkdir -p $(COMPARE_DOC_DIR)/grobid
-	curl \
-		--fail --show-error \
-		--output $(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data \
+	curl --fail --show-error \
 		--form input=@$(COMPARE_PDF) \
 		--form debugMode=true \
 		--form models=$(COMPARE_MODEL) \
-		$(GROBID_URL)/api/processFulltextDocument
+		$(GROBID_URL)/api/processFulltextDocument \
+		| grep -v '^=== model:' \
+		| tr '\t' ' ' \
+		> $(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data
 
 
 fetch-parser-model-data: .require-COMPARE_PDF
 	mkdir -p $(COMPARE_DOC_DIR)/sciencebeam-parser
 	curl -X POST \
 		--fail --show-error \
-		--output $(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
 		-H 'accept: application/json' \
 		-H 'Content-Type: multipart/form-data' \
 		-F "input=@$(COMPARE_PDF);type=application/pdf" \
-		'$(SCIENCEBEAM_PARSER_URL)/api/models/$(COMPARE_MODEL)?output_format=data'
-
-
-normalize-model-data:
-	$(PYTHON) scripts/normalize_model_data.py \
-		$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data \
-		$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).normalized.data
-	$(PYTHON) scripts/normalize_model_data.py \
-		$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
-		$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).normalized.data
+		'$(SCIENCEBEAM_PARSER_URL)/api/models/$(COMPARE_MODEL)?output_format=data' \
+		> $(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data
 
 
 diff-model-data:
 	-diff \
-		$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).normalized.data \
-		$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).normalized.data \
+		$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data \
+		$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
 		> $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).diff
 	@echo "Diff: $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).diff"
 
 
-compare-model-data: fetch-grobid-model-data fetch-parser-model-data normalize-model-data diff-model-data
+compare-model-data: fetch-grobid-model-data fetch-parser-model-data diff-model-data
 
 
 ci-lint:
