@@ -1,8 +1,9 @@
 import logging
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple, cast
 
 from sciencebeam_trainer_delft.embedding.manager import EmbeddingManager
 from sciencebeam_trainer_delft.sequence_labelling.wrapper import Sequence
+from sciencebeam_trainer_delft.utils.download_manager import DownloadManager
 
 from sciencebeam_parser.app.context import AppContext
 from sciencebeam_parser.models.model_impl import ModelImpl
@@ -29,7 +30,7 @@ class DelftModelImpl(ModelImpl):
     def _load_model(self) -> Sequence:
         embedding_manager = EmbeddingManager(
             path=REGISTRY_REGISTRY_PATH,
-            download_manager=self.app_context.download_manager
+            download_manager=cast(DownloadManager, self.app_context.download_manager)
         )
         model = Sequence(
             'dummy-model',
@@ -53,4 +54,7 @@ class DelftModelImpl(ModelImpl):
         output_format: Optional[str] = None
     ) -> List[List[Tuple[str, str]]]:
         model = self.model
-        return model.tag(texts, features=features, output_format=output_format)
+        return cast(
+            List[List[Tuple[str, str]]],
+            model.tag(texts, features=features, output_format=output_format)
+        )

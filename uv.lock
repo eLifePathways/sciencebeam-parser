@@ -3231,7 +3231,7 @@ requires-dist = [
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "pdf2image", specifier = "==1.16.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=0.0.36" },
+    { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=0.0.38" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "extra == 'cpu'", specifier = ">=0.20.1", index = "https://download.pytorch.org/whl/cpu" },
 ]
@@ -3252,14 +3252,14 @@ tf = [{ name = "tensorflow", specifier = ">=2.17.1" }]
 
 [[package]]
 name = "sciencebeam-trainer-delft"
-version = "0.0.36"
+version = "0.0.38"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonpickle" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/63/7d/8c1c834e086cb8fd0a3d49a2e86b5c9f998901b0df3cfd8a64eb58ccc6ff/sciencebeam_trainer_delft-0.0.36.tar.gz", hash = "sha256:e491f0d09eb164f6752b0e7c69e452bcdab420f272f697252cf1dff25b44d37e", size = 111986, upload-time = "2026-03-19T14:55:21.418Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/9f/d9bce5db2a8288849281a6b1b8725ddf51fcda36fae7acf9bfcf2944243f/sciencebeam_trainer_delft-0.0.38.tar.gz", hash = "sha256:81c55b678580ae58df6f3a9510b98d1637a6439602dff5ebb70c8d82738f80ab", size = 112422, upload-time = "2026-05-13T16:28:09.461Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/23/13ef8fa6043400735f3d86528b3c0ab68ea87855e5645cc0a33fa8025db1/sciencebeam_trainer_delft-0.0.36-py3-none-any.whl", hash = "sha256:7d90cab35ae5d4f511778c07ed2bee4ca8e991044c198f5f351a60aa64e34711", size = 124299, upload-time = "2026-03-19T14:55:20.261Z" },
+    { url = "https://files.pythonhosted.org/packages/31/2f/68e1c50e4b06623c369b06ac4ae77320a672a6a3092409b9a1bee88c0512/sciencebeam_trainer_delft-0.0.38-py3-none-any.whl", hash = "sha256:4184c037c314f984113af29c88d8561ccef254e93190acbadc4ba9bed0ca2fbe", size = 124792, upload-time = "2026-05-13T16:28:08.403Z" },
 ]
 
 [package.optional-dependencies]
