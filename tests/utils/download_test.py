@@ -2,7 +2,6 @@ import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
-from unittest.mock import MagicMock
 
 import pytest
 from sciencebeam_trainer_delft.utils.download_manager import DownloadManager
@@ -58,7 +57,7 @@ class MockDownloadManager(DownloadManager):
 
 
 @pytest.fixture(name='download_manager_mock')
-def _download_manager_mock(tmp_path: Path) -> MagicMock:
+def _download_manager_mock(tmp_path: Path) -> MockDownloadManager:
     download_dir_path = tmp_path / 'downloads'
     mock = MockDownloadManager(str(download_dir_path))
     return mock
