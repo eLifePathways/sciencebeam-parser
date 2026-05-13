@@ -19,7 +19,7 @@ cpu = [
   "torchvision>=0.20.1"
 ]
 delft = [
-    "sciencebeam-trainer-delft[delft]>=0.0.36",
+    "sciencebeam-trainer-delft[delft]>=0.0.38",
 ]
 cv = [
     "layoutparser==0.3.2",
