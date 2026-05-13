@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from sciencebeam_trainer_delft.sequence_labelling.reader import load_data_crf_lines
 from sciencebeam_trainer_delft.sequence_labelling.tag_formatter import (
     TagOutputFormats,
+    TagLabelFormats,
     iter_format_tag_result
 )
 
@@ -158,6 +159,7 @@ class ModelResponseRouterFactory:
                 formatted_tag_result_iterable = iter_format_tag_result(
                     tag_result,
                     output_format=output_format,
+                    label_format=TagLabelFormats.GROBID,
                     expected_tag_result=None,
                     texts=texts,
                     features=features,
