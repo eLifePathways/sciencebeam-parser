@@ -275,15 +275,7 @@ fetch-parser-model-data: .require-COMPARE_PDF
 		> $(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data
 
 
-diff-model-data:
-	-diff \
-		$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data \
-		$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
-		> $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).diff
-	@echo "Diff: $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).diff"
-
-
-compare-model-data: fetch-grobid-model-data fetch-parser-model-data diff-model-data
+compare-model-data: fetch-grobid-model-data fetch-parser-model-data
 
 
 ci-lint:
