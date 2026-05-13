@@ -31,6 +31,20 @@ DOCKER_DEV_RUN = $(DOCKER_COMPOSE) run --rm sciencebeam-parser-dev
 DOCKER_DEV_PYTHON = $(DOCKER_DEV_RUN) python
 
 
+GROBID_URL = http://localhost:8070
+SCIENCEBEAM_PARSER_URL = http://localhost:$(SCIENCEBEAM_PARSER_PORT)
+
+COMPARE_MODEL ?= segmentation
+COMPARE_DOC_ID ?= $(basename $(notdir $(COMPARE_PDF)))
+COMPARE_DOC_DIR = .temp/compare-with-grobid/by-doc/$(COMPARE_DOC_ID)
+
+
+.require-%:
+	@if [ -z "$($(*))" ]; then \
+		echo "Error: $* is required. Usage: make $(@:.require-%=%) $*=<value>"; \
+		exit 1; \
+	fi
+
 venv-clean:
 	@if [ -d "$(VENV)" ]; then \
 		rm -rf "$(VENV)"; \
@@ -236,6 +250,32 @@ docker-end-to-end-cv:
 
 ci-build-all:
 	$(MAKE) DOCKER_COMPOSE="$(DOCKER_COMPOSE_CI)" docker-build-all
+
+
+fetch-grobid-model-data: .require-COMPARE_PDF
+	mkdir -p $(COMPARE_DOC_DIR)/grobid
+	curl --fail --show-error \
+		--form input=@$(COMPARE_PDF) \
+		--form debugMode=true \
+		--form models=$(COMPARE_MODEL) \
+		$(GROBID_URL)/api/processFulltextDocument \
+		| grep -v '^=== model:' \
+		| tr '\t' ' ' \
+		> $(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data
+
+
+fetch-parser-model-data: .require-COMPARE_PDF
+	mkdir -p $(COMPARE_DOC_DIR)/sciencebeam-parser
+	curl -X POST \
+		--fail --show-error \
+		-H 'accept: application/json' \
+		-H 'Content-Type: multipart/form-data' \
+		-F "input=@$(COMPARE_PDF);type=application/pdf" \
+		'$(SCIENCEBEAM_PARSER_URL)/api/models/$(COMPARE_MODEL)?output_format=data' \
+		> $(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data
+
+
+compare-model-data: fetch-grobid-model-data fetch-parser-model-data
 
 
 ci-lint:
