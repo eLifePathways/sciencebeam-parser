@@ -273,9 +273,21 @@ fetch-parser-model-data: .require-COMPARE_PDF
 		-F "input=@$(COMPARE_PDF);type=application/pdf" \
 		'$(SCIENCEBEAM_PARSER_URL)/api/models/$(COMPARE_MODEL)?output_format=data' \
 		> $(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data
+	curl --fail --show-error \
+		'$(SCIENCEBEAM_PARSER_URL)/api/models/$(COMPARE_MODEL)/feature-names' \
+		> $(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).feature_names.json
 
 
-compare-model-data: fetch-grobid-model-data fetch-parser-model-data
+diff-model-data:
+	$(PYTHON) scripts/compare_model_data.py \
+		--sbeam=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
+		--feature-names=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).feature_names.json \
+		--grobid=$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data \
+		> $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).diff
+	@echo "diff written to $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).diff"
+
+
+compare-model-data: fetch-grobid-model-data fetch-parser-model-data diff-model-data
 
 
 ci-lint:
