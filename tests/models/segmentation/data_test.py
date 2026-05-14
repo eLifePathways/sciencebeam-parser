@@ -7,7 +7,9 @@ from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
     LayoutLine,
-    LayoutPage
+    LayoutPage,
+    LayoutPageCoordinates,
+    LayoutPageMeta
 )
 
 from sciencebeam_parser.models.data import (
@@ -218,6 +220,79 @@ class TestSegmentationLineFeaturesProvider:
             }
             for i in range(10)
         ]
+
+    def test_should_provide_is_main_area_true_when_block_inside_page(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        page_coords = LayoutPageCoordinates(x=0, y=0, width=500, height=700, page_number=1)
+        block_coords = LayoutPageCoordinates(x=100, y=100, width=50, height=20, page_number=1)
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[
+                    LayoutLine.for_text('text', coordinates=block_coords)
+                ])],
+                meta=LayoutPageMeta.for_coordinates(page_coords)
+            )
+        ])
+        feature_values = [
+            features.get_str_is_main_area()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert feature_values == ['1']
+
+    def test_should_provide_is_main_area_false_when_block_outside_page(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        page_coords = LayoutPageCoordinates(x=0, y=0, width=500, height=700, page_number=1)
+        block_coords = LayoutPageCoordinates(x=600, y=100, width=50, height=20, page_number=1)
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[
+                    LayoutLine.for_text('text', coordinates=block_coords)
+                ])],
+                meta=LayoutPageMeta.for_coordinates(page_coords)
+            )
+        ])
+        feature_values = [
+            features.get_str_is_main_area()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert feature_values == ['0']
+
+    def test_should_provide_is_main_area_false_when_no_page_coordinates(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        block_coords = LayoutPageCoordinates(x=100, y=100, width=50, height=20, page_number=1)
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=[
+                LayoutLine.for_text('text', coordinates=block_coords)
+            ])])
+        ])
+        feature_values = [
+            features.get_str_is_main_area()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert feature_values == ['0']
+
+    def test_should_provide_is_main_area_true_when_no_block_coordinates(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        page_coords = LayoutPageCoordinates(x=0, y=0, width=500, height=700, page_number=1)
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[LayoutLine.for_text('text')])],
+                meta=LayoutPageMeta.for_coordinates(page_coords)
+            )
+        ])
+        feature_values = [
+            features.get_str_is_main_area()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert feature_values == ['1']
 
     def test_should_provide_repetitive_pattern_feature(
         self,

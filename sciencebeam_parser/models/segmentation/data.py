@@ -8,6 +8,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutLine,
     LayoutToken
 )
+from sciencebeam_parser.utils.bounding_box import BoundingBox
 from sciencebeam_parser.models.data import (
     ContextAwareLayoutTokenFeatures,
     DocumentFeaturesContext,
@@ -92,6 +93,8 @@ class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
         self.document_token_index = 0
         self.is_repetitive_pattern: bool = False
         self.is_first_repetitive_pattern: bool = False
+        self.page_main_area_bounding_box: Optional[BoundingBox] = None
+        self.block_bounding_box: Optional[BoundingBox] = None
 
     def get_block_status(self) -> str:
         return get_block_status(self.block_line_index, len(self.block_lines))
@@ -118,9 +121,14 @@ class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
     def get_dummy_str_is_first_repetitive_pattern(self) -> str:
         return '0'
 
-    def get_dummy_str_is_main_area(self) -> str:
-        # whether the block's bounding box intersects with the page bounding box
-        return '1'
+    def get_str_is_main_area(self) -> str:
+        if self.page_main_area_bounding_box is None:
+            return get_str_bool_feature_value(False)
+        if self.block_bounding_box is None:
+            return get_str_bool_feature_value(True)
+        return get_str_bool_feature_value(
+            bool(self.page_main_area_bounding_box.intersection(self.block_bounding_box))
+        )
 
     def get_str_block_relative_line_length_feature(self) -> str:
         return str(feature_linear_scaling_int(
@@ -146,7 +154,7 @@ class SegmentationLineFeaturesProvider:
         self.document_features_context = document_features_context
         self.use_first_token_of_block = use_first_token_of_block
 
-    def iter_line_features(  # pylint: disable=too-many-locals
+    def iter_line_features(  # pylint: disable=too-many-locals,too-many-statements
         self,
         layout_document: LayoutDocument
     ) -> Iterable[SegmentationLineFeatures]:
@@ -187,7 +195,16 @@ class SegmentationLineFeaturesProvider:
         for page in layout_document.pages:
             blocks = page.blocks
             segmentation_line_features.page_blocks = blocks
+            segmentation_line_features.page_main_area_bounding_box = (
+                page.meta.coordinates.bounding_box
+                if page.meta.coordinates
+                else None
+            )
             for block_index, block in enumerate(blocks):
+                block_coords_list = block.get_merged_coordinates_list()
+                segmentation_line_features.block_bounding_box = (
+                    block_coords_list[0].bounding_box if block_coords_list else None
+                )
                 segmentation_line_features.page_block_index = block_index
                 block_lines = block.lines
                 segmentation_line_features.block_lines = block_lines
@@ -281,7 +298,7 @@ class SegmentationDataGenerator(ModelDataGenerator):
             FeatureDef('is_repetitive_pattern', lambda f: f.get_str_is_repetitive_pattern()),
             FeatureDef('is_first_repetitive_pattern',
                        lambda f: f.get_str_is_first_repetitive_pattern()),
-            FeatureDef('is_main_area', lambda f: f.get_dummy_str_is_main_area()),
+            FeatureDef('is_main_area', lambda f: f.get_str_is_main_area()),
             FeatureDef('whole_line_text', lambda f: f.get_formatted_whole_line_feature()),
         ]
 
