@@ -74,8 +74,19 @@ class ModelResponseRouterFactory:
         self.app_features_context = app_features_context
         self.model_name = model_name
 
+    def _register_feature_names_route(self, router: APIRouter) -> None:
+        @router.get('/feature-names')
+        def get_feature_names() -> dict:
+            data_generator = self.model.get_data_generator(
+                DocumentFeaturesContext(
+                    app_features_context=self.app_features_context
+                )
+            )
+            return {'feature_names': data_generator.feature_names}
+
     def create_router(self) -> APIRouter:
         router = APIRouter()
+        self._register_feature_names_route(router)
 
         @router.post('', description=self.model_name)
         def process_post(
@@ -189,6 +200,7 @@ class SegmentedModelRouterFactory(ModelResponseRouterFactory):
 
     def create_router(self) -> APIRouter:
         router = APIRouter()
+        self._register_feature_names_route(router)
 
         @router.post('', description=self.model_name)
         def process_post(
