@@ -3,7 +3,7 @@ import math
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Iterable, List, NamedTuple, Optional
+from typing import Callable, Generic, Iterable, List, NamedTuple, Optional, TypeVar
 
 from lxml import etree
 
@@ -36,6 +36,15 @@ class NewDocumentMarker:
 
 
 NEW_DOCUMENT_MARKER = NewDocumentMarker()
+
+
+T_ModelFeatures = TypeVar('T_ModelFeatures')
+
+
+@dataclass
+class FeatureDef(Generic[T_ModelFeatures]):
+    name: str
+    extract: Callable[[T_ModelFeatures], str]
 
 
 class LabeledLayoutToken(NamedTuple):
