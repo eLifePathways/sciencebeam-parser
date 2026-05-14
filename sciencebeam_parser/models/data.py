@@ -712,13 +712,19 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         document_features_context: DocumentFeaturesContext
     ):
         self.document_features_context = document_features_context
+        self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = []
 
-    @abstractmethod
+    @property
+    def feature_names(self) -> List[str]:
+        return [fd.name for fd in self._feature_defs]
+
     def iter_model_data_for_context_layout_token_features(
         self,
         token_features: ContextAwareLayoutTokenFeatures
     ) -> Iterable[LayoutModelData]:
-        pass
+        yield token_features.get_layout_model_data(
+            [fd.extract(token_features) for fd in self._feature_defs]
+        )
 
     def iter_model_data_for_layout_document(  # pylint: disable=too-many-locals
         self,
