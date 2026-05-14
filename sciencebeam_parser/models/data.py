@@ -3,7 +3,7 @@ import math
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Iterable, List, NamedTuple, Optional
+from typing import Callable, Generic, Iterable, List, NamedTuple, Optional, TypeVar
 
 from lxml import etree
 
@@ -36,6 +36,15 @@ class NewDocumentMarker:
 
 
 NEW_DOCUMENT_MARKER = NewDocumentMarker()
+
+
+T_ModelFeatures = TypeVar('T_ModelFeatures')
+
+
+@dataclass
+class FeatureDef(Generic[T_ModelFeatures]):
+    name: str
+    extract: Callable[[T_ModelFeatures], str]
 
 
 class LabeledLayoutToken(NamedTuple):
@@ -703,13 +712,19 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         document_features_context: DocumentFeaturesContext
     ):
         self.document_features_context = document_features_context
+        self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = []
 
-    @abstractmethod
+    @property
+    def feature_names(self) -> List[str]:
+        return [fd.name for fd in self._feature_defs]
+
     def iter_model_data_for_context_layout_token_features(
         self,
         token_features: ContextAwareLayoutTokenFeatures
     ) -> Iterable[LayoutModelData]:
-        pass
+        yield token_features.get_layout_model_data(
+            [fd.extract(token_features) for fd in self._feature_defs]
+        )
 
     def iter_model_data_for_layout_document(  # pylint: disable=too-many-locals
         self,

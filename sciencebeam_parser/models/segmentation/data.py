@@ -11,6 +11,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.models.data import (
     ContextAwareLayoutTokenFeatures,
     DocumentFeaturesContext,
+    FeatureDef,
     ModelDataGenerator,
     LayoutModelData,
     feature_linear_scaling_int,
@@ -242,6 +243,51 @@ class SegmentationDataGenerator(ModelDataGenerator):
     ):
         self.document_features_context = document_features_context
         self.use_first_token_of_block = use_first_token_of_block
+        self._feature_defs: List[FeatureDef[SegmentationLineFeatures]] = [
+            FeatureDef('token_text', lambda f: f.token_text),
+            FeatureDef('second_token_text', lambda f: f.second_token_text or f.token_text),
+            FeatureDef('lower_token_text', lambda f: f.get_lower_token_text()),
+            FeatureDef('prefix_1', lambda f: f.get_prefix(1)),
+            FeatureDef('prefix_2', lambda f: f.get_prefix(2)),
+            FeatureDef('prefix_3', lambda f: f.get_prefix(3)),
+            FeatureDef('prefix_4', lambda f: f.get_prefix(4)),
+            FeatureDef('block_status', lambda f: f.get_block_status()),
+            FeatureDef('page_status', lambda f: f.get_page_status()),
+            FeatureDef('token_font_status', lambda f: f.get_token_font_status()),
+            FeatureDef('token_font_size', lambda f: f.get_token_font_size_feature()),
+            FeatureDef('is_bold', lambda f: f.get_str_is_bold()),
+            FeatureDef('is_italic', lambda f: f.get_str_is_italic()),
+            FeatureDef('capitalisation', lambda f: f.get_capitalisation_status_using_allcap()),
+            FeatureDef('digit_status', lambda f: f.get_digit_status_using_containsdigits()),
+            FeatureDef('is_single_char', lambda f: f.get_str_is_single_char()),
+            FeatureDef('is_proper_name', lambda f: f.get_dummy_str_is_proper_name()),
+            FeatureDef('is_common_name', lambda f: f.get_dummy_str_is_common_name()),
+            FeatureDef('is_first_name', lambda f: f.get_dummy_str_is_first_name()),
+            FeatureDef('is_year', lambda f: f.get_dummy_str_is_year()),
+            FeatureDef('is_month', lambda f: f.get_dummy_str_is_month()),
+            FeatureDef('is_email', lambda f: f.get_dummy_str_is_email()),
+            FeatureDef('is_http', lambda f: f.get_dummy_str_is_http()),
+            FeatureDef('relative_document_position',
+                       lambda f: f.get_str_relative_document_position()),
+            FeatureDef('relative_page_position',
+                       lambda f: f.get_dummy_str_relative_page_position()),
+            FeatureDef('punctuation_profile', lambda f: f.get_line_punctuation_profile()),
+            FeatureDef('punctuation_profile_length',
+                       lambda f: f.get_line_punctuation_profile_length_feature()),
+            FeatureDef('block_relative_line_length',
+                       lambda f: f.get_str_block_relative_line_length_feature()),
+            FeatureDef('is_bitmap_around', lambda f: f.get_dummy_str_is_bitmap_around()),
+            FeatureDef('is_vector_around', lambda f: f.get_dummy_str_is_vector_around()),
+            FeatureDef('is_repetitive_pattern', lambda f: f.get_str_is_repetitive_pattern()),
+            FeatureDef('is_first_repetitive_pattern',
+                       lambda f: f.get_str_is_first_repetitive_pattern()),
+            FeatureDef('is_main_area', lambda f: f.get_dummy_str_is_main_area()),
+            FeatureDef('whole_line_text', lambda f: f.get_formatted_whole_line_feature()),
+        ]
+
+    @property
+    def feature_names(self) -> List[str]:
+        return [fd.name for fd in self._feature_defs]
 
     def iter_model_data_for_layout_document(
         self,
@@ -251,53 +297,8 @@ class SegmentationDataGenerator(ModelDataGenerator):
             document_features_context=self.document_features_context,
             use_first_token_of_block=self.use_first_token_of_block
         )
-        for features in features_provider.iter_line_features(
-            layout_document
-        ):
-            line_features: List[str] = [
-                features.token_text,
-                features.second_token_text or features.token_text,
-                features.get_lower_token_text(),
-                features.get_prefix(1),
-                features.get_prefix(2),
-                features.get_prefix(3),
-                features.get_prefix(4),
-                features.get_block_status(),
-                features.get_page_status(),
-                features.get_token_font_status(),
-                features.get_token_font_size_feature(),
-                features.get_str_is_bold(),
-                features.get_str_is_italic(),
-                features.get_capitalisation_status_using_allcap(),
-                features.get_digit_status_using_containsdigits(),
-                features.get_str_is_single_char(),
-                features.get_dummy_str_is_proper_name(),
-                features.get_dummy_str_is_common_name(),
-                features.get_dummy_str_is_first_name(),
-                features.get_dummy_str_is_year(),
-                features.get_dummy_str_is_month(),
-                features.get_dummy_str_is_email(),
-                features.get_dummy_str_is_http(),
-                features.get_str_relative_document_position(),
-                features.get_dummy_str_relative_page_position(),
-                features.get_line_punctuation_profile(),
-                features.get_line_punctuation_profile_length_feature(),
-                features.get_str_block_relative_line_length_feature(),
-                features.get_dummy_str_is_bitmap_around(),
-                features.get_dummy_str_is_vector_around(),
-                features.get_str_is_repetitive_pattern(),
-                features.get_str_is_first_repetitive_pattern(),
-                features.get_dummy_str_is_main_area(),
-                features.get_formatted_whole_line_feature()
-            ]
-
-            if len(line_features) != 34:
-                raise AssertionError(
-                    'expected features to have 34 features, but was=%d (features=%s)' % (
-                        len(line_features), line_features
-                    )
-                )
+        for features in features_provider.iter_line_features(layout_document):
             yield LayoutModelData(
                 layout_line=features.layout_line,
-                data_line=' '.join(line_features)
+                data_line=' '.join(fd.extract(features) for fd in self._feature_defs)
             )
