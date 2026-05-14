@@ -81,6 +81,10 @@ class LabeledLayoutModelData(LayoutModelData):
 
 
 class ModelDataGenerator(ABC):
+    @property
+    def feature_names(self) -> List[str]:
+        return []
+
     def iter_data_lines_for_xml_root(
         self,
         root: etree.ElementBase
