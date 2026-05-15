@@ -9,6 +9,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken
 )
 from sciencebeam_parser.utils.bounding_box import BoundingBox
+from sciencebeam_parser.utils.tokenizer import get_tokenized_tokens
 from sciencebeam_parser.models.data import (
     ContextAwareLayoutTokenFeatures,
     DocumentFeaturesContext,
@@ -139,6 +140,20 @@ def get_text_pattern(text: str) -> str:
     return re.sub(r'[^a-zA-Z ]', '', text).lower()
 
 
+def count_block_tokens_like_grobid(block_lines: List[LayoutLine]) -> int:
+    # Approximate Grobid's block.getTokens().size():
+    # - each ALTO String is sub-tokenized via GrobidAnalyzer (same delimiters as our tokenizer)
+    # - endTextLine appends a '\n' LayoutToken per line
+    # - endTextBlock appends a '\n' LayoutToken per block
+    content_count = sum(
+        len(get_tokenized_tokens(token.text))
+        for line in block_lines
+        for token in line.tokens
+    )
+    newline_count = len(block_lines) + 1  # one per TextLine + one per TextBlock
+    return content_count + newline_count
+
+
 class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
     def __init__(
         self,
@@ -160,6 +175,8 @@ class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
         self.max_block_line_text_length = 0
         self.document_token_count = 0
         self.document_token_index = 0
+        self.page_token_count: int = 0
+        self.page_token_index: int = 0
         self.is_repetitive_pattern: bool = False
         self.is_first_repetitive_pattern: bool = False
         self.page_main_area_bounding_box: Optional[BoundingBox] = None
@@ -210,6 +227,14 @@ class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
         return str(feature_linear_scaling_int(
             self.document_token_index,
             self.document_token_count,
+            NBBINS_POSITION
+        ))
+
+    def get_str_relative_page_position(self) -> str:
+        # Matches Grobid's relativePagePositionChar: tokens before current block / total page tokens
+        return str(feature_linear_scaling_int(
+            self.page_token_index,
+            self.page_token_count,
             NBBINS_POSITION
         ))
 
@@ -268,12 +293,18 @@ class SegmentationLineFeaturesProvider:
             segmentation_line_features.page_main_area_bounding_box = (
                 page_main_areas.get(page.meta.page_number)
             )
+            segmentation_line_features.page_token_count = sum(
+                count_block_tokens_like_grobid(block.lines)
+                for block in blocks
+            )
+            page_token_index = 0
             for block_index, block in enumerate(blocks):
                 block_coords_list = block.get_merged_coordinates_list()
                 segmentation_line_features.block_bounding_box = (
                     block_coords_list[0].bounding_box if block_coords_list else None
                 )
                 segmentation_line_features.page_block_index = block_index
+                segmentation_line_features.page_token_index = page_token_index
                 block_lines = block.lines
                 segmentation_line_features.block_lines = block_lines
                 block_line_texts = [line.text for line in block_lines]
@@ -318,6 +349,7 @@ class SegmentationLineFeaturesProvider:
                         seen_repetitive_patterns.add(line_pattern)
                     yield segmentation_line_features
                     previous_token = token
+                page_token_index += count_block_tokens_like_grobid(block_lines)
 
 
 class SegmentationDataGenerator(ModelDataGenerator):
@@ -355,7 +387,7 @@ class SegmentationDataGenerator(ModelDataGenerator):
             FeatureDef('relative_document_position',
                        lambda f: f.get_str_relative_document_position()),
             FeatureDef('relative_page_position',
-                       lambda f: f.get_dummy_str_relative_page_position()),
+                       lambda f: f.get_str_relative_page_position()),
             FeatureDef('punctuation_profile', lambda f: f.get_line_punctuation_profile()),
             FeatureDef('punctuation_profile_length',
                        lambda f: f.get_line_punctuation_profile_length_feature()),

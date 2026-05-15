@@ -292,6 +292,39 @@ class TestSegmentationLineFeaturesProvider:
             for i in range(10)
         ]
 
+    def test_should_provide_relative_page_position_based_on_token_count(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        # Matches Grobid's relativePagePositionChar: tokens before block / total page tokens
+        # With 12 single-token blocks, each block gets RPP = floor(i/12 * 12) = i
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[LayoutLine.for_text(f'word{i}')])
+                    for i in range(12)
+                ]
+            )
+        ])
+        feature_values = [
+            features.get_str_relative_page_position()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert feature_values == [str(i) for i in range(12)]
+
+    def test_should_provide_relative_page_position_zero_for_first_block(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=[LayoutLine.for_text('text')])])
+        ])
+        feature_values = [
+            features.get_str_relative_page_position()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert feature_values == ['0']
+
     def test_should_provide_is_main_area_true_when_block_inside_page(
         self,
         features_provider: SegmentationLineFeaturesProvider
