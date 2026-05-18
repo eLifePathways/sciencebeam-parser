@@ -128,9 +128,9 @@ class ModelDataGenerator(ABC):
             )
 
 
-def feature_linear_scaling_int(pos: int, total: int, bin_count: int) -> int:
+def feature_linear_scaling_int(pos: float, total: float, bin_count: int) -> int:
     """
-    Given an integer value between 0 and total, discretized into nbBins following a linear scale
+    Given an numeric value between 0 and total, discretized into nbBins following a linear scale
     Adapted from:
     grobid-core/src/main/java/org/grobid/core/features/FeatureFactory.java
     """
