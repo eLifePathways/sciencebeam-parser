@@ -28,6 +28,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      pull-requests: write
 
     env:
       BENCHMARK_SPLIT: validation
@@ -114,6 +115,24 @@ jobs:
             --config benchmarks/eval.yml \
             --run ${{ env.BENCHMARK_RUN }} \
             --data benchmarks/data
+
+      - name: Write job summary
+        run: cat ${{ env.BENCHMARK_RUN }}/report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --jq '[.[] | select(.body | startswith("## ScienceBeam Parser Evaluation"))] | .[0].id // empty')
+          if [ -n "$COMMENT_ID" ]; then
+            gh api repos/${{ github.repository }}/issues/comments/${COMMENT_ID} \
+              -X PATCH -f body="$(cat ${{ env.BENCHMARK_RUN }}/report.md)"
+          else
+            gh pr comment ${{ github.event.pull_request.number }} \
+              --body-file ${{ env.BENCHMARK_RUN }}/report.md
+          fi
 
       - name: Upload run artifacts
         if: always()
