@@ -26,6 +26,13 @@ cv = [
 ]
 
 [dependency-groups]
+benchmark = [
+    "httpx>=0.28",
+    "huggingface-hub>=0.30",
+    "numpy>=1.26",
+    "pyarrow>=18",
+    "sciencebeam-judge",
+]
 dev = [
     "flake8>=4.0.1",
     "mypy>=1.19.0",
@@ -40,6 +47,11 @@ ocr = [
 ]
 tf = [
     "tensorflow>=2.17.1",
+]
+
+[tool.uv]
+override-dependencies = [
+    "numpy>=1.26.4,<2.0",  # sciencebeam-judge/sciencebeam-alignment declare >=2.0 but don't require it; delft pins ==1.26.4
 ]
 
 [tool.uv.sources]
@@ -60,6 +72,10 @@ include = ["sciencebeam_parser*"]
   "resources/default_config/*.yml",
   "resources/xslt/*.xsl"
 ]
+
+[[tool.mypy.overrides]]
+module = "sciencebeam_judge.*"
+ignore_missing_imports = true
 
 [tool.pytest-watcher]
 now = true
