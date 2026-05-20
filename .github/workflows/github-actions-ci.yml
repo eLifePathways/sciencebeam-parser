@@ -145,7 +145,7 @@ jobs:
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
 
       - name: Run pytest
-        run: uv run python -m pytest -p no:cacheprovider ${{ matrix.pytest-ignore-args }}
+        run: uv run python -m pytest -p no:cacheprovider ${{ matrix.pytest-ignore-args }} tests/
 
 
   testpypi-publish:
