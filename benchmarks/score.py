@@ -104,7 +104,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
     return {"n": n, "aggregated": aggregated}
 
 
-def _render_report(
+def _render_report(  # pylint: disable=too-many-locals
     corpus_results: Dict[str, Any],
     field_names: List[str],
     run_record: Optional[dict],
