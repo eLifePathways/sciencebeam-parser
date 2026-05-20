@@ -1,0 +1,103 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'smoke (10 docs) or full (158 docs)'
+        required: false
+        default: 'smoke'
+        type: choice
+        options: [smoke, full]
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+
+    env:
+      BENCHMARK_SPLIT: validation
+      BENCHMARK_MODE: ${{ inputs.mode || 'smoke' }}
+      BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}
+      PARSER_IMAGE: ghcr.io/elifepathways/sciencebeam-parser_unstable:latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: uv sync --frozen --group benchmark
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve parser image tag
+        id: parser_image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh api /orgs/elifepathways/packages/container/sciencebeam-parser_unstable/versions \
+            --jq '.[0].metadata.container.tags | map(select(startswith("main-"))) | .[0]')
+          echo "tag=ghcr.io/elifepathways/sciencebeam-parser_unstable:${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Pull parser image
+        run: docker pull ${{ steps.parser_image.outputs.tag }}
+
+      - name: Start sciencebeam-parser
+        run: docker run -d --name sciencebeam-parser -p 8080:8070 ${{ steps.parser_image.outputs.tag }}
+
+      - name: Wait for parser
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/; then
+              echo; echo "Parser up"; exit 0
+            fi
+            sleep 5
+          done
+          docker logs sciencebeam-parser >&2
+          echo "Parser never became healthy" >&2; exit 1
+
+      - name: Run predict
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run python -m benchmarks.predict \
+            --config benchmarks/eval.yml \
+            --mode ${{ env.BENCHMARK_MODE }} \
+            --split ${{ env.BENCHMARK_SPLIT }} \
+            --data benchmarks/data \
+            --out ${{ env.BENCHMARK_RUN }} \
+            --parser-url http://localhost:8080 \
+            --parser-image "${{ steps.parser_image.outputs.tag }}"
+
+      - name: Run score
+        run: |
+          uv run python -m benchmarks.score \
+            --config benchmarks/eval.yml \
+            --run ${{ env.BENCHMARK_RUN }} \
+            --data benchmarks/data
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-run-${{ github.sha }}
+          path: |
+            ${{ env.BENCHMARK_RUN }}/*.md
+            ${{ env.BENCHMARK_RUN }}/*.json
+            ${{ env.BENCHMARK_RUN }}/*.jsonl
+          retention-days: 30
