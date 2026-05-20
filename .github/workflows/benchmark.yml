@@ -62,7 +62,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG=$(gh api /orgs/elifepathways/packages/container/sciencebeam-parser_unstable/versions \
-            --jq '.[0].metadata.container.tags | map(select(startswith("main-"))) | .[0]')
+            | jq -r '[.[].metadata.container.tags[] | select(startswith("main-"))] | .[0]')
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "::error::No main- tag found in GHCR packages API response" >&2
+            exit 1
+          fi
+          echo "Resolved tag: ${TAG}" >&2
           echo "tag=ghcr.io/elifepathways/sciencebeam-parser_unstable:${TAG}" >> $GITHUB_OUTPUT
 
       - name: Pull parser image
