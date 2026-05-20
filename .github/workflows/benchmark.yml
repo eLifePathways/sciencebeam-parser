@@ -27,6 +27,7 @@ jobs:
     environment: benchmark
     permissions:
       contents: read
+      packages: read
 
     env:
       BENCHMARK_SPLIT: validation
@@ -36,10 +37,21 @@ jobs:
           && 'full' || inputs.mode || 'smoke'
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}
-      PARSER_IMAGE: sciencebeam-parser:${{ github.sha }}
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Set image tag
+        id: image_tag
+        run: |
+          SHORT_SHA=${GITHUB_SHA::8}
+          TIMESTAMP=$(date --utc +%Y%m%d.%H%M)
+          PR="${{ github.event.pull_request.number }}"
+          if [ -n "$PR" ]; then
+            echo "value=sciencebeam-parser:pr-${PR}-${SHORT_SHA}-${TIMESTAMP}" >> $GITHUB_OUTPUT
+          else
+            echo "value=sciencebeam-parser:manual-${SHORT_SHA}-${TIMESTAMP}" >> $GITHUB_OUTPUT
+          fi
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -48,11 +60,29 @@ jobs:
       - name: Install Python deps
         run: uv sync --frozen --group benchmark
 
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build parser image
-        run: docker build -t ${{ env.PARSER_IMAGE }} .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          tags: ${{ steps.image_tag.outputs.value }}
+          load: true
+          cache-from: |
+            type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder
+            type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime
 
       - name: Start sciencebeam-parser
-        run: docker run -d --name sciencebeam-parser -p 8080:8070 ${{ env.PARSER_IMAGE }}
+        run: docker run -d --name sciencebeam-parser -p 8080:8070 ${{ steps.image_tag.outputs.value }}
 
       - name: Wait for parser
         run: |
@@ -76,7 +106,7 @@ jobs:
             --data benchmarks/data \
             --out ${{ env.BENCHMARK_RUN }} \
             --parser-url http://localhost:8080 \
-            --parser-image "${{ env.PARSER_IMAGE }}"
+            --parser-image "${{ steps.image_tag.outputs.value }}"
 
       - name: Run score
         run: |
