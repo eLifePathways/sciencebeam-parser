@@ -86,6 +86,7 @@ RUN apt-get update \
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --active --frozen \
+    --group benchmark \
     --dev \
     --extra cpu \
     --extra delft \
