@@ -49,6 +49,8 @@ RUN apt-get update \
         libleptonica-dev \
     && rm -rf /var/lib/apt/lists/*
 
+ENV UV_HTTP_TIMEOUT=120
+
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --active --frozen \
