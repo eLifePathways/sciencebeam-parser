@@ -34,6 +34,12 @@ DOCKER_DEV_PYTHON = $(DOCKER_DEV_RUN) python
 GROBID_URL = http://localhost:8070
 SCIENCEBEAM_PARSER_URL = http://localhost:$(SCIENCEBEAM_PARSER_PORT)
 
+BENCHMARK_CONFIG ?= benchmarks/eval.yml
+BENCHMARK_MODE ?= smoke
+BENCHMARK_SPLIT ?= train
+BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
+
 COMPARE_MODEL ?= segmentation
 COMPARE_DOC_ID ?= $(basename $(notdir $(COMPARE_PDF)))
 COMPARE_DOC_DIR = .temp/compare-with-grobid/by-doc/$(COMPARE_DOC_ID)
@@ -57,6 +63,7 @@ venv-create:
 
 dev-install:
 	$(UV) sync --active --frozen \
+		--group benchmark \
 		--dev \
 		--extra cpu \
 		--extra delft \
@@ -67,15 +74,15 @@ dev-venv: venv-create dev-install
 
 
 dev-flake8:
-	$(PYTHON) -m flake8 sciencebeam_parser tests
+	$(PYTHON) -m flake8 sciencebeam_parser tests benchmarks
 
 
 dev-pylint:
-	$(PYTHON) -m pylint sciencebeam_parser tests
+	$(PYTHON) -m pylint sciencebeam_parser tests benchmarks
 
 
 dev-mypy:
-	$(PYTHON) -m mypy --ignore-missing-imports sciencebeam_parser tests
+	$(PYTHON) -m mypy --ignore-missing-imports sciencebeam_parser tests benchmarks
 
 
 dev-lint: dev-flake8 dev-pylint dev-mypy
@@ -161,6 +168,26 @@ dev-build-python-readme:
 
 run:
 	$(PYTHON) -m sciencebeam_parser $(ARGS)
+
+
+dev-benchmark-predict:
+	$(PYTHON) -m benchmarks.predict \
+		--config $(BENCHMARK_CONFIG) \
+		--mode $(BENCHMARK_MODE) \
+		--split $(BENCHMARK_SPLIT) \
+		--out $(BENCHMARK_RUN) \
+		--parser-url $(BENCHMARK_PARSER_URL) \
+		$(ARGS)
+
+
+dev-benchmark-score:
+	$(PYTHON) -m benchmarks.score \
+		--config $(BENCHMARK_CONFIG) \
+		--run $(BENCHMARK_RUN) \
+		$(ARGS)
+
+
+dev-benchmark: dev-benchmark-predict dev-benchmark-score
 
 
 docker-buildx-bake-build-all:

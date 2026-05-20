@@ -1,0 +1,29 @@
+dataset:
+  repo_id: elifepathways/sciencebeam-v2-benchmarking
+  revision: main
+  splits:
+    train:
+      biorxiv:
+        file: biorxiv-jats/train-00000-of-00001.parquet
+        id_column: ppr_id
+    validation:
+      biorxiv:
+        file: biorxiv-jats/validation-00000-of-00001.parquet
+        id_column: ppr_id
+
+sampling:
+  smoke:
+    biorxiv: 10
+  full:
+    biorxiv: 158
+
+seeds:
+  sample: 42
+
+fields:
+  - title
+
+scoring:
+  methods:
+    - exact
+    - levenshtein
