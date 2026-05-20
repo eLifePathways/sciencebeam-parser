@@ -117,7 +117,7 @@ jobs:
         include:
           - runs-on: macos-latest
             install-poppler: brew install poppler
-            pytest-ignore-args: --ignore=tests/cv_models
+            pytest-ignore-args: --ignore=tests/cv_models --ignore=benchmarks
           - runs-on: ubuntu-24.04-arm
             install-poppler: sudo apt-get install -y poppler-utils
             pytest-ignore-args: tests/external/pdfalto/url_test.py tests/external/pdfalto/parser_test.py tests/document tests/utils tests/config tests/lookup
