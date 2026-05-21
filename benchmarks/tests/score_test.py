@@ -88,32 +88,36 @@ class TestBuildFieldScoringTypes:
 
 
 class TestDocScoresToDict:
+    def _make_score(self, field, method, tp, fp=0, fn=0, scoring_type="string"):
+        return {
+            "field_name": field,
+            "scoring_type": scoring_type,
+            "scoring_method": method,
+            "match_score": {"true_positive": tp, "false_positive": fp, "false_negative": fn},
+        }
+
     def test_should_reshape_flat_list_to_nested_dict(self):
-        doc_scores = [
-            {
-                "field_name": "title",
-                "scoring_method": "exact",
-                "match_score": {"true_positive": 1, "false_positive": 0, "false_negative": 0},
+        result = _doc_scores_to_dict([self._make_score("title", "exact", tp=1)])
+        assert result == {
+            "title": {
+                "scoring_type": "string",
+                "exact": {"precision": 1.0, "recall": 1.0, "f1": 1.0},
             }
-        ]
-        result = _doc_scores_to_dict(doc_scores)
-        assert result == {"title": {"exact": {"precision": 1.0, "recall": 1.0, "f1": 1.0}}}
+        }
 
     def test_should_group_multiple_methods_under_same_field(self):
         doc_scores = [
-            {
-                "field_name": "title",
-                "scoring_method": "exact",
-                "match_score": {"true_positive": 1, "false_positive": 0, "false_negative": 0},
-            },
-            {
-                "field_name": "title",
-                "scoring_method": "levenshtein",
-                "match_score": {"true_positive": 1, "false_positive": 0, "false_negative": 0},
-            },
+            self._make_score("title", "exact", tp=1),
+            self._make_score("title", "levenshtein", tp=1),
         ]
         result = _doc_scores_to_dict(doc_scores)
-        assert set(result["title"].keys()) == {"exact", "levenshtein"}
+        assert set(result["title"].keys()) == {"scoring_type", "exact", "levenshtein"}
+
+    def test_should_include_scoring_type_from_entry(self):
+        result = _doc_scores_to_dict(
+            [self._make_score("author_full_names", "levenshtein", tp=3, scoring_type="ulist")]
+        )
+        assert result["author_full_names"]["scoring_type"] == "ulist"
 
     def test_should_handle_empty_list(self):
         assert not _doc_scores_to_dict([])

@@ -74,12 +74,13 @@ def _build_field_scoring_types(
 
 
 def _doc_scores_to_dict(doc_scores: List[dict]) -> dict:
-    """Reshape flat score list → {field: {method: {precision, recall, f1}}}."""
+    """Reshape flat score list → {field: {scoring_type, method: {precision, recall, f1}}}."""
     result: dict = {}
     for entry in doc_scores:
-        result.setdefault(entry["field_name"], {})[entry["scoring_method"]] = (
-            _match_to_prf(entry["match_score"])
-        )
+        field = entry["field_name"]
+        result.setdefault(field, {"scoring_type": entry["scoring_type"]})[
+            entry["scoring_method"]
+        ] = _match_to_prf(entry["match_score"])
     return result
 
 
