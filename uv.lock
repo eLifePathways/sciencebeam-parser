@@ -3427,7 +3427,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/f4/48/1fd270b9276de6fb3
 
 [[package]]
 name = "sciencebeam-judge"
-version = "0.0.23"
+version = "0.0.24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "configparser" },
@@ -3443,9 +3443,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/1b/a31e2e13cae955570e6fa5fd81be1fb0113b0aacb91eb7a9bd34dc7d08c4/sciencebeam_judge-0.0.23.tar.gz", hash = "sha256:63f497b80942ccbfb339dfc1a46190328634d6ce61b1142f0a15a05f54a1dd59", size = 78276, upload-time = "2026-05-20T18:26:51.39Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/2b/dad2ce52d3e8ed3fec73bbb5115f09cb22dca40e300c160c6ecef7128dd2/sciencebeam_judge-0.0.24.tar.gz", hash = "sha256:e5dad4e157389a38530257af852b495dea490d6d5de824ff81a9b50dffb2d664", size = 78529, upload-time = "2026-05-21T16:29:33.853Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ae/e6/6c610cf24ca6d86e660a115ecaf15f374bcdcd819af07d7854697c7e3ec8/sciencebeam_judge-0.0.23-py3-none-any.whl", hash = "sha256:5e08024e20f23df68e0bff24f7347e492ba2f877875ab56b9070315df36bf411", size = 104808, upload-time = "2026-05-20T18:26:49.978Z" },
+    { url = "https://files.pythonhosted.org/packages/23/26/d53ba38caef2f5829927bd19cb84a4996084d136dfff1775f2c00f8a4b0b/sciencebeam_judge-0.0.24-py3-none-any.whl", hash = "sha256:e2a2b66f1339297bb1f16fa162d6e4062fe4170ff3e48ff17ce4dabb1945eb0f", size = 105087, upload-time = "2026-05-21T16:29:32.487Z" },
 ]
 
 [[package]]
@@ -3522,7 +3522,7 @@ benchmark = [
     { name = "huggingface-hub", specifier = ">=0.30" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pyarrow", specifier = ">=18" },
-    { name = "sciencebeam-judge", specifier = ">=0.0.23" },
+    { name = "sciencebeam-judge", specifier = ">=0.0.24" },
 ]
 dev = [
     { name = "flake8", specifier = ">=4.0.1" },
