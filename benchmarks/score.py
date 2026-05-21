@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from sciencebeam_judge.evaluation.document_scoring import iter_score_document_fields
-from sciencebeam_judge.evaluation.score_aggregation import summarise_combined_document_scores
+from sciencebeam_judge.evaluation.score_aggregation import (
+    combine_and_compact_document_scores,
+    summarise_combined_document_scores,
+)
 from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
 from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
@@ -24,11 +27,17 @@ def _score_pair(
     field_names: List[str],
     measures: List[str],
     xml_mapping: dict,
+    scoring_types_by_field_map: Optional[Dict[str, List[str]]] = None,
 ) -> List[dict]:
     expected = parse_xml(BytesIO(gold_xml), xml_mapping, fields=field_names)
     actual = parse_xml(BytesIO(pred_xml), xml_mapping, fields=field_names)
     return list(
-        iter_score_document_fields(expected, actual, field_names=field_names, measures=measures)
+        iter_score_document_fields(
+            expected, actual,
+            field_names=field_names,
+            measures=measures,
+            scoring_types_by_field_map=scoring_types_by_field_map,
+        )
     )
 
 
@@ -42,13 +51,37 @@ def _match_to_prf(ms: dict) -> dict:
     return {"precision": round(precision, 4), "recall": round(recall, 4), "f1": round(f1, 4)}
 
 
+def _build_field_measures(
+    field_names: List[str],
+    default_methods: List[str],
+    per_field: Dict[str, dict],
+) -> Dict[str, List[str]]:
+    return {
+        f: per_field.get(f, {}).get("methods", default_methods)
+        for f in field_names
+    }
+
+
+def _build_field_scoring_types(
+    field_names: List[str],
+    default_type: str,
+    per_field: Dict[str, dict],
+) -> Dict[str, str]:
+    return {
+        f: per_field.get(f, {}).get("type", default_type)
+        for f in field_names
+    }
+
+
 def _doc_scores_to_dict(doc_scores: List[dict]) -> dict:
-    """Reshape flat score list → {field: {method: {precision, recall, f1}}}."""
+    """Reshape flat score list → {field: {scoring_type, method: {counts + precision/recall/f1}}}."""
     result: dict = {}
     for entry in doc_scores:
-        result.setdefault(entry["field_name"], {})[entry["scoring_method"]] = (
-            _match_to_prf(entry["match_score"])
-        )
+        field = entry["field_name"]
+        ms = entry["match_score"]
+        result.setdefault(field, {"scoring_type": entry["scoring_type"]})[
+            entry["scoring_method"]
+        ] = {**ms, **_match_to_prf(ms)}
     return result
 
 
@@ -57,7 +90,9 @@ def _score_corpus(  # pylint: disable=too-many-locals
     data_dir: Path,
     run_dir: Path,
     field_names: List[str],
-    measures: List[str],
+    all_measures: List[str],
+    field_measures: Dict[str, List[str]],
+    field_scoring_types: Dict[str, str],
     xml_mapping: dict,
 ) -> Dict[str, Any]:
     pred_dir = run_dir / "predictions" / corpus
@@ -68,6 +103,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
         LOGGER.warning("No predictions directory for corpus %r", corpus)
         return {"n": 0}
 
+    scoring_types_by_field_map = {f: [t] for f, t in field_scoring_types.items()}
     all_doc_scores: List[dict] = []
     n = 0
 
@@ -82,11 +118,17 @@ def _score_corpus(  # pylint: disable=too-many-locals
         try:
             doc_scores = _score_pair(
                 gold_path.read_bytes(), pred_path.read_bytes(),
-                field_names, measures, xml_mapping,
+                field_names, all_measures, xml_mapping,
+                scoring_types_by_field_map=scoring_types_by_field_map,
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             LOGGER.warning("Scoring failed for %s/%s: %s", corpus, record_id, exc)
             continue
+
+        doc_scores = [
+            s for s in doc_scores
+            if s["scoring_method"] in field_measures[s["field_name"]]
+        ]
 
         (scores_dir / f"{record_id}.json").write_text(json.dumps({
             "record_id": record_id,
@@ -100,13 +142,16 @@ def _score_corpus(  # pylint: disable=too-many-locals
     if not all_doc_scores:
         return {"n": n}
 
-    aggregated = summarise_combined_document_scores(all_doc_scores, keys=field_names, count=n)
+    aggregated = summarise_combined_document_scores(
+        combine_and_compact_document_scores(all_doc_scores), keys=field_names, count=n
+    )
     return {"n": n, "aggregated": aggregated}
 
 
 def _render_report(  # pylint: disable=too-many-locals
     corpus_results: Dict[str, Any],
     field_names: List[str],
+    field_scoring_types: Dict[str, str],
     run_record: Optional[dict],
 ) -> str:
     lines = ["## ScienceBeam Parser Evaluation", ""]
@@ -127,21 +172,36 @@ def _render_report(  # pylint: disable=too-many-locals
             lines += ["_No results._", ""]
             continue
 
-        # aggregated is a list of {scoring_type, scoring_method, summary_scores}
-        methods = [entry["scoring_method"] for entry in aggregated]
+        # aggregated is a list of {scoring_type, scoring_method, summary_scores}.
+        # The same method may appear multiple times (once per scoring type), so deduplicate
+        # column headers and look up scores by (field_type, method).
+        seen: set = set()
+        unique_methods: List[str] = []
+        for entry in aggregated:
+            m = entry["scoring_method"]
+            if m not in seen:
+                seen.add(m)
+                unique_methods.append(m)
 
-        lines.append("| Field |" + "".join(f" {m} F1 |" for m in methods))
-        lines.append("|---|" + "---|" * len(methods))
+        score_lookup = {
+            (entry.get("scoring_type", "string"), entry["scoring_method"]): entry
+            for entry in aggregated
+        }
+
+        lines.append("| Field | Type |" + "".join(f" {m} F1 |" for m in unique_methods))
+        lines.append("|---|---|" + "---|" * len(unique_methods))
 
         for field in field_names:
-            row = f"| {field} |"
-            for entry in aggregated:
-                by_field = entry.get("summary_scores", {}).get("by-field", {})
-                f1 = by_field.get(field, {}).get("scores", {}).get("f1", None)
-                if f1 is None:
+            field_type = field_scoring_types.get(field, "string")
+            row = f"| {field} | {field_type} |"
+            for method in unique_methods:
+                agg_entry = score_lookup.get((field_type, method))
+                if agg_entry is None:
                     row += " — |"
-                else:
-                    row += f" {f1:.3f} |"
+                    continue
+                by_field = agg_entry.get("summary_scores", {}).get("by-field", {})
+                f1 = by_field.get(field, {}).get("scores", {}).get("f1", None)
+                row += f" {f1:.3f} |" if f1 is not None else " — |"
             lines.append(row)
 
         lines.append("")
@@ -158,7 +218,13 @@ def run_score(  # pylint: disable=too-many-locals
     register_functions()
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
     field_names: List[str] = config["fields"]
-    measures: List[str] = config.get("scoring", {}).get("methods", ["exact", "levenshtein"])
+    scoring_cfg = config.get("scoring", {})
+    default_methods: List[str] = scoring_cfg.get("default_methods", ["levenshtein"])
+    default_type: str = scoring_cfg.get("default_type", "string")
+    per_field_cfg: Dict[str, dict] = scoring_cfg.get("per_field", {})
+    field_measures = _build_field_measures(field_names, default_methods, per_field_cfg)
+    field_scoring_types = _build_field_scoring_types(field_names, default_type, per_field_cfg)
+    all_measures = list(dict.fromkeys(m for methods in field_measures.values() for m in methods))
 
     run_record = None
     run_record_path = run_dir / "run.json"
@@ -175,16 +241,18 @@ def run_score(  # pylint: disable=too-many-locals
     for corpus in corpora:
         LOGGER.info("Scoring corpus %r (split=%s)...", corpus, split)
         corpus_results[corpus] = _score_corpus(
-            corpus, data_dir / split, run_dir, field_names, measures, xml_mapping
+            corpus, data_dir / split, run_dir, field_names, all_measures, field_measures,
+            field_scoring_types, xml_mapping
         )
 
     (run_dir / "summary.json").write_text(json.dumps({
         "fields": field_names,
-        "scoring_methods": measures,
+        "field_measures": field_measures,
+        "field_scoring_types": field_scoring_types,
         "corpora": corpus_results,
     }, indent=2))
 
-    report = _render_report(corpus_results, field_names, run_record)
+    report = _render_report(corpus_results, field_names, field_scoring_types, run_record)
     report_path = out_path or run_dir / "report.md"
     report_path.write_text(report)
 

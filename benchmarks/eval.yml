@@ -22,8 +22,43 @@ seeds:
 
 fields:
   - title
+  - abstract
+  - author_full_names
+  - affiliation_text
+  - keywords
+  - body_section_titles
+  - acknowledgement
+  - first_reference_text
+  - reference_title
+  - reference_doi
 
 scoring:
-  methods:
-    - exact
+  # Scoring types:
+  #   string       - joins all list items with '' then compares as a single string
+  #                  (appropriate for fields that are a single value in practice)
+  #   ulist        - optimal item pairing regardless of order; requires equal list length
+  #                  (appropriate for unordered multi-value fields, e.g. author names)
+  #   partial_ulist - ulist but pads the shorter list; tolerates length mismatch
+  #                  (appropriate for unordered fields with variable counts)
+  #   list         - item-by-item comparison at matching positions; requires equal length
+  #                  (appropriate for ordered multi-value fields)
+  #   partial_list - list but pads the shorter list; tolerates length mismatch
+  #                  (appropriate for ordered fields where predicted count may differ)
+  default_methods:
     - levenshtein
+  default_type: string
+  per_field:
+    title:
+      methods: [exact, levenshtein]
+    author_full_names:
+      type: ulist
+    affiliation_text:
+      type: ulist
+    keywords:
+      type: ulist
+    body_section_titles:
+      type: partial_list
+    reference_title:
+      type: partial_list
+    reference_doi:
+      type: partial_ulist
