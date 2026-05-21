@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from sciencebeam_judge.evaluation.document_scoring import iter_score_document_fields
-from sciencebeam_judge.evaluation.score_aggregation import summarise_combined_document_scores
+from sciencebeam_judge.evaluation.score_aggregation import (
+    combine_and_compact_document_scores,
+    summarise_combined_document_scores,
+)
 from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
 from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
@@ -137,7 +140,9 @@ def _score_corpus(  # pylint: disable=too-many-locals
     if not all_doc_scores:
         return {"n": n}
 
-    aggregated = summarise_combined_document_scores(all_doc_scores, keys=field_names, count=n)
+    aggregated = summarise_combined_document_scores(
+        combine_and_compact_document_scores(all_doc_scores), keys=field_names, count=n
+    )
     return {"n": n, "aggregated": aggregated}
 
 
