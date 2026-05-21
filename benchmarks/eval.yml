@@ -22,6 +22,15 @@ seeds:
 
 fields:
   - title
+  - abstract
+  - author_full_names
+  - affiliation_text
+  - keywords
+  - body_section_titles
+  - acknowledgement
+  - first_reference_text
+  - reference_title
+  - reference_doi
 
 scoring:
   methods:
