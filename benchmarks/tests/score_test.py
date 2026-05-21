@@ -101,7 +101,14 @@ class TestDocScoresToDict:
         assert result == {
             "title": {
                 "scoring_type": "string",
-                "exact": {"precision": 1.0, "recall": 1.0, "f1": 1.0},
+                "exact": {
+                    "true_positive": 1,
+                    "false_positive": 0,
+                    "false_negative": 0,
+                    "precision": 1.0,
+                    "recall": 1.0,
+                    "f1": 1.0,
+                },
             }
         }
 
