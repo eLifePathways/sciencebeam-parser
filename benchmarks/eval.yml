@@ -50,9 +50,9 @@ scoring:
   default_type: string
   per_field:
     title:
-      methods: [exact, levenshtein]
+      methods: [exact, levenshtein, edit_sim]
     abstract:
-      methods: [levenshtein]
+      methods: [levenshtein, edit_sim]
     author_full_names:
       type: partial_ulist
     affiliation_text:
