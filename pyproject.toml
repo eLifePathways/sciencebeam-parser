@@ -11,7 +11,7 @@ dependencies = [
     "lxml>=6.0.2",
     "pdf2image==1.16.0",
     "pyyaml>=6.0.3",
-    "sciencebeam-judge==0.0.25",
+    "sciencebeam-judge>=0.0.26",
 ]
 
 [project.optional-dependencies]
@@ -32,7 +32,7 @@ benchmark = [
     "huggingface-hub>=0.30",
     "numpy>=1.26",
     "pyarrow>=18",
-    "sciencebeam-judge>=0.0.25",
+    "sciencebeam-judge>=0.0.26",
 ]
 dev = [
     "flake8>=4.0.1",

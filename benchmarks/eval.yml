@@ -46,18 +46,19 @@ scoring:
   #                  (appropriate for ordered fields where predicted count may differ)
   default_methods:
     - levenshtein
+    - edit_sim
   default_type: string
   per_field:
     title:
-      methods: [exact, levenshtein, edit_sim]
+      methods: [exact, levenshtein]
     abstract:
-      methods: [levenshtein, edit_sim]
+      methods: [levenshtein]
     author_full_names:
-      type: ulist
+      type: partial_ulist
     affiliation_text:
-      type: ulist
+      type: partial_ulist
     keywords:
-      type: ulist
+      type: partial_ulist
     body_section_titles:
       type: partial_list
     reference_title:
