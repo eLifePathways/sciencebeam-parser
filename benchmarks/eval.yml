@@ -46,10 +46,11 @@ scoring:
   #                  (appropriate for ordered fields where predicted count may differ)
   default_methods:
     - levenshtein
+    - edit_sim
   default_type: string
   per_field:
     title:
-      methods: [exact, levenshtein]
+      methods: [exact, levenshtein, edit_sim]
     author_full_names:
       type: ulist
     affiliation_text:
