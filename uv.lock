@@ -3427,7 +3427,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/f4/48/1fd270b9276de6fb3
 
 [[package]]
 name = "sciencebeam-judge"
-version = "0.0.25"
+version = "0.0.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "configparser" },
@@ -3443,9 +3443,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/85/ed/cd58351a63fa923a8200bf98194562bdbc3360ccf0a20b6f16746e87f96f/sciencebeam_judge-0.0.25.tar.gz", hash = "sha256:f98a9e056a58d275d1bcfc3978b0b495979fa2dc0faed0b6ad94f839e40574e5", size = 81073, upload-time = "2026-05-22T10:26:35.67Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/a7/4043720c79d73d9b92ab51c32925e18c6d6f11475def7a3a236b132cab97/sciencebeam_judge-0.0.26.tar.gz", hash = "sha256:1e175b532c7d6cdf280f165c29dc93956dca36c6bdccd310bcabc4d37d78e4d9", size = 81963, upload-time = "2026-05-22T13:25:10.817Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1c/f4/ae230d1e41f7c5494dd40a6e4cba3a4b78cc37821f4da806e6fb0d12926f/sciencebeam_judge-0.0.25-py3-none-any.whl", hash = "sha256:fd90bc3237b42ae7df719c1401cdfb16ec8bd3258af66908fb9d0bb3fdce7532", size = 107716, upload-time = "2026-05-22T10:26:34.556Z" },
+    { url = "https://files.pythonhosted.org/packages/04/12/b0fab8cbc33b240e46cfdb126716e0ceadb4fe5095830e144071bfb69d36/sciencebeam_judge-0.0.26-py3-none-any.whl", hash = "sha256:58157ac88a1e7c09791c7ddd0fec204f6dc9c964feed4920330e9890514072dd", size = 108826, upload-time = "2026-05-22T13:25:09.534Z" },
 ]
 
 [[package]]
@@ -3511,7 +3511,7 @@ requires-dist = [
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "pdf2image", specifier = "==1.16.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "sciencebeam-judge", specifier = "==0.0.25" },
+    { name = "sciencebeam-judge", specifier = ">=0.0.26" },
     { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=0.0.38" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "extra == 'cpu'", specifier = ">=0.20.1", index = "https://download.pytorch.org/whl/cpu" },
@@ -3524,7 +3524,7 @@ benchmark = [
     { name = "huggingface-hub", specifier = ">=0.30" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pyarrow", specifier = ">=18" },
-    { name = "sciencebeam-judge", specifier = ">=0.0.25" },
+    { name = "sciencebeam-judge", specifier = ">=0.0.26" },
 ]
 dev = [
     { name = "flake8", specifier = ">=4.0.1" },
