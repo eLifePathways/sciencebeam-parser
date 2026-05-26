@@ -130,6 +130,50 @@ jobs:
             --parser-url http://localhost:8080 \
             --parser-image "${{ steps.image_tag.outputs.value }}"
 
+      - name: Checkout predictions repo
+        if: github.ref == 'refs/heads/main'
+        uses: actions/checkout@v5
+        with:
+          repository: elifepathways/sciencebeam-eval-predictions
+          path: sciencebeam-eval-predictions
+          token: ${{ secrets.PREDICTIONS_REPO_PAT }}
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: .gitignore
+          sparse-checkout-cone-mode: false
+
+      - name: Push ScienceBeam Parser predictions
+        if: github.ref == 'refs/heads/main'
+        env:
+          IMAGE_TAG: ${{ steps.image_tag.outputs.value }}
+          SPLIT: ${{ env.BENCHMARK_SPLIT }}
+          MODE: ${{ env.BENCHMARK_MODE }}
+        run: |
+          VERSION="${IMAGE_TAG#sciencebeam-parser:}"
+          DEST="sciencebeam-eval-predictions/sciencebeam-parser/${VERSION}/${SPLIT}"
+          PREDICTIONS_SRC="${{ env.BENCHMARK_RUN }}/predictions"
+          for CORPUS_DIR in "${PREDICTIONS_SRC}"/*/; do
+            [ -d "${CORPUS_DIR}" ] || continue
+            CORPUS=$(basename "${CORPUS_DIR}")
+            VARIANT=$(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); print(c['dataset']['splits'].get('${SPLIT}',{}).get('${CORPUS}',{}).get('variant','v1'))")
+            mkdir -p "${DEST}/${CORPUS}/${VARIANT}"
+            cp -r "${CORPUS_DIR}/." "${DEST}/${CORPUS}/${VARIANT}/"
+          done
+          [ -f "${PREDICTIONS_SRC}/manifest.jsonl" ] && cp "${PREDICTIONS_SRC}/manifest.jsonl" "${DEST}/"
+          DATE=$(date --utc +%Y-%m-%dT%H:%M:%SZ)
+          echo "{\"tool\":\"sciencebeam-parser\",\"version\":\"${VERSION}\",\"split\":\"${SPLIT}\",\"mode\":\"${MODE}\",\"generated_at\":\"${DATE}\"}" \
+            | python3 -m json.tool > "${DEST}/metadata.json"
+          cd sciencebeam-eval-predictions
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add --sparse .
+          if git diff --cached --quiet; then
+            echo "No new predictions to push"
+          else
+            git commit -m "Add sciencebeam-parser/${VERSION} ${{ env.BENCHMARK_SPLIT }} predictions (${{ env.BENCHMARK_MODE }})"
+            git push
+          fi
+
       - name: Run score
         run: |
           uv run python -m benchmarks.score \
