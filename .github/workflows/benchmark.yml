@@ -131,6 +131,7 @@ jobs:
             --parser-image "${{ steps.image_tag.outputs.value }}"
 
       - name: Checkout predictions repo
+        if: github.ref == 'refs/heads/main'
         uses: actions/checkout@v5
         with:
           repository: elifepathways/sciencebeam-eval-predictions
@@ -142,7 +143,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Push ScienceBeam Parser predictions
-        # TODO: restore `if: github.ref == 'refs/heads/main'` after testing
+        if: github.ref == 'refs/heads/main'
         env:
           IMAGE_TAG: ${{ steps.image_tag.outputs.value }}
         run: |
