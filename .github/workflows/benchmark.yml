@@ -38,6 +38,7 @@ jobs:
           && 'full' || inputs.mode || 'smoke'
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}
+      BASELINE_DIR: benchmarks/runs/baseline
 
     steps:
       - uses: actions/checkout@v5
@@ -96,6 +97,19 @@ jobs:
           docker logs sciencebeam-parser >&2
           echo "Parser never became healthy" >&2; exit 1
 
+      - name: Set baseline cache key
+        id: baseline_key
+        run: >-
+          echo "prefix=benchmark-baseline-${{ env.BENCHMARK_SPLIT }}-${{ env.BENCHMARK_MODE }}-${{ hashFiles('benchmarks/eval.yml', 'benchmarks/score.py', 'uv.lock') }}"
+          >> $GITHUB_OUTPUT
+
+      - name: Restore baseline summary
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.BASELINE_DIR }}
+          key: ${{ steps.baseline_key.outputs.prefix }}-${{ github.run_id }}
+          restore-keys: ${{ steps.baseline_key.outputs.prefix }}-
+
       - name: Run predict
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -116,23 +130,54 @@ jobs:
             --run ${{ env.BENCHMARK_RUN }} \
             --data benchmarks/data
 
+      - name: Generate comparison report
+        run: |
+          if [ -f ${{ env.BASELINE_DIR }}/summary.json ]; then
+            BASELINE_LABEL=$(cat ${{ env.BASELINE_DIR }}/label.txt 2>/dev/null || echo "baseline")
+            uv run python -m benchmarks.report \
+              --summary "${BASELINE_LABEL}:${{ env.BASELINE_DIR }}/summary.json" \
+              --summary "${{ steps.image_tag.outputs.value }}:${{ env.BENCHMARK_RUN }}/summary.json" \
+              --out ${{ env.BENCHMARK_RUN }}/comparison.md
+          fi
+
       - name: Write job summary
-        run: cat ${{ env.BENCHMARK_RUN }}/report.md >> $GITHUB_STEP_SUMMARY
+        run: |
+          REPORT=${{ env.BENCHMARK_RUN }}/report.md
+          if [ -f ${{ env.BENCHMARK_RUN }}/comparison.md ]; then
+            REPORT=${{ env.BENCHMARK_RUN }}/comparison.md
+          fi
+          cat "$REPORT" >> $GITHUB_STEP_SUMMARY
 
       - name: Post PR comment
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          REPORT=${{ env.BENCHMARK_RUN }}/report.md
+          if [ -f ${{ env.BENCHMARK_RUN }}/comparison.md ]; then
+            REPORT=${{ env.BENCHMARK_RUN }}/comparison.md
+          fi
           COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
             --jq '[.[] | select(.body | startswith("## ScienceBeam Parser Evaluation"))] | .[0].id // empty')
           if [ -n "$COMMENT_ID" ]; then
             gh api repos/${{ github.repository }}/issues/comments/${COMMENT_ID} \
-              -X PATCH -f body="$(cat ${{ env.BENCHMARK_RUN }}/report.md)"
+              -X PATCH -f body="$(cat ${REPORT})"
           else
             gh pr comment ${{ github.event.pull_request.number }} \
-              --body-file ${{ env.BENCHMARK_RUN }}/report.md
+              --body-file "${REPORT}"
           fi
+
+      - name: Save baseline summary
+        run: |
+          mkdir -p ${{ env.BASELINE_DIR }}
+          cp ${{ env.BENCHMARK_RUN }}/summary.json ${{ env.BASELINE_DIR }}/summary.json
+          echo "${{ steps.image_tag.outputs.value }}" > ${{ env.BASELINE_DIR }}/label.txt
+
+      - name: Cache baseline summary
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.BASELINE_DIR }}
+          key: ${{ steps.baseline_key.outputs.prefix }}-${{ github.run_id }}
 
       - name: Upload run artifacts
         if: always()
