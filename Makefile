@@ -187,6 +187,11 @@ dev-benchmark-score:
 		$(ARGS)
 
 
+dev-benchmark-compare:
+	$(PYTHON) -m benchmarks.report \
+		$(ARGS)
+
+
 dev-benchmark: dev-benchmark-predict dev-benchmark-score
 
 
