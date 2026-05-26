@@ -9,6 +9,8 @@ on:
         default: 'smoke'
         type: choice
         options: [smoke, full]
+  push:
+    branches: [main]
   pull_request:
     types: [labeled, synchronize]
 
@@ -19,6 +21,7 @@ concurrency:
 jobs:
   benchmark:
     if: >-
+      github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'benchmark:smoke') ||
       contains(github.event.pull_request.labels.*.name, 'benchmark:full')
@@ -51,6 +54,8 @@ jobs:
           PR="${{ github.event.pull_request.number }}"
           if [ -n "$PR" ]; then
             echo "value=sciencebeam-parser:pr-${PR}-${SHORT_SHA}-${TIMESTAMP}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "value=sciencebeam-parser:main-${SHORT_SHA}-${TIMESTAMP}" >> $GITHUB_OUTPUT
           else
             echo "value=sciencebeam-parser:manual-${SHORT_SHA}-${TIMESTAMP}" >> $GITHUB_OUTPUT
           fi
@@ -174,6 +179,7 @@ jobs:
           echo "${{ steps.image_tag.outputs.value }}" > ${{ env.BASELINE_DIR }}/label.txt
 
       - name: Cache baseline summary
+        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.BASELINE_DIR }}
