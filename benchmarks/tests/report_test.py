@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from benchmarks.report import _get_f1, _render_comparison_report
+from benchmarks.report import _get_f1, _parse_labeled_summary, _render_comparison_report
 
 
 def _agg(scoring_type: str, method: str, by_field: dict) -> dict:
@@ -67,6 +67,27 @@ class TestGetF1:
     def test_returns_none_for_wrong_method(self):
         s = _title_summary(0.85, method="levenshtein")
         assert _get_f1(s, "biorxiv", "title", "exact") is None
+
+
+class TestParseLabeledSummary:
+    def test_simple_label_and_path(self):
+        label, path = _parse_labeled_summary("GROBID=runs/grobid/summary.json")
+        assert label == "GROBID"
+        assert str(path) == "runs/grobid/summary.json"
+
+    def test_label_with_colons(self):
+        label, path = _parse_labeled_summary(
+            "sciencebeam-parser:pr-42-abc1234=runs/sb/summary.json"
+        )
+        assert label == "sciencebeam-parser:pr-42-abc1234"
+        assert str(path) == "runs/sb/summary.json"
+
+    def test_label_with_docker_image_tag(self):
+        label, path = _parse_labeled_summary(
+            "sciencebeam-parser:pr-610-a1a2927c-20260526.1548=benchmarks/runs/baseline/summary.json"
+        )
+        assert label == "sciencebeam-parser:pr-610-a1a2927c-20260526.1548"
+        assert str(path) == "benchmarks/runs/baseline/summary.json"
 
 
 class TestRenderComparisonReport:

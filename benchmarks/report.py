@@ -116,9 +116,9 @@ def _render_comparison_report(
 
 
 def _parse_labeled_summary(spec: str) -> Tuple[str, Path]:
-    if ":" not in spec:
-        raise argparse.ArgumentTypeError(f"Expected 'label:path', got {spec!r}")
-    label, _, path_str = spec.partition(":")
+    if "=" not in spec:
+        raise argparse.ArgumentTypeError(f"Expected 'label=path', got {spec!r}")
+    label, _, path_str = spec.partition("=")
     return label, Path(path_str)
 
 
@@ -148,7 +148,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         metavar="LABEL:PATH",
         required=True,
         help=(
-            "Summary to include as 'label:path/to/summary.json'. "
+            "Summary to include as 'label=path/to/summary.json'. "
             "Repeat for each run. The last entry is the primary (reference for deltas)."
         ),
     )
