@@ -118,7 +118,7 @@ def _render_comparison_report(
 def _parse_labeled_summary(spec: str) -> Tuple[str, Path]:
     if ":" not in spec:
         raise argparse.ArgumentTypeError(f"Expected 'label:path', got {spec!r}")
-    label, _, path_str = spec.partition(":")
+    label, _, path_str = spec.rpartition(":")
     return label, Path(path_str)
 
 
