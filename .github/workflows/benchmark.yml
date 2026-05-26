@@ -135,8 +135,8 @@ jobs:
           if [ -f ${{ env.BASELINE_DIR }}/summary.json ]; then
             BASELINE_LABEL=$(cat ${{ env.BASELINE_DIR }}/label.txt 2>/dev/null || echo "baseline")
             uv run python -m benchmarks.report \
-              --summary "${BASELINE_LABEL}:${{ env.BASELINE_DIR }}/summary.json" \
-              --summary "${{ steps.image_tag.outputs.value }}:${{ env.BENCHMARK_RUN }}/summary.json" \
+              --summary "${BASELINE_LABEL}=${{ env.BASELINE_DIR }}/summary.json" \
+              --summary "${{ steps.image_tag.outputs.value }}=${{ env.BENCHMARK_RUN }}/summary.json" \
               --out ${{ env.BENCHMARK_RUN }}/comparison.md
           fi
 

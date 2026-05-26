@@ -71,20 +71,20 @@ class TestGetF1:
 
 class TestParseLabeledSummary:
     def test_simple_label_and_path(self):
-        label, path = _parse_labeled_summary("GROBID:runs/grobid/summary.json")
+        label, path = _parse_labeled_summary("GROBID=runs/grobid/summary.json")
         assert label == "GROBID"
         assert str(path) == "runs/grobid/summary.json"
 
     def test_label_with_colons(self):
         label, path = _parse_labeled_summary(
-            "sciencebeam-parser:pr-42-abc1234:runs/sb/summary.json"
+            "sciencebeam-parser:pr-42-abc1234=runs/sb/summary.json"
         )
         assert label == "sciencebeam-parser:pr-42-abc1234"
         assert str(path) == "runs/sb/summary.json"
 
-    def test_label_with_multiple_colons(self):
+    def test_label_with_docker_image_tag(self):
         label, path = _parse_labeled_summary(
-            "sciencebeam-parser:pr-610-a1a2927c-20260526.1548:benchmarks/runs/baseline/summary.json"
+            "sciencebeam-parser:pr-610-a1a2927c-20260526.1548=benchmarks/runs/baseline/summary.json"
         )
         assert label == "sciencebeam-parser:pr-610-a1a2927c-20260526.1548"
         assert str(path) == "benchmarks/runs/baseline/summary.json"
