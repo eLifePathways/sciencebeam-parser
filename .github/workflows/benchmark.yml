@@ -104,16 +104,18 @@ jobs:
 
       - name: Set baseline cache key
         id: baseline_key
-        run: >-
-          echo "prefix=benchmark-baseline-${{ env.BENCHMARK_SPLIT }}-${{ env.BENCHMARK_MODE }}-${{ hashFiles('benchmarks/eval.yml', 'benchmarks/score.py', 'uv.lock') }}"
-          >> $GITHUB_OUTPUT
+        run: |
+          echo "prefix=benchmark-baseline-${{ env.BENCHMARK_SPLIT }}-${{ env.BENCHMARK_MODE }}-${{ hashFiles('benchmarks/eval.yml', 'benchmarks/score.py', 'uv.lock') }}" >> $GITHUB_OUTPUT
+          echo "broad_prefix=benchmark-baseline-${{ env.BENCHMARK_SPLIT }}-${{ env.BENCHMARK_MODE }}-" >> $GITHUB_OUTPUT
 
       - name: Restore baseline summary
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.BASELINE_DIR }}
           key: ${{ steps.baseline_key.outputs.prefix }}-${{ github.run_id }}
-          restore-keys: ${{ steps.baseline_key.outputs.prefix }}-
+          restore-keys: |
+            ${{ steps.baseline_key.outputs.prefix }}-
+            ${{ steps.baseline_key.outputs.broad_prefix }}
 
       - name: Run predict
         env:
