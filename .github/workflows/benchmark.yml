@@ -130,6 +130,40 @@ jobs:
             --parser-url http://localhost:8080 \
             --parser-image "${{ steps.image_tag.outputs.value }}"
 
+      - name: Checkout predictions repo
+        uses: actions/checkout@v5
+        with:
+          repository: elifepathways/sciencebeam-eval-predictions
+          path: sciencebeam-eval-predictions
+          token: ${{ secrets.PREDICTIONS_REPO_PAT }}
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: .gitignore
+          sparse-checkout-cone-mode: false
+
+      - name: Push ScienceBeam Parser predictions
+        # TODO: restore `if: github.ref == 'refs/heads/main'` after testing
+        env:
+          IMAGE_TAG: ${{ steps.image_tag.outputs.value }}
+        run: |
+          VERSION="${IMAGE_TAG#sciencebeam-parser:}"
+          DEST="sciencebeam-eval-predictions/sciencebeam-parser/${VERSION}/${{ env.BENCHMARK_SPLIT }}"
+          mkdir -p "${DEST}"
+          cp -r "${{ env.BENCHMARK_RUN }}/predictions/." "${DEST}/"
+          DATE=$(date --utc +%Y-%m-%dT%H:%M:%SZ)
+          echo "{\"tool\":\"sciencebeam-parser\",\"version\":\"${VERSION}\",\"split\":\"${{ env.BENCHMARK_SPLIT }}\",\"mode\":\"${{ env.BENCHMARK_MODE }}\",\"generated_at\":\"${DATE}\"}" \
+            | python3 -m json.tool > "${DEST}/metadata.json"
+          cd sciencebeam-eval-predictions
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "No new predictions to push"
+          else
+            git commit -m "Add sciencebeam-parser/${VERSION} ${{ env.BENCHMARK_SPLIT }} predictions (${{ env.BENCHMARK_MODE }})"
+            git push
+          fi
+
       - name: Run score
         run: |
           uv run python -m benchmarks.score \
