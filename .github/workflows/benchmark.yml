@@ -146,13 +146,22 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           IMAGE_TAG: ${{ steps.image_tag.outputs.value }}
+          SPLIT: ${{ env.BENCHMARK_SPLIT }}
+          MODE: ${{ env.BENCHMARK_MODE }}
         run: |
           VERSION="${IMAGE_TAG#sciencebeam-parser:}"
-          DEST="sciencebeam-eval-predictions/sciencebeam-parser/${VERSION}/${{ env.BENCHMARK_SPLIT }}"
-          mkdir -p "${DEST}"
-          cp -r "${{ env.BENCHMARK_RUN }}/predictions/." "${DEST}/"
+          DEST="sciencebeam-eval-predictions/sciencebeam-parser/${VERSION}/${SPLIT}"
+          PREDICTIONS_SRC="${{ env.BENCHMARK_RUN }}/predictions"
+          for CORPUS_DIR in "${PREDICTIONS_SRC}"/*/; do
+            [ -d "${CORPUS_DIR}" ] || continue
+            CORPUS=$(basename "${CORPUS_DIR}")
+            VARIANT=$(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); print(c['dataset']['splits'].get('${SPLIT}',{}).get('${CORPUS}',{}).get('variant','v1'))")
+            mkdir -p "${DEST}/${CORPUS}/${VARIANT}"
+            cp -r "${CORPUS_DIR}/." "${DEST}/${CORPUS}/${VARIANT}/"
+          done
+          [ -f "${PREDICTIONS_SRC}/manifest.jsonl" ] && cp "${PREDICTIONS_SRC}/manifest.jsonl" "${DEST}/"
           DATE=$(date --utc +%Y-%m-%dT%H:%M:%SZ)
-          echo "{\"tool\":\"sciencebeam-parser\",\"version\":\"${VERSION}\",\"split\":\"${{ env.BENCHMARK_SPLIT }}\",\"mode\":\"${{ env.BENCHMARK_MODE }}\",\"generated_at\":\"${DATE}\"}" \
+          echo "{\"tool\":\"sciencebeam-parser\",\"version\":\"${VERSION}\",\"split\":\"${SPLIT}\",\"mode\":\"${MODE}\",\"generated_at\":\"${DATE}\"}" \
             | python3 -m json.tool > "${DEST}/metadata.json"
           cd sciencebeam-eval-predictions
           git config user.name "github-actions[bot]"

@@ -6,10 +6,12 @@ dataset:
       biorxiv:
         file: biorxiv-jats/train-00000-of-00001.parquet
         id_column: ppr_id
+        variant: v1
     validation:
       biorxiv:
         file: biorxiv-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
+        variant: v1
 
 sampling:
   smoke:
