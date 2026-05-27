@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import pytest
 
-from benchmarks.report import _get_f1, _parse_labeled_summary, _render_comparison_report
+from benchmarks.report import (
+    _get_f1,
+    _get_overall_f1,
+    _parse_labeled_summary,
+    _render_comparison_report,
+)
 
 
 def _agg(scoring_type: str, method: str, by_field: dict) -> dict:
@@ -28,12 +35,19 @@ def _corpus(aggregated: list, n: int = 10) -> dict:
     return {"biorxiv": {"n": n, "aggregated": aggregated}}
 
 
-def _title_summary(f1: float, method: str = "levenshtein") -> dict:
+def _multi_corpus(names: list, aggregated: list, n: int = 10) -> dict:
+    return {name: {"n": n, "aggregated": aggregated} for name in names}
+
+
+def _title_summary(f1: float, method: str = "levenshtein", corpora: Optional[dict] = None) -> dict:
     return _summary(
         fields=["title"],
         field_measures={"title": [method]},
         field_scoring_types={"title": "string"},
-        corpora=_corpus([_agg("string", method, {"title": f1})]),
+        corpora=(
+            corpora if corpora is not None
+            else _corpus([_agg("string", method, {"title": f1})])
+        ),
     )
 
 
@@ -69,6 +83,50 @@ class TestGetF1:
         assert _get_f1(s, "biorxiv", "title", "exact") is None
 
 
+class TestGetOverallF1:
+    def test_single_corpus_matches_corpus_f1(self):
+        s = _title_summary(0.85)
+        assert _get_overall_f1(s, "title", "levenshtein") == pytest.approx(0.85)
+
+    def test_weighted_mean_across_corpora(self):
+        # biorxiv: n=10, f1=0.8 → weight 8.0
+        # ore:     n=20, f1=0.6 → weight 12.0
+        # overall: 20/30 ≈ 0.667
+        s = _summary(
+            fields=["title"],
+            field_measures={"title": ["levenshtein"]},
+            field_scoring_types={"title": "string"},
+            corpora={
+                "biorxiv": {"n": 10, "aggregated": [_agg("string", "levenshtein", {"title": 0.8})]},
+                "ore": {"n": 20, "aggregated": [_agg("string", "levenshtein", {"title": 0.6})]},
+            },
+        )
+        assert _get_overall_f1(s, "title", "levenshtein") == pytest.approx(20 / 30, abs=1e-6)
+
+    def test_skips_corpus_with_missing_f1(self):
+        s = _summary(
+            fields=["title"],
+            field_measures={"title": ["levenshtein"]},
+            field_scoring_types={"title": "string"},
+            corpora={
+                "biorxiv": {"n": 10, "aggregated": [_agg("string", "levenshtein", {"title": 0.8})]},
+                "ore": {"n": 20, "aggregated": [_agg("string", "levenshtein", {})]},
+            },
+        )
+        assert _get_overall_f1(s, "title", "levenshtein") == pytest.approx(0.8)
+
+    def test_returns_none_when_no_corpora_have_f1(self):
+        s = _summary(
+            fields=["title"],
+            field_measures={"title": ["levenshtein"]},
+            field_scoring_types={"title": "string"},
+            corpora={
+                "biorxiv": {"n": 10, "aggregated": [_agg("string", "levenshtein", {})]},
+            },
+        )
+        assert _get_overall_f1(s, "title", "levenshtein") is None
+
+
 class TestParseLabeledSummary:
     def test_simple_label_and_path(self):
         label, path = _parse_labeled_summary("GROBID=runs/grobid/summary.json")
@@ -90,11 +148,19 @@ class TestParseLabeledSummary:
         assert str(path) == "benchmarks/runs/baseline/summary.json"
 
 
-class TestRenderComparisonReport:
+class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
     def _two(self, grobid_f1=0.820, sb_f1=0.852):
         return [
             ("GROBID 0.9.0-crf", _title_summary(grobid_f1)),
             ("ScienceBeam (PR)", _title_summary(sb_f1)),
+        ]
+
+    def _two_multi_corpus(self, grobid_f1=0.820, sb_f1=0.852):
+        agg_g = [_agg("string", "levenshtein", {"title": grobid_f1})]
+        agg_s = [_agg("string", "levenshtein", {"title": sb_f1})]
+        return [
+            ("GROBID", _title_summary(grobid_f1, corpora=_multi_corpus(["biorxiv", "ore"], agg_g))),
+            ("SB (PR)", _title_summary(sb_f1, corpora=_multi_corpus(["biorxiv", "ore"], agg_s))),
         ]
 
     def test_returns_empty_string_for_empty_input(self):
@@ -185,3 +251,35 @@ class TestRenderComparisonReport:
         header = next(line for line in report.splitlines() if "Field (method)" in line)
         assert "Δ" not in header
         assert "0.852" in report
+
+    def test_corpus_section_is_collapsible(self):
+        report = _render_comparison_report(self._two())
+        assert "<details>" in report
+        assert "<summary><b>biorxiv</b>" in report
+        assert "</details>" in report
+
+    def test_no_overall_section_for_single_corpus(self):
+        report = _render_comparison_report(self._two())
+        assert "### Overall" not in report
+
+    def test_overall_section_present_for_multiple_corpora(self):
+        report = _render_comparison_report(self._two_multi_corpus())
+        assert "### Overall" in report
+        assert "2 corpora" in report
+
+    def test_overall_section_shows_total_doc_count(self):
+        report = _render_comparison_report(self._two_multi_corpus())
+        # 2 corpora × 10 docs each = 20 total
+        assert "20 docs" in report
+
+    def test_overall_section_weighted_f1(self):
+        # both corpora same n=10 → simple mean
+        report = _render_comparison_report(self._two_multi_corpus(grobid_f1=0.800, sb_f1=0.840))
+        assert "0.840" in report  # sb overall F1
+        assert "0.800" in report  # grobid overall F1
+
+    def test_each_corpus_has_collapsible_section(self):
+        report = _render_comparison_report(self._two_multi_corpus())
+        assert report.count("<details>") == 2
+        assert "<summary><b>biorxiv</b>" in report
+        assert "<summary><b>ore</b>" in report
