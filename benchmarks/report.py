@@ -4,7 +4,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,6 +27,19 @@ def _get_f1(
     return None
 
 
+def _get_overall_f1(summary: dict, field: str, method: str) -> Optional[float]:
+    """Doc-count-weighted mean F1 across all corpora."""
+    total_n = 0
+    weighted = 0.0
+    for corpus, corpus_data in summary.get("corpora", {}).items():
+        n = corpus_data.get("n", 0)
+        f1 = _get_f1(summary, corpus, field, method)
+        if f1 is not None and n > 0:
+            total_n += n
+            weighted += n * f1
+    return weighted / total_n if total_n > 0 else None
+
+
 def _fmt_f1(f1: Optional[float]) -> str:
     return f"{f1:.3f}" if f1 is not None else "—"
 
@@ -35,57 +48,91 @@ def _fmt_delta(delta: Optional[float]) -> str:
     return f"{delta:+.3f}" if delta is not None else "—"
 
 
-def _render_corpus_section(  # pylint: disable=too-many-locals
+def _corpus_f1_getter(corpus: str) -> Callable[[dict, str, str], Optional[float]]:
+    return lambda s, f, m: _get_f1(s, corpus, f, m)
+
+
+def _render_field_table(  # pylint: disable=too-many-locals
+    labeled_summaries: List[Tuple[str, dict]],
+    field_names: List[str],
+    field_measures: dict,
+    field_scoring_types: dict,
+    get_f1_fn: Callable[[dict, str, str], Optional[float]],
+) -> List[str]:
+    """Render comparison table. get_f1_fn(summary, field, method) -> Optional[float]."""
+    primary_label, _ = labeled_summaries[-1]
+    others = labeled_summaries[:-1]
+    other_labels = [label for label, _ in others]
+
+    col_labels = other_labels + [primary_label] + [f"Δ {lbl}" for lbl in other_labels]
+    n_cols = 2 * len(others) + 3
+    lines = [
+        "| Field (method) | Type | " + " | ".join(col_labels) + " |",
+        "|" + "|".join(["---"] * n_cols) + "|",
+    ]
+
+    for field in field_names:
+        methods = field_measures.get(field, [])
+        field_type = field_scoring_types.get(field, "string")
+        for method in methods:
+            primary_f1 = get_f1_fn(labeled_summaries[-1][1], field, method)
+            other_f1s = [get_f1_fn(s, field, method) for _, s in others]
+            deltas = [
+                _fmt_delta(
+                    primary_f1 - f1 if primary_f1 is not None and f1 is not None else None
+                )
+                for f1 in other_f1s
+            ]
+            cells = [_fmt_f1(f1) for f1 in other_f1s] + [_fmt_f1(primary_f1)] + deltas
+            lines.append(f"| {field} ({method}) | {field_type} | " + " | ".join(cells) + " |")
+
+    return lines
+
+
+def _render_corpus_section(
     corpus: str,
     labeled_summaries: List[Tuple[str, dict]],
     field_names: List[str],
     field_measures: dict,
     field_scoring_types: dict,
 ) -> List[str]:
-    primary_label, primary_summary = labeled_summaries[-1]
-    others = labeled_summaries[:-1]
-    other_labels = [label for label, _ in others]
-
-    lines: List[str] = []
-
     counts = " | ".join(
         f"**{label}**: {s.get('corpora', {}).get(corpus, {}).get('n', 0)} docs"
         for label, s in labeled_summaries
     )
-    lines.append(counts)
-    lines.append("")
+    lines = [counts, ""]
+    lines.extend(_render_field_table(
+        labeled_summaries, field_names, field_measures, field_scoring_types,
+        _corpus_f1_getter(corpus),
+    ))
+    return lines
 
-    col_labels = (
-        list(other_labels)
-        + [primary_label]
-        + [f"Δ {label}" for label in other_labels]
+
+def _render_overall_section(  # pylint: disable=too-many-locals
+    labeled_summaries: List[Tuple[str, dict]],
+    field_names: List[str],
+    field_measures: dict,
+    field_scoring_types: dict,
+    corpora: List[str],
+) -> List[str]:
+    _, primary_summary = labeled_summaries[-1]
+    n_total = sum(
+        primary_summary.get("corpora", {}).get(c, {}).get("n", 0) for c in corpora
     )
-    lines.append("| Field (method) | Type | " + " | ".join(col_labels) + " |")
-
-    n_cols = 2 * len(others) + 3  # field, type, others, primary, delta-per-other
-    lines.append("|" + "|".join(["---"] * n_cols) + "|")
-
-    for field in field_names:
-        methods = field_measures.get(field, [])
-        field_type = field_scoring_types.get(field, "string")
-        for method in methods:
-            primary_f1 = _get_f1(primary_summary, corpus, field, method)
-            other_f1s = [_get_f1(s, corpus, field, method) for _, s in others]
-            deltas = [
-                _fmt_delta(
-                    primary_f1 - f1
-                    if primary_f1 is not None and f1 is not None
-                    else None
-                )
-                for f1 in other_f1s
-            ]
-            cells = (
-                [_fmt_f1(f1) for f1 in other_f1s]
-                + [_fmt_f1(primary_f1)]
-                + deltas
-            )
-            lines.append(f"| {field} ({method}) | {field_type} | " + " | ".join(cells) + " |")
-
+    total_counts = " | ".join(
+        f"**{label}**: {sum(s.get('corpora', {}).get(c, {}).get('n', 0) for c in corpora)} docs"
+        for label, s in labeled_summaries
+    )
+    lines = [
+        f"### Overall ({n_total} docs across {len(corpora)} corpora)",
+        "",
+        total_counts,
+        "",
+    ]
+    lines.extend(_render_field_table(
+        labeled_summaries, field_names, field_measures, field_scoring_types,
+        _get_overall_f1,
+    ))
     return lines
 
 
@@ -102,15 +149,27 @@ def _render_comparison_report(
     corpora = list(primary_summary.get("corpora", {}).keys())
 
     lines = ["## ScienceBeam Parser Evaluation", ""]
+
+    if len(corpora) > 1:
+        lines.extend(_render_overall_section(
+            labeled_summaries, field_names, field_measures, field_scoring_types, corpora,
+        ))
+        lines.append("")
+
     for corpus in corpora:
-        lines.append(f"### {corpus}")
-        lines.append("")
-        lines.extend(
-            _render_corpus_section(
-                corpus, labeled_summaries, field_names, field_measures, field_scoring_types
-            )
+        n_primary = primary_summary.get("corpora", {}).get(corpus, {}).get("n", 0)
+        corpus_lines = _render_corpus_section(
+            corpus, labeled_summaries, field_names, field_measures, field_scoring_types,
         )
-        lines.append("")
+        lines += [
+            "<details>",
+            f"<summary><b>{corpus}</b> ({n_primary} docs)</summary>",
+            "",
+            *corpus_lines,
+            "",
+            "</details>",
+            "",
+        ]
 
     return "\n".join(lines)
 
