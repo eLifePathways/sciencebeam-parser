@@ -214,6 +214,7 @@ def run_score(  # pylint: disable=too-many-locals
     run_dir: Path,
     data_dir: Path,
     out_path: Optional[Path],
+    split_override: Optional[str] = None,
 ) -> None:
     register_functions()
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
@@ -233,7 +234,7 @@ def run_score(  # pylint: disable=too-many-locals
     else:
         LOGGER.warning("No run.json found in %s; split/corpus detection may be incomplete", run_dir)
 
-    split = (run_record or {}).get("split", "train")
+    split = split_override or (run_record or {}).get("split", "train")
 
     corpora = list(config["dataset"]["splits"][split].keys())
 
@@ -270,6 +271,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument(
         "--out", default=None, help="Output path for report.md (default: <run>/report.md)"
     )
+    parser.add_argument(
+        "--split", default=None, help="Dataset split override (default: read from run.json)"
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -282,6 +286,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         run_dir=Path(args.run),
         data_dir=Path(args.data),
         out_path=Path(args.out) if args.out else None,
+        split_override=args.split,
     )
 
 

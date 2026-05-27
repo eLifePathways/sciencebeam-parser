@@ -67,3 +67,7 @@ scoring:
       type: partial_list
     reference_doi:
       type: partial_ulist
+
+baselines:
+  - tool: grobid
+    version: 0.9.0-crf

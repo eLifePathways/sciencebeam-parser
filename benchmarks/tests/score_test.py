@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from unittest.mock import patch
+
 from benchmarks.score import (
     _build_field_measures,
     _build_field_scoring_types,
     _doc_scores_to_dict,
     _match_to_prf,
     _render_report,
+    run_score,
 )
 
 
@@ -222,3 +227,76 @@ class TestRenderReport:
         result = _render_report({}, [], {}, run_record)
         assert "my-image:v1" in result
         assert "default" in result
+
+
+class TestRunScoreSplitDetermination:
+    _CONFIG = {
+        "dataset": {
+            "splits": {
+                "train": {"train_corpus": {}},
+                "validation": {"validation_corpus": {}},
+            }
+        },
+        "fields": ["title"],
+        "scoring": {
+            "default_methods": ["levenshtein"],
+            "default_type": "string",
+            "per_field": {},
+        },
+    }
+
+    def _scored_corpora(self, mock_score_corpus) -> list:
+        return [call.args[0] for call in mock_score_corpus.call_args_list]
+
+    def test_split_override_takes_precedence_over_run_json(self, tmp_path: Path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "run.json").write_text(json.dumps({"split": "train"}))
+
+        with patch("benchmarks.score.register_functions"), \
+             patch("benchmarks.score.parse_xml_mapping"), \
+             patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
+            run_score(
+                config=self._CONFIG,
+                run_dir=run_dir,
+                data_dir=tmp_path / "data",
+                out_path=tmp_path / "report.md",
+                split_override="validation",
+            )
+
+        assert self._scored_corpora(mock_score) == ["validation_corpus"]
+
+    def test_uses_split_from_run_json_when_no_override(self, tmp_path: Path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "run.json").write_text(json.dumps({"split": "validation"}))
+
+        with patch("benchmarks.score.register_functions"), \
+             patch("benchmarks.score.parse_xml_mapping"), \
+             patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
+            run_score(
+                config=self._CONFIG,
+                run_dir=run_dir,
+                data_dir=tmp_path / "data",
+                out_path=tmp_path / "report.md",
+                split_override=None,
+            )
+
+        assert self._scored_corpora(mock_score) == ["validation_corpus"]
+
+    def test_defaults_to_train_when_no_override_and_no_run_json(self, tmp_path: Path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+
+        with patch("benchmarks.score.register_functions"), \
+             patch("benchmarks.score.parse_xml_mapping"), \
+             patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
+            run_score(
+                config=self._CONFIG,
+                run_dir=run_dir,
+                data_dir=tmp_path / "data",
+                out_path=tmp_path / "report.md",
+                split_override=None,
+            )
+
+        assert self._scored_corpora(mock_score) == ["train_corpus"]
