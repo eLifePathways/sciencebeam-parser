@@ -135,5 +135,8 @@ doc_to_pdf:
     remove_header_footer: true
     remove_redline: true
 
+output:
+  pretty_print_xml: true
+
 # preload resources and models on startup
 preload_on_startup: false
