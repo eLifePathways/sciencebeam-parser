@@ -188,23 +188,6 @@ jobs:
             fi
           done
 
-      - name: Score baseline predictions
-        run: |
-          python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); [print(b['tool']+'='+b['version']) for b in c.get('baselines', [])]" \
-          | while IFS== read -r TOOL VERSION; do
-            [ -z "$TOOL" ] && continue
-            RUN_DIR="benchmarks/runs/baseline-${TOOL}"
-            if [ -d "${RUN_DIR}/predictions" ]; then
-              uv run python -m benchmarks.score \
-                --config benchmarks/eval.yml \
-                --run "${RUN_DIR}" \
-                --split "${{ env.BENCHMARK_SPLIT }}" \
-                --data benchmarks/data
-            else
-              echo "No predictions for ${TOOL}/${VERSION}, skipping"
-            fi
-          done
-
       - name: Start sciencebeam-parser
         run: docker run -d --name sciencebeam-parser -p 8080:8070 ${{ steps.image_tag.outputs.value }}
 
@@ -231,6 +214,23 @@ jobs:
             --out ${{ env.BENCHMARK_RUN }} \
             --parser-url http://localhost:8080 \
             --parser-image "${{ steps.image_tag.outputs.value }}"
+
+      - name: Score baseline predictions
+        run: |
+          python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); [print(b['tool']+'='+b['version']) for b in c.get('baselines', [])]" \
+          | while IFS== read -r TOOL VERSION; do
+            [ -z "$TOOL" ] && continue
+            RUN_DIR="benchmarks/runs/baseline-${TOOL}"
+            if [ -d "${RUN_DIR}/predictions" ]; then
+              uv run python -m benchmarks.score \
+                --config benchmarks/eval.yml \
+                --run "${RUN_DIR}" \
+                --split "${{ env.BENCHMARK_SPLIT }}" \
+                --data benchmarks/data
+            else
+              echo "No predictions for ${TOOL}/${VERSION}, skipping"
+            fi
+          done
 
       - name: Push ScienceBeam Parser predictions
         if: github.ref == 'refs/heads/main'
