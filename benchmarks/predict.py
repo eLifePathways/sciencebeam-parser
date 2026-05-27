@@ -14,7 +14,6 @@ from benchmarks.fetch import fetch_data
 
 LOGGER = logging.getLogger(__name__)
 
-MEDIA_TYPE_TEI_XML = "application/tei+xml"
 CONVERT_ENDPOINT = "/api/processFulltextDocument"
 
 
@@ -55,7 +54,6 @@ def _predict_one(
     response = client.post(
         f"{parser_url}{CONVERT_ENDPOINT}",
         files={"input": (pdf_path.name, pdf_path.read_bytes(), "application/pdf")},
-        headers={"Accept": MEDIA_TYPE_TEI_XML},
         timeout=timeout,
     )
     response.raise_for_status()

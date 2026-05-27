@@ -26,7 +26,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'benchmark:smoke') ||
       contains(github.event.pull_request.labels.*.name, 'benchmark:full')
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment: benchmark
     permissions:
       contents: read
@@ -88,20 +88,6 @@ jobs:
             type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder
             type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime
 
-      - name: Start sciencebeam-parser
-        run: docker run -d --name sciencebeam-parser -p 8080:8070 ${{ steps.image_tag.outputs.value }}
-
-      - name: Wait for parser
-        run: |
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:8080/; then
-              echo; echo "Parser up"; exit 0
-            fi
-            sleep 5
-          done
-          docker logs sciencebeam-parser >&2
-          echo "Parser never became healthy" >&2; exit 1
-
       - name: Set baseline cache key
         id: baseline_key
         run: |
@@ -117,6 +103,122 @@ jobs:
             ${{ steps.baseline_key.outputs.prefix }}-
             ${{ steps.baseline_key.outputs.broad_prefix }}
 
+      - name: Checkout predictions repo
+        uses: actions/checkout@v5
+        with:
+          repository: elifepathways/sciencebeam-eval-predictions
+          path: sciencebeam-eval-predictions
+          token: ${{ secrets.PREDICTIONS_REPO_PAT }}
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: .gitignore
+          sparse-checkout-cone-mode: false
+
+      - name: Fetch or generate baseline predictions
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SPLIT: ${{ env.BENCHMARK_SPLIT }}
+          MODE: ${{ env.BENCHMARK_MODE }}
+        run: |
+          python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); [print(b['tool']+'='+b['version']) for b in c.get('baselines', [])]" \
+          | while IFS== read -r TOOL VERSION; do
+            [ -z "$TOOL" ] && continue
+            echo "=== Baseline ${TOOL}/${VERSION} ==="
+            EXPECTED=$(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); print(sum(c.get('sampling',{}).get('${MODE}',{}).values()))")
+            EXISTING=$(git -C sciencebeam-eval-predictions ls-tree -r --name-only HEAD "${TOOL}/${VERSION}/" 2>/dev/null | grep '\.tei\.xml$' | wc -l)
+            echo "Predictions: ${EXISTING}/${EXPECTED}"
+            if [ "$EXISTING" -lt "$EXPECTED" ]; then
+              echo "Generating predictions for ${TOOL}/${VERSION}..."
+              if [ "$TOOL" = "grobid" ]; then
+                IMAGE="grobid/grobid:${VERSION}"; PORT="8070:8070"
+                URL="http://localhost:8070"; HEALTH="/api/isalive"
+              else
+                IMAGE="ghcr.io/elifepathways/sciencebeam-parser:${VERSION}"; PORT="8080:8070"
+                URL="http://localhost:8080"; HEALTH="/"
+              fi
+              docker run -d --name baseline-container -p "${PORT}" "${IMAGE}"
+              for i in $(seq 1 60); do
+                if curl -sf "${URL}${HEALTH}"; then echo; echo "Ready"; break; fi
+                [ "$i" = "60" ] && { docker logs baseline-container >&2; echo "Never ready" >&2; exit 1; }
+                sleep 5
+              done
+              uv run python -m benchmarks.predict \
+                --config benchmarks/eval.yml \
+                --mode "${MODE}" --split "${SPLIT}" \
+                --data benchmarks/data \
+                --out "benchmarks/runs/baseline-${TOOL}" \
+                --parser-url "${URL}" \
+                --parser-image "${TOOL}:${VERSION}"
+              docker stop baseline-container || true
+              DEST_BASE="sciencebeam-eval-predictions/${TOOL}/${VERSION}"
+              for CORPUS_DIR in "benchmarks/runs/baseline-${TOOL}/predictions"/*/; do
+                [ -d "${CORPUS_DIR}" ] || continue
+                CORPUS=$(basename "${CORPUS_DIR}")
+                VARIANT=$(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); print(c['dataset']['splits'].get('${SPLIT}',{}).get('${CORPUS}',{}).get('variant','v1'))")
+                mkdir -p "${DEST_BASE}/${CORPUS}/${VARIANT}/${SPLIT}"
+                cp -r "${CORPUS_DIR}/." "${DEST_BASE}/${CORPUS}/${VARIANT}/${SPLIT}/"
+              done
+              mkdir -p "${DEST_BASE}/${SPLIT}"
+              [ -f "benchmarks/runs/baseline-${TOOL}/predictions/manifest.jsonl" ] \
+                && cp "benchmarks/runs/baseline-${TOOL}/predictions/manifest.jsonl" "${DEST_BASE}/${SPLIT}/"
+              DATE=$(date --utc +%Y-%m-%dT%H:%M:%SZ)
+              echo "{\"tool\":\"${TOOL}\",\"version\":\"${VERSION}\",\"split\":\"${SPLIT}\",\"mode\":\"${MODE}\",\"generated_at\":\"${DATE}\"}" \
+                | python3 -m json.tool > "${DEST_BASE}/${SPLIT}/metadata.json"
+              cd sciencebeam-eval-predictions
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add --sparse .
+              if ! git diff --cached --quiet; then
+                git commit -m "Add ${TOOL}/${VERSION} ${SPLIT} predictions (${MODE})"
+                git push
+              fi
+              cd ..
+            else
+              echo "Fetching predictions for ${TOOL}/${VERSION} from repo..."
+              git -C sciencebeam-eval-predictions sparse-checkout add "${TOOL}/${VERSION}"
+              git -C sciencebeam-eval-predictions checkout
+              for CORPUS in $(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); print(' '.join(c['dataset']['splits'].get('${SPLIT}', {}).keys()))"); do
+                VARIANT=$(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); print(c['dataset']['splits'].get('${SPLIT}',{}).get('${CORPUS}',{}).get('variant','v1'))")
+                SRC="sciencebeam-eval-predictions/${TOOL}/${VERSION}/${CORPUS}/${VARIANT}/${SPLIT}"
+                if [ -d "${SRC}" ]; then
+                  mkdir -p "benchmarks/runs/baseline-${TOOL}/predictions/${CORPUS}"
+                  cp -r "${SRC}/." "benchmarks/runs/baseline-${TOOL}/predictions/${CORPUS}/"
+                fi
+              done
+            fi
+          done
+
+      - name: Score baseline predictions
+        run: |
+          python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); [print(b['tool']+'='+b['version']) for b in c.get('baselines', [])]" \
+          | while IFS== read -r TOOL VERSION; do
+            [ -z "$TOOL" ] && continue
+            RUN_DIR="benchmarks/runs/baseline-${TOOL}"
+            if [ -d "${RUN_DIR}/predictions" ]; then
+              uv run python -m benchmarks.score \
+                --config benchmarks/eval.yml \
+                --run "${RUN_DIR}" \
+                --split "${{ env.BENCHMARK_SPLIT }}" \
+                --data benchmarks/data
+            else
+              echo "No predictions for ${TOOL}/${VERSION}, skipping"
+            fi
+          done
+
+      - name: Start sciencebeam-parser
+        run: docker run -d --name sciencebeam-parser -p 8080:8070 ${{ steps.image_tag.outputs.value }}
+
+      - name: Wait for parser
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/; then
+              echo; echo "Parser up"; exit 0
+            fi
+            sleep 5
+          done
+          docker logs sciencebeam-parser >&2
+          echo "Parser never became healthy" >&2; exit 1
+
       - name: Run predict
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -129,18 +231,6 @@ jobs:
             --out ${{ env.BENCHMARK_RUN }} \
             --parser-url http://localhost:8080 \
             --parser-image "${{ steps.image_tag.outputs.value }}"
-
-      - name: Checkout predictions repo
-        if: github.ref == 'refs/heads/main'
-        uses: actions/checkout@v5
-        with:
-          repository: elifepathways/sciencebeam-eval-predictions
-          path: sciencebeam-eval-predictions
-          token: ${{ secrets.PREDICTIONS_REPO_PAT }}
-          fetch-depth: 1
-          filter: blob:none
-          sparse-checkout: .gitignore
-          sparse-checkout-cone-mode: false
 
       - name: Push ScienceBeam Parser predictions
         if: github.ref == 'refs/heads/main'
@@ -167,9 +257,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add --sparse .
-          if git diff --cached --quiet; then
-            echo "No new predictions to push"
-          else
+          if ! git diff --cached --quiet; then
             git commit -m "Update sciencebeam-parser/main ${SPLIT} predictions (${IMAGE_TAG})"
             git push
           fi
@@ -183,12 +271,19 @@ jobs:
 
       - name: Generate comparison report
         run: |
-          if [ -f ${{ env.BASELINE_DIR }}/summary.json ]; then
-            BASELINE_LABEL=$(cat ${{ env.BASELINE_DIR }}/label.txt 2>/dev/null || echo "baseline")
-            uv run python -m benchmarks.report \
-              --summary "${BASELINE_LABEL}=${{ env.BASELINE_DIR }}/summary.json" \
-              --summary "${{ steps.image_tag.outputs.value }}=${{ env.BENCHMARK_RUN }}/summary.json" \
-              --out ${{ env.BENCHMARK_RUN }}/comparison.md
+          SUMMARY_ARGS=()
+          while IFS== read -r TOOL VERSION; do
+            [ -z "$TOOL" ] && continue
+            SUMMARY_PATH="benchmarks/runs/baseline-${TOOL}/summary.json"
+            [ -f "${SUMMARY_PATH}" ] && SUMMARY_ARGS+=("--summary" "${TOOL} ${VERSION}=${SUMMARY_PATH}")
+          done < <(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); [print(b['tool']+'='+b['version']) for b in c.get('baselines', [])]")
+          if [ -f "${{ env.BASELINE_DIR }}/summary.json" ]; then
+            BASELINE_LABEL=$(cat "${{ env.BASELINE_DIR }}/label.txt" 2>/dev/null || echo "baseline")
+            SUMMARY_ARGS+=("--summary" "${BASELINE_LABEL}=${{ env.BASELINE_DIR }}/summary.json")
+          fi
+          SUMMARY_ARGS+=("--summary" "${{ steps.image_tag.outputs.value }}=${{ env.BENCHMARK_RUN }}/summary.json")
+          if [ "${#SUMMARY_ARGS[@]}" -ge 4 ]; then
+            uv run python -m benchmarks.report "${SUMMARY_ARGS[@]}" --out "${{ env.BENCHMARK_RUN }}/comparison.md"
           fi
 
       - name: Write job summary
