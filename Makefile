@@ -195,6 +195,16 @@ dev-benchmark-compare:
 dev-benchmark: dev-benchmark-predict dev-benchmark-score
 
 
+dev-benchmark-with-baselines:
+	$(PYTHON) -m benchmarks.run_local \
+		--config $(BENCHMARK_CONFIG) \
+		--mode $(BENCHMARK_MODE) \
+		--split $(BENCHMARK_SPLIT) \
+		--runs benchmarks/runs \
+		--parser-url $(BENCHMARK_PARSER_URL) \
+		$(ARGS)
+
+
 docker-buildx-bake-build-all:
 	docker buildx bake \
 		--file docker-bake.hcl \
