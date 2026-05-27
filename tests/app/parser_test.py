@@ -21,7 +21,8 @@ from sciencebeam_parser.app.parser import (
     ScienceBeamParser,
     ScienceBeamParserSession,
     UnsupportedRequestMediaTypeScienceBeamParserError,
-    UnsupportedResponseMediaTypeScienceBeamParserError
+    UnsupportedResponseMediaTypeScienceBeamParserError,
+    serialize_xml_to_file
 )
 
 
@@ -144,6 +145,43 @@ def _sciencebeam_parser_session(
         yield session
 
 
+class TestSerializeXmlToFile:
+    def test_should_indent_structural_elements_when_pretty_print(
+        self, tmp_path: Path
+    ):
+        root = etree.fromstring(
+            b'<TEI><teiHeader><title>My Title</title></teiHeader></TEI>'
+        )
+        filename = str(tmp_path / 'output.xml')
+        serialize_xml_to_file(root, filename, pretty_print=True)
+        content = Path(filename).read_text(encoding='utf-8')
+        assert '\n' in content
+        assert 'My Title' in content
+
+    def test_should_preserve_mixed_content_text_when_pretty_print(
+        self, tmp_path: Path
+    ):
+        root = etree.fromstring(
+            b'<TEI><p>some text <ref>1</ref> more text</p></TEI>'
+        )
+        filename = str(tmp_path / 'output.xml')
+        serialize_xml_to_file(root, filename, pretty_print=True)
+        content = Path(filename).read_text(encoding='utf-8')
+        assert 'some text ' in content
+        assert ' more text' in content
+
+    def test_should_not_indent_when_pretty_print_disabled(
+        self, tmp_path: Path
+    ):
+        root = etree.fromstring(
+            b'<TEI><teiHeader><title>My Title</title></teiHeader></TEI>'
+        )
+        filename = str(tmp_path / 'output.xml')
+        serialize_xml_to_file(root, filename, pretty_print=False)
+        content = Path(filename).read_text(encoding='utf-8')
+        assert '\n' not in content
+
+
 class TestScienceBeamParser:
     class TestStartup:
         def test_should_not_preload_if_disabled(
@@ -254,6 +292,55 @@ class TestScienceBeamParser:
                 last_page=None
             )
             assert result_file == str(expected_output_path)
+
+        def test_should_pretty_print_tei_xml_when_configured(
+            self,
+            app_config: AppConfig,
+            get_tei_for_semantic_document_mock: MagicMock,
+            request_temp_path: Path
+        ):
+            parser = ScienceBeamParser.from_config(
+                AppConfig({**app_config.props, 'output': {'pretty_print_xml': True}})
+            )
+            expected_pdf_path = request_temp_path / 'test.pdf'
+            (request_temp_path / TEMP_ALTO_XML_FILENAME).write_bytes(XML_CONTENT_1)
+            get_tei_for_semantic_document_mock.return_value = TeiDocument(
+                etree.fromstring(
+                    b'<TEI><teiHeader><title>My Title</title></teiHeader></TEI>'
+                )
+            )
+            with parser.get_new_session() as session:
+                result_file = (
+                    session.get_source(str(expected_pdf_path), MediaTypes.PDF)
+                    .get_local_file_for_response_media_type(MediaTypes.TEI_XML)
+                )
+            content = Path(result_file).read_text(encoding='utf-8')
+            assert '\n' in content
+            assert 'My Title' in content
+
+        def test_should_not_pretty_print_tei_xml_when_disabled(
+            self,
+            app_config: AppConfig,
+            get_tei_for_semantic_document_mock: MagicMock,
+            request_temp_path: Path
+        ):
+            parser = ScienceBeamParser.from_config(
+                AppConfig({**app_config.props, 'output': {'pretty_print_xml': False}})
+            )
+            expected_pdf_path = request_temp_path / 'test.pdf'
+            (request_temp_path / TEMP_ALTO_XML_FILENAME).write_bytes(XML_CONTENT_1)
+            get_tei_for_semantic_document_mock.return_value = TeiDocument(
+                etree.fromstring(
+                    b'<TEI><teiHeader><title>My Title</title></teiHeader></TEI>'
+                )
+            )
+            with parser.get_new_session() as session:
+                result_file = (
+                    session.get_source(str(expected_pdf_path), MediaTypes.PDF)
+                    .get_local_file_for_response_media_type(MediaTypes.TEI_XML)
+                )
+            content = Path(result_file).read_text(encoding='utf-8')
+            assert '\n' not in content
 
         def test_should_not_convert_pdf_to_tei_xml(
             self,
