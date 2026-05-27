@@ -40,6 +40,13 @@ BENCHMARK_SPLIT ?= train
 BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 
+SHOW_FIELD ?=
+SHOW_METHOD ?= edit_sim
+SHOW_CORPUS ?= biorxiv
+SHOW_LIMIT ?= 10
+SHOW_RUN_A ?= $(BENCHMARK_RUN)
+SHOW_RUN_B ?= $(shell python3 -c "import yaml; b=yaml.safe_load(open('benchmarks/eval.yml')).get('baselines',[]); print('benchmarks/runs/baselines/'+b[0]['tool']+'/'+b[0]['version']+'/$(BENCHMARK_SPLIT)') if b else print('')" 2>/dev/null)
+
 COMPARE_MODEL ?= segmentation
 COMPARE_DOC_ID ?= $(basename $(notdir $(COMPARE_PDF)))
 COMPARE_DOC_DIR = .temp/compare-with-grobid/by-doc/$(COMPARE_DOC_ID)
@@ -193,6 +200,32 @@ dev-benchmark-compare:
 
 
 dev-benchmark: dev-benchmark-predict dev-benchmark-score
+
+
+dev-show-regressions: .require-SHOW_FIELD
+	$(PYTHON) -m benchmarks.show_cases \
+		--run-a $(SHOW_RUN_A) \
+		--run-b $(SHOW_RUN_B) \
+		--field $(SHOW_FIELD) \
+		--method $(SHOW_METHOD) \
+		--corpus $(SHOW_CORPUS) \
+		--mode regression \
+		--data benchmarks/data \
+		--split $(BENCHMARK_SPLIT) \
+		--limit $(SHOW_LIMIT)
+
+
+dev-show-improvements: .require-SHOW_FIELD
+	$(PYTHON) -m benchmarks.show_cases \
+		--run-a $(SHOW_RUN_A) \
+		--run-b $(SHOW_RUN_B) \
+		--field $(SHOW_FIELD) \
+		--method $(SHOW_METHOD) \
+		--corpus $(SHOW_CORPUS) \
+		--mode improvement \
+		--data benchmarks/data \
+		--split $(BENCHMARK_SPLIT) \
+		--limit $(SHOW_LIMIT)
 
 
 dev-benchmark-with-baselines:
