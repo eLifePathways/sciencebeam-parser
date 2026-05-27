@@ -137,8 +137,11 @@ def get_xml_tree(xml_root: etree.ElementBase) -> etree._ElementTree:
 
 def serialize_xml_to_file(
     xml_root: etree.ElementBase,
-    filename: str
+    filename: str,
+    pretty_print: bool = False
 ):
+    if pretty_print:
+        etree.indent(xml_root, space='  ')
     get_xml_tree(xml_root).write(
         filename,
         encoding='utf-8',
@@ -300,8 +303,11 @@ class ScienceBeamParserSessionParsedSemanticDocument(_ScienceBeamParserSessionDe
         xml_root: etree.ElementBase,
         filename: str
     ) -> str:
+        pretty_print = self.session.parser.config.get('output', {}).get(
+            'pretty_print_xml', True
+        )
         start = monotonic()
-        serialize_xml_to_file(xml_root, filename=filename)
+        serialize_xml_to_file(xml_root, filename=filename, pretty_print=pretty_print)
         end = monotonic()
         LOGGER.info('serializing xml, took=%.3fs', end - start)
         return filename
