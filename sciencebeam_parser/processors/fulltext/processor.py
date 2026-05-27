@@ -33,6 +33,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticLabel,
     SemanticMixedContentWrapper,
     SemanticMixedNote,
+    SemanticNote,
     SemanticRawAffiliationAddress,
     SemanticRawAuthors,
     SemanticRawEditors,
@@ -53,6 +54,11 @@ from sciencebeam_parser.document.semantic_document import (
 )
 from sciencebeam_parser.document.tei_document import TeiDocument, get_tei_for_semantic_document
 from sciencebeam_parser.document.layout_document import LayoutDocument
+from sciencebeam_parser.document.layout_noise_filter import (
+    LayoutNoiseFilterConfig,
+    get_noise_blocks,
+    remove_noise_blocks,
+)
 from sciencebeam_parser.models.segmentation.model import SegmentationModel
 from sciencebeam_parser.models.header.model import HeaderModel
 from sciencebeam_parser.models.name.model import NameModel
@@ -188,8 +194,16 @@ class FullTextProcessor:
             layout_document,
             context=context
         )
-        segmentation_label_result = self.segmentation_model.get_label_layout_document_result(
+        noise_blocks = get_noise_blocks(
             layout_document,
+            LayoutNoiseFilterConfig(
+                enabled=self.config.noise_filter_enabled,
+                repetition_fraction=self.config.noise_filter_repetition_fraction,
+            )
+        )
+        segmentation_input = remove_noise_blocks(layout_document, noise_blocks)
+        segmentation_label_result = self.segmentation_model.get_label_layout_document_result(
+            segmentation_input,
             app_features_context=self.app_features_context
         )
         header_layout_document = segmentation_label_result.get_filtered_document_by_label(
@@ -264,6 +278,11 @@ class FullTextProcessor:
             self._assign_content_ids(tables, iter(iter_ids('tab_')))
             self._assign_target_content_ids(table_citations, SimpleContentIdMatcher(
                 self._get_semantic_content_text_by_content_id(tables, SemanticLabel)
+            ))
+        for nb in noise_blocks:
+            document.body_section.add_content(SemanticNote(
+                layout_block=nb.block,
+                note_type=nb.note_type
             ))
         if self.config.extract_graphic_bounding_boxes:
             self._process_graphics(
