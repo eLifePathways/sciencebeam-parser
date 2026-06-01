@@ -2,7 +2,7 @@ import logging
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
@@ -12,8 +12,12 @@ from sciencebeam_parser.document.layout_document import (
 
 LOGGER = logging.getLogger(__name__)
 
-# Occurrence: (page_index, y_relative, height_relative, block)
-_Occurrence = Tuple[int, Optional[float], Optional[float], LayoutBlock]
+
+class _BlockOccurrence(NamedTuple):
+    page_index: int
+    y_relative: Optional[float]
+    height_relative: Optional[float]
+    block: LayoutBlock
 
 
 @dataclass
@@ -105,27 +109,27 @@ def _in_zone(
 
 
 def _classify_repetition_group(
-    occurrences: List[_Occurrence],
+    occurrences: List[_BlockOccurrence],
     page_q1_y: Dict[int, float],
     page_q3_y: Dict[int, float],
     consistency_fraction: float,
     max_position_stddev: float,
 ) -> Optional[str]:
     classifiable = sum(
-        1 for idx, y_rel, _h, _b in occurrences
-        if y_rel is not None and idx in page_q1_y
+        1 for occ in occurrences
+        if occ.y_relative is not None and occ.page_index in page_q1_y
     )
     if not classifiable:
         return None
     for note_type in ('running-head', 'running-foot'):
         zone = [
-            (idx, y_rel) for idx, y_rel, _h, _b in occurrences
-            if y_rel is not None
-            and _in_zone(idx, y_rel, note_type, page_q1_y, page_q3_y)
+            occ for occ in occurrences
+            if occ.y_relative is not None
+            and _in_zone(occ.page_index, occ.y_relative, note_type, page_q1_y, page_q3_y)
         ]
         if len(zone) / classifiable < consistency_fraction:
             continue
-        y_rels = [y for _, y in zone]
+        y_rels = [occ.y_relative for occ in zone if occ.y_relative is not None]
         if len(y_rels) > 1 and _stddev(y_rels) > max_position_stddev:
             continue
         return note_type
@@ -133,33 +137,35 @@ def _classify_repetition_group(
 
 
 def _tag_noise_occurrences(
-    occurrences: List[_Occurrence],
+    occurrences: List[_BlockOccurrence],
     note_type: str,
     page_q1_y: Dict[int, float],
     page_q3_y: Dict[int, float],
     max_height_ratio: float,
 ) -> List[TaggedNoiseBlock]:
     zone_heights = [
-        h for idx, y_rel, h, _ in occurrences
-        if h is not None and y_rel is not None
-        and _in_zone(idx, y_rel, note_type, page_q1_y, page_q3_y)
+        occ.height_relative for occ in occurrences
+        if occ.height_relative is not None and occ.y_relative is not None
+        and _in_zone(occ.page_index, occ.y_relative, note_type, page_q1_y, page_q3_y)
     ]
     median_height = sorted(zone_heights)[len(zone_heights) // 2] if zone_heights else None
     result = []
-    for page_idx, y_rel, height_rel, block in occurrences:
-        if y_rel is None or not _in_zone(page_idx, y_rel, note_type, page_q1_y, page_q3_y):
+    for occ in occurrences:
+        if occ.y_relative is None:
             continue
-        if (median_height and height_rel is not None
-                and height_rel > max_height_ratio * median_height):
+        if not _in_zone(occ.page_index, occ.y_relative, note_type, page_q1_y, page_q3_y):
             continue
-        result.append(TaggedNoiseBlock(block=block, note_type=note_type))
+        if (median_height and occ.height_relative is not None
+                and occ.height_relative > max_height_ratio * median_height):
+            continue
+        result.append(TaggedNoiseBlock(block=occ.block, note_type=note_type))
     return result
 
 
 def _collect_blocks(
     layout_document: LayoutDocument,
-) -> Tuple[Dict[str, List[_Occurrence]], Dict[int, List[float]]]:
-    text_to_occurrences: Dict[str, List[_Occurrence]] = defaultdict(list)
+) -> Tuple[Dict[str, List[_BlockOccurrence]], Dict[int, List[float]]]:
+    text_to_occurrences: Dict[str, List[_BlockOccurrence]] = defaultdict(list)
     page_block_y_rels: Dict[int, List[float]] = defaultdict(list)
     for page_index, page in enumerate(layout_document.pages):
         for block in page.blocks:
@@ -168,7 +174,9 @@ def _collect_blocks(
                 continue
             y_rel = _get_block_y_relative(block, page)
             h_rel = _get_block_height_relative(block, page)
-            text_to_occurrences[text].append((page_index, y_rel, h_rel, block))
+            text_to_occurrences[text].append(
+                _BlockOccurrence(page_index, y_rel, h_rel, block)
+            )
             if y_rel is not None:
                 page_block_y_rels[page_index].append(y_rel)
     return dict(text_to_occurrences), dict(page_block_y_rels)
