@@ -130,7 +130,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         description="Predict: run parser on each PDF and save JATS XML"
     )
     parser.add_argument("--config", default="benchmarks/eval.yml")
-    parser.add_argument("--mode", choices=["smoke", "full"], default="smoke")
+    parser.add_argument(
+        "--mode", default="smoke",
+        help="Sampling mode defined in eval.yml (e.g. smoke, small, medium, large, full)"
+    )
     parser.add_argument(
         "--split", default="train", help="Dataset split: train (local) or validation (CI)"
     )
