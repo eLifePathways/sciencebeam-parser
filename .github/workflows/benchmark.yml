@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'smoke (10 docs) or full (158 docs)'
+        description: 'smoke (10), small (25), medium (50), large (100), or full (all) docs per corpus'
         required: false
         default: 'smoke'
         type: choice
-        options: [smoke, full]
+        options: [smoke, small, medium, large, full]
   push:
     branches: [main]
   pull_request:
@@ -24,6 +24,9 @@ jobs:
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'benchmark:smoke') ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark:small') ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark:medium') ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark:large') ||
       contains(github.event.pull_request.labels.*.name, 'benchmark:full')
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -37,8 +40,13 @@ jobs:
       BENCHMARK_SPLIT: validation
       BENCHMARK_MODE: >-
         ${{
-          contains(github.event.pull_request.labels.*.name, 'benchmark:full')
-          && 'full' || inputs.mode || 'smoke'
+          contains(github.event.pull_request.labels.*.name, 'benchmark:full') && 'full' ||
+          contains(github.event.pull_request.labels.*.name, 'benchmark:large') && 'large' ||
+          contains(github.event.pull_request.labels.*.name, 'benchmark:medium') && 'medium' ||
+          contains(github.event.pull_request.labels.*.name, 'benchmark:small') && 'small' ||
+          inputs.mode ||
+          github.ref == 'refs/heads/main' && 'medium' ||
+          'smoke'
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}
       BASELINE_DIR: benchmarks/runs/baseline
