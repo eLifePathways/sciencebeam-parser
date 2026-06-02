@@ -21,6 +21,11 @@ from sciencebeam_parser.app.parser import (
     normalize_layout_document
 )
 from sciencebeam_parser.document.layout_document import LayoutDocument
+from sciencebeam_parser.document.layout_noise_filter import (
+    LayoutNoiseFilterConfig,
+    get_noise_blocks,
+    remove_noise_blocks,
+)
 from sciencebeam_parser.document.semantic_document import (
     SemanticMixedContentWrapper,
     SemanticRawAffiliationAddress,
@@ -66,13 +71,15 @@ class ModelResponseRouterFactory:
         model: Model,
         pdfalto_wrapper: PdfAltoWrapper,
         app_features_context: AppFeaturesContext,
-        model_name: str = 'dummy'
+        model_name: str = 'dummy',
+        noise_filter_config: Optional[LayoutNoiseFilterConfig] = None
     ):
         self.name = name
         self.model = model
         self.pdfalto_wrapper = pdfalto_wrapper
         self.app_features_context = app_features_context
         self.model_name = model_name
+        self.noise_filter_config = noise_filter_config
 
     def _register_feature_names_route(self, router: APIRouter) -> None:
         @router.get('/feature-names')
@@ -110,6 +117,12 @@ class ModelResponseRouterFactory:
             )
         return router
 
+    def _apply_noise_filter(self, layout_document: LayoutDocument) -> LayoutDocument:
+        if not self.noise_filter_config or not self.noise_filter_config.enabled:
+            return layout_document
+        noise_blocks = get_noise_blocks(layout_document, self.noise_filter_config)
+        return remove_noise_blocks(layout_document, noise_blocks)
+
     def iter_filter_layout_document(
         self,
         layout_document: LayoutDocument,
@@ -140,8 +153,8 @@ class ModelResponseRouterFactory:
             xml_content = output_path.read_bytes()
             root = etree.fromstring(xml_content)
             layout_document_iterable = self.iter_filter_layout_document(
-                normalize_layout_document(
-                    parse_alto_root(root)
+                self._apply_noise_filter(
+                    normalize_layout_document(parse_alto_root(root))
                 ),
                 filter_params=(filter_params or {})
             )
@@ -520,13 +533,18 @@ def create_models_router(
     fulltext_models = sciencebeam_parser.fulltext_models
     app_features_context = sciencebeam_parser.app_features_context
     fulltext_processor_config = sciencebeam_parser.fulltext_processor_config
+    noise_filter_config = LayoutNoiseFilterConfig(
+        enabled=fulltext_processor_config.noise_filter_enabled,
+        repetition_fraction=fulltext_processor_config.noise_filter_repetition_fraction,
+    )
 
     router.include_router(
         ModelResponseRouterFactory(
             'Segmentation',
             model=fulltext_models.segmentation_model,
             pdfalto_wrapper=pdfalto_wrapper,
-            app_features_context=app_features_context
+            app_features_context=app_features_context,
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/segmentation'
     )
@@ -538,7 +556,8 @@ def create_models_router(
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
             segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=['<header>']
+            segmentation_labels=['<header>'],
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/header'
     )
@@ -552,7 +571,8 @@ def create_models_router(
             segmentation_model=fulltext_models.segmentation_model,
             segmentation_labels=['<header>'],
             header_model=fulltext_models.header_model,
-            merge_raw_authors=fulltext_processor_config.merge_raw_authors
+            merge_raw_authors=fulltext_processor_config.merge_raw_authors,
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/name-header'
     )
@@ -565,7 +585,8 @@ def create_models_router(
             app_features_context=app_features_context,
             segmentation_model=fulltext_models.segmentation_model,
             segmentation_labels=['<header>'],
-            header_model=fulltext_models.header_model
+            header_model=fulltext_models.header_model,
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/affiliation-address'
     )
@@ -579,7 +600,8 @@ def create_models_router(
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
             segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=fulltext_segmentation_labels
+            segmentation_labels=fulltext_segmentation_labels,
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/fulltext'
     )
@@ -592,7 +614,8 @@ def create_models_router(
             app_features_context=app_features_context,
             segmentation_model=fulltext_models.segmentation_model,
             segmentation_labels=fulltext_segmentation_labels,
-            fulltext_model=fulltext_models.fulltext_model
+            fulltext_model=fulltext_models.fulltext_model,
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/figure'
     )
@@ -605,7 +628,8 @@ def create_models_router(
             app_features_context=app_features_context,
             segmentation_model=fulltext_models.segmentation_model,
             segmentation_labels=fulltext_segmentation_labels,
-            fulltext_model=fulltext_models.fulltext_model
+            fulltext_model=fulltext_models.fulltext_model,
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/table'
     )
@@ -617,7 +641,8 @@ def create_models_router(
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
             segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=['<references>']
+            segmentation_labels=['<references>'],
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/reference-segmenter'
     )
@@ -630,7 +655,8 @@ def create_models_router(
             app_features_context=app_features_context,
             segmentation_model=fulltext_models.segmentation_model,
             segmentation_labels=['<references>'],
-            reference_segmenter_model=fulltext_models.reference_segmenter_model
+            reference_segmenter_model=fulltext_models.reference_segmenter_model,
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/citation'
     )
@@ -644,7 +670,8 @@ def create_models_router(
             segmentation_model=fulltext_models.segmentation_model,
             segmentation_labels=['<references>'],
             reference_segmenter_model=fulltext_models.reference_segmenter_model,
-            citation_model=fulltext_models.citation_model
+            citation_model=fulltext_models.citation_model,
+            noise_filter_config=noise_filter_config
         ).create_router(),
         prefix='/models/name-citation'
     )
