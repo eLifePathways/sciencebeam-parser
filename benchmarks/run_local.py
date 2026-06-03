@@ -60,14 +60,24 @@ def _wait_healthy(url: str, health_path: str, retries: int = 60, interval: int =
     )
 
 
-def _docker_start(name: str, image: str, port: str) -> None:
+def _docker_start(name: str, image: str, port: str, env_vars: Optional[dict] = None) -> None:
     LOGGER.info("Starting container %s (%s)", name, image)
-    subprocess.run(["docker", "run", "-d", "--name", name, "-p", port, image], check=True)
+    cmd = ["docker", "run", "-d", "--name", name, "-p", port]
+    for k, v in (env_vars or {}).items():
+        cmd += ["-e", f"{k}={v}"]
+    cmd.append(image)
+    subprocess.run(cmd, check=True)
 
 
 def _docker_stop(name: str) -> None:
     subprocess.run(["docker", "stop", name], check=False, capture_output=True)
     subprocess.run(["docker", "rm", name], check=False, capture_output=True)
+
+
+def _baseline_env_vars(tool: str, profile: Optional[str]) -> dict:
+    if profile and tool != "grobid":
+        return {"SCIENCEBEAM_PARSER__PROFILE": profile}
+    return {}
 
 
 def _run_baseline(
@@ -78,22 +88,26 @@ def _run_baseline(
     runs_dir: Path,
     tool: str,
     version: str,
+    profile: Optional[str],
     expected: int,
 ) -> Optional[Tuple[str, Path]]:
-    run_dir = runs_dir / "baselines" / tool / version / split
+    run_dir = runs_dir / "baselines" / tool / version / (profile or "default") / split
     existing = _count_predictions(run_dir)
-    LOGGER.info("=== Baseline %s/%s: %d/%d predictions ===", tool, version, existing, expected)
+    LOGGER.info(
+        "=== Baseline %s/%s (profile=%s): %d/%d predictions ===",
+        tool, version, profile or "default", existing, expected,
+    )
 
     if existing < expected:
         dcfg = _tool_docker_config(tool, version)
         container = f"run-local-{tool}"
         _docker_stop(container)
-        _docker_start(container, dcfg["image"], dcfg["port"])
+        _docker_start(container, dcfg["image"], dcfg["port"], _baseline_env_vars(tool, profile))
         try:
             _wait_healthy(dcfg["url"], dcfg["health_path"])
             run_predict(
                 config, mode, split, data_dir, run_dir,
-                dcfg["url"], f"{tool}:{version}", None,
+                dcfg["url"], f"{tool}:{version}", profile,
             )
         finally:
             _docker_stop(container)
@@ -102,8 +116,9 @@ def _run_baseline(
 
     run_score(config, run_dir, data_dir, out_path=None, split_override=split)
 
+    label = f"{tool} {version}" + (f" ({profile})" if profile else "")
     summary_path = run_dir / "summary.json"
-    return (f"{tool} {version}", summary_path) if summary_path.exists() else None
+    return (label, summary_path) if summary_path.exists() else None
 
 
 def run_local(
@@ -114,6 +129,7 @@ def run_local(
     runs_dir: Path,
     parser_url: Optional[str],
     parser_image: Optional[str],
+    parser_profile: Optional[str],
     baseline_only: bool,
 ) -> None:
     expected = _expected_count(config, mode)
@@ -122,7 +138,8 @@ def run_local(
     for baseline in config.get("baselines", []):
         entry = _run_baseline(
             config, mode, split, data_dir, runs_dir,
-            baseline["tool"], baseline["version"], expected,
+            baseline["tool"], baseline["version"],
+            baseline.get("profile"), expected,
         )
         if entry:
             labeled_paths.append(entry)
@@ -135,15 +152,15 @@ def run_local(
         return
 
     primary_run_dir = runs_dir / split
-    run_predict(config, mode, split, data_dir, primary_run_dir, parser_url, parser_image, None)
+    run_predict(
+        config, mode, split, data_dir, primary_run_dir, parser_url, parser_image, parser_profile
+    )
     run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split)
 
-    primary_label = parser_image or "local"
-    labeled_paths.append((primary_label, primary_run_dir / "summary.json"))
+    labeled_paths.append((parser_image or "local", primary_run_dir / "summary.json"))
 
     if len(labeled_paths) >= 2:
-        report_path = primary_run_dir / "comparison.md"
-        run_compare(labeled_paths, report_path)
+        run_compare(labeled_paths, primary_run_dir / "comparison.md")
     else:
         LOGGER.info("Only one summary available; skipping comparison report")
 
@@ -170,6 +187,9 @@ def main(argv=None) -> None:
         "--parser-image", default=None, help="Primary parser image tag (provenance label)"
     )
     parser.add_argument(
+        "--profile", default=None, help="Model configuration profile for the primary parser"
+    )
+    parser.add_argument(
         "--baseline-only", action="store_true",
         help="Only generate and score baselines; skip primary parser",
     )
@@ -188,6 +208,7 @@ def main(argv=None) -> None:
         runs_dir=Path(args.runs),
         parser_url=args.parser_url,
         parser_image=args.parser_image,
+        parser_profile=args.profile,
         baseline_only=args.baseline_only,
     )
 

@@ -94,7 +94,7 @@ class TestRunLocal:
         mock_score.side_effect = fake_score
 
         run_local(_CONFIG, "smoke", "train", tmp_path / "data", runs_dir,
-                  parser_url=None, parser_image=None, baseline_only=True)
+                  parser_url=None, parser_image=None, parser_profile=None, baseline_only=True)
 
         mock_start.assert_called_once()
         mock_predict.assert_called_once()
@@ -109,7 +109,8 @@ class TestRunLocal:
     ):
         runs_dir = tmp_path / "runs"
         pred_dir = (
-            runs_dir / "baselines" / "grobid" / "0.9.0-crf" / "train" / "predictions" / "biorxiv"
+            runs_dir / "baselines" / "grobid" / "0.9.0-crf" / "default" / "train"
+            / "predictions" / "biorxiv"
         )
         pred_dir.mkdir(parents=True)
         for i in range(10):
@@ -121,7 +122,7 @@ class TestRunLocal:
         mock_score.side_effect = fake_score
 
         run_local(_CONFIG, "smoke", "train", tmp_path / "data", runs_dir,
-                  parser_url=None, parser_image=None, baseline_only=True)
+                  parser_url=None, parser_image=None, parser_profile=None, baseline_only=True)
 
         mock_start.assert_not_called()
         mock_predict.assert_not_called()
@@ -144,7 +145,8 @@ class TestRunLocal:
         mock_score.side_effect = fake_score
 
         run_local(_CONFIG, "smoke", "train", tmp_path / "data", runs_dir,
-                  parser_url="http://localhost:8080", parser_image=None, baseline_only=True)
+                  parser_url="http://localhost:8080", parser_image=None,
+                  parser_profile=None, baseline_only=True)
 
         mock_compare.assert_not_called()
         assert mock_predict.call_count <= 1  # only baseline predict, no primary
@@ -168,10 +170,100 @@ class TestRunLocal:
 
         run_local(_CONFIG, "smoke", "train", tmp_path / "data", runs_dir,
                   parser_url="http://localhost:8080", parser_image="my-image:v1",
-                  baseline_only=False)
+                  parser_profile=None, baseline_only=False)
 
         mock_compare.assert_called_once()
         labeled_paths = mock_compare.call_args.args[0]
         labels = [label for label, _ in labeled_paths]
         assert "grobid 0.9.0-crf" in labels
         assert "my-image:v1" in labels
+
+    @patch("benchmarks.run_local._docker_stop")
+    @patch("benchmarks.run_local._docker_start")
+    @patch("benchmarks.run_local._wait_healthy")
+    @patch("benchmarks.run_local.run_score")
+    @patch("benchmarks.run_local.run_predict")
+    def test_passes_profile_env_var_to_sbp_container(
+        self, _mock_predict, mock_score, _mock_wait, mock_start, _mock_stop, tmp_path: Path
+    ):
+        config = {
+            **_CONFIG,
+            "baselines": [{"tool": "sciencebeam-parser", "version": "1.0.0",
+                           "profile": "grobid_crf_0_9_0"}],
+        }
+
+        def fake_score(_config, run_dir, _data_dir, **_kwargs):
+            self._make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        run_local(config, "smoke", "train", tmp_path / "data", tmp_path / "runs",
+                  parser_url=None, parser_image=None, parser_profile=None, baseline_only=True)
+
+        call_kwargs = mock_start.call_args
+        env_vars = (
+            call_kwargs.args[3]
+            if len(call_kwargs.args) > 3
+            else call_kwargs.kwargs.get("env_vars", {})
+        )
+        assert env_vars.get("SCIENCEBEAM_PARSER__PROFILE") == "grobid_crf_0_9_0"
+
+    @patch("benchmarks.run_local._docker_stop")
+    @patch("benchmarks.run_local._docker_start")
+    @patch("benchmarks.run_local._wait_healthy")
+    @patch("benchmarks.run_local.run_score")
+    @patch("benchmarks.run_local.run_predict")
+    def test_grobid_baseline_does_not_get_profile_env_var(
+        self, _mock_predict, mock_score, _mock_wait, mock_start, _mock_stop, tmp_path: Path
+    ):
+        config = {
+            **_CONFIG,
+            "baselines": [{"tool": "grobid", "version": "0.9.0-crf",
+                           "profile": "some_profile"}],
+        }
+
+        def fake_score(_config, run_dir, _data_dir, **_kwargs):
+            self._make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        run_local(config, "smoke", "train", tmp_path / "data", tmp_path / "runs",
+                  parser_url=None, parser_image=None, parser_profile=None, baseline_only=True)
+
+        call_kwargs = mock_start.call_args
+        env_vars = (
+            call_kwargs.args[3]
+            if len(call_kwargs.args) > 3
+            else call_kwargs.kwargs.get("env_vars", {})
+        )
+        assert "SCIENCEBEAM_PARSER__PROFILE" not in (env_vars or {})
+
+    @patch("benchmarks.run_local._docker_stop")
+    @patch("benchmarks.run_local._docker_start")
+    @patch("benchmarks.run_local._wait_healthy")
+    @patch("benchmarks.run_local.run_score")
+    @patch("benchmarks.run_local.run_predict")
+    def test_profile_included_in_baseline_label(
+        self, mock_predict, mock_score, _mock_wait, _mock_start, _mock_stop, tmp_path: Path
+    ):
+        config = {
+            **_CONFIG,
+            "baselines": [{"tool": "grobid", "version": "0.9.0-crf",
+                           "profile": "grobid_crf_0_9_0"}],
+        }
+        runs_dir = tmp_path / "runs"
+
+        def fake_score(_config, run_dir, _data_dir, **_kwargs):
+            self._make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        run_local(config, "smoke", "train", tmp_path / "data", runs_dir,
+                  parser_url="http://localhost:8080", parser_image=None,
+                  parser_profile=None, baseline_only=False)
+
+        # run_predict is called with run_dir as the 5th positional arg;
+        # the path must contain the profile name segment
+        baseline_call = mock_predict.call_args_list[0]
+        run_dir = baseline_call.args[4]
+        assert "grobid_crf_0_9_0" in str(run_dir)

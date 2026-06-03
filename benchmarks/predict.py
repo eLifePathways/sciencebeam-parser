@@ -70,7 +70,7 @@ def run_predict(  # pylint: disable=too-many-locals
     run_dir: Path,
     parser_url: str,
     parser_image: Optional[str],
-    parser_config: Optional[str],
+    profile: Optional[str],
 ) -> None:
     records = fetch_data(config, mode, split, data_dir)
     done = _load_done(run_dir)
@@ -110,7 +110,7 @@ def run_predict(  # pylint: disable=too-many-locals
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "run.json").write_text(json.dumps({
         "parser_image": parser_image,
-        "parser_config": parser_config,
+        "profile": profile,
         "dataset_repo_id": config["dataset"]["repo_id"],
         "dataset_revision": config["dataset"]["revision"],
         "split": split,
@@ -142,7 +142,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--parser-url", default="http://localhost:8080")
     parser.add_argument("--parser-image", default=None, help="Docker image tag (provenance only)")
     parser.add_argument(
-        "--parser-config", default=None, help="Parser config override path (provenance only)"
+        "--profile", default=None, help="Model configuration profile name"
     )
     args = parser.parse_args(argv)
 
@@ -159,7 +159,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         run_dir=Path(args.out),
         parser_url=args.parser_url,
         parser_image=args.parser_image,
-        parser_config=args.parser_config,
+        profile=args.profile,
     )
 
 

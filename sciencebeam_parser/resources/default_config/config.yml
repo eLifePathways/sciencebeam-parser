@@ -111,6 +111,74 @@ models:
   citation:
     path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-citation-biorxiv-no-word-embedding.tar.gz'
 
+sequence_model_profiles:
+  biorxiv_elife:
+    segmentation:
+      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-segmentation-biorxiv-10k-auto-v0.0.23-train-1966-e133.tar.gz'
+      use_first_token_of_block: false
+    header:
+      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-header-biorxiv-no-word-embedding.tar.gz'
+    name_header:
+      path: 'https://github.com/kermitt2/grobid/raw/0.6.0/grobid-home/models/name/header'
+      engine: 'wapiti'
+    name_citation:
+      path: 'https://github.com/kermitt2/grobid/raw/0.6.2/grobid-home/models/name/citation'
+      engine: 'wapiti'
+    affiliation_address:
+      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-affiliation-address-biorxiv-no-word-embedding.tar.gz'
+    fulltext:
+      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-fulltext-biorxiv-10k-auto-v0.0.21-train-1986-e159.tar.gz'
+    figure:
+      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-figure-biorxiv-10k-auto-v0.0.18-train-1865-e219.tar.gz'
+    table:
+      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-table-biorxiv-10k-auto-v0.0.18-train-1865-e569.tar.gz'
+    reference_segmenter:
+      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-reference-segmenter-biorxiv-no-word-embedding.tar.gz'
+    citation:
+      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-citation-biorxiv-no-word-embedding.tar.gz'
+  grobid_crf_0_9_0:
+    segmentation:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/segmentation'
+      engine: 'wapiti'
+    header:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/header'
+      engine: 'wapiti'
+    name_header:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/name/header'
+      engine: 'wapiti'
+    name_citation:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/name/citation'
+      engine: 'wapiti'
+    affiliation_address:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/affiliations'
+      engine: 'wapiti'
+    fulltext:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/fulltext'
+      engine: 'wapiti'
+    figure:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/figure'
+      engine: 'wapiti'
+    table:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/table'
+      engine: 'wapiti'
+    reference_segmenter:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/reference-segmenter'
+      engine: 'wapiti'
+    citation:
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/citation'
+      engine: 'wapiti'
+
+profiles:
+  biorxiv_elife:
+    sequence_models: biorxiv_elife
+  grobid_crf_0_9_0:
+    sequence_models: grobid_crf_0_9_0
+
+profile_aliases:
+  grobid_crf: grobid_crf_0_9_0
+
+profile: biorxiv_elife
+
 cv_models:
   default:
     path: 'lp://efficientdet/PubLayNet'

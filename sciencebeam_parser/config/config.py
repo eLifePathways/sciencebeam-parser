@@ -17,6 +17,16 @@ def parse_env_value(value: str) -> Union[str, int]:
     return yaml.safe_load(value)
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    result = copy.deepcopy(base)
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
 class AppConfig:
     def __init__(self, props: dict):
         self.props = props
@@ -49,6 +59,48 @@ class AppConfig:
                 parent_props = parent_props.setdefault(parent_key, {})
             parent_props[leaf_key] = parse_env_value(env_value)
         return AppConfig(updated_props)
+
+    def resolve_profile(self, profile_name: Optional[str] = None) -> 'AppConfig':
+        name = profile_name or self.props.get('profile')
+        if not name:
+            return self
+
+        aliases = self.props.get('profile_aliases', {})
+        resolved = aliases.get(name, name)
+
+        profiles = self.props.get('profiles', {})
+        if resolved not in profiles:
+            available = sorted(profiles)
+            suffix = f' (alias for {resolved!r})' if resolved != name else ''
+            raise ValueError(
+                f'Unknown profile {name!r}{suffix}. Available: {available}'
+            )
+
+        profile = profiles[resolved]
+        overlay: dict = {}
+
+        seq_name = profile.get('sequence_models')
+        if seq_name:
+            seq_profiles = self.props.get('sequence_model_profiles', {})
+            if seq_name not in seq_profiles:
+                raise ValueError(
+                    f'Profile {resolved!r} references unknown sequence_model_profile '
+                    f'{seq_name!r}. Available: {sorted(seq_profiles)}'
+                )
+            overlay['models'] = seq_profiles[seq_name]
+
+        for key, value in profile.items():
+            if key != 'sequence_models':
+                overlay[key] = value
+
+        return AppConfig(_deep_merge(self.props, overlay))
+
+    def get_active_profile_name(self, profile_name: Optional[str] = None) -> Optional[str]:
+        name = profile_name or self.props.get('profile')
+        if not name:
+            return None
+        aliases = self.props.get('profile_aliases', {})
+        return aliases.get(name, name)
 
     def get(self, key: str, default_value: Optional[Any] = None):
         return self.props.get(key, default_value)
