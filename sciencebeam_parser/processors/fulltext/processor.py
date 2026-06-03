@@ -199,6 +199,8 @@ class FullTextProcessor:
             LayoutNoiseFilterConfig(
                 enabled=self.config.noise_filter_enabled,
                 repetition_fraction=self.config.noise_filter_repetition_fraction,
+                preserve_first_page_head=self.config.noise_filter_preserve_first_page_head,
+                preserve_first_page_foot=self.config.noise_filter_preserve_first_page_foot,
             )
         )
         segmentation_input = remove_noise_blocks(layout_document, noise_blocks)

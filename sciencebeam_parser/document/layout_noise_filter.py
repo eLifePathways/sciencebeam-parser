@@ -31,6 +31,10 @@ class LayoutNoiseFilterConfig:
     # Occurrences whose height exceeds this multiple of the group median are not filtered
     # (catches e.g. a large title on page 1 that also repeats as a small footer)
     max_height_ratio: float = 2.0
+    # Never filter running-head blocks on page 1 (the paper title lives there)
+    preserve_first_page_head: bool = True
+    # Never filter running-foot blocks on page 1 (footers have no special status on page 1)
+    preserve_first_page_foot: bool = False
 
 
 @dataclass
@@ -142,6 +146,7 @@ def _tag_noise_occurrences(
     page_q1_y: Dict[int, float],
     page_q3_y: Dict[int, float],
     max_height_ratio: float,
+    preserve_first_page: bool,
 ) -> List[TaggedNoiseBlock]:
     zone_heights = [
         occ.height_relative for occ in occurrences
@@ -151,6 +156,8 @@ def _tag_noise_occurrences(
     median_height = sorted(zone_heights)[len(zone_heights) // 2] if zone_heights else None
     result = []
     for occ in occurrences:
+        if preserve_first_page and occ.page_index == 0:
+            continue
         if occ.y_relative is None:
             continue
         if not _in_zone(occ.page_index, occ.y_relative, note_type, page_q1_y, page_q3_y):
@@ -205,8 +212,14 @@ def get_noise_blocks(
         )
         if not note_type:
             continue
+        preserve = (
+            config.preserve_first_page_head
+            if note_type == 'running-head'
+            else config.preserve_first_page_foot
+        )
         noise_blocks.extend(_tag_noise_occurrences(
-            occurrences, note_type, page_q1_y, page_q3_y, config.max_height_ratio
+            occurrences, note_type, page_q1_y, page_q3_y,
+            config.max_height_ratio, preserve
         ))
     LOGGER.debug('found %d layout noise blocks', len(noise_blocks))
     return noise_blocks

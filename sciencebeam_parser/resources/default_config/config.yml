@@ -75,6 +75,9 @@ lookup:
 processors:
   fulltext:
     noise_filter_enabled: true
+    noise_filter_repetition_fraction: 0.5
+    noise_filter_preserve_first_page_head: true
+    noise_filter_preserve_first_page_foot: false
     merge_raw_authors: false
     use_cv_model: false
     cv_render_dpi: 100

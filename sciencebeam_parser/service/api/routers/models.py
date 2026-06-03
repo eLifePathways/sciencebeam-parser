@@ -536,6 +536,8 @@ def create_models_router(
     noise_filter_config = LayoutNoiseFilterConfig(
         enabled=fulltext_processor_config.noise_filter_enabled,
         repetition_fraction=fulltext_processor_config.noise_filter_repetition_fraction,
+        preserve_first_page_head=fulltext_processor_config.noise_filter_preserve_first_page_head,
+        preserve_first_page_foot=fulltext_processor_config.noise_filter_preserve_first_page_foot,
     )
 
     router.include_router(
