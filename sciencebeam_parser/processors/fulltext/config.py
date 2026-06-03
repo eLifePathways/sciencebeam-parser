@@ -48,6 +48,10 @@ class FullTextProcessorConfig(NamedTuple):
     use_ocr_model: bool = False
     replace_text_by_cv_graphic: bool = False
     max_graphic_distance: float = DEFAULT_MAX_GRAPHIC_DISTANCE
+    noise_filter_enabled: bool = False
+    noise_filter_repetition_fraction: float = 0.5
+    noise_filter_preserve_first_page_head: bool = True
+    noise_filter_preserve_first_page_foot: bool = False
 
     @staticmethod
     def from_app_config(app_config: AppConfig) -> 'FullTextProcessorConfig':
