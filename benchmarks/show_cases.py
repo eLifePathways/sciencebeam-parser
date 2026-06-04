@@ -220,6 +220,14 @@ def _export_case(
         run_b / "predictions" / corpus / f"{record_id}.tei.xml",
         out_dir / f"{record_id}.run-b.tei.xml",
     )
+    _copy_if_exists(
+        run_a / "scores" / corpus / f"{record_id}.json",
+        out_dir / f"{record_id}.run-a.scores.json",
+    )
+    _copy_if_exists(
+        run_b / "scores" / corpus / f"{record_id}.json",
+        out_dir / f"{record_id}.run-b.scores.json",
+    )
 
 
 def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-arguments
