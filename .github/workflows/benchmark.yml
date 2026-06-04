@@ -9,6 +9,11 @@ on:
         default: 'smoke'
         type: choice
         options: [smoke, small, medium, large, full]
+      profile:
+        description: 'Model configuration profile (empty = image default)'
+        required: false
+        default: ''
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -47,6 +52,13 @@ jobs:
           inputs.mode ||
           github.ref == 'refs/heads/main' && 'medium' ||
           'smoke'
+        }}
+      BENCHMARK_PROFILE: >-
+        ${{
+          contains(github.event.pull_request.labels.*.name, 'profile:grobid_crf') && 'grobid_crf' ||
+          contains(github.event.pull_request.labels.*.name, 'profile:biorxiv_elife') && 'biorxiv_elife' ||
+          inputs.profile ||
+          ''
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}
       BASELINE_DIR: benchmarks/runs/baseline
@@ -197,7 +209,13 @@ jobs:
           done
 
       - name: Start sciencebeam-parser
-        run: docker run -d --name sciencebeam-parser -p 8080:8070 ${{ steps.image_tag.outputs.value }}
+        run: |
+          PROFILE_ENV=()
+          if [ -n "${{ env.BENCHMARK_PROFILE }}" ]; then
+            PROFILE_ENV=(-e "SCIENCEBEAM_PARSER__PROFILE=${{ env.BENCHMARK_PROFILE }}")
+          fi
+          docker run -d --name sciencebeam-parser -p 8080:8070 \
+            "${PROFILE_ENV[@]}" ${{ steps.image_tag.outputs.value }}
 
       - name: Wait for parser
         run: |
@@ -214,6 +232,10 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          PROFILE_ARG=()
+          if [ -n "${{ env.BENCHMARK_PROFILE }}" ]; then
+            PROFILE_ARG=(--profile "${{ env.BENCHMARK_PROFILE }}")
+          fi
           uv run python -m benchmarks.predict \
             --config benchmarks/eval.yml \
             --mode ${{ env.BENCHMARK_MODE }} \
@@ -221,7 +243,8 @@ jobs:
             --data benchmarks/data \
             --out ${{ env.BENCHMARK_RUN }} \
             --parser-url http://localhost:8080 \
-            --parser-image "${{ steps.image_tag.outputs.value }}"
+            --parser-image "${{ steps.image_tag.outputs.value }}" \
+            "${PROFILE_ARG[@]}"
 
       - name: Score baseline predictions
         run: |
