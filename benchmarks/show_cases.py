@@ -9,6 +9,9 @@ from io import BytesIO
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import httpx
+from lxml import etree as lxml_etree
+
 from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
 from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
@@ -180,6 +183,33 @@ def _print_case(  # pylint: disable=too-many-arguments,too-many-positional-argum
     print()
 
 
+_PDFALTO_ENDPOINT = "/api/pdfalto"
+
+
+def _pretty_print_xml(content: bytes) -> bytes:
+    try:
+        root = lxml_etree.fromstring(content)
+        return lxml_etree.tostring(root, pretty_print=True, xml_declaration=True, encoding="UTF-8")
+    except lxml_etree.XMLSyntaxError:
+        return content
+
+
+def _fetch_pdfalto_xml(parser_url: str, pdf_path: Path) -> Optional[bytes]:
+    """POST a PDF to the pdfalto endpoint and return the ALTO XML bytes, or None on failure."""
+    try:
+        with httpx.Client() as client:
+            response = client.post(
+                f"{parser_url}{_PDFALTO_ENDPOINT}",
+                files={"input": (pdf_path.name, pdf_path.read_bytes(), "application/pdf")},
+                timeout=60,
+            )
+            response.raise_for_status()
+            return response.content
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        LOGGER.warning("Failed to fetch pdfalto XML for %s: %s", pdf_path.name, exc)
+        return None
+
+
 def _copy_if_exists(src: Path, dst: Path) -> None:
     if src.exists():
         shutil.copy(src, dst)
@@ -197,6 +227,7 @@ def _export_case(
     run_b: Path,
     data_dir: Path,
     split: str,
+    alto_xml: Optional[bytes] = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for suffix, text in [
@@ -228,6 +259,8 @@ def _export_case(
         run_b / "scores" / corpus / f"{record_id}.json",
         out_dir / f"{record_id}.run-b.scores.json",
     )
+    if alto_xml is not None:
+        (out_dir / f"{record_id}.alto.xml").write_bytes(_pretty_print_xml(alto_xml))
 
 
 def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -241,6 +274,7 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
     data_dir: Path,
     split: str,
     limit: Optional[int],
+    parser_url: Optional[str] = None,
 ) -> None:
     register_functions()
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
@@ -262,6 +296,11 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
         gold_text, text_a, text_b = _extract_texts(
             corp, record_id, run_a, run_b, data_dir, split, field, xml_mapping,
         )
+        alto_xml = None
+        if parser_url:
+            pdf_path = data_dir / split / corp / f"{record_id}.pdf"
+            if pdf_path.exists():
+                alto_xml = _fetch_pdfalto_xml(parser_url, pdf_path)
         _print_case(
             delta, corp, record_id, score_a, score_b,
             label_a, label_b, gold_text, text_a, text_b,
@@ -270,6 +309,7 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
             examples_base / corp, record_id, corp, field,
             gold_text, text_a, text_b,
             run_a, run_b, data_dir, split,
+            alto_xml=alto_xml,
         )
 
     if to_show:
@@ -291,6 +331,10 @@ def main(argv=None) -> None:
     parser.add_argument("--data", default="benchmarks/data", type=Path)
     parser.add_argument("--split", default="train")
     parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument(
+        "--parser-url", default=None,
+        help="Parser URL for on-demand pdfalto XML export (e.g. http://localhost:8080)"
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
@@ -305,6 +349,7 @@ def main(argv=None) -> None:
         data_dir=args.data,
         split=args.split,
         limit=args.limit,
+        parser_url=args.parser_url,
     )
 
 

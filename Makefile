@@ -46,6 +46,7 @@ SHOW_CORPUS ?= biorxiv
 SHOW_LIMIT ?= 10
 SHOW_RUN_A ?= $(BENCHMARK_RUN)
 SHOW_RUN_B ?= $(shell python3 -c "import yaml; b=yaml.safe_load(open('benchmarks/eval.yml')).get('baselines',[]); print('benchmarks/runs/baselines/'+b[0]['tool']+'/'+b[0]['version']+'/$(BENCHMARK_SPLIT)') if b else print('')" 2>/dev/null)
+SHOW_PARSER_URL ?=
 
 COMPARE_MODEL ?= segmentation
 COMPARE_DOC_ID ?= $(basename $(notdir $(COMPARE_PDF)))
@@ -212,7 +213,8 @@ dev-show-regressions: .require-SHOW_FIELD
 		--mode regression \
 		--data benchmarks/data \
 		--split $(BENCHMARK_SPLIT) \
-		--limit $(SHOW_LIMIT)
+		--limit $(SHOW_LIMIT) \
+		$(if $(SHOW_PARSER_URL),--parser-url $(SHOW_PARSER_URL),)
 
 
 dev-show-improvements: .require-SHOW_FIELD
@@ -225,7 +227,8 @@ dev-show-improvements: .require-SHOW_FIELD
 		--mode improvement \
 		--data benchmarks/data \
 		--split $(BENCHMARK_SPLIT) \
-		--limit $(SHOW_LIMIT)
+		--limit $(SHOW_LIMIT) \
+		$(if $(SHOW_PARSER_URL),--parser-url $(SHOW_PARSER_URL),)
 
 
 dev-benchmark-with-baselines:
