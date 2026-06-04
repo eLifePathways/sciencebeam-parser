@@ -38,7 +38,12 @@ def create_app_for_config(config: AppConfig) -> FastAPI:
 
 
 def get_app_config() -> AppConfig:
-    return AppConfig.load_yaml(DEFAULT_CONFIG_FILE).apply_environment_variables()
+    profile_name = os.environ.get('SCIENCEBEAM_PARSER__PROFILE')
+    return (
+        AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
+        .resolve_profile(profile_name)
+        .apply_environment_variables()
+    )
 
 
 def apply_logging_config(logging_config: Optional[dict] = None):

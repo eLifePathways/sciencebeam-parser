@@ -158,7 +158,7 @@ def _render_report(  # pylint: disable=too-many-locals
 
     if run_record:
         image = run_record.get("parser_image") or "local"
-        cfg = run_record.get("parser_config") or "default"
+        cfg = run_record.get("profile") or run_record.get("parser_config") or "default"
         mode = run_record.get("mode", "?")
         lines += [f"**Image:** `{image}`  **Config:** `{cfg}`  **Mode:** {mode}", ""]
 
