@@ -150,7 +150,7 @@ sequence_model_profiles:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/name/citation'
       engine: 'wapiti'
     affiliation_address:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/affiliations'
+      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/affiliation-address'
       engine: 'wapiti'
     fulltext:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/fulltext'
