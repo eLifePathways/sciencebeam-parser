@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -9,6 +11,7 @@ from benchmarks.show_cases import (
     _comparison_label,
     _copy_if_exists,
     _export_case,
+    _fetch_pdfalto_xml,
     _get_doc_score,
     _run_label,
     find_cases,
@@ -103,6 +106,7 @@ def _make_export_case_call(
     out_dir: Path, tmp_path: Path,
     gold_text=None, text_a=None, text_b=None,
     with_source_files=False,
+    alto_xml: Optional[bytes] = None,
 ):
     run_a = tmp_path / "run_a"
     run_b = tmp_path / "run_b"
@@ -123,7 +127,36 @@ def _make_export_case_call(
         out_dir, "doc1", "biorxiv", "title",
         gold_text, text_a, text_b,
         run_a, run_b, data_dir, "train",
+        alto_xml=alto_xml,
     )
+
+
+class TestFetchPdfaltoXml:
+    def _mock_client(self, content: bytes):
+        mock_response = MagicMock()
+        mock_response.content = content
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+        return mock_client
+
+    def test_returns_content_on_success(self, tmp_path: Path):
+        pdf = tmp_path / "doc.pdf"
+        pdf.write_bytes(b"pdf")
+        with patch(
+            "benchmarks.show_cases.httpx.Client", return_value=self._mock_client(b"<alto/>")
+        ):
+            result = _fetch_pdfalto_xml("http://localhost:8080", pdf)
+        assert result == b"<alto/>"
+
+    def test_returns_none_on_error(self, tmp_path: Path):
+        pdf = tmp_path / "doc.pdf"
+        pdf.write_bytes(b"pdf")
+        with patch("benchmarks.show_cases.httpx.Client") as mock_cls:
+            mock_cls.return_value.__enter__.return_value.post.side_effect = Exception("conn error")
+            result = _fetch_pdfalto_xml("http://localhost:8080", pdf)
+        assert result is None
 
 
 class TestCopyIfExists:
@@ -178,6 +211,19 @@ class TestExportCase:
         assert not (out_dir / "doc1.run-b.tei.xml").exists()
         assert not (out_dir / "doc1.run-a.scores.json").exists()
         assert not (out_dir / "doc1.run-b.scores.json").exists()
+
+    def test_writes_alto_xml_when_provided(self, tmp_path: Path):
+        out_dir = tmp_path / "examples"
+        _make_export_case_call(out_dir, tmp_path, alto_xml=b"<alto><Page/></alto>")
+        content = (out_dir / "doc1.alto.xml").read_bytes()
+        assert b"<alto>" in content
+        assert b"<Page/>" in content
+        assert b"\n" in content  # formatted
+
+    def test_skips_alto_xml_when_none(self, tmp_path: Path):
+        out_dir = tmp_path / "examples"
+        _make_export_case_call(out_dir, tmp_path, alto_xml=None)
+        assert not (out_dir / "doc1.alto.xml").exists()
 
 
 class TestFindCases:
