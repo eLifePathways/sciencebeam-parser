@@ -115,6 +115,10 @@ def _make_export_case_call(
         (run_a / "predictions" / "biorxiv" / "doc1.tei.xml").write_bytes(b"<tei-a/>")
         (run_b / "predictions" / "biorxiv").mkdir(parents=True, exist_ok=True)
         (run_b / "predictions" / "biorxiv" / "doc1.tei.xml").write_bytes(b"<tei-b/>")
+        (run_a / "scores" / "biorxiv").mkdir(parents=True, exist_ok=True)
+        (run_a / "scores" / "biorxiv" / "doc1.json").write_bytes(b'{"run":"a"}')
+        (run_b / "scores" / "biorxiv").mkdir(parents=True, exist_ok=True)
+        (run_b / "scores" / "biorxiv" / "doc1.json").write_bytes(b'{"run":"b"}')
     _export_case(
         out_dir, "doc1", "biorxiv", "title",
         gold_text, text_a, text_b,
@@ -162,6 +166,8 @@ class TestExportCase:
         assert (out_dir / "doc1.jats.xml").read_bytes() == b"<jats/>"
         assert (out_dir / "doc1.run-a.tei.xml").read_bytes() == b"<tei-a/>"
         assert (out_dir / "doc1.run-b.tei.xml").read_bytes() == b"<tei-b/>"
+        assert (out_dir / "doc1.run-a.scores.json").read_bytes() == b'{"run":"a"}'
+        assert (out_dir / "doc1.run-b.scores.json").read_bytes() == b'{"run":"b"}'
 
     def test_skips_missing_source_files(self, tmp_path: Path):
         out_dir = tmp_path / "examples"
@@ -170,6 +176,8 @@ class TestExportCase:
         assert not (out_dir / "doc1.jats.xml").exists()
         assert not (out_dir / "doc1.run-a.tei.xml").exists()
         assert not (out_dir / "doc1.run-b.tei.xml").exists()
+        assert not (out_dir / "doc1.run-a.scores.json").exists()
+        assert not (out_dir / "doc1.run-b.scores.json").exists()
 
 
 class TestFindCases:
