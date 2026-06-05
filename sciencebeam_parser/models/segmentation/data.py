@@ -136,8 +136,8 @@ def calculate_page_main_areas(  # pylint: disable=too-many-locals,too-many-branc
 # based on:
 # https://github.com/kermitt2/grobid/blob/0.6.2/grobid-core/src/main/java/org/grobid/core/features/FeatureFactory.java#L359-L367
 def get_text_pattern(text: str) -> str:
-    # Note: original code is meant to shadow numbers but are actually removed
-    return re.sub(r'[^a-zA-Z ]', '', text).lower()
+    # Matches GROBID's FeatureFactory.getPattern: remove everything except letters, then lowercase
+    return re.sub(r'[^a-zA-Z]', '', text).lower()
 
 
 def count_block_tokens_like_grobid(block_lines: List[LayoutLine]) -> int:
@@ -280,7 +280,7 @@ class SegmentationLineFeaturesProvider:
         pattern_by_line_id = {
             key: value
             for key, value in all_pattern_by_line_id.items()
-            if len(value) >= 8  # Java GROBID sometimes counts an additional trailing space
+            if len(value) > 8  # matches GROBID: pattern.length() > 8
         }
         pattern_counter = Counter(pattern_by_line_id.values())
         LOGGER.debug('pattern_counter: %s', pattern_counter)
