@@ -74,7 +74,7 @@ lookup:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.6.2/grobid-home/lexicon/names/names.family
 processors:
   fulltext:
-    noise_filter_enabled: false
+    noise_filter_enabled: true
     noise_filter_repetition_fraction: 0.5
     noise_filter_preserve_first_page_head: false
     noise_filter_preserve_first_page_foot: false
