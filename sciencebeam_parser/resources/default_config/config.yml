@@ -180,7 +180,7 @@ profiles:
 profile_aliases:
   grobid_crf: grobid_crf_0_9_0
 
-profile: biorxiv_elife
+profile: grobid_crf
 
 cv_models:
   default:
