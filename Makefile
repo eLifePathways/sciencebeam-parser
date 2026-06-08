@@ -368,6 +368,16 @@ diff-model-data:
 compare-model-data: fetch-grobid-model-data fetch-parser-model-data diff-model-data
 
 
+OVERRIDE ?=
+
+dev-diff-feature-override: .require-COMPARE_DOC_ID .require-OVERRIDE
+	$(PYTHON) scripts/diff_feature_override.py \
+		--data=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
+		--feature-names=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).feature_names.json \
+		--model=$(COMPARE_MODEL) \
+		--override="$(OVERRIDE)"
+
+
 ci-lint:
 	$(MAKE) DOCKER_COMPOSE="$(DOCKER_COMPOSE_CI)" docker-lint
 
