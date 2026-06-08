@@ -5,6 +5,7 @@ from typing import Counter, Dict, Iterable, List, Optional, Set
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
+    LayoutGraphic,
     LayoutLine,
     LayoutToken
 )
@@ -36,6 +37,25 @@ NBBINS_POSITION = 12
 
 EMPTY_LAYOUT_TOKEN = LayoutToken('')
 EMPTY_LAYOUT_LINE = LayoutLine([])
+
+# Matches GROBID's Document.MIN_DISTANCE (coordinate units from pdfalto ALTO output)
+_GRAPHIC_MIN_DISTANCE = 100.0
+
+VECTOR_GRAPHIC_TYPE = 'svg'
+
+
+def _is_graphic_connected_to_block(
+    graphic: LayoutGraphic,
+    block_y: float,
+    block_height: float
+) -> bool:
+    if not graphic.coordinates:
+        return False
+    gc = graphic.coordinates
+    return (
+        abs((gc.y + gc.height) - block_y) < _GRAPHIC_MIN_DISTANCE
+        or abs(gc.y - (block_y + block_height)) < _GRAPHIC_MIN_DISTANCE
+    )
 
 
 def get_block_status(line_index: int, line_count: int) -> str:
@@ -181,6 +201,8 @@ class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
         self.is_first_repetitive_pattern: bool = False
         self.page_main_area_bounding_box: Optional[BoundingBox] = None
         self.block_bounding_box: Optional[BoundingBox] = None
+        self.is_vector_around: bool = False
+        self.is_bitmap_around: bool = False
 
     def get_block_status(self) -> str:
         return get_block_status(self.block_line_index, len(self.block_lines))
@@ -215,6 +237,12 @@ class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
         return get_str_bool_feature_value(
             bool(self.page_main_area_bounding_box.intersection(self.block_bounding_box))
         )
+
+    def get_str_is_vector_around(self) -> str:
+        return get_str_bool_feature_value(self.is_vector_around)
+
+    def get_str_is_bitmap_around(self) -> str:
+        return get_str_bool_feature_value(self.is_bitmap_around)
 
     def get_str_block_relative_line_length_feature(self) -> str:
         return str(feature_linear_scaling_int(
@@ -300,9 +328,22 @@ class SegmentationLineFeaturesProvider:
             page_token_index = 0
             for block_index, block in enumerate(blocks):
                 block_coords_list = block.get_merged_coordinates_list()
+                block_coords = block_coords_list[0] if block_coords_list else None
                 segmentation_line_features.block_bounding_box = (
-                    block_coords_list[0].bounding_box if block_coords_list else None
+                    block_coords.bounding_box if block_coords else None
                 )
+                block_y = block_coords.y if block_coords else 0.0
+                block_height = block_coords.height if block_coords else 0.0
+                is_vector_around = False
+                is_bitmap_around = False
+                for graphic in page.graphics:
+                    if _is_graphic_connected_to_block(graphic, block_y, block_height):
+                        if graphic.graphic_type == VECTOR_GRAPHIC_TYPE:
+                            is_vector_around = True
+                        else:
+                            is_bitmap_around = True
+                segmentation_line_features.is_vector_around = is_vector_around
+                segmentation_line_features.is_bitmap_around = is_bitmap_around
                 segmentation_line_features.page_block_index = block_index
                 segmentation_line_features.page_token_index = page_token_index
                 block_lines = block.lines
@@ -393,8 +434,8 @@ class SegmentationDataGenerator(ModelDataGenerator):
                        lambda f: f.get_line_punctuation_profile_length_feature()),
             FeatureDef('block_relative_line_length',
                        lambda f: f.get_str_block_relative_line_length_feature()),
-            FeatureDef('is_bitmap_around', lambda f: f.get_dummy_str_is_bitmap_around()),
-            FeatureDef('is_vector_around', lambda f: f.get_dummy_str_is_vector_around()),
+            FeatureDef('is_bitmap_around', lambda f: f.get_str_is_bitmap_around()),
+            FeatureDef('is_vector_around', lambda f: f.get_str_is_vector_around()),
             FeatureDef('is_repetitive_pattern', lambda f: f.get_str_is_repetitive_pattern()),
             FeatureDef('is_first_repetitive_pattern',
                        lambda f: f.get_str_is_first_repetitive_pattern()),

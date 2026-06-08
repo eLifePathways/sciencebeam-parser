@@ -6,6 +6,7 @@ import pytest
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
+    LayoutGraphic,
     LayoutLine,
     LayoutPage,
     LayoutPageCoordinates,
@@ -19,6 +20,7 @@ from sciencebeam_parser.models.data import (
 from sciencebeam_parser.utils.bounding_box import BoundingBox
 from sciencebeam_parser.models.segmentation.data import (
     NBBINS_POSITION,
+    VECTOR_GRAPHIC_TYPE,
     SegmentationLineFeatures,
     SegmentationLineFeaturesProvider,
     calculate_page_main_areas,
@@ -441,3 +443,96 @@ class TestSegmentationLineFeaturesProvider:
                 'get_str_is_first_repetitive_pattern': '0'
             },
         ]
+
+
+class TestSegmentationLineFeaturesProviderVectorAround:
+    def _make_doc_with_block_and_graphics(
+        self,
+        block_coords: LayoutPageCoordinates,
+        graphics: list
+    ) -> LayoutDocument:
+        return LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[
+                    LayoutLine.for_text('Nitric', coordinates=block_coords)
+                ])],
+                graphics=graphics
+            )
+        ])
+
+    def test_no_graphics_returns_zero(self, features_provider):
+        block_coords = LayoutPageCoordinates(x=50, y=200, width=200, height=20, page_number=1)
+        doc = self._make_doc_with_block_and_graphics(block_coords, [])
+        features = list(_iter_line_features(features_provider, doc))
+        assert features[0].get_str_is_vector_around() == '0'
+        assert features[0].get_str_is_bitmap_around() == '0'
+
+    def test_svg_graphic_above_block_within_distance_sets_vector(self, features_provider):
+        # graphic bottom edge (y=110, height=80 → bottom=190) is 10 units above block top (200)
+        block_coords = LayoutPageCoordinates(x=50, y=200, width=200, height=20, page_number=1)
+        graphic = LayoutGraphic(
+            coordinates=LayoutPageCoordinates(x=0, y=110, width=500, height=80, page_number=1),
+            graphic_type=VECTOR_GRAPHIC_TYPE
+        )
+        doc = self._make_doc_with_block_and_graphics(block_coords, [graphic])
+        features = list(_iter_line_features(features_provider, doc))
+        assert features[0].get_str_is_vector_around() == '1'
+        assert features[0].get_str_is_bitmap_around() == '0'
+
+    def test_svg_graphic_below_block_within_distance_sets_vector(self, features_provider):
+        # graphic top edge (y=215) is 15 units below block bottom (200+20=220 → diff=5)
+        block_coords = LayoutPageCoordinates(x=50, y=200, width=200, height=20, page_number=1)
+        graphic = LayoutGraphic(
+            coordinates=LayoutPageCoordinates(x=0, y=215, width=500, height=80, page_number=1),
+            graphic_type=VECTOR_GRAPHIC_TYPE
+        )
+        doc = self._make_doc_with_block_and_graphics(block_coords, [graphic])
+        features = list(_iter_line_features(features_provider, doc))
+        assert features[0].get_str_is_vector_around() == '1'
+
+    def test_bitmap_graphic_within_distance_sets_bitmap(self, features_provider):
+        block_coords = LayoutPageCoordinates(x=50, y=200, width=200, height=20, page_number=1)
+        graphic = LayoutGraphic(
+            coordinates=LayoutPageCoordinates(x=0, y=110, width=500, height=80, page_number=1),
+            graphic_type='image'
+        )
+        doc = self._make_doc_with_block_and_graphics(block_coords, [graphic])
+        features = list(_iter_line_features(features_provider, doc))
+        assert features[0].get_str_is_vector_around() == '0'
+        assert features[0].get_str_is_bitmap_around() == '1'
+
+    def test_graphic_beyond_distance_returns_zero(self, features_provider):
+        # graphic bottom (y=0, height=50 → bottom=50) is 150 units above block top (200) — > 100
+        block_coords = LayoutPageCoordinates(x=50, y=200, width=200, height=20, page_number=1)
+        graphic = LayoutGraphic(
+            coordinates=LayoutPageCoordinates(x=0, y=0, width=500, height=50, page_number=1),
+            graphic_type=VECTOR_GRAPHIC_TYPE
+        )
+        doc = self._make_doc_with_block_and_graphics(block_coords, [graphic])
+        features = list(_iter_line_features(features_provider, doc))
+        assert features[0].get_str_is_vector_around() == '0'
+
+    def test_graphic_without_coordinates_is_ignored(self, features_provider):
+        block_coords = LayoutPageCoordinates(x=50, y=200, width=200, height=20, page_number=1)
+        graphic = LayoutGraphic(coordinates=None, graphic_type=VECTOR_GRAPHIC_TYPE)
+        doc = self._make_doc_with_block_and_graphics(block_coords, [graphic])
+        features = list(_iter_line_features(features_provider, doc))
+        assert features[0].get_str_is_vector_around() == '0'
+
+    def test_vector_flag_propagates_to_all_lines_in_block(self, features_provider):
+        block_coords = LayoutPageCoordinates(x=50, y=200, width=200, height=20, page_number=1)
+        graphic = LayoutGraphic(
+            coordinates=LayoutPageCoordinates(x=0, y=110, width=500, height=80, page_number=1),
+            graphic_type=VECTOR_GRAPHIC_TYPE
+        )
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[
+                    LayoutLine.for_text('line1', coordinates=block_coords),
+                    LayoutLine.for_text('line2', coordinates=block_coords)
+                ])],
+                graphics=[graphic]
+            )
+        ])
+        features = list(_iter_line_features(features_provider, doc))
+        assert all(f.get_str_is_vector_around() == '1' for f in features)
