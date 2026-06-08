@@ -176,6 +176,9 @@ profiles:
     sequence_models: biorxiv_elife
   grobid_crf_0_9_0:
     sequence_models: grobid_crf_0_9_0
+    processors:
+      fulltext:
+        noise_filter_enabled: false
 
 profile_aliases:
   grobid_crf: grobid_crf_0_9_0
