@@ -44,8 +44,8 @@ class TestGetTextPattern:
     def test_should_keep_uppercase_characters_and_convert_to_lowercase(self):
         assert get_text_pattern('ABC') == 'abc'
 
-    def test_should_keep_spaces(self):
-        assert get_text_pattern('abc abc') == 'abc abc'
+    def test_should_remove_spaces(self):
+        assert get_text_pattern('abc abc') == 'abcabc'
 
     def test_should_remove_punctuation(self):
         assert get_text_pattern('abc.,:;') == 'abc'

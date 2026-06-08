@@ -50,7 +50,7 @@ class FullTextProcessorConfig(NamedTuple):
     max_graphic_distance: float = DEFAULT_MAX_GRAPHIC_DISTANCE
     noise_filter_enabled: bool = False
     noise_filter_repetition_fraction: float = 0.5
-    noise_filter_preserve_first_page_head: bool = True
+    noise_filter_preserve_first_page_head: bool = False
     noise_filter_preserve_first_page_foot: bool = False
 
     @staticmethod

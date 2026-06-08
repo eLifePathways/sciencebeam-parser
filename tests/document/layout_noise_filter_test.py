@@ -87,7 +87,7 @@ class TestGetNoiseBlocks:
         )
         result = get_noise_blocks(doc, ENABLED_CONFIG)
         assert {nb.note_type for nb in result} == {'running-head'}
-        assert len(result) == 2  # page 1 preserved by default
+        assert len(result) == 3
 
     def test_detects_running_foot_at_bottom(self):
         # y=950 → y_rel=0.95, well above q3 of each page
@@ -149,7 +149,7 @@ class TestGetNoiseBlocks:
             _page_with_body([_block_at_y('journal name', y=10)], page_number=2),
         )
         result = get_noise_blocks(doc, ENABLED_CONFIG)
-        assert len(result) == 1  # page 1 preserved by default
+        assert len(result) == 2
 
     def test_large_title_on_first_page_not_filtered_when_repeated_as_small_footer(self):
         # Regression (scielo_br): a paper title appears large (height=60) near the
