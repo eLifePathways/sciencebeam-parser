@@ -58,10 +58,9 @@ jobs:
           contains(github.event.pull_request.labels.*.name, 'profile:grobid_crf') && 'grobid_crf' ||
           contains(github.event.pull_request.labels.*.name, 'profile:biorxiv_elife') && 'biorxiv_elife' ||
           inputs.profile ||
-          ''
+          'grobid_crf'
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}
-      BASELINE_DIR: benchmarks/runs/baseline
 
     steps:
       - uses: actions/checkout@v5
@@ -107,21 +106,6 @@ jobs:
           cache-from: |
             type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder
             type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime
-
-      - name: Set baseline cache key
-        id: baseline_key
-        run: |
-          echo "prefix=benchmark-baseline-${{ env.BENCHMARK_SPLIT }}-${{ env.BENCHMARK_MODE }}-${{ hashFiles('benchmarks/eval.yml', 'benchmarks/score.py', 'uv.lock') }}" >> $GITHUB_OUTPUT
-          echo "broad_prefix=benchmark-baseline-${{ env.BENCHMARK_SPLIT }}-${{ env.BENCHMARK_MODE }}-" >> $GITHUB_OUTPUT
-
-      - name: Restore baseline summary
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.BASELINE_DIR }}
-          key: ${{ steps.baseline_key.outputs.prefix }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ steps.baseline_key.outputs.prefix }}-
-            ${{ steps.baseline_key.outputs.broad_prefix }}
 
       - name: Checkout predictions repo
         uses: actions/checkout@v5
@@ -214,6 +198,41 @@ jobs:
             fi
           done
 
+      - name: Fetch sciencebeam-parser main baseline
+        run: |
+          PROFILE="${{ env.BENCHMARK_PROFILE }}"
+          [ -z "$PROFILE" ] && PROFILE="default"
+          SPLIT="${{ env.BENCHMARK_SPLIT }}"
+          PRED_BASE="sciencebeam-parser/main/${PROFILE}"
+          LOCAL_DIR="benchmarks/runs/baseline-sciencebeam-parser-main"
+          TEIXML_COUNT=$(git -C sciencebeam-eval-predictions ls-tree -r --name-only HEAD "${PRED_BASE}/" 2>/dev/null | grep '\.tei\.xml$' | wc -l)
+          if [ "$TEIXML_COUNT" -eq 0 ]; then
+            echo "No predictions found for sciencebeam-parser/main/${PROFILE}, skipping"
+            exit 0
+          fi
+          git -C sciencebeam-eval-predictions sparse-checkout add "${PRED_BASE}"
+          git -C sciencebeam-eval-predictions checkout
+          METADATA_FILE="sciencebeam-eval-predictions/${PRED_BASE}/${SPLIT}/metadata.json"
+          if [ ! -f "${METADATA_FILE}" ]; then
+            echo "Metadata file not found at ${METADATA_FILE}, skipping"
+            exit 0
+          fi
+          MAIN_IMAGE=$(python3 -c "import json; d=json.load(open('${METADATA_FILE}')); print(d.get('image','sciencebeam-parser:main'))")
+          MAIN_PROFILE=$(python3 -c "import json; d=json.load(open('${METADATA_FILE}')); print(d.get('profile',''))")
+          MAIN_LABEL="${MAIN_IMAGE}"
+          [ -n "${MAIN_PROFILE}" ] && MAIN_LABEL="${MAIN_IMAGE} (${MAIN_PROFILE})"
+          echo "sciencebeam-parser/main baseline: ${MAIN_LABEL}"
+          echo "SBP_MAIN_LABEL=${MAIN_LABEL}" >> $GITHUB_ENV
+          echo "SBP_MAIN_BASELINE_DIR=${LOCAL_DIR}" >> $GITHUB_ENV
+          for CORPUS in $(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); print(' '.join(c['dataset']['splits'].get('${SPLIT}', {}).keys()))"); do
+            VARIANT=$(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); print(c['dataset']['splits'].get('${SPLIT}',{}).get('${CORPUS}',{}).get('variant','v1'))")
+            SRC="sciencebeam-eval-predictions/${PRED_BASE}/${CORPUS}/${VARIANT}/${SPLIT}"
+            if [ -d "${SRC}" ]; then
+              mkdir -p "${LOCAL_DIR}/predictions/${CORPUS}"
+              cp -r "${SRC}/." "${LOCAL_DIR}/predictions/${CORPUS}/"
+            fi
+          done
+
       - name: Start sciencebeam-parser
         run: |
           PROFILE_ENV=()
@@ -268,6 +287,13 @@ jobs:
               echo "No predictions for ${TOOL}/${VERSION} profile=${PROFILE}, skipping"
             fi
           done
+          if [ -n "${SBP_MAIN_BASELINE_DIR}" ] && [ -d "${SBP_MAIN_BASELINE_DIR}/predictions" ]; then
+            uv run python -m benchmarks.score \
+              --config benchmarks/eval.yml \
+              --run "${SBP_MAIN_BASELINE_DIR}" \
+              --split "${{ env.BENCHMARK_SPLIT }}" \
+              --data benchmarks/data
+          fi
 
       - name: Push ScienceBeam Parser predictions
         if: github.ref == 'refs/heads/main'
@@ -316,11 +342,11 @@ jobs:
             SUMMARY_PATH="benchmarks/runs/baseline-${TOOL}-${PROFILE}/summary.json"
             [ -f "${SUMMARY_PATH}" ] && SUMMARY_ARGS+=("--summary" "${TOOL} ${VERSION} (${PROFILE})=${SUMMARY_PATH}")
           done < <(python3 -c "import yaml; c=yaml.safe_load(open('benchmarks/eval.yml')); [print(b['tool']+' '+b['version']+' '+b.get('profile','default')) for b in c.get('baselines', [])]")
-          if [ -f "${{ env.BASELINE_DIR }}/summary.json" ]; then
-            BASELINE_LABEL=$(cat "${{ env.BASELINE_DIR }}/label.txt" 2>/dev/null || echo "baseline")
-            SUMMARY_ARGS+=("--summary" "${BASELINE_LABEL}=${{ env.BASELINE_DIR }}/summary.json")
+          if [ -n "${SBP_MAIN_LABEL}" ] && [ -f "${SBP_MAIN_BASELINE_DIR}/summary.json" ]; then
+            SUMMARY_ARGS+=("--summary" "${SBP_MAIN_LABEL}=${SBP_MAIN_BASELINE_DIR}/summary.json")
           fi
-          SUMMARY_ARGS+=("--summary" "${{ steps.image_tag.outputs.value }}=${{ env.BENCHMARK_RUN }}/summary.json")
+          CURRENT_LABEL="${{ steps.image_tag.outputs.value }} (${{ env.BENCHMARK_PROFILE }})"
+          SUMMARY_ARGS+=("--summary" "${CURRENT_LABEL}=${{ env.BENCHMARK_RUN }}/summary.json")
           if [ "${#SUMMARY_ARGS[@]}" -ge 4 ]; then
             uv run python -m benchmarks.report "${SUMMARY_ARGS[@]}" --out "${{ env.BENCHMARK_RUN }}/comparison.md"
           fi
@@ -351,19 +377,6 @@ jobs:
             gh pr comment ${{ github.event.pull_request.number }} \
               --body-file "${REPORT}"
           fi
-
-      - name: Save baseline summary
-        run: |
-          mkdir -p ${{ env.BASELINE_DIR }}
-          cp ${{ env.BENCHMARK_RUN }}/summary.json ${{ env.BASELINE_DIR }}/summary.json
-          echo "${{ steps.image_tag.outputs.value }}" > ${{ env.BASELINE_DIR }}/label.txt
-
-      - name: Cache baseline summary
-        if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.BASELINE_DIR }}
-          key: ${{ steps.baseline_key.outputs.prefix }}-${{ github.run_id }}
 
       - name: Upload run artifacts
         if: always()
