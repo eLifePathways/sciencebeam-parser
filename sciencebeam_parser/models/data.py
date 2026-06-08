@@ -15,10 +15,20 @@ from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 LOGGER = logging.getLogger(__name__)
 
 
+YEAR_PATTERN = re.compile(r'[12]\d{3}')
+
+MONTH_NAMES = frozenset({
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december',
+    'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+})
+
+
 class AppFeaturesContext(NamedTuple):
     country_lookup: Optional[TextLookUp] = None
     first_name_lookup: Optional[TextLookUp] = None
     last_name_lookup: Optional[TextLookUp] = None
+    common_name_lookup: Optional[TextLookUp] = None
 
 
 DEFAULT_APP_FEATURES_CONTEXT = AppFeaturesContext()
@@ -689,6 +699,23 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         return self._get_str_lookup(
             self.document_features_context.app_features_context.last_name_lookup
         )
+
+    def get_str_is_proper_name(self) -> str:
+        ctx = self.document_features_context.app_features_context
+        if ctx.first_name_lookup and ctx.first_name_lookup.contains(self.token_text):
+            return '1'
+        return self._get_str_lookup(ctx.last_name_lookup)
+
+    def get_str_is_common_name(self) -> str:
+        return self._get_str_lookup(
+            self.document_features_context.app_features_context.common_name_lookup
+        )
+
+    def get_str_is_year(self) -> str:
+        return get_str_bool_feature_value(bool(YEAR_PATTERN.search(self.token_text)))
+
+    def get_str_is_month(self) -> str:
+        return get_str_bool_feature_value(self.token_text.lower() in MONTH_NAMES)
 
     def get_dummy_str_relative_document_position(self):
         # position within whole document

@@ -1,11 +1,16 @@
 from abc import ABC, abstractmethod
 
 from sciencebeam_parser.document.layout_document import (
+    LayoutLine,
     LayoutPageCoordinates,
     LayoutFont,
     LayoutToken
 )
+from sciencebeam_parser.lookup import SimpleTextLookUp
 from sciencebeam_parser.models.data import (
+    AppFeaturesContext,
+    ContextAwareLayoutTokenFeatures,
+    DocumentFeaturesContext,
     RelativeFontSizeFeature,
     LineIndentationStatusFeature,
     get_block_status_with_blockend_for_single_token,
@@ -21,6 +26,21 @@ from sciencebeam_parser.models.data import (
     get_punctuation_profile_length_for_raw_punctuation_profile_feature,
     get_word_shape_feature
 )
+
+
+def _make_features(
+    token_text: str,
+    app_features_context: AppFeaturesContext = AppFeaturesContext()
+) -> ContextAwareLayoutTokenFeatures:
+    token = LayoutToken(token_text)
+    line = LayoutLine.for_text(token_text)
+    return ContextAwareLayoutTokenFeatures(
+        token,
+        layout_line=line,
+        document_features_context=DocumentFeaturesContext(
+            app_features_context=app_features_context
+        )
+    )
 
 
 class TestRelativeFontSizeFeature:
@@ -373,3 +393,79 @@ class TestGetWordShapeFeature:
         assert get_word_shape_feature('Üwe') == 'Xxx'
         assert get_word_shape_feature('Tes9t99') == 'Xxdxdd'
         assert get_word_shape_feature('T') == 'X'
+
+
+class TestContextAwareLayoutTokenFeaturesIsYear:
+    def test_should_return_1_for_four_digit_year_starting_with_2(self):
+        assert _make_features('2025').get_str_is_year() == '1'
+
+    def test_should_return_1_for_four_digit_year_starting_with_1(self):
+        assert _make_features('1999').get_str_is_year() == '1'
+
+    def test_should_return_1_when_year_pattern_found_within_longer_token(self):
+        # GROBID uses .find() so matches anywhere in the token (e.g. DOI components)
+        assert _make_features('12688').get_str_is_year() == '1'
+
+    def test_should_return_0_for_short_number(self):
+        assert _make_features('10').get_str_is_year() == '0'
+
+    def test_should_return_0_for_word(self):
+        assert _make_features('Innovation').get_str_is_year() == '0'
+
+
+class TestContextAwareLayoutTokenFeaturesIsMonth:
+    def test_should_return_1_for_full_month_name(self):
+        assert _make_features('January').get_str_is_month() == '1'
+        assert _make_features('August').get_str_is_month() == '1'
+        assert _make_features('December').get_str_is_month() == '1'
+
+    def test_should_return_1_for_month_abbreviation(self):
+        assert _make_features('Jan').get_str_is_month() == '1'
+        assert _make_features('Apr').get_str_is_month() == '1'
+        assert _make_features('Aug').get_str_is_month() == '1'
+
+    def test_should_be_case_insensitive(self):
+        assert _make_features('JANUARY').get_str_is_month() == '1'
+        assert _make_features('aug').get_str_is_month() == '1'
+
+    def test_should_return_0_for_non_month(self):
+        assert _make_features('Innovation').get_str_is_month() == '0'
+        assert _make_features('2025').get_str_is_month() == '0'
+
+
+class TestContextAwareLayoutTokenFeaturesIsCommonName:
+    def test_should_return_0_when_no_lookup_configured(self):
+        assert _make_features('innovation').get_str_is_common_name() == '0'
+
+    def test_should_return_1_for_word_in_lookup(self):
+        lookup = SimpleTextLookUp({'innovation', 'battery', 'recycling'})
+        ctx = AppFeaturesContext(common_name_lookup=lookup)
+        assert _make_features('innovation', ctx).get_str_is_common_name() == '1'
+        assert _make_features('Innovation', ctx).get_str_is_common_name() == '1'
+
+    def test_should_return_0_for_word_not_in_lookup(self):
+        lookup = SimpleTextLookUp({'innovation'})
+        ctx = AppFeaturesContext(common_name_lookup=lookup)
+        assert _make_features('Patil', ctx).get_str_is_common_name() == '0'
+
+
+class TestContextAwareLayoutTokenFeaturesIsProperName:
+    def test_should_return_0_when_no_lookups_configured(self):
+        assert _make_features('Patil').get_str_is_proper_name() == '0'
+
+    def test_should_return_1_for_word_in_first_name_lookup(self):
+        lookup = SimpleTextLookUp({'Anish', 'Willem'})
+        ctx = AppFeaturesContext(first_name_lookup=lookup)
+        assert _make_features('Anish', ctx).get_str_is_proper_name() == '1'
+
+    def test_should_return_1_for_word_in_last_name_lookup(self):
+        lookup = SimpleTextLookUp({'Patil', 'Vonk'})
+        ctx = AppFeaturesContext(last_name_lookup=lookup)
+        assert _make_features('Patil', ctx).get_str_is_proper_name() == '1'
+
+    def test_should_return_0_for_word_not_in_either_lookup(self):
+        ctx = AppFeaturesContext(
+            first_name_lookup=SimpleTextLookUp({'Anish'}),
+            last_name_lookup=SimpleTextLookUp({'Patil'})
+        )
+        assert _make_features('Innovation', ctx).get_str_is_proper_name() == '0'

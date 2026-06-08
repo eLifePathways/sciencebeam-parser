@@ -96,6 +96,10 @@ def load_app_features_context(
         last_name_lookup=load_lookup_from_config(
             config.get('lookup', {}).get('last_name'),
             download_manager=download_manager
+        ),
+        common_name_lookup=load_lookup_from_config(
+            config.get('lookup', {}).get('common_name'),
+            download_manager=download_manager
         )
     )
 

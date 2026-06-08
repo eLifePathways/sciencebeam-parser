@@ -62,16 +62,19 @@ xslt:
 lookup:
   country:
     paths:
-      - https://raw.githubusercontent.com/kermitt2/grobid/0.6.2/grobid-home/lexicon/countries/CountryCodes.xml
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/countries/CountryCodes.xml
   first_name:
     paths:
-      - https://raw.githubusercontent.com/kermitt2/grobid/0.6.2/grobid-home/lexicon/names/firstname.5k
-      - https://raw.githubusercontent.com/kermitt2/grobid/0.6.2/grobid-home/lexicon/names/names.female
-      - https://raw.githubusercontent.com/kermitt2/grobid/0.6.2/grobid-home/lexicon/names/names.male
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/firstname.5k
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.female
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.male
   last_name:
     paths:
-      - https://raw.githubusercontent.com/kermitt2/grobid/0.6.2/grobid-home/lexicon/names/lastname.5k
-      - https://raw.githubusercontent.com/kermitt2/grobid/0.6.2/grobid-home/lexicon/names/names.family
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/lastname.5k
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.family
+  common_name:
+    paths:
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/wordforms/english.wf
 processors:
   fulltext:
     noise_filter_enabled: true
