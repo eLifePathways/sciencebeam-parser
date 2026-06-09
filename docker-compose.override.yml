@@ -6,9 +6,12 @@ services:
       - ./sciencebeam_parser:/opt/sciencebeam_parser/sciencebeam_parser
 
   sciencebeam-parser-dev:
+    # Secrets (e.g. HF_TOKEN) live in .env.local (gitignored) so they are set
+    # once and never committed. A shell `export HF_TOKEN=...` still overrides it.
+    env_file:
+      - path: .env.local
+        required: false
     environment:
-      # Passed through from the shell (e.g. `export HF_TOKEN=...`); do not commit
-      # the token to the tracked .env. Needed to fetch the gated benchmark dataset.
       - HF_TOKEN
       - BENCH_LOCAL_PARQUET_DIR
     volumes:
