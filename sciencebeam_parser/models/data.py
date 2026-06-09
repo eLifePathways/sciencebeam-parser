@@ -707,8 +707,11 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         return self._get_str_lookup(ctx.last_name_lookup)
 
     def get_str_is_common_name(self) -> str:
-        return self._get_str_lookup(
-            self.document_features_context.app_features_context.common_name_lookup
+        lookup = self.document_features_context.app_features_context.common_name_lookup
+        if not lookup:
+            return get_str_bool_feature_value(False)
+        return get_str_bool_feature_value(
+            lookup.contains(self.token_text.rstrip('.,;:'))
         )
 
     def get_str_is_year(self) -> str:
