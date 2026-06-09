@@ -39,6 +39,20 @@ BENCHMARK_CONFIG ?= benchmarks/eval.yml
 BENCHMARK_MODE ?= smoke
 BENCHMARK_SPLIT ?= train
 BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+
+# GROBID baseline: GROBID runs via host docker; predict/score run in the dev
+# container and reach it at host.docker.internal. Override GROBID_IMAGE if your
+# team publishes a different tag. GROBID_BASELINE_RUN must match SHOW_RUN_B.
+GROBID_BASELINE_VERSION ?= 0.9.0-crf
+GROBID_IMAGE ?= grobid/grobid:$(GROBID_BASELINE_VERSION)
+GROBID_PORT ?= 8070
+GROBID_CONTAINER_NAME ?= grobid-baseline
+# GROBID loads its CRF models on startup; on constrained Docker hosts this can
+# take several minutes. Wait = RETRIES * INTERVAL seconds (default 10 min).
+GROBID_WAIT_RETRIES ?= 120
+GROBID_WAIT_INTERVAL ?= 5
+GROBID_BASELINE_RUN ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/$(BENCHMARK_SPLIT)
+DOCKER_HOST_GROBID_URL ?= http://host.docker.internal:$(GROBID_PORT)
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 
 SHOW_FIELD ?=
@@ -300,6 +314,31 @@ docker-benchmark-with-baselines:
 		PYTHON="$(DOCKER_DEV_PYTHON)" \
 		BENCHMARK_PARSER_URL="$(DOCKER_SCIENCEBEAM_PARSER_URL)" \
 		dev-benchmark-with-baselines
+
+
+# Generate the GROBID baseline run (run-b for show-regressions/improvements).
+# Starts GROBID via host docker, then predicts + scores in the dev container
+# pointing at host.docker.internal, writing to the path SHOW_RUN_B expects.
+docker-benchmark-grobid-baseline:
+	-docker rm -f $(GROBID_CONTAINER_NAME)
+	docker run -d --name $(GROBID_CONTAINER_NAME) -p $(GROBID_PORT):8070 $(GROBID_IMAGE)
+	@echo "Waiting for GROBID at http://localhost:$(GROBID_PORT)/api/isalive ..."
+	@for i in $$(seq 1 $(GROBID_WAIT_RETRIES)); do \
+		curl -sf "http://localhost:$(GROBID_PORT)/api/isalive" >/dev/null && { echo "GROBID is up"; break; }; \
+		echo "  waiting ($$i/$(GROBID_WAIT_RETRIES))"; sleep $(GROBID_WAIT_INTERVAL); \
+		if [ $$i -eq $(GROBID_WAIT_RETRIES) ]; then echo "GROBID did not become ready"; docker rm -f $(GROBID_CONTAINER_NAME); exit 1; fi; \
+	done
+	$(MAKE) \
+		PYTHON="$(DOCKER_DEV_PYTHON)" \
+		BENCHMARK_PARSER_URL="$(DOCKER_HOST_GROBID_URL)" \
+		BENCHMARK_RUN="$(GROBID_BASELINE_RUN)" \
+		dev-benchmark-predict
+	$(MAKE) \
+		PYTHON="$(DOCKER_DEV_PYTHON)" \
+		BENCHMARK_RUN="$(GROBID_BASELINE_RUN)" \
+		dev-benchmark-score
+	-docker rm -f $(GROBID_CONTAINER_NAME)
+	@echo "GROBID baseline written to $(GROBID_BASELINE_RUN)"
 
 
 # Optional: to enrich cases with pdfalto output, pass
