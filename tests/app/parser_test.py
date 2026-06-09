@@ -188,6 +188,16 @@ class TestSerializeXmlToFile:
         assert '\n' in content  # structural indentation is still present
         assert '<hi>Part 1</hi><hi>Part 2</hi>' in content  # siblings stay adjacent
 
+    def test_should_not_crash_when_xml_root_is_element_tree(
+        self, tmp_path: Path
+    ):
+        # _XSLTResultTree (used for JATS output) is an _ElementTree subclass,
+        # not a plain element. Indentation must be skipped rather than crashing.
+        tree = etree.ElementTree(etree.fromstring(b'<article>1</article>'))
+        filename = str(tmp_path / 'output.xml')
+        serialize_xml_to_file(tree, filename, pretty_print=True)
+        assert Path(filename).read_bytes() == b'<article>1</article>'
+
     def test_should_not_indent_when_pretty_print_disabled(
         self, tmp_path: Path
     ):

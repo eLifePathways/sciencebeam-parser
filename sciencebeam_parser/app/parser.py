@@ -183,7 +183,11 @@ def serialize_xml_to_file(
     filename: str,
     pretty_print: bool = False
 ):
-    if pretty_print:
+    # _XSLTResultTree (JATS) is an _ElementTree subclass; skip for those
+    is_element_tree = isinstance(
+        xml_root, etree._ElementTree  # pylint: disable=protected-access
+    )
+    if pretty_print and not is_element_tree:
         _indent_tei(xml_root)
     get_xml_tree(xml_root).write(
         filename,
