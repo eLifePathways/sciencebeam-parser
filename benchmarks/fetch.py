@@ -12,6 +12,18 @@ from huggingface_hub import hf_hub_download
 LOGGER = logging.getLogger(__name__)
 
 
+def _sample_indices(n_total: int, n: int, seed: int) -> set:
+    """Return a deterministic set of n indices from [0, n_total).
+
+    Smaller n always produces a subset of larger n with the same seed,
+    so smoke ⊂ small ⊂ medium ⊂ large ⊂ full for each corpus.
+    """
+    rng = np.random.default_rng(seed)
+    all_indices = np.arange(n_total)
+    rng.shuffle(all_indices)
+    return set(int(i) for i in all_indices[:n])
+
+
 def _get_corpus_filename_and_id_column(entry: Any) -> Tuple[str, str]:
     if isinstance(entry, dict):
         return entry["file"], entry.get("id_column", "id")
@@ -65,8 +77,7 @@ def fetch_data(  # pylint: disable=too-many-locals
         pf = pq.ParquetFile(parquet_path)
         all_ids = pf.read(columns=[id_column]).column(id_column).to_pylist()
         n = min(sample_sizes[corpus], len(all_ids))
-        rng = np.random.default_rng(seed)
-        picked = set(int(i) for i in rng.choice(len(all_ids), size=n, replace=False))
+        picked = _sample_indices(len(all_ids), n, seed)
 
         corpus_dir = data_dir / split / corpus
         corpus_dir.mkdir(parents=True, exist_ok=True)
