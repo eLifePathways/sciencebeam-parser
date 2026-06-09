@@ -138,6 +138,33 @@ class TestAltoParser:
         )
         assert page.meta.page_number == 11
 
+    def test_should_clamp_negative_token_dimensions_to_zero(self):
+        page = AltoParser().parse_page(
+            ALTO_E.Page(
+                ALTO_E.PrintSpace(
+                    ALTO_E.TextBlock(
+                        ALTO_E.TextLine(
+                            ALTO_E.String(
+                                CONTENT=TOKEN_1,
+                                STYLEREFS=FONT_ID_1,
+                                HPOS='253.44',
+                                VPOS='-94923152',
+                                WIDTH='61.65',
+                                HEIGHT='-48132729'
+                            )
+                        )
+                    )
+                )
+            ),
+            page_index=0
+        )
+        tokens = page.blocks[0].lines[0].tokens
+        assert len(tokens) == 1
+        coords = tokens[0].coordinates
+        assert coords is not None
+        assert coords.width == 61.65
+        assert coords.height == 0.0
+
 
 class TestParseAltoRoot:
     def test_should_parse_simple_document(self):

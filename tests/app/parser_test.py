@@ -161,6 +161,7 @@ class TestSerializeXmlToFile:
     def test_should_preserve_mixed_content_text_when_pretty_print(
         self, tmp_path: Path
     ):
+        # p.text and ref.tail are non-empty, so etree guards protect them
         root = etree.fromstring(
             b'<TEI><p>some text <ref>1</ref> more text</p></TEI>'
         )
@@ -169,6 +170,33 @@ class TestSerializeXmlToFile:
         content = Path(filename).read_text(encoding='utf-8')
         assert 'some text ' in content
         assert ' more text' in content
+
+    def test_should_not_insert_whitespace_between_inline_sibling_elements(
+        self, tmp_path: Path
+    ):
+        # title has no direct text; all content is in <hi> children whose
+        # tails are None. Naively indenting would insert newlines between
+        # the <hi> siblings, corrupting the concatenated title text.
+        root = etree.fromstring(
+            b'<TEI><teiHeader><titleStmt>'
+            b'<title><hi>Part 1</hi><hi>Part 2</hi></title>'
+            b'</titleStmt></teiHeader></TEI>'
+        )
+        filename = str(tmp_path / 'output.xml')
+        serialize_xml_to_file(root, filename, pretty_print=True)
+        content = Path(filename).read_text(encoding='utf-8')
+        assert '\n' in content  # structural indentation is still present
+        assert '<hi>Part 1</hi><hi>Part 2</hi>' in content  # siblings stay adjacent
+
+    def test_should_not_crash_when_xml_root_is_element_tree(
+        self, tmp_path: Path
+    ):
+        # _XSLTResultTree (used for JATS output) is an _ElementTree subclass,
+        # not a plain element. Indentation must be skipped rather than crashing.
+        tree = etree.ElementTree(etree.fromstring(b'<article>1</article>'))
+        filename = str(tmp_path / 'output.xml')
+        serialize_xml_to_file(tree, filename, pretty_print=True)
+        assert Path(filename).read_bytes() == b'<article>1</article>'
 
     def test_should_not_indent_when_pretty_print_disabled(
         self, tmp_path: Path

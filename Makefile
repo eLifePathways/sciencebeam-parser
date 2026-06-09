@@ -446,6 +446,39 @@ dev-diff-feature-override: .require-COMPARE_DOC_ID .require-OVERRIDE
 		--override="$(OVERRIDE)"
 
 
+SWAP_FEATURES ?=
+
+dev-diff-feature-swap: .require-COMPARE_DOC_ID
+	$(PYTHON) scripts/diff_feature_swap.py \
+		--data=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
+		--alt-data=$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data \
+		--feature-names=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).feature_names.json \
+		--model=$(COMPARE_MODEL) \
+		$(if $(SWAP_FEATURES),--swap-features=$(SWAP_FEATURES)) \
+		--output=$(COMPARE_DOC_DIR)/$(COMPARE_MODEL).feature_swap.txt
+	@echo "output written to $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).feature_swap.txt"
+
+dev-find-important-features: .require-COMPARE_DOC_ID
+	$(PYTHON) scripts/diff_feature_swap.py \
+		--data=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
+		--alt-data=$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data \
+		--feature-names=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).feature_names.json \
+		--model=$(COMPARE_MODEL) \
+		--find-important \
+		--output=$(COMPARE_DOC_DIR)/$(COMPARE_MODEL).find_important.txt
+	@echo "output written to $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).find_important.txt"
+
+dev-binary-search-features: .require-COMPARE_DOC_ID
+	$(PYTHON) scripts/diff_feature_swap.py \
+		--data=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data \
+		--alt-data=$(COMPARE_DOC_DIR)/grobid/$(COMPARE_MODEL).data \
+		--feature-names=$(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).feature_names.json \
+		--model=$(COMPARE_MODEL) \
+		--binary-search \
+		--output=$(COMPARE_DOC_DIR)/$(COMPARE_MODEL).binary_search.txt
+	@echo "output written to $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).binary_search.txt"
+
+
 ci-lint:
 	$(MAKE) DOCKER_COMPOSE="$(DOCKER_COMPOSE_CI)" docker-lint
 

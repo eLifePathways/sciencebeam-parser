@@ -258,6 +258,38 @@ class TestGetTokenFontSizeFeature:
             ))
         ) == 'HIGHERFONT'
 
+    def test_should_return_samefontsize_for_sub_integer_float_decrease(self):
+        # GROBID uses (int) cast; 9.96 and 9.5 both truncate to 9 → SAMEFONTSIZE
+        assert get_token_font_size_feature(
+            previous_token=LayoutToken('', font=LayoutFont(
+                font_id='dummy', font_size=9.96
+            )),
+            current_token=LayoutToken('', font=LayoutFont(
+                font_id='dummy', font_size=9.5
+            ))
+        ) == 'SAMEFONTSIZE'
+
+    def test_should_return_samefontsize_for_sub_integer_float_increase(self):
+        assert get_token_font_size_feature(
+            previous_token=LayoutToken('', font=LayoutFont(
+                font_id='dummy', font_size=9.5
+            )),
+            current_token=LayoutToken('', font=LayoutFont(
+                font_id='dummy', font_size=9.96
+            ))
+        ) == 'SAMEFONTSIZE'
+
+    def test_should_return_lowerfont_for_cross_integer_decrease(self):
+        # 9.96 → int 9, 10.5 → int 10: different integers → LOWERFONT
+        assert get_token_font_size_feature(
+            previous_token=LayoutToken('', font=LayoutFont(
+                font_id='dummy', font_size=10.5
+            )),
+            current_token=LayoutToken('', font=LayoutFont(
+                font_id='dummy', font_size=9.96
+            ))
+        ) == 'LOWERFONT'
+
 
 class TestGetDigitFeature:
     def test_should_return_nodigit(self):
