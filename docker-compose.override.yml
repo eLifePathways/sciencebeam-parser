@@ -12,7 +12,6 @@ services:
       - path: .env.local
         required: false
     environment:
-      - HF_TOKEN
       - BENCH_LOCAL_PARQUET_DIR
     volumes:
       - ./benchmarks:/opt/sciencebeam_parser/benchmarks
