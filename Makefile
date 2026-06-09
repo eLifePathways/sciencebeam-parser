@@ -309,20 +309,6 @@ docker-benchmark-compare:
 docker-benchmark: docker-benchmark-predict docker-benchmark-score
 
 
-# Full local benchmark for docker-only setups: primary parser run (run-a) plus
-# the GROBID baseline (run-b). benchmarks.run_local can't be used in-container
-# (it shells out to the docker CLI), so this orchestrates the working targets:
-# parser up -> run-a -> parser down (free RAM for GROBID) -> run-b. The parser
-# stack is left stopped; compare with docker-show-regressions/improvements.
-docker-benchmark-with-baselines:
-	$(MAKE) docker-start-and-wait-for-api
-	$(MAKE) docker-benchmark
-	$(MAKE) docker-stop
-	$(MAKE) docker-benchmark-grobid-baseline
-	@echo "Done: run-a (parser) + run-b (GROBID baseline) generated."
-	@echo "Compare: make docker-show-regressions SHOW_FIELD=title SHOW_METHOD=edit_sim"
-
-
 # Generate the GROBID baseline run (run-b for show-regressions/improvements).
 # Starts GROBID via host docker, then predicts + scores in the dev container
 # pointing at host.docker.internal, writing to the path SHOW_RUN_B expects.
@@ -346,6 +332,20 @@ docker-benchmark-grobid-baseline:
 		dev-benchmark-score
 	-docker rm -f $(GROBID_CONTAINER_NAME)
 	@echo "GROBID baseline written to $(GROBID_BASELINE_RUN)"
+
+
+# Full local benchmark for docker-only setups: primary parser run (run-a) plus
+# the GROBID baseline (run-b). benchmarks.run_local can't be used in-container
+# (it shells out to the docker CLI), so this orchestrates the working targets:
+# parser up -> run-a -> parser down (free RAM for GROBID) -> run-b. The parser
+# stack is left stopped; compare with docker-show-regressions/improvements.
+docker-benchmark-with-baselines:
+	$(MAKE) docker-start-and-wait-for-api
+	$(MAKE) docker-benchmark
+	$(MAKE) docker-stop
+	$(MAKE) docker-benchmark-grobid-baseline
+	@echo "Done: run-a (parser) + run-b (GROBID baseline) generated."
+	@echo "Compare: make docker-show-regressions SHOW_FIELD=title SHOW_METHOD=edit_sim"
 
 
 # Optional: to enrich cases with pdfalto output, pass
