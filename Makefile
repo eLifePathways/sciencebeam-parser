@@ -53,6 +53,9 @@ GROBID_WAIT_RETRIES ?= 120
 GROBID_WAIT_INTERVAL ?= 5
 GROBID_BASELINE_RUN ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/$(BENCHMARK_SPLIT)
 DOCKER_HOST_GROBID_URL ?= http://host.docker.internal:$(GROBID_PORT)
+# Where benchmarks.run_local writes the baseline (note the 'default' profile segment,
+# unlike GROBID_BASELINE_RUN); used by the hybrid target.
+GROBID_BASELINE_RUN_LOCAL ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/default/$(BENCHMARK_SPLIT)
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 
 SHOW_FIELD ?=
@@ -94,6 +97,17 @@ dev-install:
 
 
 dev-venv: venv-create dev-install
+
+
+# Lightweight host venv for running the benchmark scripts (incl. benchmarks.run_local)
+# directly on the host. Installs only the benchmark group + light core deps, NOT the
+# cpu/delft/cv extras (torch/TensorFlow), so it works where dev-install can't (e.g. Mac
+# Intel). run_local orchestrates the GROBID/parser containers via the host docker CLI.
+benchmark-install:
+	$(UV) sync --active --frozen --no-dev --group benchmark
+
+
+benchmark-venv: venv-create benchmark-install
 
 
 dev-flake8:
@@ -346,6 +360,24 @@ docker-benchmark-with-baselines:
 	$(MAKE) docker-benchmark-grobid-baseline
 	@echo "Done: run-a (parser) + run-b (GROBID baseline) generated."
 	@echo "Compare: make docker-show-regressions SHOW_FIELD=title SHOW_METHOD=edit_sim"
+
+
+# Hybrid: run-a (primary) from the local containerized parser via docker-benchmark,
+# run-b (GROBID baseline) from benchmarks.run_local on the host (--baseline-only),
+# then build the comparison table from the two summaries. Needs the host benchmark
+# venv (make benchmark-venv). Order keeps memory bounded: parser up -> run-a ->
+# parser down -> GROBID (run_local) while parser is stopped.
+docker-benchmark-hybrid:
+	$(MAKE) docker-start-and-wait-for-api
+	$(MAKE) docker-benchmark
+	$(MAKE) docker-stop
+	$(MAKE) dev-benchmark-with-baselines ARGS=--baseline-only
+	$(PYTHON) -m benchmarks.report \
+		--summary "grobid $(GROBID_BASELINE_VERSION)=$(GROBID_BASELINE_RUN_LOCAL)/summary.json" \
+		--summary "local=$(BENCHMARK_RUN)/summary.json" \
+		--out $(BENCHMARK_RUN)/comparison.md
+	@echo "Hybrid comparison written to $(BENCHMARK_RUN)/comparison.md"
+	@echo "Per-doc debug: make dev-show-regressions SHOW_FIELD=<field> SHOW_RUN_B=$(GROBID_BASELINE_RUN_LOCAL)"
 
 
 # Optional: to enrich cases with pdfalto output, pass
