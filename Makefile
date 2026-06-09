@@ -40,21 +40,10 @@ BENCHMARK_MODE ?= smoke
 BENCHMARK_SPLIT ?= train
 BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
 
-# GROBID baseline: GROBID runs via host docker; predict/score run in the dev
-# container and reach it at host.docker.internal. Override GROBID_IMAGE if your
-# team publishes a different tag. GROBID_BASELINE_RUN must match SHOW_RUN_B.
+# GROBID baseline version and the path benchmarks.run_local writes it to (note the
+# 'default' profile segment). The baseline (run-b) is produced by run_local on the
+# host; see docker-benchmark-with-baselines.
 GROBID_BASELINE_VERSION ?= 0.9.0-crf
-GROBID_IMAGE ?= grobid/grobid:$(GROBID_BASELINE_VERSION)
-GROBID_PORT ?= 8070
-GROBID_CONTAINER_NAME ?= grobid-baseline
-# GROBID loads its CRF models on startup; on constrained Docker hosts this can
-# take several minutes. Wait = RETRIES * INTERVAL seconds (default 10 min).
-GROBID_WAIT_RETRIES ?= 120
-GROBID_WAIT_INTERVAL ?= 5
-GROBID_BASELINE_RUN ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/$(BENCHMARK_SPLIT)
-DOCKER_HOST_GROBID_URL ?= http://host.docker.internal:$(GROBID_PORT)
-# Where benchmarks.run_local writes the baseline (note the 'default' profile segment,
-# unlike GROBID_BASELINE_RUN); used by the hybrid target.
 GROBID_BASELINE_RUN_LOCAL ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/default/$(BENCHMARK_SPLIT)
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 
@@ -323,51 +312,12 @@ docker-benchmark-compare:
 docker-benchmark: docker-benchmark-predict docker-benchmark-score
 
 
-# Generate the GROBID baseline run (run-b for show-regressions/improvements).
-# Starts GROBID via host docker, then predicts + scores in the dev container
-# pointing at host.docker.internal, writing to the path SHOW_RUN_B expects.
-docker-benchmark-grobid-baseline:
-	-docker rm -f $(GROBID_CONTAINER_NAME)
-	docker run -d --name $(GROBID_CONTAINER_NAME) -p $(GROBID_PORT):8070 $(GROBID_IMAGE)
-	@echo "Waiting for GROBID at http://localhost:$(GROBID_PORT)/api/isalive ..."
-	@for i in $$(seq 1 $(GROBID_WAIT_RETRIES)); do \
-		curl -sf "http://localhost:$(GROBID_PORT)/api/isalive" >/dev/null && { echo "GROBID is up"; break; }; \
-		echo "  waiting ($$i/$(GROBID_WAIT_RETRIES))"; sleep $(GROBID_WAIT_INTERVAL); \
-		if [ $$i -eq $(GROBID_WAIT_RETRIES) ]; then echo "GROBID did not become ready"; docker rm -f $(GROBID_CONTAINER_NAME); exit 1; fi; \
-	done
-	$(MAKE) \
-		PYTHON="$(DOCKER_DEV_PYTHON)" \
-		BENCHMARK_PARSER_URL="$(DOCKER_HOST_GROBID_URL)" \
-		BENCHMARK_RUN="$(GROBID_BASELINE_RUN)" \
-		dev-benchmark-predict
-	$(MAKE) \
-		PYTHON="$(DOCKER_DEV_PYTHON)" \
-		BENCHMARK_RUN="$(GROBID_BASELINE_RUN)" \
-		dev-benchmark-score
-	-docker rm -f $(GROBID_CONTAINER_NAME)
-	@echo "GROBID baseline written to $(GROBID_BASELINE_RUN)"
-
-
-# Full local benchmark for docker-only setups: primary parser run (run-a) plus
-# the GROBID baseline (run-b). benchmarks.run_local can't be used in-container
-# (it shells out to the docker CLI), so this orchestrates the working targets:
-# parser up -> run-a -> parser down (free RAM for GROBID) -> run-b. The parser
-# stack is left stopped; compare with docker-show-regressions/improvements.
+# Full local benchmark: run-a (primary) from the local containerized parser via
+# docker-benchmark, run-b (GROBID baseline) from benchmarks.run_local on the host
+# (--baseline-only), then build the comparison table from the two summaries.
+# Requires the host benchmark venv (make benchmark-venv). The order keeps memory
+# bounded on small Docker hosts: parser up -> run-a -> parser down -> GROBID.
 docker-benchmark-with-baselines:
-	$(MAKE) docker-start-and-wait-for-api
-	$(MAKE) docker-benchmark
-	$(MAKE) docker-stop
-	$(MAKE) docker-benchmark-grobid-baseline
-	@echo "Done: run-a (parser) + run-b (GROBID baseline) generated."
-	@echo "Compare: make docker-show-regressions SHOW_FIELD=title SHOW_METHOD=edit_sim"
-
-
-# Hybrid: run-a (primary) from the local containerized parser via docker-benchmark,
-# run-b (GROBID baseline) from benchmarks.run_local on the host (--baseline-only),
-# then build the comparison table from the two summaries. Needs the host benchmark
-# venv (make benchmark-venv). Order keeps memory bounded: parser up -> run-a ->
-# parser down -> GROBID (run_local) while parser is stopped.
-docker-benchmark-hybrid:
 	$(MAKE) docker-start-and-wait-for-api
 	$(MAKE) docker-benchmark
 	$(MAKE) docker-stop
@@ -376,7 +326,7 @@ docker-benchmark-hybrid:
 		--summary "grobid $(GROBID_BASELINE_VERSION)=$(GROBID_BASELINE_RUN_LOCAL)/summary.json" \
 		--summary "local=$(BENCHMARK_RUN)/summary.json" \
 		--out $(BENCHMARK_RUN)/comparison.md
-	@echo "Hybrid comparison written to $(BENCHMARK_RUN)/comparison.md"
+	@echo "Comparison written to $(BENCHMARK_RUN)/comparison.md"
 	@echo "Per-doc debug: make dev-show-regressions SHOW_FIELD=<field> SHOW_RUN_B=$(GROBID_BASELINE_RUN_LOCAL)"
 
 
