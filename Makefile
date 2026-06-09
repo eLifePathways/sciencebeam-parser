@@ -13,6 +13,10 @@ NOT_SLOW_PYTEST_ARGS = -m 'not slow'
 
 SCIENCEBEAM_PARSER_PORT = 8080
 
+# Seconds to wait for the parser API on startup. Cold starts re-download pdfalto
+# + GROBID lexicons, so allow several minutes.
+API_WAIT_TIMEOUT ?= 300
+
 PDFALTO_CONVERT_API_URL = http://localhost:$(SCIENCEBEAM_PARSER_PORT)/api/pdfalto
 EXAMPLE_PDF_DOCUMENT = test-data/minimal-example.pdf
 EXAMPLE_DOCX_DOCUMENT = test-data/minimal-office-open.docx
@@ -347,7 +351,7 @@ docker-show-api-logs-and-fail:
 docker-wait-for-api:
 	$(DOCKER_COMPOSE) run --rm wait-for-it \
 		"$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070" \
-		--timeout=120 \
+		--timeout=$(API_WAIT_TIMEOUT) \
 		--strict \
 		-- echo "ScienceBeam Parser API is up" \
 		|| $(MAKE) docker-show-api-logs-and-fail
