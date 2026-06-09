@@ -302,6 +302,16 @@ docker-benchmark-with-baselines:
 		dev-benchmark-with-baselines
 
 
+# Optional: to enrich cases with pdfalto output, pass
+# SHOW_PARSER_URL=$(DOCKER_SCIENCEBEAM_PARSER_URL) (parser must be running).
+docker-show-regressions:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-show-regressions
+
+
+docker-show-improvements:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-show-improvements
+
+
 docker-show-api-logs-and-fail:
 	$(DOCKER_COMPOSE) logs "$(DOCKER_SCIENCEBEAM_PARSER_HOST)" && exit 1
 
