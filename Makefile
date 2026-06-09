@@ -309,11 +309,18 @@ docker-benchmark-compare:
 docker-benchmark: docker-benchmark-predict docker-benchmark-score
 
 
+# Full local benchmark for docker-only setups: primary parser run (run-a) plus
+# the GROBID baseline (run-b). benchmarks.run_local can't be used in-container
+# (it shells out to the docker CLI), so this orchestrates the working targets:
+# parser up -> run-a -> parser down (free RAM for GROBID) -> run-b. The parser
+# stack is left stopped; compare with docker-show-regressions/improvements.
 docker-benchmark-with-baselines:
-	$(MAKE) \
-		PYTHON="$(DOCKER_DEV_PYTHON)" \
-		BENCHMARK_PARSER_URL="$(DOCKER_SCIENCEBEAM_PARSER_URL)" \
-		dev-benchmark-with-baselines
+	$(MAKE) docker-start-and-wait-for-api
+	$(MAKE) docker-benchmark
+	$(MAKE) docker-stop
+	$(MAKE) docker-benchmark-grobid-baseline
+	@echo "Done: run-a (parser) + run-b (GROBID baseline) generated."
+	@echo "Compare: make docker-show-regressions SHOW_FIELD=title SHOW_METHOD=edit_sim"
 
 
 # Generate the GROBID baseline run (run-b for show-regressions/improvements).
