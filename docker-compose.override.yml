@@ -4,3 +4,16 @@ services:
       - "${SCIENCEBEAM_PARSER_PORT}:8070"
     volumes:
       - ./sciencebeam_parser:/opt/sciencebeam_parser/sciencebeam_parser
+
+  sciencebeam-parser-dev:
+    environment:
+      # Passed through from the shell (e.g. `export HF_TOKEN=...`); do not commit
+      # the token to the tracked .env. Needed to fetch the gated benchmark dataset.
+      - HF_TOKEN
+      - BENCH_LOCAL_PARQUET_DIR
+    volumes:
+      - ./benchmarks:/opt/sciencebeam_parser/benchmarks
+      - huggingface-cache:/root/.cache/huggingface
+
+volumes:
+  huggingface-cache:

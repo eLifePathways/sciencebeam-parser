@@ -25,8 +25,9 @@ SCIENCEBEAM_DELFT_STATEFUL = false
 
 
 DOCKER_SCIENCEBEAM_PARSER_HOST = sciencebeam-parser
-DOCKER_PDFALTO_CONVERT_API_URL = http://$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070/api/pdfalto
-DOCKER_CONVERT_API_URL = http://$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070/api/convert
+DOCKER_SCIENCEBEAM_PARSER_URL = http://$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070
+DOCKER_PDFALTO_CONVERT_API_URL = $(DOCKER_SCIENCEBEAM_PARSER_URL)/api/pdfalto
+DOCKER_CONVERT_API_URL = $(DOCKER_SCIENCEBEAM_PARSER_URL)/api/convert
 DOCKER_DEV_RUN = $(DOCKER_COMPOSE) run --rm sciencebeam-parser-dev
 DOCKER_DEV_PYTHON = $(DOCKER_DEV_RUN) python
 
@@ -276,6 +277,31 @@ docker-pytest:
 	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-pytest
 
 
+docker-benchmark-predict:
+	$(MAKE) \
+		PYTHON="$(DOCKER_DEV_PYTHON)" \
+		BENCHMARK_PARSER_URL="$(DOCKER_SCIENCEBEAM_PARSER_URL)" \
+		dev-benchmark-predict
+
+
+docker-benchmark-score:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-score
+
+
+docker-benchmark-compare:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-compare
+
+
+docker-benchmark: docker-benchmark-predict docker-benchmark-score
+
+
+docker-benchmark-with-baselines:
+	$(MAKE) \
+		PYTHON="$(DOCKER_DEV_PYTHON)" \
+		BENCHMARK_PARSER_URL="$(DOCKER_SCIENCEBEAM_PARSER_URL)" \
+		dev-benchmark-with-baselines
+
+
 docker-show-api-logs-and-fail:
 	$(DOCKER_COMPOSE) logs "$(DOCKER_SCIENCEBEAM_PARSER_HOST)" && exit 1
 
@@ -283,7 +309,7 @@ docker-show-api-logs-and-fail:
 docker-wait-for-api:
 	$(DOCKER_COMPOSE) run --rm wait-for-it \
 		"$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070" \
-		--timeout=30 \
+		--timeout=120 \
 		--strict \
 		-- echo "ScienceBeam Parser API is up" \
 		|| $(MAKE) docker-show-api-logs-and-fail
