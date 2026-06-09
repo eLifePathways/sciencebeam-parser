@@ -170,9 +170,13 @@ def get_token_font_size_feature(
     current_font_size = current_token.font.font_size
     if not previous_font_size or not current_font_size:
         return 'HIGHERFONT'
-    if previous_font_size < current_font_size:
+    # GROBID truncates font sizes to int before comparison ((int) token.getFontSize()),
+    # absorbing sub-point float noise from pdfalto.
+    prev_int = int(previous_font_size)
+    curr_int = int(current_font_size)
+    if prev_int < curr_int:
         return 'HIGHERFONT'
-    if previous_font_size > current_font_size:
+    if prev_int > curr_int:
         return 'LOWERFONT'
     return 'SAMEFONTSIZE'
 
