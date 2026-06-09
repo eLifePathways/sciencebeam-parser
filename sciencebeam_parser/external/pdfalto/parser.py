@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, List
 
 from lxml import etree
@@ -16,6 +17,8 @@ from sciencebeam_parser.document.layout_document import (
     EMPTY_FONT
 )
 
+
+LOGGER = logging.getLogger(__name__)
 
 ALTO_NS = 'http://www.loc.gov/standards/alto/ns-v3#'
 ALTO_NS_MAP = {
@@ -36,11 +39,20 @@ class AltoParser:
         node: etree.ElementBase,
         page_number: int
     ) -> LayoutPageCoordinates:
+        width = float(node.attrib.get('WIDTH', 0))
+        height = float(node.attrib.get('HEIGHT', 0))
+        if width < 0 or height < 0:
+            LOGGER.warning(
+                'Clamping negative dimensions to zero: width=%r, height=%r, attrib=%r',
+                width, height, dict(node.attrib)
+            )
+            width = max(0.0, width)
+            height = max(0.0, height)
         return LayoutPageCoordinates(
             x=float(node.attrib.get('HPOS', 0)),
             y=float(node.attrib.get('VPOS', 0)),
-            width=float(node.attrib.get('WIDTH', 0)),
-            height=float(node.attrib.get('HEIGHT', 0)),
+            width=width,
+            height=height,
             page_number=page_number
         )
 
