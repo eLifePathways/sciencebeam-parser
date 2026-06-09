@@ -92,6 +92,11 @@ sampling:
     scielo_mx: 112
     scielo_preprints-jats: 1000
 
+parser:
+  # Per-document conversion timeout (seconds). Large PDFs can exceed the
+  # default of 60s; a timeout is recorded as an error and the run continues.
+  timeout_seconds: 300
+
 seeds:
   sample: 42
 

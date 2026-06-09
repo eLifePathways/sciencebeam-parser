@@ -13,6 +13,10 @@ NOT_SLOW_PYTEST_ARGS = -m 'not slow'
 
 SCIENCEBEAM_PARSER_PORT = 8080
 
+# Seconds to wait for the parser API on startup. Cold starts re-download pdfalto
+# + GROBID lexicons, so allow several minutes.
+API_WAIT_TIMEOUT ?= 300
+
 PDFALTO_CONVERT_API_URL = http://localhost:$(SCIENCEBEAM_PARSER_PORT)/api/pdfalto
 EXAMPLE_PDF_DOCUMENT = test-data/minimal-example.pdf
 EXAMPLE_DOCX_DOCUMENT = test-data/minimal-office-open.docx
@@ -25,8 +29,9 @@ SCIENCEBEAM_DELFT_STATEFUL = false
 
 
 DOCKER_SCIENCEBEAM_PARSER_HOST = sciencebeam-parser
-DOCKER_PDFALTO_CONVERT_API_URL = http://$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070/api/pdfalto
-DOCKER_CONVERT_API_URL = http://$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070/api/convert
+DOCKER_SCIENCEBEAM_PARSER_URL = http://$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070
+DOCKER_PDFALTO_CONVERT_API_URL = $(DOCKER_SCIENCEBEAM_PARSER_URL)/api/pdfalto
+DOCKER_CONVERT_API_URL = $(DOCKER_SCIENCEBEAM_PARSER_URL)/api/convert
 DOCKER_DEV_RUN = $(DOCKER_COMPOSE) run --rm sciencebeam-parser-dev
 DOCKER_DEV_PYTHON = $(DOCKER_DEV_RUN) python
 
@@ -38,6 +43,12 @@ BENCHMARK_CONFIG ?= benchmarks/eval.yml
 BENCHMARK_MODE ?= smoke
 BENCHMARK_SPLIT ?= train
 BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+
+# GROBID baseline version and the path benchmarks.run_local writes it to (note the
+# 'default' profile segment). The baseline (run-b) is produced by run_local on the
+# host; see docker-benchmark-with-baselines.
+GROBID_BASELINE_VERSION ?= 0.9.0-crf
+GROBID_BASELINE_RUN_LOCAL ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/default/$(BENCHMARK_SPLIT)
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 
 SHOW_FIELD ?=
@@ -45,7 +56,7 @@ SHOW_METHOD ?= edit_sim
 SHOW_CORPUS ?= biorxiv
 SHOW_LIMIT ?= 10
 SHOW_RUN_A ?= $(BENCHMARK_RUN)
-SHOW_RUN_B ?= $(shell python3 -c "import yaml; b=yaml.safe_load(open('benchmarks/eval.yml')).get('baselines',[]); print('benchmarks/runs/baselines/'+b[0]['tool']+'/'+b[0]['version']+'/$(BENCHMARK_SPLIT)') if b else print('')" 2>/dev/null)
+SHOW_RUN_B ?= $(shell python3 -c "import yaml; b=yaml.safe_load(open('benchmarks/eval.yml')).get('baselines',[]); print('benchmarks/runs/baselines/'+b[0]['tool']+'/'+b[0]['version']+'/'+(b[0].get('profile') or 'default')+'/$(BENCHMARK_SPLIT)') if b else print('')" 2>/dev/null)
 SHOW_PARSER_URL ?=
 
 COMPARE_MODEL ?= segmentation
@@ -79,6 +90,17 @@ dev-install:
 
 
 dev-venv: venv-create dev-install
+
+
+# Lightweight host venv for running the benchmark scripts (incl. benchmarks.run_local)
+# directly on the host. Installs only the benchmark group + light core deps, NOT the
+# cpu/delft/cv extras (torch/TensorFlow), so it works where dev-install can't (e.g. Mac
+# Intel). run_local orchestrates the GROBID/parser containers via the host docker CLI.
+benchmark-install:
+	$(UV) sync --active --frozen --no-dev --group benchmark
+
+
+benchmark-venv: venv-create benchmark-install
 
 
 dev-flake8:
@@ -276,6 +298,52 @@ docker-pytest:
 	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-pytest
 
 
+docker-benchmark-predict:
+	$(MAKE) \
+		PYTHON="$(DOCKER_DEV_PYTHON)" \
+		BENCHMARK_PARSER_URL="$(DOCKER_SCIENCEBEAM_PARSER_URL)" \
+		dev-benchmark-predict
+
+
+docker-benchmark-score:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-score
+
+
+docker-benchmark-compare:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-compare
+
+
+docker-benchmark: docker-benchmark-predict docker-benchmark-score
+
+
+# Full local benchmark: run-a (primary) from the local containerized parser via
+# docker-benchmark, run-b (GROBID baseline) from benchmarks.run_local on the host
+# (--baseline-only), then build the comparison table from the two summaries.
+# Requires the host benchmark venv (make benchmark-venv). The order keeps memory
+# bounded on small Docker hosts: parser up -> run-a -> parser down -> GROBID.
+docker-benchmark-with-baselines:
+	$(MAKE) docker-start-and-wait-for-api
+	$(MAKE) docker-benchmark
+	$(MAKE) docker-stop
+	$(MAKE) dev-benchmark-with-baselines ARGS=--baseline-only
+	$(PYTHON) -m benchmarks.report \
+		--summary "grobid $(GROBID_BASELINE_VERSION)=$(GROBID_BASELINE_RUN_LOCAL)/summary.json" \
+		--summary "local=$(BENCHMARK_RUN)/summary.json" \
+		--out $(BENCHMARK_RUN)/comparison.md
+	@echo "Comparison written to $(BENCHMARK_RUN)/comparison.md"
+	@echo "Per-doc debug: make dev-show-regressions SHOW_FIELD=<field> SHOW_RUN_B=$(GROBID_BASELINE_RUN_LOCAL)"
+
+
+# Optional: to enrich cases with pdfalto output, pass
+# SHOW_PARSER_URL=$(DOCKER_SCIENCEBEAM_PARSER_URL) (parser must be running).
+docker-show-regressions:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-show-regressions
+
+
+docker-show-improvements:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-show-improvements
+
+
 docker-show-api-logs-and-fail:
 	$(DOCKER_COMPOSE) logs "$(DOCKER_SCIENCEBEAM_PARSER_HOST)" && exit 1
 
@@ -283,7 +351,7 @@ docker-show-api-logs-and-fail:
 docker-wait-for-api:
 	$(DOCKER_COMPOSE) run --rm wait-for-it \
 		"$(DOCKER_SCIENCEBEAM_PARSER_HOST):8070" \
-		--timeout=30 \
+		--timeout=$(API_WAIT_TIMEOUT) \
 		--strict \
 		-- echo "ScienceBeam Parser API is up" \
 		|| $(MAKE) docker-show-api-logs-and-fail

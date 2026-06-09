@@ -4,3 +4,18 @@ services:
       - "${SCIENCEBEAM_PARSER_PORT}:8070"
     volumes:
       - ./sciencebeam_parser:/opt/sciencebeam_parser/sciencebeam_parser
+
+  sciencebeam-parser-dev:
+    # Secrets (e.g. HF_TOKEN) live in .env.local (gitignored) so they are set
+    # once and never committed. A shell `export HF_TOKEN=...` still overrides it.
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      - BENCH_LOCAL_PARQUET_DIR
+    volumes:
+      - ./benchmarks:/opt/sciencebeam_parser/benchmarks
+      - huggingface-cache:/root/.cache/huggingface
+
+volumes:
+  huggingface-cache:

@@ -99,6 +99,7 @@ COPY delft ./delft
 
 COPY tests ./tests
 COPY test-data ./test-data
+COPY benchmarks ./benchmarks
 COPY scripts/dev ./scripts/dev
 COPY doc ./doc
 COPY .flake8 .pylintrc README.md ./

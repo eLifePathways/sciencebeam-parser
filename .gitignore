@@ -11,3 +11,5 @@ grobid-home
 
 *.pyc
 *.zip
+
+.env.local
