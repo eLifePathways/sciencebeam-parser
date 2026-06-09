@@ -139,13 +139,52 @@ def get_xml_tree(xml_root: etree.ElementBase) -> etree._ElementTree:
     return etree.ElementTree(xml_root)
 
 
+_TEI_BLOCK_ELEMENT_NAMES = frozenset({
+    'TEI', 'teiHeader', 'fileDesc', 'titleStmt', 'publicationStmt',
+    'profileDesc', 'sourceDesc', 'abstract',
+    'text', 'body', 'back', 'front',
+    'div', 'listBibl', 'biblStruct', 'analytic', 'monogr',
+    'figure', 'table', 'row',
+})
+
+
+def _indent_tei_element(
+    element: etree.ElementBase,
+    space: str,
+    level: int
+) -> None:
+    # Only add indentation inside known structural/block TEI elements.
+    # Content elements (title, p, hi, ref, …) are left completely untouched
+    # so their text content can never be corrupted by inserted whitespace.
+    # The tail of a content element is still set by its parent block element,
+    # so it still appears on its own indented line.
+    local_name = etree.QName(element).localname
+    if local_name not in _TEI_BLOCK_ELEMENT_NAMES:
+        return
+    children = list(element)
+    if not children:
+        return
+    indent = '\n' + level * space
+    child_indent = indent + space
+    if not (element.text and element.text.strip()):
+        element.text = child_indent
+    for i, child in enumerate(children):
+        _indent_tei_element(child, space, level + 1)
+        if not (child.tail and child.tail.strip()):
+            child.tail = child_indent if i < len(children) - 1 else indent
+
+
+def _indent_tei(root: etree.ElementBase, space: str = '  ') -> None:
+    _indent_tei_element(root, space=space, level=0)
+
+
 def serialize_xml_to_file(
     xml_root: etree.ElementBase,
     filename: str,
     pretty_print: bool = False
 ):
     if pretty_print:
-        etree.indent(xml_root, space='  ')
+        _indent_tei(xml_root)
     get_xml_tree(xml_root).write(
         filename,
         encoding='utf-8',
