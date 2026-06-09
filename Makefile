@@ -52,7 +52,7 @@ SHOW_METHOD ?= edit_sim
 SHOW_CORPUS ?= biorxiv
 SHOW_LIMIT ?= 10
 SHOW_RUN_A ?= $(BENCHMARK_RUN)
-SHOW_RUN_B ?= $(shell python3 -c "import yaml; b=yaml.safe_load(open('benchmarks/eval.yml')).get('baselines',[]); print('benchmarks/runs/baselines/'+b[0]['tool']+'/'+b[0]['version']+'/$(BENCHMARK_SPLIT)') if b else print('')" 2>/dev/null)
+SHOW_RUN_B ?= $(shell python3 -c "import yaml; b=yaml.safe_load(open('benchmarks/eval.yml')).get('baselines',[]); print('benchmarks/runs/baselines/'+b[0]['tool']+'/'+b[0]['version']+'/'+(b[0].get('profile') or 'default')+'/$(BENCHMARK_SPLIT)') if b else print('')" 2>/dev/null)
 SHOW_PARSER_URL ?=
 
 COMPARE_MODEL ?= segmentation
