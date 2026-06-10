@@ -44,9 +44,9 @@ BENCHMARK_MODE ?= smoke
 BENCHMARK_SPLIT ?= train
 BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
 
-# GROBID baseline version and the path benchmarks.run_local writes it to (note the
-# 'default' profile segment). The baseline (run-b) is produced by run_local on the
-# host; see docker-benchmark-with-baselines.
+# GROBID baseline version and the path benchmarks.run writes it to (note the
+# 'default' profile segment). The baseline (run-b) is produced by benchmarks.run on
+# the host; see docker-benchmark-with-baselines.
 GROBID_BASELINE_VERSION ?= 0.9.0-crf
 GROBID_BASELINE_RUN_LOCAL ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/default/$(BENCHMARK_SPLIT)
 # GROBID instance for docker-compare-model-data (run on the host at GROBID_URL).
@@ -98,10 +98,10 @@ dev-install:
 dev-venv: venv-create dev-install
 
 
-# Lightweight host venv for running the benchmark scripts (incl. benchmarks.run_local)
+# Lightweight host venv for running the benchmark scripts (incl. benchmarks.run)
 # directly on the host. Installs only the benchmark group + light core deps, NOT the
 # cpu/delft/cv extras (torch/TensorFlow), so it works where dev-install can't (e.g. Mac
-# Intel). run_local orchestrates the GROBID/parser containers via the host docker CLI.
+# Intel). benchmarks.run orchestrates the GROBID/parser containers via the host docker CLI.
 benchmark-install:
 	$(UV) sync --active --frozen --no-dev --group benchmark
 
@@ -261,7 +261,7 @@ dev-show-improvements: .require-SHOW_FIELD
 
 
 dev-benchmark-with-baselines:
-	$(PYTHON) -m benchmarks.run_local \
+	$(PYTHON) -m benchmarks.run \
 		--config $(BENCHMARK_CONFIG) \
 		--mode $(BENCHMARK_MODE) \
 		--split $(BENCHMARK_SPLIT) \
@@ -324,7 +324,7 @@ docker-benchmark: docker-benchmark-predict docker-benchmark-score
 
 
 # Full local benchmark: run-a (primary) from the local containerized parser via
-# docker-benchmark, run-b (GROBID baseline) from benchmarks.run_local on the host
+# docker-benchmark, run-b (GROBID baseline) from benchmarks.run on the host
 # (--baseline-only), then build the comparison table from the two summaries.
 # Requires the host benchmark venv (make benchmark-venv). The order keeps memory
 # bounded on small Docker hosts: parser up -> run-a -> parser down -> GROBID.
