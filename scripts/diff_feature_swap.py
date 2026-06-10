@@ -27,6 +27,7 @@ Usage:
 
 import argparse
 import contextlib
+import difflib
 import json
 import logging
 import sys
@@ -58,14 +59,31 @@ def parts_to_feature_lines(parts_list: List[List[str]]) -> List[str]:
     return [' '.join(parts[:-1]) for parts in parts_list]
 
 
+def align_parts(
+    sbeam_parts: List[List[str]],
+    alt_parts: List[List[str]],
+) -> List[Tuple[int, int]]:
+    """Align sbeam and alt token lists by token text; return list of (si, gi) index pairs."""
+    sbeam_tokens = [p[0] for p in sbeam_parts]
+    alt_tokens = [p[0] for p in alt_parts]
+    matcher = difflib.SequenceMatcher(None, sbeam_tokens, alt_tokens, autojunk=False)
+    pairs = []
+    for opcode, s0, s1, g0, g1 in matcher.get_opcodes():
+        if opcode == 'equal':
+            pairs.extend(zip(range(s0, s1), range(g0, g1)))
+    return pairs
+
+
 def find_differing_features(
     sbeam: List[List[str]],
     alt: List[List[str]],
     feature_names: List[str],
+    aligned_pairs: List[Tuple[int, int]],
 ) -> List[str]:
-    """Return the ordered list of feature names that differ at least once across all tokens."""
+    """Return the ordered list of feature names that differ at least once across aligned tokens."""
     differing: Set[str] = set()
-    for s_parts, a_parts in zip(sbeam, alt):
+    for si, gi in aligned_pairs:
+        s_parts, a_parts = sbeam[si], alt[gi]
         for i, name in enumerate(feature_names):
             if i < len(s_parts) - 1 and i < len(a_parts) - 1:
                 if s_parts[i] != a_parts[i]:
@@ -78,16 +96,18 @@ def apply_swap(
     alt: List[List[str]],
     feature_names: List[str],
     swap_features: List[str],
+    aligned_pairs: List[Tuple[int, int]],
 ) -> List[str]:
-    """Return feature-lines with specified feature columns taken from alt instead of sbeam."""
+    """Return feature-lines with specified feature columns taken from alt for aligned tokens."""
     swap_indices = {feature_names.index(f) for f in swap_features}
-    result = []
-    for s_parts, a_parts in zip(sbeam, alt):
-        merged = list(s_parts)
+    result = [' '.join(parts[:-1]) for parts in sbeam]
+    for si, gi in aligned_pairs:
+        merged = list(sbeam[si])
+        a_parts = alt[gi]
         for i in swap_indices:
             if i < len(a_parts) - 1:
                 merged[i] = a_parts[i]
-        result.append(' '.join(merged[:-1]))  # strip label
+        result[si] = ' '.join(merged[:-1])
     return result
 
 
@@ -129,11 +149,12 @@ def binary_search_features(
     target_changes: Set[Tuple[int, str, str]],
     model,
     baseline: List[str],
+    aligned_pairs: List[Tuple[int, int]],
 ) -> List[str]:
     """Return the smallest subset of `features` that reproduces `target_changes`."""
     if not features:
         return []
-    swapped_lines = apply_swap(sbeam, alt, feature_names, features)
+    swapped_lines = apply_swap(sbeam, alt, feature_names, features, aligned_pairs)
     labels = run_model(model, swapped_lines)
     changes = {
         (i, orig, new)
@@ -152,13 +173,13 @@ def binary_search_features(
 
     # Try each half independently
     left_result = binary_search_features(
-        sbeam, alt, feature_names, left, target_changes, model, baseline
+        sbeam, alt, feature_names, left, target_changes, model, baseline, aligned_pairs
     )
     if left_result:
         return left_result
 
     right_result = binary_search_features(
-        sbeam, alt, feature_names, right, target_changes, model, baseline
+        sbeam, alt, feature_names, right, target_changes, model, baseline, aligned_pairs
     )
     if right_result:
         return right_result
@@ -234,10 +255,17 @@ def _run(args, feature_names):
     sbeam_parts = load_parts(args.data)
     alt_parts = load_parts(args.alt_data)
 
+    aligned_pairs = align_parts(sbeam_parts, alt_parts)
+    sbeam_only = len(sbeam_parts) - len(aligned_pairs)
+    alt_only = len(alt_parts) - len(aligned_pairs)
+
     if len(sbeam_parts) != len(alt_parts):
-        sys.exit(
-            f'Token count mismatch: sbeam has {len(sbeam_parts)} tokens, '
-            f'alt has {len(alt_parts)}'
+        print(
+            f'Note: token count mismatch — sbeam: {len(sbeam_parts)},'
+            f' alt: {len(alt_parts)}.'
+            f' Aligned: {len(aligned_pairs)}'
+            f' (sbeam-only: {sbeam_only}, alt-only: {alt_only}).',
+            file=sys.stderr
         )
 
     config = get_app_config()
@@ -247,7 +275,7 @@ def _run(args, feature_names):
     baseline_lines = parts_to_feature_lines(sbeam_parts)
     baseline_labels = run_model(model, baseline_lines)
 
-    differing = find_differing_features(sbeam_parts, alt_parts, feature_names)
+    differing = find_differing_features(sbeam_parts, alt_parts, feature_names, aligned_pairs)
     print(f'Features that differ between sbeam and alt: {differing}')
 
     # Column label: what does the baseline represent vs the swapped version?
@@ -257,7 +285,7 @@ def _run(args, feature_names):
     if args.find_important:
         print(f'\n--- Individual feature importance (label format: {baseline_label} → {updated_label}) ---')
         for feat in differing:
-            swapped = apply_swap(sbeam_parts, alt_parts, feature_names, [feat])
+            swapped = apply_swap(sbeam_parts, alt_parts, feature_names, [feat], aligned_pairs)
             labels = run_model(model, swapped)
             changed = sum(1 for a, b in zip(baseline_labels, labels) if a != b)
             if changed:
@@ -273,7 +301,7 @@ def _run(args, feature_names):
 
     if args.binary_search:
         print('\n--- Binary search for minimal feature subset ---')
-        all_swapped = apply_swap(sbeam_parts, alt_parts, feature_names, differing)
+        all_swapped = apply_swap(sbeam_parts, alt_parts, feature_names, differing, aligned_pairs)
         all_labels = run_model(model, all_swapped)
         target_changes = {
             (i, orig, new)
@@ -286,11 +314,11 @@ def _run(args, feature_names):
         print(f'Swapping all {len(differing)} features causes {len(target_changes)} label change(s).')
         minimal = binary_search_features(
             sbeam_parts, alt_parts, feature_names, differing,
-            target_changes, model, baseline_labels
+            target_changes, model, baseline_labels, aligned_pairs
         )
         if minimal:
             print(f'Minimal subset found ({len(minimal)} feature(s)): {minimal}')
-            swapped = apply_swap(sbeam_parts, alt_parts, feature_names, minimal)
+            swapped = apply_swap(sbeam_parts, alt_parts, feature_names, minimal, aligned_pairs)
             labels = run_model(model, swapped)
             show_diff(
                 baseline_labels, labels, sbeam_parts,
@@ -311,7 +339,7 @@ def _run(args, feature_names):
             sys.exit(f'Unknown feature(s): {unknown}. Available: {feature_names}')
 
     print(f'\nSwapping: {swap_list}  ({baseline_label} → {updated_label})')
-    swapped = apply_swap(sbeam_parts, alt_parts, feature_names, swap_list)
+    swapped = apply_swap(sbeam_parts, alt_parts, feature_names, swap_list, aligned_pairs)
     labels = run_model(model, swapped)
     show_diff(
         baseline_labels, labels, sbeam_parts,
