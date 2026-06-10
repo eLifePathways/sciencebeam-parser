@@ -1,4 +1,10 @@
 services:
+  sciencebeam-parser:
+    # Publish on the host so host-side tools (e.g. compare-model-data via
+    # SCIENCEBEAM_PARSER_URL=http://localhost:8080) can reach the parser.
+    ports:
+      - "8080:8070"
+
   sciencebeam-parser-cv:
     ports:
       - "${SCIENCEBEAM_PARSER_PORT}:8070"
