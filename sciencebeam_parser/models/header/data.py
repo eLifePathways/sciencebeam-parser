@@ -43,7 +43,7 @@ class HeaderDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
             FeatureDef('is_location_name',
                        lambda f: f.get_dummy_str_is_location_name()),
             FeatureDef('is_email', lambda f: f.get_dummy_str_is_email()),
-            FeatureDef('is_http', lambda f: f.get_dummy_str_is_http()),
+            FeatureDef('is_http', lambda f: f.get_str_is_http()),
             FeatureDef('punctuation_type', lambda f: f.get_punctuation_type_feature()),
             FeatureDef('is_largest_font', lambda f: f.get_str_is_largest_font_size()),
             # bug in GROBID #795

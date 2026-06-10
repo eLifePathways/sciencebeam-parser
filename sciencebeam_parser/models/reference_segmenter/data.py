@@ -37,7 +37,7 @@ class ReferenceSegmenterDataGenerator(ContextAwareLayoutTokenModelDataGenerator)
                        lambda f: f.get_dummy_str_is_location_name()),
             FeatureDef('is_year', lambda f: f.get_dummy_str_is_year()),
             FeatureDef('is_month', lambda f: f.get_dummy_str_is_month()),
-            FeatureDef('is_http', lambda f: f.get_dummy_str_is_http()),
+            FeatureDef('is_http', lambda f: f.get_str_is_http()),
             FeatureDef('punctuation_profile',
                        lambda f: f.get_line_punctuation_profile()),
             FeatureDef('line_token_relative_position',

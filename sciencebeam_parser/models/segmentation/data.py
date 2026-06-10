@@ -424,7 +424,7 @@ class SegmentationDataGenerator(ModelDataGenerator):
             FeatureDef('is_year', lambda f: f.get_str_is_year()),
             FeatureDef('is_month', lambda f: f.get_str_is_month()),
             FeatureDef('is_email', lambda f: f.get_dummy_str_is_email()),
-            FeatureDef('is_http', lambda f: f.get_dummy_str_is_http()),
+            FeatureDef('is_http', lambda f: f.get_str_is_http()),
             FeatureDef('relative_document_position',
                        lambda f: f.get_str_relative_document_position()),
             FeatureDef('relative_page_position',

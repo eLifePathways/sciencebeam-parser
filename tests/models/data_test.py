@@ -465,6 +465,20 @@ class TestContextAwareLayoutTokenFeaturesIsMonth:
         assert _make_features('2025').get_str_is_month() == '0'
 
 
+class TestContextAwareLayoutTokenFeaturesIsHttp:
+    def test_should_return_1_for_https_url(self):
+        assert _make_features('https://doi.org/10.1234/example').get_str_is_http() == '1'
+
+    def test_should_return_1_for_http_url(self):
+        assert _make_features('http://example.com/path').get_str_is_http() == '1'
+
+    def test_should_return_0_for_plain_word(self):
+        assert _make_features('Innovation').get_str_is_http() == '0'
+
+    def test_should_return_0_for_url_without_scheme(self):
+        assert _make_features('example.com/path').get_str_is_http() == '0'
+
+
 class TestContextAwareLayoutTokenFeaturesIsCommonName:
     def test_should_return_0_when_no_lookup_configured(self):
         assert _make_features('innovation').get_str_is_common_name() == '0'

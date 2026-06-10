@@ -724,6 +724,11 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
     def get_str_is_month(self) -> str:
         return get_str_bool_feature_value(self.token_text.lower() in MONTH_NAMES)
 
+    def get_str_is_http(self) -> str:
+        return get_str_bool_feature_value(
+            self.token_text.startswith(('http://', 'https://'))
+        )
+
     def get_dummy_str_relative_document_position(self):
         # position within whole document
         return '0'
