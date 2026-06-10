@@ -49,6 +49,11 @@ BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
 # host; see docker-benchmark-with-baselines.
 GROBID_BASELINE_VERSION ?= 0.9.0-crf
 GROBID_BASELINE_RUN_LOCAL ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/default/$(BENCHMARK_SPLIT)
+# GROBID instance for docker-compare-model-data (run on the host at GROBID_URL).
+GROBID_IMAGE ?= grobid/grobid:$(GROBID_BASELINE_VERSION)
+GROBID_CONTAINER_NAME ?= grobid-compare
+GROBID_WAIT_RETRIES ?= 120
+GROBID_WAIT_INTERVAL ?= 5
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 
 SHOW_FIELD ?=
@@ -434,6 +439,35 @@ diff-model-data:
 
 
 compare-model-data: fetch-grobid-model-data fetch-parser-model-data diff-model-data
+
+
+# Start a long-lived GROBID instance on the host (at GROBID_URL) for model-data
+# comparison. Start it once, then run fetch-*/diff-model-data repeatedly.
+docker-grobid-start:
+	-docker rm -f $(GROBID_CONTAINER_NAME)
+	docker run -d --name $(GROBID_CONTAINER_NAME) -p 8070:8070 $(GROBID_IMAGE)
+	@echo "Waiting for GROBID at $(GROBID_URL)/api/isalive ..."
+	@for i in $$(seq 1 $(GROBID_WAIT_RETRIES)); do \
+		curl -sf "$(GROBID_URL)/api/isalive" >/dev/null && { echo "GROBID is up"; break; }; \
+		echo "  waiting ($$i/$(GROBID_WAIT_RETRIES))"; sleep $(GROBID_WAIT_INTERVAL); \
+		if [ $$i -eq $(GROBID_WAIT_RETRIES) ]; then echo "GROBID did not become ready"; docker rm -f $(GROBID_CONTAINER_NAME); exit 1; fi; \
+	done
+
+
+docker-grobid-stop:
+	-docker rm -f $(GROBID_CONTAINER_NAME)
+
+
+# One-shot convenience: bring up the parser stack (published on :8080) + a host
+# GROBID (:8070), run compare-model-data on the host (curl + host benchmark venv),
+# then stop GROBID. For iterating, prefer docker-grobid-start once + repeated
+# fetch-*/diff-model-data. Requires COMPARE_PDF and the host venv.
+docker-compare-model-data: .require-COMPARE_PDF
+	$(MAKE) docker-start-and-wait-for-api
+	$(MAKE) docker-grobid-start
+	$(MAKE) compare-model-data
+	$(MAKE) docker-grobid-stop
+	@echo "Diff written under $(COMPARE_DOC_DIR)/"
 
 
 OVERRIDE ?=
