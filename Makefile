@@ -267,6 +267,7 @@ dev-benchmark-with-baselines:
 		--split $(BENCHMARK_SPLIT) \
 		--runs benchmarks/runs \
 		--parser-url $(BENCHMARK_PARSER_URL) \
+		--concurrency $(BENCHMARK_CONCURRENCY) \
 		$(ARGS)
 
 
