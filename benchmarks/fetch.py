@@ -106,3 +106,77 @@ def fetch_data(  # pylint: disable=too-many-locals
         LOGGER.info("Corpus %r: materialised %d records to %s", corpus, n, corpus_dir)
 
     return records
+
+
+def fetch_gold(  # pylint: disable=too-many-locals
+    cfg: Dict[str, Any], mode: str, split: str, data_dir: Path
+) -> List[Dict[str, str]]:
+    """Download gold XML only (no PDFs) for each corpus.
+
+    Idempotent: skips files that already exist.
+    Returns records: {corpus, record_id, xml_path}.
+    """
+    sample_sizes = cfg["sampling"][mode]
+    seed = cfg["seeds"]["sample"]
+    token = os.environ.get("HF_TOKEN")
+    local_root = os.environ.get("BENCH_LOCAL_PARQUET_DIR")
+
+    split_corpora = cfg["dataset"]["splits"].get(split)
+    if not split_corpora:
+        raise ValueError(f"Unknown split {split!r}. Available: {list(cfg['dataset']['splits'])}")
+
+    records: List[Dict[str, str]] = []
+
+    for corpus, corpus_cfg in split_corpora.items():
+        if corpus not in sample_sizes:
+            LOGGER.warning(
+                "No sample size configured for corpus %r in mode %r, skipping", corpus, mode
+            )
+            continue
+
+        filename, id_column = _get_corpus_filename_and_id_column(corpus_cfg)
+        LOGGER.info(
+            "Fetching gold for corpus %r (mode=%s, n=%d)", corpus, mode, sample_sizes[corpus]
+        )
+
+        if local_root:
+            parquet_path = str(Path(local_root) / filename)
+        else:
+            parquet_path = hf_hub_download(
+                repo_id=cfg["dataset"]["repo_id"],
+                filename=filename,
+                revision=cfg["dataset"]["revision"],
+                repo_type="dataset",
+                token=token,
+            )
+
+        pf = pq.ParquetFile(parquet_path)
+        all_ids = pf.read(columns=[id_column]).column(id_column).to_pylist()
+        n = min(sample_sizes[corpus], len(all_ids))
+        picked = _sample_indices(len(all_ids), n, seed)
+
+        corpus_dir = data_dir / split / corpus
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+
+        global_i = 0
+        for batch in pf.iter_batches(batch_size=64, columns=[id_column, "xml"]):
+            for row in range(batch.num_rows):
+                if global_i in picked:
+                    record_id = str(batch.column(id_column)[row].as_py()).replace("/", "_")
+                    xml_path = corpus_dir / f"{record_id}.jats.xml"
+
+                    if not xml_path.exists():
+                        xml_path.write_text(
+                            str(batch.column("xml")[row].as_py()), encoding="utf-8"
+                        )
+
+                    records.append({
+                        "corpus": corpus,
+                        "record_id": record_id,
+                        "xml_path": str(xml_path),
+                    })
+                global_i += 1
+
+        LOGGER.info("Corpus %r: materialised %d gold records to %s", corpus, n, corpus_dir)
+
+    return records

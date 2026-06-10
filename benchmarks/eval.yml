@@ -149,3 +149,8 @@ scoring:
 baselines:
   - tool: grobid
     version: 0.9.0-crf
+    profile: default
+  - tool: sciencebeam-parser
+    version: main
+    profile: grobid_crf
+    generate: false
