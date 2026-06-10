@@ -121,7 +121,7 @@ jobs:
               --ignore=tests/cv_models
               tests/
           - runs-on: ubuntu-24.04-arm
-            install-poppler: sudo apt-get install -y poppler-utils
+            install-poppler: sudo apt-get update && sudo apt-get install -y poppler-utils
             pytest-args: >-
               tests/external/pdfalto/url_test.py
               tests/external/pdfalto/parser_test.py
