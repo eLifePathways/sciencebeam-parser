@@ -71,11 +71,11 @@ sampling:
     scielo_mx: 25
     scielo_preprints-jats: 25
   medium:
-    biorxiv: 50
+    biorxiv: 47
     ore: 50
     pkp: 50
     scielo_br: 50
-    scielo_mx: 50
+    scielo_mx: 34
     scielo_preprints-jats: 50
   large:
     biorxiv: 100
