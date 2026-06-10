@@ -240,6 +240,7 @@ jobs:
             PROFILE_ENV=(-e "SCIENCEBEAM_PARSER__PROFILE=${{ env.BENCHMARK_PROFILE }}")
           fi
           docker run -d --name sciencebeam-parser -p 8080:8070 \
+            -e SCIENCEBEAM_PARSER__PRELOAD_ON_STARTUP=true \
             "${PROFILE_ENV[@]}" ${{ steps.image_tag.outputs.value }}
 
       - name: Wait for parser
