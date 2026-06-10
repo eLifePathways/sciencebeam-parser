@@ -128,6 +128,27 @@ class TestLineIndentationStatusFeature:
             LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
         ) is False
 
+    def test_should_not_compare_indentation_across_blocks(self):
+        # Matches GROBID: previousFeatures=null at block boundary suppresses cross-block comparison.
+        # An indented block (x=50) followed by a new block at x=10 should not mark the new
+        # block's first line as un-indented — cross-block x comparison is skipped entirely.
+        line_indentation_status_feature = LineIndentationStatusFeature()
+        line_indentation_status_feature.on_new_block()
+        line_indentation_status_feature.on_new_line()
+        assert line_indentation_status_feature.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is False
+        line_indentation_status_feature.on_new_line()
+        assert line_indentation_status_feature.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=50, y=10, width=10, height=10))
+        ) is True
+        # New block at x=10 — should NOT reset indented (no cross-block comparison)
+        line_indentation_status_feature.on_new_block()
+        line_indentation_status_feature.on_new_line()
+        assert line_indentation_status_feature.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is True
+
 
 class _TestBaseGetLineStatus(ABC):
     @abstractmethod

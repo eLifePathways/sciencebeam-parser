@@ -329,7 +329,7 @@ class LineIndentationStatusFeature:
         self._is_indented = False
 
     def on_new_block(self):
-        pass
+        self._line_start_x = None
 
     def on_new_line(self):
         self._is_new_line = True
@@ -795,6 +795,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         ))
         document_token_index = 0
         for block in layout_document.iter_all_blocks():
+            line_indentation_status_feature.on_new_block()
             block_lines = block.lines
             line_count = len(block_lines)
             for line_index, line in enumerate(block_lines):
