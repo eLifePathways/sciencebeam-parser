@@ -55,6 +55,7 @@ GROBID_CONTAINER_NAME ?= grobid-compare
 GROBID_WAIT_RETRIES ?= 120
 GROBID_WAIT_INTERVAL ?= 5
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
+BENCHMARK_CONCURRENCY ?= 0
 
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
@@ -212,6 +213,7 @@ dev-benchmark-predict:
 		--split $(BENCHMARK_SPLIT) \
 		--out $(BENCHMARK_RUN) \
 		--parser-url $(BENCHMARK_PARSER_URL) \
+		--concurrency $(BENCHMARK_CONCURRENCY) \
 		$(ARGS)
 
 
