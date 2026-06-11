@@ -64,11 +64,15 @@ lookup:
     paths:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/countries/CountryCodes.xml
   first_name:
+    # GROBID splits each name-file line on tab and hyphen, taking the first component.
+    # e.g. "Mary-Ann" → "mary" only. Enable here to match that behaviour.
+    split_on_hyphen: true
     paths:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/firstname.5k
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.female
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.male
   last_name:
+    split_on_hyphen: true
     paths:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/lastname.5k
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.family
