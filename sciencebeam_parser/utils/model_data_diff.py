@@ -1,7 +1,8 @@
 import difflib
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class ModelDataDiffResult:
     aligned_with_diffs_count: int
     sbeam_only_count: int
     grobid_only_count: int
+    feature_diff_counts: Dict[str, int] = field(default_factory=dict)
     aligned_diffs: List[AlignedTokenDiff] = field(default_factory=list)
     sbeam_only_tokens: List[Tuple[str, int]] = field(default_factory=list)
     grobid_only_tokens: List[Tuple[str, int]] = field(default_factory=list)
@@ -94,6 +96,7 @@ def diff_model_data(  # pylint: disable=too-many-locals
         grobid_only_count=0
     )
 
+    feature_counts: Counter = Counter()
     for opcode, s0, s1, g0, g1 in matcher.get_opcodes():
         if opcode == 'equal':
             for si, gi in zip(range(s0, s1), range(g0, g1)):
@@ -109,6 +112,8 @@ def diff_model_data(  # pylint: disable=too-many-locals
                         grobid_line_number=gi + 1,
                         feature_diffs=feature_diffs
                     ))
+                    for fd in feature_diffs:
+                        feature_counts[fd.feature_name] += 1
         if opcode in ('delete', 'replace'):
             for si in range(s0, s1):
                 result.sbeam_only_count += 1
@@ -118,6 +123,7 @@ def diff_model_data(  # pylint: disable=too-many-locals
                 result.grobid_only_count += 1
                 result.grobid_only_tokens.append((grobid_tokens[gi], gi + 1))
 
+    result.feature_diff_counts = dict(feature_counts)
     return result
 
 
@@ -134,6 +140,28 @@ def format_diff_result(diff_result: ModelDataDiffResult) -> str:
             f' grobid-only: {diff_result.grobid_only_count}'
         ),
     ]
+
+    counts = diff_result.feature_diff_counts
+    non_label = sorted(
+        ((name, n) for name, n in counts.items() if name != 'label'),
+        key=lambda x: -x[1]
+    )
+    label_count = counts.get('label', 0)
+    if non_label or label_count:
+        lines.append('')
+        lines.append('feature diffs by type:')
+        for name, n in non_label:
+            lines.append(f'  {name}: {n}')
+        lines.append(f'  label: {label_count}')
+        label_pairs: Counter = Counter()
+        for token_diff in diff_result.aligned_diffs:
+            for fd in token_diff.feature_diffs:
+                if fd.feature_name == 'label':
+                    label_pairs[(fd.grobid_value, fd.sbeam_value)] += 1
+        for (grobid_label, sbeam_label), n in label_pairs.most_common():
+            lines.append(
+                f'    {n}x {grobid_label} (grobid) → {sbeam_label} (sbeam)'
+            )
 
     detail_lines = []
     for token_diff in diff_result.aligned_diffs:

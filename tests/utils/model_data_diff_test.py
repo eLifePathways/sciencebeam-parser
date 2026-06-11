@@ -157,3 +157,52 @@ class TestFormatModelDataDiff:
         assert '< sbeam-only' not in result
         assert '> grobid-only' not in result
         assert '→' not in result
+
+    def test_feature_summary_shows_counts_sorted_by_frequency(self):
+        # Two capitalisation diffs and one label diff → summary lists cap first, then label
+        sbeam = (
+            self._make_line('a', cap='INITCAP', label='B-body') + '\n'
+            + self._make_line('b', cap='INITCAP', label='I-header') + '\n'
+            + self._make_line('c', cap='ALLCAP', label='B-body')
+        )
+        grobid = (
+            self._make_line('a', cap='ALLCAP', label='B-body') + '\n'
+            + self._make_line('b', cap='ALLCAP', label='B-body') + '\n'
+            + self._make_line('c', cap='ALLCAP', label='B-body')
+        )
+        result = format_model_data_diff(sbeam, grobid, FEATURE_NAMES_2)
+        assert 'feature diffs by type:' in result
+        cap_pos = result.index('capitalisation: 2')
+        label_pos = result.index('label: 1')
+        assert cap_pos < label_pos
+
+    def test_feature_summary_always_shows_label_even_when_zero(self):
+        sbeam = self._make_line('tok', cap='INITCAP')
+        grobid = self._make_line('tok', cap='ALLCAP')
+        result = format_model_data_diff(sbeam, grobid, FEATURE_NAMES_2)
+        assert 'label: 0' in result
+
+    def test_no_feature_summary_when_no_diffs(self):
+        data = self._make_line('tok')
+        result = format_model_data_diff(data, data, FEATURE_NAMES_2)
+        assert 'feature diffs by type:' not in result
+
+    def test_label_pair_breakdown_shown_sorted_by_frequency(self):
+        # Three label diffs: two header→body and one header→I-body.
+        # header→body appears most often and should come first.
+        sbeam = (
+            self._make_line('a', label='B-body') + '\n'
+            + self._make_line('b', label='B-body') + '\n'
+            + self._make_line('c', label='I-body')
+        )
+        grobid = (
+            self._make_line('a', label='B-header') + '\n'
+            + self._make_line('b', label='B-header') + '\n'
+            + self._make_line('c', label='B-header')
+        )
+        result = format_model_data_diff(sbeam, grobid, FEATURE_NAMES_2)
+        assert '2x B-header (grobid) → B-body (sbeam)' in result
+        assert '1x B-header (grobid) → I-body (sbeam)' in result
+        two_pos = result.index('2x B-header')
+        one_pos = result.index('1x B-header')
+        assert two_pos < one_pos
