@@ -127,6 +127,10 @@ async def _run_predict_async(
                     pdf_bytes = Path(rec["pdf_path"]).read_bytes()
                     response = await client.post(
                         f"{parser_url}{CONVERT_ENDPOINT}",
+                        data={
+                            "includeRawAffiliations": "1",
+                            "includeRawCitations": "1",
+                        },
                         files={
                             "input": (
                                 Path(rec["pdf_path"]).name,
