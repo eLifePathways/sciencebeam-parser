@@ -270,7 +270,8 @@ def _run(args, feature_names):
 
     config = get_app_config()
     sb_parser = ScienceBeamParser.from_config(config)
-    model = sb_parser.fulltext_models.get_sequence_model_by_name(args.model)
+    sb_model_name = args.model.replace('-', '_')
+    model = sb_parser.fulltext_models.get_sequence_model_by_name(sb_model_name)
 
     baseline_lines = parts_to_feature_lines(sbeam_parts)
     baseline_labels = run_model(model, baseline_lines)
