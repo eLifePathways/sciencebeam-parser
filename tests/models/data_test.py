@@ -150,6 +150,51 @@ class TestLineIndentationStatusFeature:
         ) is True
 
 
+class TestLineIndentationStatusFeatureWithCompareAcrossBlocks:
+    """Tests for compare_across_blocks=True (GROBID ReferenceSegmenterParser behaviour).
+
+    Every line (including the first of a new block) compares its x against the previous
+    line's x, matching GROBID's flat-token-stream processing where blocks have no effect.
+    """
+
+    def _feature(self):
+        return LineIndentationStatusFeature(compare_across_blocks=True)
+
+    def test_first_line_of_new_block_resets_indentation_when_shifted_left(self):
+        # Block 1: line at x=10, then indented line at x=50 → _is_indented=True
+        # Block 2: line at x=10 — should RESET indentation (x=10 < x=50 - charWidth)
+        f = self._feature()
+        f.on_new_block()
+        f.on_new_line()
+        assert f.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is False
+        f.on_new_line()
+        assert f.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=50, y=10, width=10, height=10))
+        ) is True
+        # New block at x=10 — SHOULD reset indented (cross-block comparison happens)
+        f.on_new_block()
+        f.on_new_line()
+        assert f.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is False
+
+    def test_first_line_of_new_block_sets_indentation_when_shifted_right(self):
+        f = self._feature()
+        f.on_new_block()
+        f.on_new_line()
+        assert f.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is False
+        # New block indented right of x=10
+        f.on_new_block()
+        f.on_new_line()
+        assert f.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=50, y=10, width=10, height=10))
+        ) is True
+
+
 class TestLineIndentationStatusFeatureWithPersistAcrossBlocks:
     """Tests for persist_across_blocks=True (GROBID HeaderParser behaviour).
 
