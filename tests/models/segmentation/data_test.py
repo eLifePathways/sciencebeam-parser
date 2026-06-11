@@ -13,13 +13,9 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPageMeta
 )
 
-from sciencebeam_parser.models.data import (
-    DEFAULT_DOCUMENT_FEATURES_CONTEXT,
-    feature_linear_scaling_int
-)
+from sciencebeam_parser.models.data import DEFAULT_DOCUMENT_FEATURES_CONTEXT
 from sciencebeam_parser.utils.bounding_box import BoundingBox
 from sciencebeam_parser.models.segmentation.data import (
-    NBBINS_POSITION,
     VECTOR_GRAPHIC_TYPE,
     SegmentationLineFeatures,
     SegmentationLineFeaturesProvider,
@@ -267,32 +263,47 @@ class TestSegmentationLineFeaturesProvider:
             },
         ]
 
-    def test_should_provide_block_relative_document_token_position(
+    def test_should_provide_same_relative_document_token_position_for_all_lines_in_block(
         self,
         features_provider: SegmentationLineFeaturesProvider
     ):
+        # Matches GROBID: nn (the position numerator) is set once per block, so every line
+        # in the same block gets the same relativeDocumentPosition.
         layout_document = LayoutDocument(pages=[
             LayoutPage(blocks=[LayoutBlock(lines=[
                 LayoutLine.for_text(f'line{i}')
                 for i in range(10)
             ])])
         ])
-        feature_values = []
-        for features in _iter_line_features(features_provider, layout_document):
-            feature_values.append({
-                'str_relative_document_position': (
-                    features.get_str_relative_document_position()
-                )
-            })
-        LOGGER.debug('feature_values: %r', feature_values)
-        assert feature_values == [
-            {
-                'str_relative_document_position': str(feature_linear_scaling_int(
-                    i, 10, NBBINS_POSITION
-                )),
-            }
-            for i in range(10)
+        feature_values = [
+            features.get_str_relative_document_position()
+            for features in _iter_line_features(features_provider, layout_document)
         ]
+        LOGGER.debug('feature_values: %r', feature_values)
+        assert len(set(feature_values)) == 1, (
+            'all lines in one block should share the same relativeDocumentPosition'
+        )
+
+    def test_should_provide_block_relative_document_token_position_across_blocks(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        # Matches GROBID: with 12 single-token blocks, nn increments by
+        # count_block_tokens_like_grobid (= 3) per block, giving positions 0-11.
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[LayoutLine.for_text(f'word{i}')])
+                    for i in range(12)
+                ]
+            )
+        ])
+        feature_values = [
+            features.get_str_relative_document_position()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        LOGGER.debug('feature_values: %r', feature_values)
+        assert feature_values == [str(i) for i in range(12)]
 
     def test_should_provide_relative_page_position_based_on_token_count(
         self,

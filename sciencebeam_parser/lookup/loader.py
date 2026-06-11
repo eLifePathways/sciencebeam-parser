@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -20,10 +21,16 @@ def is_wf_filename(path: str) -> bool:
     return os.path.basename(path).lower().endswith('.wf')
 
 
-def load_lookup_from_text_file(path: str) -> TextLookUp:
-    return SimpleTextLookUp(
-        set(Path(path).read_text(encoding='utf-8').splitlines()) - {''}
-    )
+def load_lookup_from_text_file(path: str, split_on_hyphen: bool = False) -> TextLookUp:
+    words: set = set()
+    for line in Path(path).read_text(encoding='utf-8').splitlines():
+        if line:
+            # GROBID uses StringTokenizer(line, "\t\n-") and takes the first token,
+            # so compound names like "El-Am" contribute only "El" (→ "el") to the set.
+            word = re.split(r'[\t-]', line)[0] if split_on_hyphen else line
+            if word:
+                words.add(word)
+    return SimpleTextLookUp(words)
 
 
 def load_lookup_from_wf_file(path: str) -> TextLookUp:
@@ -39,7 +46,8 @@ def load_lookup_from_wf_file(path: str) -> TextLookUp:
 
 def load_lookup_from_path(
     path: Optional[str],
-    download_manager: DownloadManagerProtocol
+    download_manager: DownloadManagerProtocol,
+    split_on_hyphen: bool = False
 ) -> Optional[TextLookUp]:
     if not path:
         return None
@@ -49,7 +57,7 @@ def load_lookup_from_path(
         return load_xml_lookup_from_file(local_path)
     if is_wf_filename(path):
         return load_lookup_from_wf_file(local_path)
-    return load_lookup_from_text_file(local_path)
+    return load_lookup_from_text_file(local_path, split_on_hyphen=split_on_hyphen)
 
 
 def load_lookup_from_config(
@@ -59,8 +67,10 @@ def load_lookup_from_config(
     if not config:
         return None
     paths = config.get('paths', [])
+    split_on_hyphen = config.get('split_on_hyphen', False)
     LOGGER.info('loading lookup from: %r', paths)
     return MergedTextLookUp([
-        load_lookup_from_path(path, download_manager=download_manager)
+        load_lookup_from_path(path, download_manager=download_manager,
+                              split_on_hyphen=split_on_hyphen)
         for path in paths
     ])

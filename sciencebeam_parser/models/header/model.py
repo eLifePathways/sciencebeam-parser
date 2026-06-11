@@ -24,7 +24,10 @@ class HeaderModel(Model):
         document_features_context: DocumentFeaturesContext
     ) -> HeaderDataGenerator:
         return HeaderDataGenerator(
-            document_features_context=document_features_context
+            document_features_context=document_features_context,
+            persist_indentation_reference_across_blocks=self.model_config.get(
+                'persist_indentation_reference_across_blocks', False
+            )
         )
 
     def get_semantic_extractor(self) -> HeaderSemanticExtractor:

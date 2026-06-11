@@ -64,11 +64,15 @@ lookup:
     paths:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/countries/CountryCodes.xml
   first_name:
+    # GROBID splits each name-file line on tab and hyphen, taking the first component.
+    # e.g. "Mary-Ann" → "mary" only. Enable here to match that behaviour.
+    split_on_hyphen: true
     paths:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/firstname.5k
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.female
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.male
   last_name:
+    split_on_hyphen: true
     paths:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/lastname.5k
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/names/names.family
@@ -143,9 +147,11 @@ sequence_model_profiles:
     segmentation:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/segmentation'
       engine: 'wapiti'
+      use_first_token_of_block: true
     header:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/header'
       engine: 'wapiti'
+      persist_indentation_reference_across_blocks: true
     name_header:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/name/header'
       engine: 'wapiti'

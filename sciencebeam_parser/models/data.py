@@ -323,27 +323,39 @@ class RelativeFontSizeFeature:
 
 
 class LineIndentationStatusFeature:
-    def __init__(self):
-        self._line_start_x = None
+    def __init__(self, persist_across_blocks: bool = False):
+        self._persist_across_blocks = persist_across_blocks
+        self._line_start_x: Optional[float] = None
         self._is_new_line = True
         self._is_indented = False
+        self._skip_next_line_start_update = True
 
     def on_new_block(self):
-        pass
+        if self._persist_across_blocks:
+            # GROBID HeaderParser behaviour: lineStartX persists across blocks.
+            # previousFeatures=null at the block boundary suppresses the update for the
+            # first line of the new block, so line 2 compares against the previous block's
+            # last lineStartX rather than against line 1 of the new block.
+            self._skip_next_line_start_update = True
+        else:
+            self._line_start_x = None
 
     def on_new_line(self):
         self._is_new_line = True
 
     def get_is_indented_and_update(self, layout_token: LayoutToken):
         if self._is_new_line and layout_token.coordinates and layout_token.text:
-            previous_line_start_x = self._line_start_x
-            self._line_start_x = layout_token.coordinates.x
-            character_width = layout_token.coordinates.width / len(layout_token.text)
-            if previous_line_start_x is not None:
-                if self._line_start_x - previous_line_start_x > character_width:
-                    self._is_indented = True
-                if previous_line_start_x - self._line_start_x > character_width:
-                    self._is_indented = False
+            if self._persist_across_blocks and self._skip_next_line_start_update:
+                self._skip_next_line_start_update = False
+            else:
+                previous_line_start_x = self._line_start_x
+                self._line_start_x = layout_token.coordinates.x
+                character_width = layout_token.coordinates.width / len(layout_token.text)
+                if previous_line_start_x is not None:
+                    if self._line_start_x - previous_line_start_x > character_width:
+                        self._is_indented = True
+                    if previous_line_start_x - self._line_start_x > character_width:
+                        self._is_indented = False
         self._is_new_line = False
         return self._is_indented
 
@@ -724,6 +736,11 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
     def get_str_is_month(self) -> str:
         return get_str_bool_feature_value(self.token_text.lower() in MONTH_NAMES)
 
+    def get_str_is_http(self) -> str:
+        return get_str_bool_feature_value(
+            self.token_text.startswith(('http://', 'https://'))
+        )
+
     def get_dummy_str_relative_document_position(self):
         # position within whole document
         return '0'
@@ -747,9 +764,13 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
 class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
     def __init__(
         self,
-        document_features_context: DocumentFeaturesContext
+        document_features_context: DocumentFeaturesContext,
+        persist_indentation_reference_across_blocks: bool = False
     ):
         self.document_features_context = document_features_context
+        self._persist_indentation_reference_across_blocks = (
+            persist_indentation_reference_across_blocks
+        )
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = []
 
     @property
@@ -771,7 +792,9 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         relative_font_size_feature = RelativeFontSizeFeature(
             layout_document.iter_all_tokens()
         )
-        line_indentation_status_feature = LineIndentationStatusFeature()
+        line_indentation_status_feature = LineIndentationStatusFeature(
+            persist_across_blocks=self._persist_indentation_reference_across_blocks
+        )
         previous_layout_token: Optional[LayoutToken] = None
         concatenated_line_tokens_length_by_line_id = {
             id(line): sum((len(token.text) for token in line.tokens))
@@ -790,6 +813,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         ))
         document_token_index = 0
         for block in layout_document.iter_all_blocks():
+            line_indentation_status_feature.on_new_block()
             block_lines = block.lines
             line_count = len(block_lines)
             for line_index, line in enumerate(block_lines):

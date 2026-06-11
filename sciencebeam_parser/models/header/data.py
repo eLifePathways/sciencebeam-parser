@@ -9,8 +9,15 @@ from sciencebeam_parser.models.data import (
 
 
 class HeaderDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
-    def __init__(self, document_features_context: DocumentFeaturesContext):
-        super().__init__(document_features_context)
+    def __init__(
+        self,
+        document_features_context: DocumentFeaturesContext,
+        persist_indentation_reference_across_blocks: bool = False
+    ):
+        super().__init__(
+            document_features_context,
+            persist_indentation_reference_across_blocks=persist_indentation_reference_across_blocks
+        )
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = [
             FeatureDef('token_text', lambda f: f.token_text),
             FeatureDef('lower_token_text', lambda f: f.get_lower_token_text()),
@@ -43,7 +50,7 @@ class HeaderDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
             FeatureDef('is_location_name',
                        lambda f: f.get_dummy_str_is_location_name()),
             FeatureDef('is_email', lambda f: f.get_dummy_str_is_email()),
-            FeatureDef('is_http', lambda f: f.get_dummy_str_is_http()),
+            FeatureDef('is_http', lambda f: f.get_str_is_http()),
             FeatureDef('punctuation_type', lambda f: f.get_punctuation_type_feature()),
             FeatureDef('is_largest_font', lambda f: f.get_str_is_largest_font_size()),
             # bug in GROBID #795

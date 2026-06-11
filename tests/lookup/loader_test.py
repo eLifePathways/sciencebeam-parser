@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from sciencebeam_parser.lookup import SimpleTextLookUp
-from sciencebeam_parser.lookup.loader import is_wf_filename, load_lookup_from_wf_file
+from sciencebeam_parser.lookup.loader import (
+    is_wf_filename,
+    load_lookup_from_text_file,
+    load_lookup_from_wf_file,
+)
 
 
 class TestIsWfFilename:
@@ -65,3 +69,37 @@ class TestLoadLookupFromWfFile:
         lookup = load_lookup_from_wf_file(str(wf_file))
         assert lookup.contains('battery') is True
         assert lookup.contains('innovation') is True
+
+
+class TestLoadLookupFromTextFile:
+    def test_should_load_plain_name(self, tmp_path: Path):
+        names_file = tmp_path / 'names.family'
+        names_file.write_text('Smith\nJones\n', encoding='utf-8')
+        lookup = load_lookup_from_text_file(str(names_file))
+        assert lookup.contains('Smith') is True
+        assert lookup.contains('Jones') is True
+
+    def test_without_split_on_hyphen_stores_whole_line(self, tmp_path: Path):
+        names_file = tmp_path / 'names.family'
+        names_file.write_text('El-Am\n', encoding='utf-8')
+        lookup = load_lookup_from_text_file(str(names_file), split_on_hyphen=False)
+        assert lookup.contains('El-Am') is True
+        assert lookup.contains('El') is False
+
+    def test_split_on_hyphen_takes_first_component(self, tmp_path: Path):
+        # Matches GROBID's StringTokenizer(line, "\t\n-") behaviour:
+        # "El-Am" → first token "El" → stored as "el" (SimpleTextLookUp lowercases).
+        names_file = tmp_path / 'names.family'
+        names_file.write_text('El-Am\n', encoding='utf-8')
+        lookup = load_lookup_from_text_file(str(names_file), split_on_hyphen=True)
+        assert lookup.contains('El') is True
+        assert lookup.contains('el') is True
+        assert lookup.contains('El-Am') is False
+        assert lookup.contains('Am') is False
+
+    def test_split_on_hyphen_handles_tab_separator(self, tmp_path: Path):
+        names_file = tmp_path / 'names.family'
+        names_file.write_text('Smith\tother\n', encoding='utf-8')
+        lookup = load_lookup_from_text_file(str(names_file), split_on_hyphen=True)
+        assert lookup.contains('Smith') is True
+        assert lookup.contains('other') is False
