@@ -323,15 +323,24 @@ class RelativeFontSizeFeature:
 
 
 class LineIndentationStatusFeature:
-    def __init__(self, persist_across_blocks: bool = False):
+    def __init__(
+        self,
+        persist_across_blocks: bool = False,
+        compare_across_blocks: bool = False
+    ):
         self._persist_across_blocks = persist_across_blocks
+        self._compare_across_blocks = compare_across_blocks
         self._line_start_x: Optional[float] = None
         self._is_new_line = True
         self._is_indented = False
         self._skip_next_line_start_update = True
 
     def on_new_block(self):
-        if self._persist_across_blocks:
+        if self._compare_across_blocks:
+            # GROBID ReferenceSegmenterParser behaviour: no block-level reset; every new line
+            # (including the first line of a new block) compares against the previous line.
+            pass
+        elif self._persist_across_blocks:
             # GROBID HeaderParser behaviour: lineStartX persists across blocks.
             # previousFeatures=null at the block boundary suppresses the update for the
             # first line of the new block, so line 2 compares against the previous block's
@@ -555,7 +564,10 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         max_concatenated_line_tokens_length: int = 0,
         line_token_position: int = 0,
         relative_font_size_feature: Optional[RelativeFontSizeFeature] = None,
-        line_indentation_status_feature: Optional[LineIndentationStatusFeature] = None
+        line_indentation_status_feature: Optional[LineIndentationStatusFeature] = None,
+        grobid_nn: int = 0,
+        grobid_line_length: int = 0,
+        max_grobid_line_length: int = 0
     ) -> None:
         super().__init__(layout_token)
         self.layout_line = layout_line
@@ -572,6 +584,9 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.line_token_position = line_token_position
         self.relative_font_size_feature = relative_font_size_feature
         self.line_indentation_status_feature = line_indentation_status_feature
+        self.grobid_nn = grobid_nn
+        self.grobid_line_length = grobid_line_length
+        self.max_grobid_line_length = max_grobid_line_length
 
     def get_layout_model_data(self, features: List[str]) -> LayoutModelData:
         return LayoutModelData(
@@ -667,10 +682,10 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         )
 
     def get_truncated_line_punctuation_profile_length_feature(self) -> str:
-        return get_punctuation_profile_length_for_raw_punctuation_profile_feature(
-            self.get_raw_line_punctuation_profile(),
-            max_length=10
-        )
+        raw = self.get_raw_line_punctuation_profile()
+        if not raw:
+            return 'no'
+        return str(min(10, len(raw)))
 
     def get_str_line_token_relative_position(self) -> str:
         return str(feature_linear_scaling_int(
@@ -683,6 +698,23 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         return str(feature_linear_scaling_int(
             len(self.concatenated_line_tokens_text),
             self.max_concatenated_line_tokens_length,
+            _LINESCALE
+        ))
+
+    def get_str_grobid_line_token_relative_position(self) -> str:
+        # Matches GROBID's nn / currentLineLength formula:
+        # nn = cumulative length including current token, spaces double-counted;
+        # currentLineLength = full line length including whitespace and newline.
+        return str(feature_linear_scaling_int(
+            self.grobid_nn,
+            self.grobid_line_length,
+            _LINESCALE
+        ))
+
+    def get_str_grobid_line_relative_length(self) -> str:
+        return str(feature_linear_scaling_int(
+            self.grobid_line_length,
+            self.max_grobid_line_length,
             _LINESCALE
         ))
 
@@ -736,9 +768,18 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
     def get_str_is_month(self) -> str:
         return get_str_bool_feature_value(self.token_text.lower() in MONTH_NAMES)
 
+    def get_str_is_first_name_for_uppercase_lookup(self) -> str:
+        # GROBID's first-name list is all-uppercase; exact (case-sensitive) matching means
+        # only tokens that are themselves all-uppercase will hit an entry.
+        if not self.token_text.isupper():
+            return '0'
+        return self._get_str_lookup(
+            self.document_features_context.app_features_context.first_name_lookup
+        )
+
     def get_str_is_http(self) -> str:
         return get_str_bool_feature_value(
-            self.token_text.startswith(('http://', 'https://'))
+            self.token_text.lower().startswith('http')
         )
 
     def get_dummy_str_relative_document_position(self):
@@ -765,12 +806,14 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
     def __init__(
         self,
         document_features_context: DocumentFeaturesContext,
-        persist_indentation_reference_across_blocks: bool = False
+        persist_indentation_reference_across_blocks: bool = False,
+        compare_indentation_across_blocks: bool = False
     ):
         self.document_features_context = document_features_context
         self._persist_indentation_reference_across_blocks = (
             persist_indentation_reference_across_blocks
         )
+        self._compare_indentation_across_blocks = compare_indentation_across_blocks
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = []
 
     @property
@@ -793,7 +836,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
             layout_document.iter_all_tokens()
         )
         line_indentation_status_feature = LineIndentationStatusFeature(
-            persist_across_blocks=self._persist_indentation_reference_across_blocks
+            persist_across_blocks=self._persist_indentation_reference_across_blocks,
+            compare_across_blocks=self._compare_indentation_across_blocks
         )
         previous_layout_token: Optional[LayoutToken] = None
         concatenated_line_tokens_length_by_line_id = {
@@ -807,6 +851,16 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         max_concatenated_line_tokens_length = max(
             concatenated_line_tokens_length_by_line_id.values()
         )
+        # GROBID-compatible line lengths: include inter-token whitespace and a newline,
+        # matching GROBID's accumulated.length() in its look-ahead (nn / currentLineLength).
+        grobid_line_length_by_line_id = {
+            id(line): (
+                sum(len(t.text) + (1 if t.whitespace else 0) for t in line.tokens) + 1
+            )
+            for block in layout_document.iter_all_blocks()
+            for line in block.lines
+        }
+        max_grobid_line_length = max(grobid_line_length_by_line_id.values())
         document_token_count = sum((
             1
             for _ in layout_document.iter_all_tokens()
@@ -824,7 +878,11 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                     token.text for token in line_tokens
                 ])
                 line_token_position = 0
+                grobid_nn = 0
+                grobid_line_length = grobid_line_length_by_line_id[id(line)]
                 for token_index, token in enumerate(line_tokens):
+                    # GROBID's nn includes the current token's length before the feature is emitted.
+                    grobid_nn += len(token.text)
                     yield from self.iter_model_data_for_context_layout_token_features(
                         ContextAwareLayoutTokenFeatures(
                             token,
@@ -841,9 +899,15 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                             max_concatenated_line_tokens_length=max_concatenated_line_tokens_length,
                             line_token_position=line_token_position,
                             relative_font_size_feature=relative_font_size_feature,
-                            line_indentation_status_feature=line_indentation_status_feature
+                            line_indentation_status_feature=line_indentation_status_feature,
+                            grobid_nn=grobid_nn,
+                            grobid_line_length=grobid_line_length,
+                            max_grobid_line_length=max_grobid_line_length
                         )
                     )
                     previous_layout_token = token
                     line_token_position += len(token.text)
+                    # GROBID double-counts each space: space token contributes len(' ')+1 = 2.
+                    if token.whitespace:
+                        grobid_nn += 2 * len(token.whitespace)
                     document_token_index += 1
