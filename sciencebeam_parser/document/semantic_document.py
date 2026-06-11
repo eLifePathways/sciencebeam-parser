@@ -282,8 +282,9 @@ class SemanticCaption(SemanticSimpleContentWrapper):
     pass
 
 
+@dataclass
 class SemanticTitle(SemanticSimpleContentWrapper):
-    pass
+    trailing_text: str = ''
 
 
 class SemanticJournal(SemanticSimpleContentWrapper):

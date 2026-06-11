@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Iterable, Mapping, Optional, Tuple
+from typing import AbstractSet, Iterable, Mapping, Optional, Tuple
 
 from sciencebeam_parser.document.semantic_document import (
     SemanticContentWrapper,
@@ -12,11 +12,38 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticRawAuthors,
     T_SemanticContentFactory
 )
-from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutTokensText
+from sciencebeam_parser.document.layout_document import (
+    LayoutBlock,
+    LayoutLine,
+    LayoutTokensText
+)
 from sciencebeam_parser.models.extract import SimpleModelSemanticExtractor
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+TITLE_TRAILING_PUNCT_CHARS: AbstractSet[str] = {'.'}
+
+
+def _split_trailing_title_punct(
+    layout_block: LayoutBlock,
+) -> Tuple[LayoutBlock, str]:
+    """Strip a trailing punctuation token from the title layout block.
+
+    Returns the cleaned block and the stripped character (empty string if nothing stripped).
+    GROBID moves such punctuation outside the <title> element via cleanField.
+    """
+    lines = layout_block.lines
+    if not lines:
+        return layout_block, ''
+    last_line = lines[-1]
+    tokens = last_line.tokens
+    if not tokens or tokens[-1].text not in TITLE_TRAILING_PUNCT_CHARS:
+        return layout_block, ''
+    trailing = tokens[-1].text
+    new_lines = lines[:-1] + [LayoutLine(tokens=tokens[:-1])]
+    return LayoutBlock(lines=new_lines), trailing
 
 
 # based on:
@@ -76,7 +103,8 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
             previous_label = next_previous_label
             next_previous_label = name
             if name == '<title>' and not has_title:
-                yield SemanticTitle(layout_block=layout_block)
+                clean_block, trailing = _split_trailing_title_punct(layout_block)
+                yield SemanticTitle(layout_block=clean_block, trailing_text=trailing)
                 has_title = True
                 continue
             if name == '<abstract>' and not has_abstract:
