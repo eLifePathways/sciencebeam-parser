@@ -10,7 +10,8 @@ from sciencebeam_parser.document.layout_document import (
     LayoutLine,
     LayoutPage,
     LayoutPageCoordinates,
-    LayoutPageMeta
+    LayoutPageMeta,
+    LayoutToken
 )
 
 from sciencebeam_parser.models.data import DEFAULT_DOCUMENT_FEATURES_CONTEXT
@@ -20,6 +21,7 @@ from sciencebeam_parser.models.segmentation.data import (
     SegmentationLineFeatures,
     SegmentationLineFeaturesProvider,
     calculate_page_main_areas,
+    count_block_tokens_like_grobid,
     get_text_pattern
 )
 
@@ -50,6 +52,41 @@ class TestGetTextPattern:
 
     def test_should_remove_digits(self):
         assert get_text_pattern('abc123') == 'abc'
+
+
+class TestCountBlockTokensLikeGrobid:
+    def test_should_count_subtokens_space_and_newlines(self):
+        # plain word: 1 sub-token + 1 space + 1 newline(line) + 1 newline(block) = 4
+        block_lines = [LayoutLine([LayoutToken('word')])]
+        assert count_block_tokens_like_grobid(block_lines) == 4
+
+    def test_should_not_count_space_for_hyphenated_line_ending(self):
+        # GROBID skips the space when the last sub-token of an ALTO String ends with '-'.
+        # Each ALTO <String> maps to ONE LayoutToken. 'treat-' → subtokens ['treat', '-'];
+        # last sub-token '-' ends with '-', so GROBID adds no trailing space.
+        # 1 LayoutToken → 2 sub-tokens + 0 spaces + 2 newlines = 4.
+        block_lines = [LayoutLine([LayoutToken('treat-')])]
+        assert count_block_tokens_like_grobid(block_lines) == 4
+
+    def test_should_not_count_space_for_paren_chi_hyphen_token(self):
+        # Real-world case: '(Chi-' → subtokens ['(', 'Chi', '-']; last is '-', no space.
+        # 3 sub-tokens + 0 spaces + 2 newlines = 5.
+        block_lines = [LayoutLine([LayoutToken('(Chi-')])]
+        assert count_block_tokens_like_grobid(block_lines) == 5
+
+    def test_should_count_space_only_at_alto_string_boundaries_after_retokenize(self):
+        # After normalize_layout_document() retokenization, an ALTO String like '(Chi-' splits
+        # into sub-tokens ['(', 'Chi', '-'] as separate LayoutTokens. Internal sub-tokens get
+        # whitespace='' (no boundary), the last retains the original whitespace (' ').
+        # '-' is the last sub-token of the ALTO String and ends with '-' → no space added.
+        # Result: 3 sub-tokens + 0 spaces + 2 newlines = 5 (same as pre-retokenize).
+        retokenized_subtokens = [
+            LayoutToken('(', whitespace=''),
+            LayoutToken('Chi', whitespace=''),
+            LayoutToken('-', whitespace=' '),
+        ]
+        block_lines = [LayoutLine(retokenized_subtokens)]
+        assert count_block_tokens_like_grobid(block_lines) == 5
 
 
 def _iter_line_features(
@@ -253,15 +290,34 @@ class TestSegmentationLineFeaturesProvider:
         LOGGER.debug('feature_values: %r', feature_values)
         assert feature_values == [
             {
-                'str_block_relative_line_length_feature': '1',  # 1 * 10 / 10
+                'str_block_relative_line_length_feature': '1',  # (1+1) * 10 / (10+1)
             },
             {
-                'str_block_relative_line_length_feature': '2',  # 2 * 10 / 10
+                'str_block_relative_line_length_feature': '2',  # (2+1) * 10 / (10+1)
             },
             {
-                'str_block_relative_line_length_feature': '10',  # 10 * 10 / 10
+                'str_block_relative_line_length_feature': '10',  # (10+1) * 10 / (10+1)
             },
         ]
+
+    def test_should_provide_block_relative_line_length_with_trailing_space_correction(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        # GROBID appends a trailing space after each ALTO String in block.getText(),
+        # making every line 1 char longer than sbeam's join_layout_tokens.
+        # Without +1 correction: floor(4/41*10) = 0; with +1: floor(5/42*10) = 1.
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=[
+                LayoutLine.for_text('a' * 41),  # max line
+                LayoutLine.for_text('doi:'),    # 4-char line near the 0/1 bin boundary
+            ])])
+        ])
+        feature_values = [
+            features.get_str_block_relative_line_length_feature()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert feature_values == ['10', '1']
 
     def test_should_provide_same_relative_document_token_position_for_all_lines_in_block(
         self,
@@ -289,7 +345,8 @@ class TestSegmentationLineFeaturesProvider:
         features_provider: SegmentationLineFeaturesProvider
     ):
         # Matches GROBID: with 12 single-token blocks, nn increments by
-        # count_block_tokens_like_grobid (= 3) per block, giving positions 0-11.
+        # count_block_tokens_like_grobid (= 4: 1 sub-token + 1 space + 2 newlines) per block,
+        # giving positions 0-11.
         layout_document = LayoutDocument(pages=[
             LayoutPage(
                 blocks=[
