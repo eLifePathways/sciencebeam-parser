@@ -284,10 +284,11 @@ class SegmentationLineFeaturesProvider:
             document_features_context=self.document_features_context
         )
         previous_token: Optional[LayoutToken] = None
-        segmentation_line_features.document_token_count = sum(
-            len(line.tokens)
+        # Matches GROBID: documentLenghtChar initialised to -1, then += block.getTokens().size()
+        # for each block. block.getTokens().size() ≈ count_block_tokens_like_grobid.
+        segmentation_line_features.document_token_count = -1 + sum(
+            count_block_tokens_like_grobid(block.lines)
             for block in layout_document.iter_all_blocks()
-            for line in block.lines
         )
         pattern_candididate_block_iterable = (
             block
@@ -346,6 +347,9 @@ class SegmentationLineFeaturesProvider:
                 segmentation_line_features.is_bitmap_around = is_bitmap_around
                 segmentation_line_features.page_block_index = block_index
                 segmentation_line_features.page_token_index = page_token_index
+                # Matches GROBID: nn is set once per block (before the line loop) so all lines
+                # in a block share the same relativeDocumentPosition.
+                segmentation_line_features.document_token_index = document_token_index
                 block_lines = block.lines
                 segmentation_line_features.block_lines = block_lines
                 block_line_texts = [line.text for line in block_lines]
@@ -353,8 +357,6 @@ class SegmentationLineFeaturesProvider:
                 first_block_token = next(iter(block.iter_all_tokens()), None)
                 assert first_block_token
                 for line_index, line in enumerate(block_lines):
-                    segmentation_line_features.document_token_index = document_token_index
-                    document_token_index += len(line.tokens)
                     segmentation_line_features.layout_line = line
                     segmentation_line_features.block_line_index = line_index
                     segmentation_line_features.max_block_line_text_length = (
@@ -390,6 +392,7 @@ class SegmentationLineFeaturesProvider:
                         seen_repetitive_patterns.add(line_pattern)
                     yield segmentation_line_features
                     previous_token = token
+                document_token_index += count_block_tokens_like_grobid(block_lines)
                 page_token_index += count_block_tokens_like_grobid(block_lines)
 
 
