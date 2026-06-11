@@ -163,6 +163,7 @@ def get_text_pattern(text: str) -> str:
 def count_block_tokens_like_grobid(block_lines: List[LayoutLine]) -> int:
     # Approximate Grobid's block.getTokens().size():
     # - each ALTO String is sub-tokenized via GrobidAnalyzer (same delimiters as our tokenizer)
+    # - PDFALTOSaxHandler appends a ' ' LayoutToken after each ALTO String
     # - endTextLine appends a '\n' LayoutToken per line
     # - endTextBlock appends a '\n' LayoutToken per block
     content_count = sum(
@@ -170,8 +171,21 @@ def count_block_tokens_like_grobid(block_lines: List[LayoutLine]) -> int:
         for line in block_lines
         for token in line.tokens
     )
+    # One space token per ALTO String: GROBID's PDFALTOSaxHandler adds a ' ' LayoutToken after
+    # each ALTO String, skipping it when the last sub-token ends with '-' (hyphenated endings).
+    # After normalize_layout_document() retokenization, ALTO String sub-tokens become separate
+    # LayoutTokens: internal sub-tokens get whitespace='', the last retains the original whitespace
+    # (' '). Pre-retokenization each ALTO String LayoutToken has default whitespace=' '. So
+    # token.whitespace identifies ALTO String boundaries in both cases, and token.text.endswith('-')
+    # detects hyphenation (equivalent to checking the last sub-token of the original ALTO String).
+    space_count = sum(
+        1
+        for line in block_lines
+        for token in line.tokens
+        if token.whitespace and not token.text.endswith('-')
+    )
     newline_count = len(block_lines) + 1  # one per TextLine + one per TextBlock
-    return content_count + newline_count
+    return content_count + space_count + newline_count
 
 
 class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
@@ -245,9 +259,12 @@ class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
         return get_str_bool_feature_value(self.is_bitmap_around)
 
     def get_str_block_relative_line_length_feature(self) -> str:
+        # GROBID adds a trailing space after each ALTO String in block.getText(),
+        # making every line length 1 char more than sbeam's join_layout_tokens.
+        # Adding 1 to both numerator and denominator matches GROBID's scaling.
         return str(feature_linear_scaling_int(
-            len(self.line_text),
-            self.max_block_line_text_length,
+            len(self.line_text) + 1,
+            self.max_block_line_text_length + 1,
             _LINESCALE
         ))
 
