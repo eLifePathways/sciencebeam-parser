@@ -147,6 +147,7 @@ sequence_model_profiles:
     header:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/header'
       engine: 'wapiti'
+      persist_indentation_reference_across_blocks: true
     name_header:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/name/header'
       engine: 'wapiti'

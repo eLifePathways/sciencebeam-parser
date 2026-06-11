@@ -9,8 +9,15 @@ from sciencebeam_parser.models.data import (
 
 
 class HeaderDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
-    def __init__(self, document_features_context: DocumentFeaturesContext):
-        super().__init__(document_features_context)
+    def __init__(
+        self,
+        document_features_context: DocumentFeaturesContext,
+        persist_indentation_reference_across_blocks: bool = False
+    ):
+        super().__init__(
+            document_features_context,
+            persist_indentation_reference_across_blocks=persist_indentation_reference_across_blocks
+        )
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = [
             FeatureDef('token_text', lambda f: f.token_text),
             FeatureDef('lower_token_text', lambda f: f.get_lower_token_text()),

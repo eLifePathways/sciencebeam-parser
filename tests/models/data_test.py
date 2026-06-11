@@ -150,6 +150,84 @@ class TestLineIndentationStatusFeature:
         ) is True
 
 
+class TestLineIndentationStatusFeatureWithPersistAcrossBlocks:
+    """Tests for persist_across_blocks=True (GROBID HeaderParser behaviour).
+
+    GROBID: lineStartX persists across blocks; the first line of each new block does NOT
+    update lineStartX (previousFeatures=null suppresses it); the second line compares
+    against the previous block's last lineStartX.
+    """
+
+    def _feature(self) -> LineIndentationStatusFeature:
+        return LineIndentationStatusFeature(persist_across_blocks=True)
+
+    def test_first_line_of_block_does_not_update_reference(self):
+        # Block 1: line 0 skip, line 1 establishes reference.
+        # Block 2: first line must not update the reference — so _line_start_x stays block-1 value.
+        f = self._feature()
+        f.on_new_block()
+        f.on_new_line()
+        f.get_is_indented_and_update(  # line 0: skip
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        )
+        f.on_new_line()
+        f.get_is_indented_and_update(  # line 1: establishes _line_start_x=10
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        )
+        f.on_new_block()
+        f.on_new_line()
+        # First line of block 2 at x=50: skipped → _line_start_x still 10, _is_indented still False
+        assert f.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=50, y=10, width=10, height=10))
+        ) is False
+
+    def test_second_line_of_new_block_compares_against_previous_block(self):
+        # Concrete case: email block ends at x=28, abstract block is at x=375.
+        # Line 1 of the abstract block (second line) must detect the large x-shift as LINEINDENT.
+        f = self._feature()
+        # Block 1 (email): establish _line_start_x=28
+        f.on_new_block()
+        f.on_new_line()
+        f.get_is_indented_and_update(  # line 0: skip
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=28, y=10, width=28, height=10))
+        )
+        f.on_new_line()
+        f.get_is_indented_and_update(  # line 1: _line_start_x=28
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=28, y=10, width=28, height=10))
+        )
+        # Block 2 (abstract, all lines at x=375)
+        f.on_new_block()
+        f.on_new_line()
+        # First line: skip → _line_start_x stays 28
+        assert f.get_is_indented_and_update(
+            LayoutToken('Introdução:', coordinates=LayoutPageCoordinates(
+                x=375, y=10, width=46, height=10
+            ))
+        ) is False
+        f.on_new_line()
+        # Second line: compare 375 against _line_start_x=28 → large shift → LINEINDENT
+        assert f.get_is_indented_and_update(
+            LayoutToken('um', coordinates=LayoutPageCoordinates(x=375, y=10, width=14, height=10))
+        ) is True
+
+    def test_within_block_indentation_detected_from_third_line(self):
+        # Line 0 skip, line 1 establishes reference, line 2 detects indentation.
+        f = self._feature()
+        f.on_new_block()
+        f.on_new_line()
+        assert f.get_is_indented_and_update(  # line 0: skip
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is False
+        f.on_new_line()
+        assert f.get_is_indented_and_update(  # line 1: establishes ref x=10
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is False
+        f.on_new_line()
+        assert f.get_is_indented_and_update(  # line 2: compare 50 against 10 → True
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=50, y=10, width=10, height=10))
+        ) is True
+
+
 class _TestBaseGetLineStatus(ABC):
     @abstractmethod
     def get_line_status(self, *args) -> str:
