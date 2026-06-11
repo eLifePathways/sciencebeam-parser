@@ -14,6 +14,7 @@ from sciencebeam_parser.document.layout_document import (
 
 from sciencebeam_parser.models.header.extract import (
     HeaderSemanticExtractor,
+    _split_trailing_title_punct,
     get_cleaned_abstract_text,
     get_cleaned_abstract_layout_block
 )
@@ -86,6 +87,26 @@ class TestGetCleanedAbstractLayoutBlock:
         assert join_layout_tokens(cleaned_layout_block.lines[0].tokens) == ABSTRACT_1
 
 
+class TestSplitTrailingTitlePunct:
+    def test_no_trailing_punct_returns_unchanged(self):
+        block = LayoutBlock.for_text(TITLE_1)
+        clean, trailing = _split_trailing_title_punct(block)
+        assert join_layout_tokens(clean.lines[0].tokens) == TITLE_1
+        assert trailing == ''
+
+    def test_trailing_dot_is_stripped_and_returned(self):
+        block = LayoutBlock.for_text(TITLE_1 + ' .')
+        clean, trailing = _split_trailing_title_punct(block)
+        assert join_layout_tokens(clean.lines[0].tokens) == TITLE_1
+        assert trailing == '.'
+
+    def test_empty_block_returns_unchanged(self):
+        block = LayoutBlock(lines=[])
+        clean, trailing = _split_trailing_title_punct(block)
+        assert clean == block
+        assert trailing == ''
+
+
 class TestHeaderSemanticExtractor:
     def test_should_set_title_and_abstract(self):
         semantic_content_list = list(
@@ -98,6 +119,18 @@ class TestHeaderSemanticExtractor:
         LOGGER.debug('front: %s', front)
         assert front.get_text_by_type(SemanticTitle) == TITLE_1
         assert front.get_text_by_type(SemanticAbstract) == ABSTRACT_1
+
+    def test_should_strip_trailing_dot_from_title_into_trailing_text(self):
+        title_with_dot = TITLE_1 + ' .'
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<title>', LayoutBlock.for_text(title_with_dot))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        semantic_title = next(front.iter_by_type(SemanticTitle))
+        assert front.get_text_by_type(SemanticTitle) == TITLE_1
+        assert semantic_title.trailing_text == '.'
 
     def test_should_ignore_additional_title_and_abstract(self):
         # Note: this behaviour should be reviewed

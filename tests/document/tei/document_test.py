@@ -63,3 +63,16 @@ class TestTeiDocument:
             './tei:hi[@rend="italic"]'
         ) == ['italic1']
         assert document.get_title() == 'rend italic1 test'
+
+    def test_should_place_trailing_text_outside_title_element(self):
+        title_block = LayoutBlock.for_text('The title')
+        document = TeiDocument()
+        document.set_title_layout_block(title_block, trailing_text='.')
+        nodes = document.root.xpath(
+            '//tei:fileDesc/tei:titleStmt/tei:title[@level="a"][@type="main"]',
+            namespaces=TEI_NS_MAP
+        )
+        assert len(nodes) == 1
+        title_node = nodes[0]
+        assert document.get_title() == 'The title'
+        assert title_node.tail == '.'

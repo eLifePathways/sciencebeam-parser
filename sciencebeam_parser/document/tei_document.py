@@ -57,9 +57,12 @@ def get_tei_for_semantic_document(  # pylint: disable=too-many-branches, too-man
 
     stop_watch_recorder.start('front')
     LOGGER.info('generating tei document: front')
-    title_block = semantic_document.front.view_by_type(SemanticTitle).merged_block
-    if title_block:
-        tei_document.set_title_layout_block(title_block)
+    semantic_title = next(semantic_document.front.iter_by_type(SemanticTitle), None)
+    if semantic_title is not None and semantic_title.merged_block:
+        tei_document.set_title_layout_block(
+            semantic_title.merged_block,
+            trailing_text=semantic_title.trailing_text
+        )
 
     abstract_block = semantic_document.front.view_by_type(SemanticAbstract).merged_block
     if abstract_block:
