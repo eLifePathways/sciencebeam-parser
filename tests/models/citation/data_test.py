@@ -8,6 +8,22 @@ from sciencebeam_parser.models.data import DEFAULT_DOCUMENT_FEATURES_CONTEXT
 from sciencebeam_parser.models.citation.data import CitationDataGenerator
 
 
+def _get_feature_for_tokens(
+    token_texts_with_whitespace: list,
+    target_token_text: str,
+    feature_name: str
+) -> str:
+    tokens = [LayoutToken(text, whitespace=ws) for text, ws in token_texts_with_whitespace]
+    line = LayoutLine(tokens)
+    doc = LayoutDocument.for_blocks([LayoutBlock(lines=[line])])
+    gen = CitationDataGenerator(DEFAULT_DOCUMENT_FEATURES_CONTEXT)
+    idx = gen.feature_names.index(feature_name)
+    for item in gen.iter_model_data_for_layout_document(doc):
+        if item.data_line and item.data_line.split()[0] == target_token_text:
+            return item.data_line.split()[idx]
+    raise KeyError(f'token {target_token_text!r} not found')
+
+
 def _get_feature(token_text: str, feature_name: str) -> str:
     tokens = [LayoutToken(token_text)]
     line = LayoutLine(tokens)
@@ -31,6 +47,23 @@ class TestIsYear:
 
     def test_partial_number_gives_0(self):
         assert _get_feature('20', 'is_year') == '0'
+
+
+class TestIsHttp:
+    def test_http_starting_token_gives_1(self):
+        tokens = [('https', ''), ('://', ''), ('doi.org', ' '), ('other', ' ')]
+        assert _get_feature_for_tokens(tokens, 'https', 'is_http') == '1'
+
+    def test_token_within_url_span_gives_1(self):
+        tokens = [('https', ''), ('://', ''), ('doi.org', '/'), ('10.1234', ' ')]
+        assert _get_feature_for_tokens(tokens, 'doi.org', 'is_http') == '1'
+
+    def test_token_outside_url_gives_0(self):
+        tokens = [('https', ''), ('://', ''), ('doi.org', ' '), ('other', ' ')]
+        assert _get_feature_for_tokens(tokens, 'other', 'is_http') == '0'
+
+    def test_word_without_url_gives_0(self):
+        assert _get_feature('Lancet', 'is_http') == '0'
 
 
 class TestIsMonth:

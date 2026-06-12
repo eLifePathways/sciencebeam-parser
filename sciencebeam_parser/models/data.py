@@ -24,6 +24,14 @@ _EMAIL_PATTERN = re.compile(
     r'\w+([.\-_,]\w+)?\s?([.\-_,]\w+)?\s?@\s?\w+(\s?[.\-]\s?\w+)+'
 )
 
+# Mirrors GROBID's TextUtilities.urlPattern1 used by HeaderParser and CitationParser.
+# Both parsers use span-based detection: every token within a matched URL span is marked.
+_HTTP_URL_PATTERN = re.compile(
+    r'(?i)(https?|ftp)\s{0,2}:\s{0,2}//\s{0,2}[-A-Z0-9+&@#/%?=~_()|!:.;]*'
+    r'[-A-Z0-9+&@#/%=~_()]'
+    r'|www\s{0,2}\.\s{0,2}[-A-Z0-9+&@#/%?=~_()|!:.;]*[-A-Z0-9+&@#/%=~_()]'
+)
+
 
 def _get_email_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
     text_parts: List[str] = []
@@ -42,6 +50,32 @@ def _get_email_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
         return frozenset()
     matched: set = set()
     for m in _EMAIL_PATTERN.finditer(full_text):
+        m_start, m_end = m.start(), m.end()
+        for i, t in enumerate(tokens):
+            t_start = char_start_by_token[i]
+            t_end = t_start + len(t.text)
+            if t_start < m_end and t_end > m_start:
+                matched.add(i)
+    return frozenset(matched)
+
+
+def _get_http_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
+    text_parts: List[str] = []
+    char_start_by_token: List[int] = []
+    pos = 0
+    last = len(tokens) - 1
+    for i, t in enumerate(tokens):
+        char_start_by_token.append(pos)
+        text_parts.append(t.text)
+        pos += len(t.text)
+        if i < last:
+            text_parts.append(t.whitespace)
+            pos += len(t.whitespace)
+    full_text = ''.join(text_parts)
+    if 'http' not in full_text.lower() and 'www.' not in full_text.lower():
+        return frozenset()
+    matched: set = set()
+    for m in _HTTP_URL_PATTERN.finditer(full_text):
         m_start, m_end = m.start(), m.end()
         for i, t in enumerate(tokens):
             t_start = char_start_by_token[i]
@@ -613,7 +647,8 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         grobid_line_length: int = 0,
         max_grobid_line_length: int = 0,
         is_location_name: bool = False,
-        is_email: bool = False
+        is_email: bool = False,
+        is_http: bool = False
     ) -> None:
         super().__init__(layout_token)
         self.layout_line = layout_line
@@ -635,6 +670,7 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.max_grobid_line_length = max_grobid_line_length
         self.is_location_name = is_location_name
         self.is_email = is_email
+        self.is_http = is_http
 
     def get_layout_model_data(self, features: List[str]) -> LayoutModelData:
         return LayoutModelData(
@@ -832,6 +868,9 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         )
 
     def get_str_is_http(self) -> str:
+        return '1' if self.is_http else '0'
+
+    def get_str_is_http_token_based(self) -> str:
         return get_str_bool_feature_value(
             self.token_text.lower().startswith('http')
         )
@@ -915,10 +954,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
             for line in block.lines
         }
         max_grobid_line_length = max(grobid_line_length_by_line_id.values())
-        document_token_count = sum((
-            1
-            for _ in layout_document.iter_all_tokens()
-        ))
+        all_tokens = list(layout_document.iter_all_tokens())
+        document_token_count = len(all_tokens)
         # Pre-compute location name indices if a phrase match is configured.
         # This mirrors GROBID's HeaderParser which runs tokenPositionsLocationNames()
         # before the feature loop and marks tokens within matched spans.
@@ -927,13 +964,13 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         )
         location_name_indices: frozenset = frozenset()
         if location_phrase_match is not None:
-            all_token_texts = [t.text for t in layout_document.iter_all_tokens()]
             location_name_indices = frozenset(
-                location_phrase_match.match_token_indices(all_token_texts)
+                location_phrase_match.match_token_indices(
+                    [t.text for t in all_tokens]
+                )
             )
-        email_token_indices = _get_email_token_indices(
-            list(layout_document.iter_all_tokens())
-        )
+        email_token_indices = _get_email_token_indices(all_tokens)
+        http_token_indices = _get_http_token_indices(all_tokens)
         document_token_index = 0
         for block in layout_document.iter_all_blocks():
             line_indentation_status_feature.on_new_block()
@@ -973,7 +1010,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                             grobid_line_length=grobid_line_length,
                             max_grobid_line_length=max_grobid_line_length,
                             is_location_name=(document_token_index in location_name_indices),
-                            is_email=(document_token_index in email_token_indices)
+                            is_email=(document_token_index in email_token_indices),
+                            is_http=(document_token_index in http_token_indices)
                         )
                     )
                     previous_layout_token = token
