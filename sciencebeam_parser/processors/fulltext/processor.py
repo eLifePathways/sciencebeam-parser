@@ -126,23 +126,20 @@ def _authors_match(
 
 
 def _iter_deduplicated_authors(
-    raw_authors: List[SemanticRawAuthors],
     parsed_per_block: List[List[SemanticContentWrapper]],
     use_initial_fallback: bool
 ) -> Iterable[SemanticContentWrapper]:
     seen: List[SemanticAuthor] = []
-    for raw_author, parsed in zip(raw_authors, parsed_per_block):
-        parsed_authors = [c for c in parsed if isinstance(c, SemanticAuthor)]
-        if seen and parsed_authors and all(
-            any(_authors_match(a, s, use_initial_fallback) for s in seen)
-            for a in parsed_authors
-        ):
-            yield SemanticNote(layout_block=raw_author.merged_block, note_type='raw_authors')
-        else:
-            for item in parsed:
-                yield item
-                if isinstance(item, SemanticAuthor):
+    for parsed in parsed_per_block:
+        for item in parsed:
+            if isinstance(item, SemanticAuthor):
+                if seen and any(_authors_match(item, s, use_initial_fallback) for s in seen):
+                    yield SemanticNote(layout_block=item.merged_block, note_type='raw_authors')
+                else:
+                    yield item
                     seen.append(item)
+            else:
+                yield item
 
 
 class FullTextProcessorDocumentContext(NamedTuple):
@@ -547,7 +544,6 @@ class FullTextProcessor:
             ]
             if self.config.deduplicate_raw_authors and not self.config.merge_raw_authors:
                 result_content.extend(_iter_deduplicated_authors(
-                    raw_authors,
                     parsed_per_block,
                     self.config.deduplicate_raw_authors_use_initial_fallback
                 ))

@@ -383,6 +383,47 @@ class TestFullTextProcessor:
         notes = list(semantic_document.front.iter_by_type(SemanticNote))
         assert len(notes) == 0
 
+    def test_should_deduplicate_only_duplicate_authors_in_mixed_block(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        # Block 1: Alice Smith
+        given1 = LayoutBlock.for_text('Alice')
+        sur1 = LayoutBlock.for_text('Smith')
+        authors_block = LayoutBlock.merge_blocks([given1, sur1])
+        # Block 2: Alice Smith (duplicate) + Bob Jones (new)
+        given2a = LayoutBlock.for_text('Alice')
+        sur2a = LayoutBlock.for_text('Smith')
+        given2b = LayoutBlock.for_text('Bob')
+        sur2b = LayoutBlock.for_text('Jones')
+        corresp_block = LayoutBlock.merge_blocks([given2a, sur2a, given2b, sur2b])
+
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            LayoutBlock.merge_blocks([authors_block, corresp_block]), '<header>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            authors_block, '<author>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            corresp_block, '<author>'
+        )
+        self._setup_author_blocks(fulltext_models_mock, given1, sur1)
+        self._setup_author_blocks(fulltext_models_mock, given2a, sur2a)
+        self._setup_author_blocks(fulltext_models_mock, given2b, sur2b)
+
+        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock.merge_blocks([authors_block, corresp_block])
+        ])])
+        semantic_document = FullTextProcessor(
+            fulltext_models_mock
+        ).get_semantic_document_for_layout_document(layout_document=layout_document)
+        authors = semantic_document.front.authors
+        assert len(authors) == 2
+        assert authors[0].given_name_text == 'Alice'
+        assert authors[1].given_name_text == 'Bob'
+        notes = list(semantic_document.front.iter_by_type(SemanticNote))
+        assert len(notes) == 1
+        assert notes[0].note_type == 'raw_authors'
+
     def test_should_not_deduplicate_when_disabled(
         self, fulltext_models_mock: MockFullTextModels
     ):
