@@ -18,6 +18,12 @@ LOGGER = logging.getLogger(__name__)
 
 YEAR_PATTERN = re.compile(r'[12]\d{3}')
 
+# Mirrors GROBID's TextUtilities.emailPattern:
+#   \w+((\.|‐|_|,)\w+)?\s?((\.|‐|_|,)\w+)?\s?@\s?\w+(\s?(\.|‐)\s?\w+)+
+_EMAIL_PATTERN = re.compile(
+    r'\w+([.\-_,]\w+)?\s?([.\-_,]\w+)?\s?@\s?\w+(\s?[.\-]\s?\w+)+'
+)
+
 MONTH_NAMES = frozenset({
     'january', 'february', 'march', 'april', 'may', 'june',
     'july', 'august', 'september', 'october', 'november', 'december',
@@ -579,7 +585,8 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         grobid_nn: int = 0,
         grobid_line_length: int = 0,
         max_grobid_line_length: int = 0,
-        is_location_name: bool = False
+        is_location_name: bool = False,
+        is_email: bool = False
     ) -> None:
         super().__init__(layout_token)
         self.layout_line = layout_line
@@ -600,6 +607,7 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.grobid_line_length = grobid_line_length
         self.max_grobid_line_length = max_grobid_line_length
         self.is_location_name = is_location_name
+        self.is_email = is_email
 
     def get_layout_model_data(self, features: List[str]) -> LayoutModelData:
         return LayoutModelData(
@@ -637,6 +645,9 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
 
     def get_str_is_location_name(self) -> str:
         return '1' if self.is_location_name else '0'
+
+    def get_str_is_email(self) -> str:
+        return '1' if self.is_email else '0'
 
     def get_is_indented_and_update(self) -> bool:
         assert self.line_indentation_status_feature
@@ -893,6 +904,27 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
             location_name_indices = frozenset(
                 location_phrase_match.match_token_indices(all_token_texts)
             )
+        # Pre-compute email token indices. Mirrors GROBID's
+        # Lexicon.tokenPositionsEmailPattern(): run emailPattern against the
+        # reconstructed full text and map character spans back to token indices.
+        all_tokens_for_email = list(layout_document.iter_all_tokens())
+        full_text = ''.join(t.text + t.whitespace for t in all_tokens_for_email)
+        email_token_indices: frozenset = frozenset()
+        if '@' in full_text:
+            char_start_by_token: List[int] = []
+            pos = 0
+            for t in all_tokens_for_email:
+                char_start_by_token.append(pos)
+                pos += len(t.text) + len(t.whitespace)
+            matched: set = set()
+            for m in _EMAIL_PATTERN.finditer(full_text):
+                m_start, m_end = m.start(), m.end()
+                for i, t in enumerate(all_tokens_for_email):
+                    t_start = char_start_by_token[i]
+                    t_end = t_start + len(t.text)
+                    if t_start < m_end and t_end > m_start:
+                        matched.add(i)
+            email_token_indices = frozenset(matched)
         document_token_index = 0
         for block in layout_document.iter_all_blocks():
             line_indentation_status_feature.on_new_block()
@@ -931,7 +963,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                             grobid_nn=grobid_nn,
                             grobid_line_length=grobid_line_length,
                             max_grobid_line_length=max_grobid_line_length,
-                            is_location_name=(document_token_index in location_name_indices)
+                            is_location_name=(document_token_index in location_name_indices),
+                            is_email=(document_token_index in email_token_indices)
                         )
                     )
                     previous_layout_token = token
