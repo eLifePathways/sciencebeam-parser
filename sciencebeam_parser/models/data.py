@@ -8,6 +8,7 @@ from typing import Callable, Generic, Iterable, List, NamedTuple, Optional, Type
 from lxml import etree
 
 from sciencebeam_parser.lookup import TextLookUp
+from sciencebeam_parser.lookup.phrase_match import SequencePhraseMatch
 from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken,  LayoutLine
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 
@@ -29,6 +30,7 @@ class AppFeaturesContext(NamedTuple):
     first_name_lookup: Optional[TextLookUp] = None
     last_name_lookup: Optional[TextLookUp] = None
     common_name_lookup: Optional[TextLookUp] = None
+    location_name_phrase_match: Optional[SequencePhraseMatch] = None
 
 
 DEFAULT_APP_FEATURES_CONTEXT = AppFeaturesContext()
@@ -576,7 +578,8 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         line_indentation_status_feature: Optional[LineIndentationStatusFeature] = None,
         grobid_nn: int = 0,
         grobid_line_length: int = 0,
-        max_grobid_line_length: int = 0
+        max_grobid_line_length: int = 0,
+        is_location_name: bool = False
     ) -> None:
         super().__init__(layout_token)
         self.layout_line = layout_line
@@ -596,6 +599,7 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.grobid_nn = grobid_nn
         self.grobid_line_length = grobid_line_length
         self.max_grobid_line_length = max_grobid_line_length
+        self.is_location_name = is_location_name
 
     def get_layout_model_data(self, features: List[str]) -> LayoutModelData:
         return LayoutModelData(
@@ -630,6 +634,9 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
 
     def get_dummy_page_status(self) -> str:
         return 'PAGEIN'
+
+    def get_str_is_location_name(self) -> str:
+        return '1' if self.is_location_name else '0'
 
     def get_is_indented_and_update(self) -> bool:
         assert self.line_indentation_status_feature
@@ -874,6 +881,18 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
             1
             for _ in layout_document.iter_all_tokens()
         ))
+        # Pre-compute location name indices if a phrase match is configured.
+        # This mirrors GROBID's HeaderParser which runs tokenPositionsLocationNames()
+        # before the feature loop and marks tokens within matched spans.
+        location_phrase_match = (
+            self.document_features_context.app_features_context.location_name_phrase_match
+        )
+        location_name_indices: frozenset = frozenset()
+        if location_phrase_match is not None:
+            all_token_texts = [t.text for t in layout_document.iter_all_tokens()]
+            location_name_indices = frozenset(
+                location_phrase_match.match_token_indices(all_token_texts)
+            )
         document_token_index = 0
         for block in layout_document.iter_all_blocks():
             line_indentation_status_feature.on_new_block()
@@ -911,7 +930,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                             line_indentation_status_feature=line_indentation_status_feature,
                             grobid_nn=grobid_nn,
                             grobid_line_length=grobid_line_length,
-                            max_grobid_line_length=max_grobid_line_length
+                            max_grobid_line_length=max_grobid_line_length,
+                            is_location_name=(document_token_index in location_name_indices)
                         )
                     )
                     previous_layout_token = token
