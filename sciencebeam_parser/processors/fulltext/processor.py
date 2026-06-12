@@ -101,6 +101,48 @@ from sciencebeam_parser.processors.fulltext.config import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _is_initial(s: str) -> bool:
+    return len(s.replace('.', '').replace(' ', '')) <= 2
+
+
+def _authors_match(
+    a: SemanticAuthor,
+    b: SemanticAuthor,
+    use_initial_fallback: bool
+) -> bool:
+    if not a.surname_text or a.surname_text.lower() != b.surname_text.lower():
+        return False
+    gn_a = a.given_name_text
+    gn_b = b.given_name_text
+    if not gn_a or not gn_b:
+        return False
+    if not _is_initial(gn_a) and not _is_initial(gn_b):
+        return gn_a.lower() == gn_b.lower()
+    if not use_initial_fallback:
+        return False
+    return gn_a[0].lower() == gn_b[0].lower()
+
+
+def _iter_deduplicated_authors(
+    raw_authors: List[SemanticRawAuthors],
+    parsed_per_block: List[List[SemanticContentWrapper]],
+    use_initial_fallback: bool
+) -> Iterable[SemanticContentWrapper]:
+    seen: List[SemanticAuthor] = []
+    for raw_author, parsed in zip(raw_authors, parsed_per_block):
+        parsed_authors = [c for c in parsed if isinstance(c, SemanticAuthor)]
+        if seen and parsed_authors and all(
+            any(_authors_match(a, s, use_initial_fallback) for s in seen)
+            for a in parsed_authors
+        ):
+            yield SemanticNote(layout_block=raw_author.merged_block, note_type='raw_authors')
+        else:
+            for item in parsed:
+                yield item
+                if isinstance(item, SemanticAuthor):
+                    seen.append(item)
+
+
 class FullTextProcessorDocumentContext(NamedTuple):
     pdf_path: Optional[str] = None
     temp_dir: Optional[str] = None
@@ -497,17 +539,19 @@ class FullTextProcessor:
                 app_features_context=self.app_features_context
             )
             LOGGER.debug('labeled_layout_tokens_list (author): %r', labeled_layout_tokens_list)
-            authors_iterable = (
-                author
-                for labeled_layout_tokens in labeled_layout_tokens_list
-                for author in (
-                    self.name_header_model.iter_semantic_content_for_labeled_layout_tokens(
-                        labeled_layout_tokens
-                    )
-                )
-            )
-            for author in authors_iterable:
-                result_content.append(author)
+            parsed_per_block = [
+                list(self.name_header_model.iter_semantic_content_for_labeled_layout_tokens(llt))
+                for llt in labeled_layout_tokens_list
+            ]
+            if self.config.deduplicate_raw_authors and not self.config.merge_raw_authors:
+                result_content.extend(_iter_deduplicated_authors(
+                    raw_authors,
+                    parsed_per_block,
+                    self.config.deduplicate_raw_authors_use_initial_fallback
+                ))
+            else:
+                for parsed in parsed_per_block:
+                    result_content.extend(parsed)
         semantic_parent.mixed_content = result_content
 
     def _process_raw_affiliations(self, semantic_document: SemanticDocument):

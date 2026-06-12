@@ -24,21 +24,28 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticEditor,
     SemanticFigure,
     SemanticFigureCitation,
+    SemanticGivenName,
     SemanticGraphic,
     SemanticInstitution,
     SemanticInvalidReference,
     SemanticLabel,
     SemanticMarker,
+    SemanticNote,
     SemanticRawReference,
     SemanticRawReferenceText,
     SemanticReference,
     SemanticReferenceCitation,
     SemanticReferenceList,
     SemanticSectionTypes,
+    SemanticSurname,
     SemanticTable,
     SemanticTableCitation,
     SemanticTitle,
     iter_by_semantic_type_recursively
+)
+from sciencebeam_parser.processors.fulltext.processor import (
+    _authors_match,
+    _is_initial
 )
 from sciencebeam_parser.processors.fulltext import processor as processor_module
 from sciencebeam_parser.processors.fulltext.processor import (
@@ -292,6 +299,191 @@ class TestFullTextProcessor:
         assert authors[0].given_name_text == given_name_block.text
         assert authors[0].surname_text == surname_block.text
 
+    def _setup_author_blocks(
+        self,
+        fulltext_models_mock: MockFullTextModels,
+        given_name_block: LayoutBlock,
+        surname_block: LayoutBlock
+    ):
+        fulltext_models_mock.name_header_model_mock.update_label_by_layout_block(
+            given_name_block, '<forename>'
+        )
+        fulltext_models_mock.name_header_model_mock.update_label_by_layout_block(
+            surname_block, '<surname>'
+        )
+
+    def test_should_deduplicate_exact_author_from_second_raw_authors_span(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        # Main author list: "Richard Coward"
+        given1 = LayoutBlock.for_text('Richard')
+        sur1 = LayoutBlock.for_text('Coward')
+        authors_block = LayoutBlock.merge_blocks([given1, sur1])
+        # Correspondence section: same "Richard Coward" (separate tokens)
+        given2 = LayoutBlock.for_text('Richard')
+        sur2 = LayoutBlock.for_text('Coward')
+        corresp_block = LayoutBlock.merge_blocks([given2, sur2])
+
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            LayoutBlock.merge_blocks([authors_block, corresp_block]), '<header>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            authors_block, '<author>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            corresp_block, '<author>'
+        )
+        self._setup_author_blocks(fulltext_models_mock, given1, sur1)
+        self._setup_author_blocks(fulltext_models_mock, given2, sur2)
+
+        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock.merge_blocks([authors_block, corresp_block])
+        ])])
+        semantic_document = FullTextProcessor(
+            fulltext_models_mock
+        ).get_semantic_document_for_layout_document(layout_document=layout_document)
+        authors = semantic_document.front.authors
+        assert len(authors) == 1
+        assert authors[0].given_name_text == 'Richard'
+        assert authors[0].surname_text == 'Coward'
+        notes = list(semantic_document.front.iter_by_type(SemanticNote))
+        assert len(notes) == 1
+        assert notes[0].note_type == 'raw_authors'
+
+    def test_should_keep_second_span_when_not_a_duplicate(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        given1 = LayoutBlock.for_text('Alice')
+        sur1 = LayoutBlock.for_text('Smith')
+        authors_block = LayoutBlock.merge_blocks([given1, sur1])
+        given2 = LayoutBlock.for_text('Bob')
+        sur2 = LayoutBlock.for_text('Jones')
+        corresp_block = LayoutBlock.merge_blocks([given2, sur2])
+
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            LayoutBlock.merge_blocks([authors_block, corresp_block]), '<header>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            authors_block, '<author>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            corresp_block, '<author>'
+        )
+        self._setup_author_blocks(fulltext_models_mock, given1, sur1)
+        self._setup_author_blocks(fulltext_models_mock, given2, sur2)
+
+        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock.merge_blocks([authors_block, corresp_block])
+        ])])
+        semantic_document = FullTextProcessor(
+            fulltext_models_mock
+        ).get_semantic_document_for_layout_document(layout_document=layout_document)
+        authors = semantic_document.front.authors
+        assert len(authors) == 2
+        notes = list(semantic_document.front.iter_by_type(SemanticNote))
+        assert len(notes) == 0
+
+    def test_should_not_deduplicate_when_disabled(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        given1 = LayoutBlock.for_text('Richard')
+        sur1 = LayoutBlock.for_text('Coward')
+        authors_block = LayoutBlock.merge_blocks([given1, sur1])
+        given2 = LayoutBlock.for_text('Richard')
+        sur2 = LayoutBlock.for_text('Coward')
+        corresp_block = LayoutBlock.merge_blocks([given2, sur2])
+
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            LayoutBlock.merge_blocks([authors_block, corresp_block]), '<header>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            authors_block, '<author>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            corresp_block, '<author>'
+        )
+        self._setup_author_blocks(fulltext_models_mock, given1, sur1)
+        self._setup_author_blocks(fulltext_models_mock, given2, sur2)
+
+        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock.merge_blocks([authors_block, corresp_block])
+        ])])
+        semantic_document = FullTextProcessor(
+            fulltext_models_mock,
+            config=FullTextProcessorConfig(deduplicate_raw_authors=False)
+        ).get_semantic_document_for_layout_document(layout_document=layout_document)
+        authors = semantic_document.front.authors
+        assert len(authors) == 2
+
+
+class TestIsInitial:
+    def test_single_letter(self):
+        assert _is_initial('R') is True
+
+    def test_single_letter_with_dot(self):
+        assert _is_initial('R.') is True
+
+    def test_two_letters(self):
+        assert _is_initial('JM') is True
+
+    def test_full_name(self):
+        assert _is_initial('Richard') is False
+
+    def test_short_name_three_chars(self):
+        assert _is_initial('Jan') is False
+
+
+class TestAuthorsMatch:
+    def _make_author(self, given_name: str, surname: str) -> SemanticAuthor:
+        a = SemanticAuthor()
+        if given_name:
+            a.add_content(SemanticGivenName(layout_block=LayoutBlock.for_text(given_name)))
+        if surname:
+            a.add_content(SemanticSurname(layout_block=LayoutBlock.for_text(surname)))
+        return a
+
+    def test_exact_full_name_match(self):
+        a = self._make_author('Richard', 'Coward')
+        b = self._make_author('Richard', 'Coward')
+        assert _authors_match(a, b, use_initial_fallback=True) is True
+
+    def test_different_surnames_no_match(self):
+        a = self._make_author('Richard', 'Coward')
+        b = self._make_author('Richard', 'Smith')
+        assert _authors_match(a, b, use_initial_fallback=True) is False
+
+    def test_different_full_first_names_no_match(self):
+        a = self._make_author('James', 'Smith')
+        b = self._make_author('John', 'Smith')
+        assert _authors_match(a, b, use_initial_fallback=True) is False
+
+    def test_initial_vs_full_name_with_fallback(self):
+        a = self._make_author('R', 'Coward')
+        b = self._make_author('Richard', 'Coward')
+        assert _authors_match(a, b, use_initial_fallback=True) is True
+
+    def test_initial_vs_full_name_without_fallback(self):
+        a = self._make_author('R', 'Coward')
+        b = self._make_author('Richard', 'Coward')
+        assert _authors_match(a, b, use_initial_fallback=False) is False
+
+    def test_case_insensitive(self):
+        a = self._make_author('richard', 'coward')
+        b = self._make_author('Richard', 'Coward')
+        assert _authors_match(a, b, use_initial_fallback=True) is True
+
+    def test_missing_given_name_no_match(self):
+        a = self._make_author('', 'Coward')
+        b = self._make_author('Richard', 'Coward')
+        assert _authors_match(a, b, use_initial_fallback=True) is False
+
+    def test_missing_surname_no_match(self):
+        a = self._make_author('Richard', '')
+        b = self._make_author('Richard', 'Coward')
+        assert _authors_match(a, b, use_initial_fallback=True) is False
+
+
+class TestFullTextProcessorAffiliation:
     def test_should_extract_affiliation_address_from_document(
         self, fulltext_models_mock: MockFullTextModels
     ):
