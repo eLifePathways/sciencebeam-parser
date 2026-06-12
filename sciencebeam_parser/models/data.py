@@ -3,13 +3,13 @@ import math
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Generic, Iterable, List, NamedTuple, Optional, TypeVar
+from typing import Callable, FrozenSet, Generic, Iterable, List, NamedTuple, Optional, TypeVar
 
 from lxml import etree
 
 from sciencebeam_parser.lookup import TextLookUp
 from sciencebeam_parser.lookup.phrase_match import SequencePhraseMatch
-from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken,  LayoutLine
+from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken, LayoutLine
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 
 
@@ -23,6 +23,33 @@ YEAR_PATTERN = re.compile(r'[12]\d{3}')
 _EMAIL_PATTERN = re.compile(
     r'\w+([.\-_,]\w+)?\s?([.\-_,]\w+)?\s?@\s?\w+(\s?[.\-]\s?\w+)+'
 )
+
+
+def _get_email_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
+    text_parts: List[str] = []
+    char_start_by_token: List[int] = []
+    pos = 0
+    last = len(tokens) - 1
+    for i, t in enumerate(tokens):
+        char_start_by_token.append(pos)
+        text_parts.append(t.text)
+        pos += len(t.text)
+        if i < last:
+            text_parts.append(t.whitespace)
+            pos += len(t.whitespace)
+    full_text = ''.join(text_parts)
+    if '@' not in full_text:
+        return frozenset()
+    matched: set = set()
+    for m in _EMAIL_PATTERN.finditer(full_text):
+        m_start, m_end = m.start(), m.end()
+        for i, t in enumerate(tokens):
+            t_start = char_start_by_token[i]
+            t_end = t_start + len(t.text)
+            if t_start < m_end and t_end > m_start:
+                matched.add(i)
+    return frozenset(matched)
+
 
 MONTH_NAMES = frozenset({
     'january', 'february', 'march', 'april', 'may', 'june',
@@ -904,27 +931,9 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
             location_name_indices = frozenset(
                 location_phrase_match.match_token_indices(all_token_texts)
             )
-        # Pre-compute email token indices. Mirrors GROBID's
-        # Lexicon.tokenPositionsEmailPattern(): run emailPattern against the
-        # reconstructed full text and map character spans back to token indices.
-        all_tokens_for_email = list(layout_document.iter_all_tokens())
-        full_text = ''.join(t.text + t.whitespace for t in all_tokens_for_email)
-        email_token_indices: frozenset = frozenset()
-        if '@' in full_text:
-            char_start_by_token: List[int] = []
-            pos = 0
-            for t in all_tokens_for_email:
-                char_start_by_token.append(pos)
-                pos += len(t.text) + len(t.whitespace)
-            matched: set = set()
-            for m in _EMAIL_PATTERN.finditer(full_text):
-                m_start, m_end = m.start(), m.end()
-                for i, t in enumerate(all_tokens_for_email):
-                    t_start = char_start_by_token[i]
-                    t_end = t_start + len(t.text)
-                    if t_start < m_end and t_end > m_start:
-                        matched.add(i)
-            email_token_indices = frozenset(matched)
+        email_token_indices = _get_email_token_indices(
+            list(layout_document.iter_all_tokens())
+        )
         document_token_index = 0
         for block in layout_document.iter_all_blocks():
             line_indentation_status_feature.on_new_block()
