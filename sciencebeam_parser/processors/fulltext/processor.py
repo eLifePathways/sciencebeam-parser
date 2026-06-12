@@ -114,6 +114,8 @@ def _authors_match(
         return False
     gn_a = a.given_name_text
     gn_b = b.given_name_text
+    if not gn_a and not gn_b:
+        return True  # both surname-only → same person
     if not gn_a or not gn_b:
         return False
     if not _is_initial(gn_a) and not _is_initial(gn_b):

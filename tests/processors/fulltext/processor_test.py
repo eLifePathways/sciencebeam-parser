@@ -472,7 +472,12 @@ class TestAuthorsMatch:
         b = self._make_author('Richard', 'Coward')
         assert _authors_match(a, b, use_initial_fallback=True) is True
 
-    def test_missing_given_name_no_match(self):
+    def test_both_surname_only_match(self):
+        a = self._make_author('', 'Basit')
+        b = self._make_author('', 'Basit')
+        assert _authors_match(a, b, use_initial_fallback=True) is True
+
+    def test_one_surname_only_no_match(self):
         a = self._make_author('', 'Coward')
         b = self._make_author('Richard', 'Coward')
         assert _authors_match(a, b, use_initial_fallback=True) is False
