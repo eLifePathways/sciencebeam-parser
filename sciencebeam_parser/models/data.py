@@ -18,22 +18,21 @@ LOGGER = logging.getLogger(__name__)
 
 YEAR_PATTERN = re.compile(r'[12]\d{3}')
 
-# Mirrors GROBID's TextUtilities.emailPattern:
-#   \w+((\.|‐|_|,)\w+)?\s?((\.|‐|_|,)\w+)?\s?@\s?\w+(\s?(\.|‐)\s?\w+)+
+# Mirrors GROBID's TextUtilities.emailPattern
 _EMAIL_PATTERN = re.compile(
     r'\w+([.\-_,]\w+)?\s?([.\-_,]\w+)?\s?@\s?\w+(\s?[.\-]\s?\w+)+'
 )
 
-# Mirrors GROBID's TextUtilities.urlPattern1 used by HeaderParser and CitationParser.
-# Both parsers use span-based detection: every token within a matched URL span is marked.
+# Mirrors GROBID's TextUtilities.urlPattern1; header and citation parsers use span-based detection.
 _HTTP_URL_PATTERN = re.compile(
-    r'(?i)(https?|ftp)\s{0,2}:\s{0,2}//\s{0,2}[-A-Z0-9+&@#/%?=~_()|!:.;]*'
-    r'[-A-Z0-9+&@#/%=~_()]'
+    r'(?i)(https?|ftp)\s{0,2}:\s{0,2}//\s{0,2}[-A-Z0-9+&@#/%?=~_()|!:.;]*[-A-Z0-9+&@#/%=~_()]'
     r'|www\s{0,2}\.\s{0,2}[-A-Z0-9+&@#/%?=~_()|!:.;]*[-A-Z0-9+&@#/%=~_()]'
 )
 
 
-def _get_email_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
+def _get_pattern_token_indices(
+    tokens: List[LayoutToken], pattern: re.Pattern, required_substring: str = ''
+) -> FrozenSet[int]:
     text_parts: List[str] = []
     char_start_by_token: List[int] = []
     pos = 0
@@ -46,50 +45,29 @@ def _get_email_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
             text_parts.append(t.whitespace)
             pos += len(t.whitespace)
     full_text = ''.join(text_parts)
-    if '@' not in full_text:
+    if required_substring and required_substring not in full_text:
         return frozenset()
     matched: set = set()
-    for m in _EMAIL_PATTERN.finditer(full_text):
-        m_start, m_end = m.start(), m.end()
+    for m in pattern.finditer(full_text):
         for i, t in enumerate(tokens):
             t_start = char_start_by_token[i]
-            t_end = t_start + len(t.text)
-            if t_start < m_end and t_end > m_start:
+            if t_start < m.end() and t_start + len(t.text) > m.start():
                 matched.add(i)
     return frozenset(matched)
+
+
+def _get_email_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
+    return _get_pattern_token_indices(tokens, _EMAIL_PATTERN, required_substring='@')
 
 
 def _get_http_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
-    text_parts: List[str] = []
-    char_start_by_token: List[int] = []
-    pos = 0
-    last = len(tokens) - 1
-    for i, t in enumerate(tokens):
-        char_start_by_token.append(pos)
-        text_parts.append(t.text)
-        pos += len(t.text)
-        if i < last:
-            text_parts.append(t.whitespace)
-            pos += len(t.whitespace)
-    full_text = ''.join(text_parts)
-    if 'http' not in full_text.lower() and 'www.' not in full_text.lower():
-        return frozenset()
-    matched: set = set()
-    for m in _HTTP_URL_PATTERN.finditer(full_text):
-        m_start, m_end = m.start(), m.end()
-        for i, t in enumerate(tokens):
-            t_start = char_start_by_token[i]
-            t_end = t_start + len(t.text)
-            if t_start < m_end and t_end > m_start:
-                matched.add(i)
-    return frozenset(matched)
+    return _get_pattern_token_indices(tokens, _HTTP_URL_PATTERN)
 
 
 MONTH_NAMES = frozenset({
     'january', 'february', 'march', 'april', 'may', 'june',
     'july', 'august', 'september', 'october', 'november', 'december',
-    'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
-})
+    'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'})
 
 
 class AppFeaturesContext(NamedTuple):
