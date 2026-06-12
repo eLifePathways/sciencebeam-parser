@@ -3,13 +3,13 @@ import math
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Generic, Iterable, List, NamedTuple, Optional, TypeVar
+from typing import Callable, FrozenSet, Generic, Iterable, List, NamedTuple, Optional, TypeVar
 
 from lxml import etree
 
 from sciencebeam_parser.lookup import TextLookUp
 from sciencebeam_parser.lookup.phrase_match import SequencePhraseMatch
-from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken,  LayoutLine
+from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken, LayoutLine
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 
 
@@ -17,6 +17,39 @@ LOGGER = logging.getLogger(__name__)
 
 
 YEAR_PATTERN = re.compile(r'[12]\d{3}')
+
+# Mirrors GROBID's TextUtilities.emailPattern:
+#   \w+((\.|‐|_|,)\w+)?\s?((\.|‐|_|,)\w+)?\s?@\s?\w+(\s?(\.|‐)\s?\w+)+
+_EMAIL_PATTERN = re.compile(
+    r'\w+([.\-_,]\w+)?\s?([.\-_,]\w+)?\s?@\s?\w+(\s?[.\-]\s?\w+)+'
+)
+
+
+def _get_email_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
+    text_parts: List[str] = []
+    char_start_by_token: List[int] = []
+    pos = 0
+    last = len(tokens) - 1
+    for i, t in enumerate(tokens):
+        char_start_by_token.append(pos)
+        text_parts.append(t.text)
+        pos += len(t.text)
+        if i < last:
+            text_parts.append(t.whitespace)
+            pos += len(t.whitespace)
+    full_text = ''.join(text_parts)
+    if '@' not in full_text:
+        return frozenset()
+    matched: set = set()
+    for m in _EMAIL_PATTERN.finditer(full_text):
+        m_start, m_end = m.start(), m.end()
+        for i, t in enumerate(tokens):
+            t_start = char_start_by_token[i]
+            t_end = t_start + len(t.text)
+            if t_start < m_end and t_end > m_start:
+                matched.add(i)
+    return frozenset(matched)
+
 
 MONTH_NAMES = frozenset({
     'january', 'february', 'march', 'april', 'may', 'june',
@@ -579,7 +612,8 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         grobid_nn: int = 0,
         grobid_line_length: int = 0,
         max_grobid_line_length: int = 0,
-        is_location_name: bool = False
+        is_location_name: bool = False,
+        is_email: bool = False
     ) -> None:
         super().__init__(layout_token)
         self.layout_line = layout_line
@@ -600,6 +634,7 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.grobid_line_length = grobid_line_length
         self.max_grobid_line_length = max_grobid_line_length
         self.is_location_name = is_location_name
+        self.is_email = is_email
 
     def get_layout_model_data(self, features: List[str]) -> LayoutModelData:
         return LayoutModelData(
@@ -637,6 +672,9 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
 
     def get_str_is_location_name(self) -> str:
         return '1' if self.is_location_name else '0'
+
+    def get_str_is_email(self) -> str:
+        return '1' if self.is_email else '0'
 
     def get_is_indented_and_update(self) -> bool:
         assert self.line_indentation_status_feature
@@ -893,6 +931,9 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
             location_name_indices = frozenset(
                 location_phrase_match.match_token_indices(all_token_texts)
             )
+        email_token_indices = _get_email_token_indices(
+            list(layout_document.iter_all_tokens())
+        )
         document_token_index = 0
         for block in layout_document.iter_all_blocks():
             line_indentation_status_feature.on_new_block()
@@ -931,7 +972,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                             grobid_nn=grobid_nn,
                             grobid_line_length=grobid_line_length,
                             max_grobid_line_length=max_grobid_line_length,
-                            is_location_name=(document_token_index in location_name_indices)
+                            is_location_name=(document_token_index in location_name_indices),
+                            is_email=(document_token_index in email_token_indices)
                         )
                     )
                     previous_layout_token = token
