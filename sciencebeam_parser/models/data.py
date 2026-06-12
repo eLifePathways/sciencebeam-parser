@@ -334,6 +334,10 @@ class LineIndentationStatusFeature:
         self._is_new_line = True
         self._is_indented = False
         self._skip_next_line_start_update = True
+        # For compare_across_blocks: skip the very first LINESTART update so that
+        # token 2 compares against token 2's predecessor (token 2), not token 1.
+        # This matches GROBID's previousFeatures=null double-skip behaviour.
+        self._first_linestart_skipped = False
 
     def on_new_block(self):
         if self._compare_across_blocks:
@@ -354,7 +358,12 @@ class LineIndentationStatusFeature:
 
     def get_is_indented_and_update(self, layout_token: LayoutToken):
         if self._is_new_line and layout_token.coordinates and layout_token.text:
-            if self._persist_across_blocks and self._skip_next_line_start_update:
+            if self._compare_across_blocks and not self._first_linestart_skipped:
+                # Match GROBID: the first-ever LINESTART token does not set lineStartX
+                # (previousFeatures=null), so token 2 also skips comparison (NaN check).
+                # Only from token 3 onward does comparison happen normally.
+                self._first_linestart_skipped = True
+            elif self._persist_across_blocks and self._skip_next_line_start_update:
                 self._skip_next_line_start_update = False
             else:
                 previous_line_start_x = self._line_start_x

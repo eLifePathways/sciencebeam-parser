@@ -37,12 +37,23 @@ class TestLoadLookupFromWfFile:
         assert lookup.contains('battery\t=\tNcns-') is False
         assert lookup.contains('battery') is True
 
-    def test_should_be_case_insensitive(self, tmp_path: Path):
+    def test_lowercase_word_matches_case_insensitively(self, tmp_path: Path):
+        # A word that is already lowercase in the file can be found regardless of query case.
+        wf_file = tmp_path / 'english.wf'
+        wf_file.write_text('innovation\t=\tNcns-\n', encoding='latin-1')
+        lookup = load_lookup_from_wf_file(str(wf_file))
+        assert lookup.contains('innovation') is True
+        assert lookup.contains('Innovation') is True
+
+    def test_capitalised_word_is_not_stored(self, tmp_path: Path):
+        # GROBID stores words as-is but queries in lowercase, so capitalised wordforms
+        # (e.g. 'British', 'October') are effectively unreachable.
+        # We replicate this by only storing already-lowercase wordforms.
         wf_file = tmp_path / 'english.wf'
         wf_file.write_text('Innovation\t=\tNcns-\n', encoding='latin-1')
         lookup = load_lookup_from_wf_file(str(wf_file))
-        assert lookup.contains('Innovation') is True
-        assert lookup.contains('innovation') is True
+        assert lookup.contains('Innovation') is False
+        assert lookup.contains('innovation') is False
 
     def test_should_load_multiple_word_forms(self, tmp_path: Path):
         wf_file = tmp_path / 'english.wf'

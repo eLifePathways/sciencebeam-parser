@@ -153,46 +153,57 @@ class TestLineIndentationStatusFeature:
 class TestLineIndentationStatusFeatureWithCompareAcrossBlocks:
     """Tests for compare_across_blocks=True (GROBID ReferenceSegmenterParser behaviour).
 
-    Every line (including the first of a new block) compares its x against the previous
-    line's x, matching GROBID's flat-token-stream processing where blocks have no effect.
+    GROBID skips the first-ever LINESTART update (previousFeatures=null), so the second
+    LINESTART also skips comparison (previousLineStartX=NaN). Only from the third LINESTART
+    onward does normal comparison happen.  All block boundaries are ignored (no-op on_new_block).
     """
 
     def _feature(self):
         return LineIndentationStatusFeature(compare_across_blocks=True)
 
     def test_first_line_of_new_block_resets_indentation_when_shifted_left(self):
-        # Block 1: line at x=10, then indented line at x=50 → _is_indented=True
-        # Block 2: line at x=10 — should RESET indentation (x=10 < x=50 - charWidth)
+        # GROBID double-skip: line 1 skips update; line 2 skips comparison (stores reference).
+        # Line 3 (x=50) is the first real comparison: x=50 > x=10 → LINEINDENT.
+        # New block at x=10 — SHOULD reset indentation (cross-block comparison happens).
         f = self._feature()
         f.on_new_block()
         f.on_new_line()
         assert f.get_is_indented_and_update(
             LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
-        ) is False
+        ) is False  # line 1: first-ever skip, lineStartX not set
+        f.on_new_line()
+        assert f.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is False  # line 2: previous=None, no comparison, stores lineStartX=10
         f.on_new_line()
         assert f.get_is_indented_and_update(
             LayoutToken('x', coordinates=LayoutPageCoordinates(x=50, y=10, width=10, height=10))
-        ) is True
+        ) is True   # line 3: compare x=50 vs x=10 → LINEINDENT
         # New block at x=10 — SHOULD reset indented (cross-block comparison happens)
         f.on_new_block()
         f.on_new_line()
         assert f.get_is_indented_and_update(
             LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
-        ) is False
+        ) is False  # line 4 (new block): compare x=10 vs x=50 → ALIGNEDLEFT
 
     def test_first_line_of_new_block_sets_indentation_when_shifted_right(self):
+        # After the double-skip warm-up, a new block at x=50 (right of x=10) is LINEINDENT.
         f = self._feature()
         f.on_new_block()
         f.on_new_line()
         assert f.get_is_indented_and_update(
             LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
-        ) is False
+        ) is False  # line 1: first-ever skip
+        f.on_new_line()
+        assert f.get_is_indented_and_update(
+            LayoutToken('x', coordinates=LayoutPageCoordinates(x=10, y=10, width=10, height=10))
+        ) is False  # line 2: stores lineStartX=10, no comparison
         # New block indented right of x=10
         f.on_new_block()
         f.on_new_line()
         assert f.get_is_indented_and_update(
             LayoutToken('x', coordinates=LayoutPageCoordinates(x=50, y=10, width=10, height=10))
-        ) is True
+        ) is True   # line 3 (new block): compare x=50 vs x=10 → LINEINDENT
 
 
 class TestLineIndentationStatusFeatureWithPersistAcrossBlocks:

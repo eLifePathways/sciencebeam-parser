@@ -198,11 +198,11 @@ class TestAlignment:
         items = list(gen.iter_model_data_for_layout_document(doc))
         idx = gen.feature_names.index('alignment')
         alignments = [item.data_line.split()[idx] for item in items]
-        # token '1': ALIGNEDLEFT (first line, no previous)
+        # token '1': ALIGNEDLEFT (first-ever LINESTART, double-skip: lineStartX not set)
         assert alignments[0] == 'ALIGNEDLEFT'
-        # token 'Author': LINEINDENT (indented relative to '1')
-        assert alignments[1] == 'LINEINDENT'
-        # token '2': ALIGNEDLEFT (x=10 < x=50 of previous 'Author' line → not indented)
+        # token 'Author': ALIGNEDLEFT (second LINESTART: previous=None, no comparison)
+        assert alignments[1] == 'ALIGNEDLEFT'
+        # token '2': ALIGNEDLEFT (x=10 < x=50 of 'Author' → not indented)
         assert alignments[2] == 'ALIGNEDLEFT'
 
 
