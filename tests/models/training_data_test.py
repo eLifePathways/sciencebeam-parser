@@ -143,3 +143,24 @@ class TestTrainingTeiParser:
             labeled_layout_tokens[0].layout_token.line_meta
             != labeled_layout_tokens[1].layout_token.line_meta
         )
+
+    def test_unannotated_tokens_after_annotated_span_use_O(self):
+        # training_data.py emits plain 'O' for all unannotated tokens regardless of
+        # position. The I-<other> GROBID convention is applied later by
+        # translate_tag_result_tags_IOB_to_grobid in generate_delft_data.py.
+        tei_root = _get_training_tei_with_text([
+            E('head', TOKEN_1, E('lb')),
+            '\n',
+            TOKEN_2, E('lb'),
+            '\n',
+            TOKEN_3, E('lb'),
+            '\n',
+        ])
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<head>'),
+            (TOKEN_2, 'O'),
+            (TOKEN_3, 'O'),
+        ]]

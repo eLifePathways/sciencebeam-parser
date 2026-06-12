@@ -73,12 +73,23 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def translate_tags_IOB_to_grobid(tag: str) -> str:
+_GROBID_OTHER_LABELS = frozenset({'<other>', 'I-<other>'})
+
+
+def translate_tags_IOB_to_grobid(
+    tag: str,
+    prev_grobid_tag: Optional[str] = None
+) -> str:
     """
-    Convert labels from IOB2 to the ones used by GROBID (expected by the wapiti model)
+    Convert labels from IOB2 to the ones used by GROBID (expected by the wapiti model).
+
+    When prev_grobid_tag is supplied the function also replicates GROBID's convention of
+    emitting I-<other> for the first "other" token immediately after an annotated span.
     """
     if tag == 'O':
-        # outside
+        # GROBID uses I-<other> for the first "other" token after any annotated span
+        if prev_grobid_tag is not None and prev_grobid_tag not in _GROBID_OTHER_LABELS:
+            return 'I-<other>'
         return '<other>'
     if tag.startswith('B-'):
         # begin
@@ -89,14 +100,23 @@ def translate_tags_IOB_to_grobid(tag: str) -> str:
     return tag
 
 
+def _translate_doc_tags_IOB_to_grobid(
+    doc_tag_result: Sequence[Tuple[str, str]]
+) -> List[Tuple[str, str]]:
+    translated: List[Tuple[str, str]] = []
+    prev_grobid_tag: Optional[str] = None
+    for token_text, tag in doc_tag_result:
+        grobid_tag = translate_tags_IOB_to_grobid(tag, prev_grobid_tag)
+        translated.append((token_text, grobid_tag))
+        prev_grobid_tag = grobid_tag
+    return translated
+
+
 def translate_tag_result_tags_IOB_to_grobid(
     tag_result: Sequence[Sequence[Tuple[str, str]]]
 ) -> List[List[Tuple[str, str]]]:
     return [
-        [
-            (token_text, translate_tags_IOB_to_grobid(tag))
-            for token_text, tag in doc_tag_result
-        ]
+        _translate_doc_tags_IOB_to_grobid(doc_tag_result)
         for doc_tag_result in tag_result
     ]
 

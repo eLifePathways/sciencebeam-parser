@@ -27,7 +27,9 @@ from sciencebeam_parser.models.data import DocumentFeaturesContext, ModelDataGen
 
 import sciencebeam_parser.training.cli.generate_delft_data as generate_delft_data_module
 from sciencebeam_parser.training.cli.generate_delft_data import (
-    main
+    main,
+    translate_tag_result_tags_IOB_to_grobid,
+    translate_tags_IOB_to_grobid
 )
 from sciencebeam_parser.utils.xml_writer import XmlTreeWriter
 from tests.processors.fulltext.model_mocks import MockFullTextModels
@@ -188,6 +190,44 @@ def _test_generate_delft_with_two_tokens_tei_only(
         expected_labels=expected_labels,
         data_generator=data_generator
     )
+
+
+class TestTranslateTagsIOBToGrobid:
+    def test_outside_tag_becomes_other(self):
+        assert translate_tags_IOB_to_grobid('O') == '<other>'
+
+    def test_begin_tag_becomes_i_prefixed(self):
+        assert translate_tags_IOB_to_grobid('B-<title>') == 'I-<title>'
+
+    def test_inside_tag_drops_prefix(self):
+        assert translate_tags_IOB_to_grobid('I-<title>') == '<title>'
+
+    def test_outside_after_annotated_becomes_i_other(self):
+        # GROBID uses I-<other> for the first "other" token immediately after any
+        # annotated span. prev_grobid_tag carries the previous translated label.
+        assert translate_tags_IOB_to_grobid('O', prev_grobid_tag='I-<title>') == 'I-<other>'
+        assert translate_tags_IOB_to_grobid('O', prev_grobid_tag='<title>') == 'I-<other>'
+
+    def test_outside_after_other_stays_other(self):
+        assert translate_tags_IOB_to_grobid('O', prev_grobid_tag='<other>') == '<other>'
+        assert translate_tags_IOB_to_grobid('O', prev_grobid_tag='I-<other>') == '<other>'
+
+    def test_outside_at_document_start_stays_other(self):
+        assert translate_tags_IOB_to_grobid('O', prev_grobid_tag=None) == '<other>'
+
+    def test_translate_doc_applies_i_other_convention(self):
+        # Full document translation: O after B-<title> → I-<other>; subsequent O → <other>
+        tag_result = [[
+            ('token1', 'B-<title>'),
+            ('token2', 'O'),
+            ('token3', 'O'),
+        ]]
+        translated = translate_tag_result_tags_IOB_to_grobid(tag_result)
+        assert translated == [[
+            ('token1', 'I-<title>'),
+            ('token2', 'I-<other>'),
+            ('token3', '<other>'),
+        ]]
 
 
 @log_on_exception
