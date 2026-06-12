@@ -41,6 +41,8 @@ class FullTextProcessorConfig(NamedTuple):
     extract_figure_fields: bool = True
     extract_table_fields: bool = True
     merge_raw_authors: bool = False
+    deduplicate_raw_authors: bool = True
+    deduplicate_raw_authors_use_initial_fallback: bool = True
     extract_graphic_bounding_boxes: bool = True
     extract_graphic_assets: bool = False
     use_cv_model: bool = False
