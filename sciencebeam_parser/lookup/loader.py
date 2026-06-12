@@ -34,12 +34,15 @@ def load_lookup_from_text_file(path: str, split_on_hyphen: bool = False) -> Text
 
 
 def load_lookup_from_wf_file(path: str) -> TextLookUp:
-    # GROBID multext wordforms format: first tab-separated column is the word form
+    # GROBID multext wordforms format: first tab-separated column is the word form.
+    # GROBID stores words as-is (preserving case) but test_common() lowercases the query,
+    # so capitalised wordforms (e.g. 'British', 'October') are effectively unreachable.
+    # We replicate this by only storing already-lowercase wordforms.
     words: set = set()
     for line in Path(path).read_text(encoding='latin-1').splitlines():
         if line:
             word = line.split('\t', 1)[0]
-            if word:
+            if word and word == word.lower():
                 words.add(word)
     return SimpleTextLookUp(words)
 
