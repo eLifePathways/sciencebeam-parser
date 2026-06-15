@@ -108,3 +108,26 @@ class TestIsKnownIdentifier:
 
     def test_word_gives_0(self):
         assert _get_feature('Lancet', 'is_known_identifier') == '0'
+
+
+class TestSentenceTokenRelativePosition:
+    def test_single_token_gives_0(self):
+        # single token: sentence_token_count = 1, index = 0 → bin 0
+        assert _get_feature('Word', 'sentence_token_relative_position') == '0'
+
+    def test_last_of_three_space_separated_tokens_matches_grobid(self):
+        # GROBID: tokens = ["A"," ","B"," ","C"], sentenceLenth=5
+        # "C" is at n=4: floor(4/5*12) = floor(9.6) = 9
+        # sbeam (pre-fix) was: floor(2/3*12) = 8 — wrong
+        tokens = [('A', ' '), ('B', ' '), ('C', '')]
+        assert _get_feature_for_tokens(tokens, 'C', 'sentence_token_relative_position') == '9'
+
+    def test_middle_of_three_matches_grobid(self):
+        # "B" at n=2: floor(2/5*12) = floor(4.8) = 4 (same as pre-fix sbeam: floor(1/3*12) = 4)
+        tokens = [('A', ' '), ('B', ' '), ('C', '')]
+        assert _get_feature_for_tokens(tokens, 'B', 'sentence_token_relative_position') == '4'
+
+    def test_no_whitespace_tokens_unchanged(self):
+        # sub-tokens of a DOI with no whitespace: same as before
+        tokens = [('10', ''), ('.', ''), ('1016', ''), ('/', ''), ('abcde', '')]
+        assert _get_feature_for_tokens(tokens, '10', 'sentence_token_relative_position') == '0'
