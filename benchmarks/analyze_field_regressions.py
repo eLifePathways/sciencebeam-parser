@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# pylint: disable=too-many-lines
 """
 Automated GROBID feature parity analysis for a specific benchmark field.
 
@@ -46,17 +47,30 @@ from sciencebeam_parser.utils.model_data_diff import format_model_data_diff
 
 LOGGER = logging.getLogger(__name__)
 
-FIELD_RELEVANT_LABELS: Dict[str, frozenset] = {
-    'reference_doi':        frozenset({'<pubnum>', '<web>'}),
-    'reference_title':      frozenset({'<title>'}),
-    'title':                frozenset({'<title>'}),
-    'abstract':             frozenset({'<abstract>'}),
-    'keywords':             frozenset({'<keyword>'}),
-    'author_full_names':    frozenset({'<forenames>', '<surname>', '<author>'}),
-    'affiliation_text':     frozenset({'<affiliation>'}),
-    'body_section_titles':  frozenset({'<section>'}),
-    'acknowledgement':      frozenset({'<acknowledgement>'}),
-    'first_reference_text': frozenset({'<references>', '<reference>'}),
+_REFERENCE_MODEL_LABELS: Dict[str, frozenset] = {
+    'segmentation':        frozenset({'<references>'}),
+    'reference-segmenter': frozenset({'<reference>'}),
+}
+
+_HEADER_MODEL_LABELS: Dict[str, frozenset] = {
+    'segmentation': frozenset({'<header>'}),
+}
+
+MODEL_RELEVANT_LABELS: Dict[str, Dict[str, frozenset]] = {
+    'reference_doi':        {**_REFERENCE_MODEL_LABELS,
+                             'citation': frozenset({'<pubnum>', '<web>'})},
+    'reference_title':      {**_REFERENCE_MODEL_LABELS, 'citation': frozenset({'<title>'})},
+    'first_reference_text': _REFERENCE_MODEL_LABELS,
+    'title':                {**_HEADER_MODEL_LABELS, 'header': frozenset({'<title>'})},
+    'abstract':             {**_HEADER_MODEL_LABELS, 'header': frozenset({'<abstract>'})},
+    'keywords':             {**_HEADER_MODEL_LABELS, 'header': frozenset({'<keyword>'})},
+    'author_full_names':    {**_HEADER_MODEL_LABELS, 'header': frozenset({'<author>'}),
+                             'name-header': frozenset({'<forenames>', '<surname>'})},
+    'affiliation_text':     {**_HEADER_MODEL_LABELS, 'header': frozenset({'<affiliation>'})},
+    'body_section_titles':  {'segmentation': frozenset({'<body>'}),
+                             'fulltext': frozenset({'<section>'})},
+    'acknowledgement':      {'segmentation': frozenset({'<acknowledgement>'}),
+                             'fulltext': frozenset({'<acknowledgement>'})},
 }
 
 FIELD_MODEL: Dict[str, str] = {
@@ -119,6 +133,10 @@ class FeatureSummary:
     total_label_changes: int
     docs_affected: int
     transitions: Counter = field(default_factory=Counter)
+    relevant_docs_affected: Optional[int] = None
+    relevant_label_changes: Optional[int] = None
+    other_docs_affected: Optional[int] = None
+    other_label_changes: Optional[int] = None
 
 
 @dataclass
@@ -264,14 +282,50 @@ def _is_meaningful_label_change(sbeam_label: str, grobid_label: str) -> bool:
     return not (sbeam_label in _OTHER_LABELS and grobid_label in _OTHER_LABELS)
 
 
+@dataclass
+class _FeatureCounters:
+    changes: Counter = field(default_factory=Counter)
+    doc_count: Counter = field(default_factory=Counter)
+    transitions: Dict[str, Counter] = field(default_factory=dict)
+    relevant_changes: Counter = field(default_factory=Counter)
+    relevant_doc_count: Counter = field(default_factory=Counter)
+    other_changes: Counter = field(default_factory=Counter)
+    other_doc_count: Counter = field(default_factory=Counter)
+
+
+def _accumulate_feature(
+    fc: '_FeatureCounters',
+    feat: str,
+    meaningful: list,
+    relevant_labels: Optional[frozenset],
+) -> None:
+    fc.changes[feat] += len(meaningful)
+    fc.doc_count[feat] += 1
+    if feat not in fc.transitions:
+        fc.transitions[feat] = Counter()
+    for tok in meaningful:
+        fc.transitions[feat][(tok['sbeam_label'], tok['grobid_label'])] += 1
+    if not relevant_labels:
+        return
+    rel_toks = [
+        tok for tok in meaningful
+        if _pair_is_relevant(tok['sbeam_label'], tok['grobid_label'], relevant_labels)
+    ]
+    other_toks = [tok for tok in meaningful if tok not in rel_toks]
+    if rel_toks:
+        fc.relevant_changes[feat] += len(rel_toks)
+        fc.relevant_doc_count[feat] += 1
+    if other_toks:
+        fc.other_changes[feat] += len(other_toks)
+        fc.other_doc_count[feat] += 1
+
+
 def _aggregate_model_results(
     model_name: str,
     doc_results: List[Tuple[str, Optional[dict]]],
+    relevant_labels: Optional[frozenset] = None,
 ) -> ModelSummary:
-    feature_changes: Counter = Counter()
-    feature_doc_count: Counter = Counter()
-    feature_transitions: Dict[str, Counter] = {}
-
+    fc = _FeatureCounters()
     docs_analyzed = 0
     docs_failed = 0
     docs_with_feature_diffs = 0
@@ -289,21 +343,28 @@ def _aggregate_model_results(
                 if _is_meaningful_label_change(tok['sbeam_label'], tok['grobid_label'])
             ]
             if meaningful:
-                feature_changes[feat] += len(meaningful)
-                feature_doc_count[feat] += 1
-                if feat not in feature_transitions:
-                    feature_transitions[feat] = Counter()
-                for tok in meaningful:
-                    feature_transitions[feat][(tok['sbeam_label'], tok['grobid_label'])] += 1
+                _accumulate_feature(fc, feat, meaningful, relevant_labels)
 
     summaries = [
         FeatureSummary(
             feature=feat,
-            total_label_changes=feature_changes[feat],
-            docs_affected=feature_doc_count[feat],
-            transitions=feature_transitions.get(feat, Counter()),
+            total_label_changes=fc.changes[feat],
+            docs_affected=fc.doc_count[feat],
+            transitions=fc.transitions.get(feat, Counter()),
+            relevant_docs_affected=(
+                fc.relevant_doc_count.get(feat) if relevant_labels else None
+            ),
+            relevant_label_changes=(
+                fc.relevant_changes.get(feat) if relevant_labels else None
+            ),
+            other_docs_affected=(
+                fc.other_doc_count.get(feat) if relevant_labels else None
+            ),
+            other_label_changes=(
+                fc.other_changes.get(feat) if relevant_labels else None
+            ),
         )
-        for feat in sorted(feature_changes, key=lambda f: feature_changes[f], reverse=True)
+        for feat in sorted(fc.changes, key=lambda f: fc.changes[f], reverse=True)
     ]
 
     return ModelSummary(
@@ -330,49 +391,126 @@ def _pair_is_relevant(s: str, g: str, relevant_labels: frozenset) -> bool:
     return _label_is_relevant(s, relevant_labels) or _label_is_relevant(g, relevant_labels)
 
 
-def _has_relevant_transition(fs: FeatureSummary, relevant_labels: frozenset) -> bool:
-    return any(_pair_is_relevant(s, g, relevant_labels) for s, g in fs.transitions)
+def _feature_section_label(features: List[FeatureSummary]) -> str:
+    n = len(features)
+    m = sum(fs.total_label_changes for fs in features)
+    return f'{n} feature{"s" if n != 1 else ""}, {m} label change{"s" if m != 1 else ""}'
+
+
+def _render_feature_summary_table(
+    features: List[FeatureSummary],
+    focus: Optional[str] = None,
+) -> List[str]:
+    if focus == 'relevant':
+        rows: List[str] = [
+            '| Feature | Total docs | Total Δlabels | Relevant docs | Relevant Δlabels |',
+            '|---------|------:|------:|------:|------:|',
+        ]
+        for fs in features:
+            rows.append(
+                f'| {fs.feature}'
+                f' | {fs.docs_affected}'
+                f' | {fs.total_label_changes}'
+                f' | {fs.relevant_docs_affected or 0}'
+                f' | {fs.relevant_label_changes or 0} |'
+            )
+    elif focus == 'other':
+        rows = [
+            '| Feature | Total docs | Total Δlabels | Other docs | Other Δlabels |',
+            '|---------|------:|------:|------:|------:|',
+        ]
+        for fs in features:
+            rows.append(
+                f'| {fs.feature}'
+                f' | {fs.docs_affected}'
+                f' | {fs.total_label_changes}'
+                f' | {fs.other_docs_affected or 0}'
+                f' | {fs.other_label_changes or 0} |'
+            )
+    else:
+        rows = [
+            '| Feature | Total docs | Total Δlabels |',
+            '|---------|------:|------:|',
+        ]
+        for fs in features:
+            rows.append(
+                f'| {fs.feature} | {fs.docs_affected} | {fs.total_label_changes} |'
+            )
+    return rows
+
+
+def _feature_stat_cols(fs: FeatureSummary, focus: Optional[str]) -> Tuple[str, str]:
+    """Return (stat_cols_str, empty_continuation_cells) for a feature row."""
+    if focus == 'relevant':
+        return (
+            f' | {fs.relevant_docs_affected or 0} | {fs.relevant_label_changes or 0}',
+            '| | | | |',
+        )
+    if focus == 'other':
+        return (
+            f' | {fs.other_docs_affected or 0} | {fs.other_label_changes or 0}',
+            '| | | | |',
+        )
+    return '', '| | | |'
+
+
+def _filter_transitions(
+    all_trans: list,
+    focus: Optional[str],
+    relevant_labels: Optional[frozenset],
+) -> list:
+    if focus == 'relevant' and relevant_labels:
+        return [((s, g), n) for (s, g), n in all_trans if _pair_is_relevant(s, g, relevant_labels)]
+    if focus == 'other' and relevant_labels:
+        return [
+            ((s, g), n) for (s, g), n in all_trans
+            if not _pair_is_relevant(s, g, relevant_labels)
+        ]
+    return all_trans
 
 
 def _render_feature_table(
     features: List[FeatureSummary],
-    docs_analyzed: int,
     relevant_labels: Optional[frozenset] = None,
+    focus: Optional[str] = None,
 ) -> List[str]:
-    rows: List[str] = [
-        '| Feature | Total Δlabels | Docs affected | Transition | Count |',
-        '|---------|------:|------:|-----------|------:|',
-    ]
+    if focus == 'relevant':
+        rows: List[str] = [
+            '| Feature | Total docs | Total Δlabels | Relevant docs | Relevant Δlabels'
+            ' | Transition | Count |',
+            '|---------|------:|------:|------:|------:|-----------|------:|',
+        ]
+    elif focus == 'other':
+        rows = [
+            '| Feature | Total docs | Total Δlabels | Other docs | Other Δlabels'
+            ' | Transition | Count |',
+            '|---------|------:|------:|------:|------:|-----------|------:|',
+        ]
+    else:
+        rows = [
+            '| Feature | Total docs | Total Δlabels | Transition | Count |',
+            '|---------|------:|------:|-----------|------:|',
+        ]
     for fs in features:
-        all_trans = fs.transitions.most_common()
-        if relevant_labels:
-            rel = [
-                ((s, g), n) for (s, g), n in all_trans
-                if _pair_is_relevant(s, g, relevant_labels)
-            ]
-            others = [
-                ((s, g), n) for (s, g), n in all_trans
-                if not _pair_is_relevant(s, g, relevant_labels)
-            ]
-            sorted_trans = rel + others
-        else:
-            sorted_trans = all_trans
+        sorted_trans = _filter_transitions(fs.transitions.most_common(), focus, relevant_labels)
+        stat_cols, empty_stat = _feature_stat_cols(fs, focus)
         for i, ((s, g), n) in enumerate(sorted_trans):
             cell = f'`{s} → {g}`'
-            if relevant_labels and _pair_is_relevant(s, g, relevant_labels):
-                cell = f'**{cell}**'
             if i == 0:
                 rows.append(
-                    f'| {fs.feature} | {fs.total_label_changes}'
-                    f' | {fs.docs_affected}/{docs_analyzed}'
-                    f' | {cell} | {n} |'
+                    f'| {fs.feature}'
+                    f' | {fs.docs_affected}'
+                    f' | {fs.total_label_changes}'
+                    f'{stat_cols} | {cell} | {n} |'
                 )
             else:
-                rows.append(f'| | | | {cell} | {n} |')
+                rows.append(f'{empty_stat} {cell} | {n} |')
         if not sorted_trans:
             rows.append(
-                f'| {fs.feature} | {fs.total_label_changes}'
-                f' | {fs.docs_affected}/{docs_analyzed} | — | |'
+                f'| {fs.feature}'
+                f' | {fs.docs_affected}'
+                f' | {fs.total_label_changes}'
+                f'{stat_cols} | — | |'
             )
     return rows
 
@@ -414,7 +552,7 @@ def _render_docs_table(
     return rows
 
 
-def _generate_report(
+def _generate_report(  # pylint: disable=too-many-statements
     analysis_field: str,
     run_a: Path,
     run_b: Path,
@@ -422,7 +560,7 @@ def _generate_report(
     cases: List[RegressionCase],
     model_summaries: List[ModelSummary],
 ) -> str:
-    relevant_labels = FIELD_RELEVANT_LABELS.get(analysis_field)
+    field_model_labels = MODEL_RELEVANT_LABELS.get(analysis_field, {})
     regression_note = (
         f'{total_regressions} total, {len(cases)} analyzed'
         if len(cases) < total_regressions
@@ -455,30 +593,51 @@ def _generate_report(
                 lines += ['_No feature differences found._', '']
             continue
 
+        relevant_labels = field_model_labels.get(ms.model)
         if relevant_labels:
             labels_str = ', '.join(f'`{lbl}`' for lbl in sorted(relevant_labels))
-            rel_feats = [
-                fs for fs in ms.features if _has_relevant_transition(fs, relevant_labels)
-            ]
-            other_feats = [
-                fs for fs in ms.features if not _has_relevant_transition(fs, relevant_labels)
-            ]
+            rel_feats = [fs for fs in ms.features if fs.relevant_docs_affected]
+            other_feats = [fs for fs in ms.features if fs.other_docs_affected]
 
-            lines.append(f'### Features affecting {labels_str}')
-            lines.append('')
             if rel_feats:
-                lines += _render_feature_table(rel_feats, ms.docs_analyzed, relevant_labels)
+                lines.append(
+                    f'<details><summary>Features affecting {labels_str}'
+                    f' — {_feature_section_label(rel_feats)}</summary>'
+                )
+                lines.append('')
+                lines += _render_feature_summary_table(rel_feats, focus='relevant')
+                lines.append('')
+                lines.append('<details><summary>Transition detail</summary>')
+                lines.append('')
+                lines += _render_feature_table(rel_feats, relevant_labels, focus='relevant')
+                lines.append('')
+                lines.append('</details>')
+                lines.append('')
+                lines.append('</details>')
             else:
-                lines.append(f'_No features directly affect {labels_str} in these documents._')
+                lines.append(
+                    f'_No features directly affect {labels_str} in these documents._'
+                )
             lines.append('')
 
             if other_feats:
-                lines.append('### Other feature differences')
+                lines.append(
+                    f'<details><summary>Other feature differences'
+                    f' — {_feature_section_label(other_feats)}</summary>'
+                )
                 lines.append('')
-                lines += _render_feature_table(other_feats, ms.docs_analyzed)
+                lines += _render_feature_summary_table(other_feats, focus='other')
+                lines.append('')
+                lines.append('<details><summary>Transition detail</summary>')
+                lines.append('')
+                lines += _render_feature_table(other_feats, relevant_labels, focus='other')
+                lines.append('')
+                lines.append('</details>')
+                lines.append('')
+                lines.append('</details>')
                 lines.append('')
         else:
-            lines += _render_feature_table(ms.features, ms.docs_analyzed)
+            lines += _render_feature_table(ms.features)
             lines.append('')
 
     return '\n'.join(lines)
@@ -835,8 +994,13 @@ def main() -> None:
         concurrency=_resolve_concurrency(args.concurrency),
     )
 
+    field_model_labels = MODEL_RELEVANT_LABELS.get(args.field, {})
     model_summaries = [
-        _aggregate_model_results(model_name, model_doc_results[model_name])
+        _aggregate_model_results(
+            model_name,
+            model_doc_results[model_name],
+            relevant_labels=field_model_labels.get(model_name),
+        )
         for model_name in model_chain
     ]
 
