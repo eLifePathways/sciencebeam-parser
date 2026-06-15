@@ -92,13 +92,21 @@ PARSER_DEFAULT_URL = 'http://localhost:8080'
 
 
 @dataclass
+class FieldPresenceSummary:
+    in_grobid: int
+    in_raw: int
+    in_sb: int
+    total: int
+
+
+@dataclass
 class RegressionCase:
     delta: float
     corpus: str
     record_id: str
     score_a: float
     score_b: float
-    failure_mode: str = 'unknown'
+    presence: Optional[FieldPresenceSummary] = None
 
 
 @dataclass
@@ -368,18 +376,12 @@ def _render_feature_table(
 def _render_docs_table(
     cases: List[RegressionCase],
 ) -> List[str]:
-    def _not_all_found(mode: str) -> bool:
-        if mode == 'unknown':
-            return False
-        found, _, total = mode.partition('/')
-        return bool(total) and found != total
-
-    show_presence = any(_not_all_found(c.failure_mode) for c in cases)
+    show_presence = any(c.presence is not None for c in cases)
     header = '| Doc | Corpus | GROBID | ScienceBeam | Δ |'
     sep = '|-----|--------|------:|------:|--:|'
     if show_presence:
-        header += ' In raw text |'
-        sep += '------------|'
+        header += ' Gold | In GROBID | In raw text | In ScienceBeam |'
+        sep += '---:|:---:|:---:|:---:|'
     header += ' Examples |'
     sep += '---------|'
     rows: List[str] = ['## Analyzed documents', '', header, sep]
@@ -390,16 +392,20 @@ def _render_docs_table(
             f'{case.score_b:.2f}', f'{case.score_a:.2f}', f'{case.delta:+.2f}',
         ]
         if show_presence:
-            cells.append(case.failure_mode)
+            p = case.presence
+            cells += (
+                [str(p.total), str(p.in_grobid), str(p.in_raw), str(p.in_sb)]
+                if p is not None else ['-', '-', '-', '-']
+            )
         cells.append(f'[{case.record_id}]({rel}/)')
         rows.append('| ' + ' | '.join(cells) + ' |')
     if show_presence:
         rows.append('')
         rows.append(
-            '_"In raw text": of the gold values found in GROBID\'s prediction,'
-            ' how many also appear in the raw ScienceBeam prediction'
-            ' (whitespace-normalised). Values absent from the raw text'
-            ' may have been retrieved via external metadata lookup._'
+            '_Presence counts: how many gold values (out of total) appear in each prediction.'
+            ' "In raw text" uses the raw ScienceBeam TEI (no external lookup).'
+            ' Values absent from the raw text may have been retrieved'
+            ' via external metadata lookup._'
         )
     return rows
 
@@ -558,33 +564,34 @@ def _build_presence(
     ]
 
 
-def _classify_failure_mode(
+def _compute_presence_summary(
     case: RegressionCase,
     out_dir: Path,
     analysis_field: str,
     run_a: Path,
     run_b: Path,
-) -> str:
+) -> Optional[FieldPresenceSummary]:
     gold_file = (
         out_dir / 'by-doc' / case.corpus / case.record_id
         / f'{case.record_id}.gold.{analysis_field}.txt'
     )
     gold_text = gold_file.read_text(encoding='utf-8') if gold_file.exists() else ''
     if not gold_text:
-        return 'unknown'
+        return None
     doc_dir = out_dir / 'by-doc' / case.corpus / case.record_id
     sb_tei = run_a / 'predictions' / case.corpus / f'{case.record_id}.tei.xml'
     grobid_tei = run_b / 'predictions' / case.corpus / f'{case.record_id}.tei.xml'
     sb_field_file = doc_dir / f'{case.record_id}.run-a.{analysis_field}.txt'
     three_way = _build_presence(gold_text, sb_tei, grobid_tei, sb_field_file)
     if three_way is None:
-        return 'unknown'
+        return None
     _write_field_presence(doc_dir, case.record_id, analysis_field, three_way)
-    grobid_found = [(v, in_raw) for v, in_grobid, in_raw, _ in three_way if in_grobid]
-    if not grobid_found:
-        return 'unknown'
-    found_in_raw = sum(1 for _, in_raw in grobid_found if in_raw)
-    return f'{found_in_raw}/{len(grobid_found)}'
+    return FieldPresenceSummary(
+        in_grobid=sum(1 for _, g, _, _ in three_way if g),
+        in_raw=sum(1 for _, _, r, _ in three_way if r),
+        in_sb=sum(1 for _, _, _, s in three_way if s),
+        total=len(three_way),
+    )
 
 
 def _export_doc_examples(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -738,7 +745,7 @@ def main() -> None:
         )
 
     for case in cases:
-        case.failure_mode = _classify_failure_mode(
+        case.presence = _compute_presence_summary(
             case, args.out, args.field, args.run_a, args.run_b,
         )
 
