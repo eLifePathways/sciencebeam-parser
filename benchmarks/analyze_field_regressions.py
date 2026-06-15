@@ -74,13 +74,14 @@ MODEL_PARENT: Dict[str, str] = {
 }
 
 
-def _get_model_chain(field: str) -> List[str]:
+def _get_model_chain(analysis_field: str) -> List[str]:
     chain = []
-    model: Optional[str] = FIELD_MODEL[field]
+    model: Optional[str] = FIELD_MODEL[analysis_field]
     while model is not None:
         chain.append(model)
         model = MODEL_PARENT.get(model)
     return list(reversed(chain))
+
 
 GROBID_DEFAULT_URL = 'http://localhost:8070'
 PARSER_DEFAULT_URL = 'http://localhost:8080'
@@ -116,7 +117,7 @@ def _check_service(url: str, name: str) -> None:
     try:
         r = httpx.get(f'{url}/api/isalive', timeout=5)
         r.raise_for_status()
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         sys.exit(f'Error: {name} not reachable at {url}: {exc}')
 
 
@@ -168,12 +169,12 @@ def _fetch_parser_model_data(
 def _load_sbparser_models(model_chain: List[str]) -> Dict[str, object]:
     config = get_app_config()
     sb_parser = ScienceBeamParser.from_config(config)
-    models = {}
+    models: Dict[str, object] = {}
     for model_name in model_chain:
         sb_name = model_name.replace('-', '_')
         try:
             models[model_name] = sb_parser.fulltext_models.get_sequence_model_by_name(sb_name)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             sys.exit(f'Failed to load model {model_name!r}: {exc}')
     return models
 
@@ -312,7 +313,6 @@ def _pair_is_relevant(s: str, g: str, relevant_labels: frozenset) -> bool:
     return _label_is_relevant(s, relevant_labels) or _label_is_relevant(g, relevant_labels)
 
 
-
 def _has_relevant_transition(fs: FeatureSummary, relevant_labels: frozenset) -> bool:
     return any(_pair_is_relevant(s, g, relevant_labels) for s, g in fs.transitions)
 
@@ -329,8 +329,14 @@ def _render_feature_table(
     for fs in features:
         all_trans = fs.transitions.most_common()
         if relevant_labels:
-            rel = [(p, n) for p, n in all_trans if _pair_is_relevant(*p, relevant_labels)]
-            others = [(p, n) for p, n in all_trans if not _pair_is_relevant(*p, relevant_labels)]
+            rel = [
+                ((s, g), n) for (s, g), n in all_trans
+                if _pair_is_relevant(s, g, relevant_labels)
+            ]
+            others = [
+                ((s, g), n) for (s, g), n in all_trans
+                if not _pair_is_relevant(s, g, relevant_labels)
+            ]
             sorted_trans = rel + others
         else:
             sorted_trans = all_trans
@@ -394,8 +400,12 @@ def _generate_report(
 
         if relevant_labels:
             labels_str = ', '.join(f'`{lbl}`' for lbl in sorted(relevant_labels))
-            rel_feats = [fs for fs in ms.features if _has_relevant_transition(fs, relevant_labels)]
-            other_feats = [fs for fs in ms.features if not _has_relevant_transition(fs, relevant_labels)]
+            rel_feats = [
+                fs for fs in ms.features if _has_relevant_transition(fs, relevant_labels)
+            ]
+            other_feats = [
+                fs for fs in ms.features if not _has_relevant_transition(fs, relevant_labels)
+            ]
 
             lines.append(f'### Features affecting {labels_str}')
             lines.append('')
@@ -415,6 +425,74 @@ def _generate_report(
             lines.append('')
 
     return '\n'.join(lines)
+
+
+def _find_regression_cases(
+    run_a: Path,
+    run_b: Path,
+    analysis_field: str,
+    method: str,
+    limit: Optional[int],
+) -> Tuple[List[RegressionCase], int]:
+    cases_raw = find_cases(
+        run_a=run_a,
+        run_b=run_b,
+        field=analysis_field,
+        method=method,
+        corpus_filter=None,
+        mode='regression',
+    )
+    all_cases = [
+        RegressionCase(delta, corpus, record_id, score_a, score_b)
+        for delta, corpus, record_id, score_a, score_b in cases_raw
+    ]
+    total = len(all_cases)
+    return all_cases[:limit] if limit else all_cases, total
+
+
+def _run_analysis_loop(  # pylint: disable=too-many-locals
+    cases: List[RegressionCase],
+    model_chain: List[str],
+    sbparser_models: Dict[str, object],
+    grobid_url: str,
+    parser_url: str,
+    data_dir: Path,
+    split: str,
+    out_dir: Path,
+) -> Dict[str, List[Tuple[str, Optional[dict]]]]:
+    model_doc_results: Dict[str, List[Tuple[str, Optional[dict]]]] = {
+        m: [] for m in model_chain
+    }
+    total = len(cases) * len(model_chain)
+    done = 0
+    by_doc_dir = out_dir / 'by-doc'
+    for case in cases:
+        pdf_path = data_dir / split / case.corpus / f'{case.record_id}.pdf'
+        doc_dir = by_doc_dir / case.record_id
+        for model_name in model_chain:
+            done += 1
+            print(
+                f'[{done}/{total}] {case.corpus}/{case.record_id} / {model_name}',
+                file=sys.stderr,
+            )
+            model = sbparser_models.get(model_name)
+            if model is None:
+                model_doc_results[model_name].append((case.record_id, None))
+                continue
+            try:
+                result = _analyze_doc_model(
+                    case.record_id, model_name, model,
+                    pdf_path, grobid_url, parser_url,
+                    doc_dir=doc_dir,
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                LOGGER.warning(
+                    'Failed %s/%s model=%s: %s',
+                    case.corpus, case.record_id, model_name, exc,
+                )
+                result = None
+            model_doc_results[model_name].append((case.record_id, result))
+    return model_doc_results
 
 
 def main() -> None:
@@ -465,20 +543,13 @@ def main() -> None:
     _check_service(args.grobid_url, 'GROBID')
     _check_service(args.parser_url, 'ScienceBeam Parser')
 
-    cases_raw = find_cases(
+    cases, total_regressions = _find_regression_cases(
         run_a=args.run_a,
         run_b=args.run_b,
-        field=args.field,
+        analysis_field=args.field,
         method=args.method,
-        corpus_filter=None,
-        mode='regression',
+        limit=args.limit,
     )
-    all_cases = [
-        RegressionCase(delta, corpus, record_id, score_a, score_b)
-        for delta, corpus, record_id, score_a, score_b in cases_raw
-    ]
-    total_regressions = len(all_cases)
-    cases = all_cases[:args.limit] if args.limit else all_cases
 
     print(
         f'Found {total_regressions} regression document(s) for field {args.field!r}'
@@ -491,39 +562,16 @@ def main() -> None:
     LOGGER.info('Loading ScienceBeam Parser models: %s', model_chain)
     sbparser_models = _load_sbparser_models(model_chain)
 
-    model_doc_results: Dict[str, List[Tuple[str, Optional[dict]]]] = {
-        m: [] for m in model_chain
-    }
-
-    total = len(cases) * len(model_chain)
-    done = 0
-    by_doc_dir = args.out / 'by-doc'
-    for case in cases:
-        pdf_path = args.data / args.split / case.corpus / f'{case.record_id}.pdf'
-        doc_dir = by_doc_dir / case.record_id
-        for model_name in model_chain:
-            done += 1
-            print(
-                f'[{done}/{total}] {case.corpus}/{case.record_id} / {model_name}',
-                file=sys.stderr,
-            )
-            model = sbparser_models.get(model_name)
-            if model is None:
-                model_doc_results[model_name].append((case.record_id, None))
-                continue
-            try:
-                result = _analyze_doc_model(
-                    case.record_id, model_name, model,
-                    pdf_path, args.grobid_url, args.parser_url,
-                    doc_dir=doc_dir,
-                )
-            except Exception as exc:
-                LOGGER.warning(
-                    'Failed %s/%s model=%s: %s',
-                    case.corpus, case.record_id, model_name, exc,
-                )
-                result = None
-            model_doc_results[model_name].append((case.record_id, result))
+    model_doc_results = _run_analysis_loop(
+        cases=cases,
+        model_chain=model_chain,
+        sbparser_models=sbparser_models,
+        grobid_url=args.grobid_url,
+        parser_url=args.parser_url,
+        data_dir=args.data,
+        split=args.split,
+        out_dir=args.out,
+    )
 
     model_summaries = [
         _aggregate_model_results(model_name, model_doc_results[model_name])
