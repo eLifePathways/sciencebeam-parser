@@ -40,6 +40,7 @@ from sciencebeam_parser.document.semantic_document import (
 )
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 from sciencebeam_parser.external.pdfalto.wrapper import PdfAltoWrapper
+from sciencebeam_parser.models.citation.model import CitationModel
 from sciencebeam_parser.models.data import AppFeaturesContext, DocumentFeaturesContext
 from sciencebeam_parser.models.model import Model
 from sciencebeam_parser.service.api.dependencies import (
@@ -375,6 +376,8 @@ class AffiliationAddressModelRouterFactory(SegmentedModelRouterFactory):
 
 
 class CitationModelRouterFactory(SegmentedModelRouterFactory):
+    model: CitationModel
+
     def __init__(self, *args, reference_segmenter_model: Model, **kwargs):
         super().__init__(*args, **kwargs)
         self.reference_segmenter_model = reference_segmenter_model
@@ -400,12 +403,13 @@ class CitationModelRouterFactory(SegmentedModelRouterFactory):
             )).iter_by_type(SemanticRawReference)
         )
         LOGGER.info('semantic_raw_references count: %d', len(semantic_raw_references))
-        return [
+        docs = [
             LayoutDocument.for_blocks(
                 [semantic_raw_reference.view_by_type(SemanticRawReferenceText).merged_block]
             ).remove_empty_blocks()
             for semantic_raw_reference in semantic_raw_references
         ]
+        return self.model.retokenize_layout_documents(docs)
 
 
 class NameCitationModelRouterFactory(SegmentedModelRouterFactory):

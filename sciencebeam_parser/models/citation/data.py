@@ -4,12 +4,15 @@ from sciencebeam_parser.models.data import (
     ContextAwareLayoutTokenFeatures,
     ContextAwareLayoutTokenModelDataGenerator,
     DocumentFeaturesContext,
-    FeatureDef
+    FeatureDef,
 )
 
 
 class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
-    def __init__(self, document_features_context: DocumentFeaturesContext):
+    def __init__(
+        self,
+        document_features_context: DocumentFeaturesContext
+    ):
         super().__init__(document_features_context)
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = [
             FeatureDef('token_text', lambda f: f.token_text),
