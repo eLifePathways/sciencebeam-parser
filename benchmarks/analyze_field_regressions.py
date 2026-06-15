@@ -22,6 +22,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -30,7 +31,7 @@ from typing import Dict, List, Optional, Tuple
 
 import httpx
 
-from benchmarks.show_cases import find_cases
+from benchmarks.show_cases import comparison_label, find_cases
 from sciencebeam_parser.app.parser import ScienceBeamParser
 from sciencebeam_parser.service.server import get_app_config
 from sciencebeam_parser.utils.feature_importance import find_important_data
@@ -360,6 +361,29 @@ def _render_feature_table(
     return rows
 
 
+def _render_docs_table(
+    cases: List[RegressionCase],
+    out: Path,
+    examples_base: Optional[Path],
+) -> List[str]:
+    rows: List[str] = [
+        '## Analyzed documents',
+        '',
+        '| Doc | Corpus | GROBID | ScienceBeam | Δ |' + (' Examples |' if examples_base else ''),
+        '|-----|--------|------:|------:|--:|' + ('---------|' if examples_base else ''),
+    ]
+    for case in cases:
+        row = (
+            f'| {case.record_id} | {case.corpus}'
+            f' | {case.score_b:.2f} | {case.score_a:.2f} | {case.delta:+.2f} |'
+        )
+        if examples_base is not None:
+            rel = os.path.relpath(examples_base / case.corpus, out)
+            row += f' [{case.record_id}]({rel}/) |'
+        rows.append(row)
+    return rows
+
+
 def _generate_report(
     analysis_field: str,
     run_a: Path,
@@ -367,6 +391,8 @@ def _generate_report(
     total_regressions: int,
     cases: List[RegressionCase],
     model_summaries: List[ModelSummary],
+    out: Path,
+    examples_base: Optional[Path] = None,
 ) -> str:
     relevant_labels = FIELD_RELEVANT_LABELS.get(analysis_field)
     regression_note = (
@@ -378,18 +404,21 @@ def _generate_report(
     lines += [
         f'# Field Analysis: {analysis_field}',
         '',
-        f'- **Run A (sbeam)**: `{run_a}`',
-        f'- **Run B (grobid)**: `{run_b}`',
+        f'- **Run A (ScienceBeam)**: `{run_a}`',
+        f'- **Run B (GROBID)**: `{run_b}`',
         f'- **Regression documents**: {regression_note}',
         '',
     ]
 
+    lines += _render_docs_table(cases, out, examples_base)
+    lines.append('')
+
     for ms in model_summaries:
-        header = f'## {ms.model} ({ms.docs_analyzed} docs analyzed'
-        if ms.docs_failed:
-            header += f', {ms.docs_failed} failed'
-        header += f', {ms.docs_with_feature_diffs} with feature diffs)'
-        lines.append(header)
+        lines.append(
+            f'## {ms.model} ({ms.docs_analyzed} docs analyzed'
+            + (f', {ms.docs_failed} failed' if ms.docs_failed else '')
+            + f', {ms.docs_with_feature_diffs} with feature diffs)'
+        )
         lines.append('')
         if not ms.features:
             if ms.docs_with_feature_diffs:
@@ -578,6 +607,10 @@ def main() -> None:
         for model_name in model_chain
     ]
 
+    examples_base = (
+        args.run_a / 'examples' / f'vs-{comparison_label(args.run_b)}'
+        / 'regression' / args.field / args.method
+    )
     report = _generate_report(
         analysis_field=args.field,
         run_a=args.run_a,
@@ -585,6 +618,8 @@ def main() -> None:
         total_regressions=total_regressions,
         cases=cases,
         model_summaries=model_summaries,
+        out=args.out,
+        examples_base=examples_base if examples_base.exists() else None,
     )
 
     args.out.mkdir(parents=True, exist_ok=True)

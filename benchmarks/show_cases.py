@@ -88,7 +88,7 @@ def _run_label(run: Path) -> str:
         return run.name
 
 
-def _comparison_label(run_b: Path) -> str:
+def comparison_label(run_b: Path) -> str:
     """Derive a short label from run_b path for use in export directory names.
 
     baselines/grobid/0.9.0-crf/train -> grobid-0.9.0-crf
@@ -101,6 +101,9 @@ def _comparison_label(run_b: Path) -> str:
     if len(parts) > 1:
         label = "/".join(parts[:-1])
     return label.replace("/", "-")
+
+
+_comparison_label = comparison_label
 
 
 def find_cases(
