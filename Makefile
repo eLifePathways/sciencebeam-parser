@@ -518,7 +518,7 @@ dev-binary-search-features: .require-COMPARE_DOC_ID
 
 ANALYZE_FIELD ?=
 ANALYZE_LIMIT ?=
-ANALYZE_OUT ?= $(SHOW_RUN_A)/field-analysis/$(ANALYZE_FIELD)
+ANALYZE_OUT ?= $(SHOW_RUN_A)/field-analysis/$(ANALYZE_FIELD)/$(SHOW_METHOD)
 
 dev-analyze-field-regressions: .require-ANALYZE_FIELD
 	$(PYTHON) -m benchmarks.analyze_field_regressions \

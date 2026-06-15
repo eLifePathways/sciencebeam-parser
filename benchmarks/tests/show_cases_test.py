@@ -10,10 +10,10 @@ import pytest
 from benchmarks.show_cases import (
     _comparison_label,
     _copy_if_exists,
-    _export_case,
     _fetch_pdfalto_xml,
     _get_doc_score,
     _run_label,
+    export_case,
     find_cases,
     word_diff,
 )
@@ -123,7 +123,7 @@ def _make_export_case_call(
         (run_a / "scores" / "biorxiv" / "doc1.json").write_bytes(b'{"run":"a"}')
         (run_b / "scores" / "biorxiv").mkdir(parents=True, exist_ok=True)
         (run_b / "scores" / "biorxiv" / "doc1.json").write_bytes(b'{"run":"b"}')
-    _export_case(
+    export_case(
         out_dir, "doc1", "biorxiv", "title",
         gold_text, text_a, text_b,
         run_a, run_b, data_dir, "train",

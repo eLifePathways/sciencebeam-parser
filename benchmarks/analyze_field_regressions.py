@@ -22,7 +22,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -30,8 +29,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import httpx
+from sciencebeam_judge.parsing.xml import parse_xml_mapping
+from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
+from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
-from benchmarks.show_cases import comparison_label, find_cases
+from benchmarks.show_cases import export_case, extract_texts, find_cases
 from sciencebeam_parser.app.parser import ScienceBeamParser
 from sciencebeam_parser.service.server import get_app_config
 from sciencebeam_parser.utils.feature_importance import find_important_data
@@ -363,23 +365,20 @@ def _render_feature_table(
 
 def _render_docs_table(
     cases: List[RegressionCase],
-    out: Path,
-    examples_base: Optional[Path],
 ) -> List[str]:
     rows: List[str] = [
         '## Analyzed documents',
         '',
-        '| Doc | Corpus | GROBID | ScienceBeam | Δ |' + (' Examples |' if examples_base else ''),
-        '|-----|--------|------:|------:|--:|' + ('---------|' if examples_base else ''),
+        '| Doc | Corpus | GROBID | ScienceBeam | Δ | Examples |',
+        '|-----|--------|------:|------:|--:|---------|',
     ]
     for case in cases:
+        rel = Path('by-doc') / case.corpus / case.record_id
         row = (
             f'| {case.record_id} | {case.corpus}'
-            f' | {case.score_b:.2f} | {case.score_a:.2f} | {case.delta:+.2f} |'
+            f' | {case.score_b:.2f} | {case.score_a:.2f} | {case.delta:+.2f}'
+            f' | [{case.record_id}]({rel}/) |'
         )
-        if examples_base is not None:
-            rel = os.path.relpath(examples_base / case.corpus, out)
-            row += f' [{case.record_id}]({rel}/) |'
         rows.append(row)
     return rows
 
@@ -391,8 +390,6 @@ def _generate_report(
     total_regressions: int,
     cases: List[RegressionCase],
     model_summaries: List[ModelSummary],
-    out: Path,
-    examples_base: Optional[Path] = None,
 ) -> str:
     relevant_labels = FIELD_RELEVANT_LABELS.get(analysis_field)
     regression_note = (
@@ -410,7 +407,7 @@ def _generate_report(
         '',
     ]
 
-    lines += _render_docs_table(cases, out, examples_base)
+    lines += _render_docs_table(cases)
     lines.append('')
 
     for ms in model_summaries:
@@ -479,6 +476,38 @@ def _find_regression_cases(
     return all_cases[:limit] if limit else all_cases, total
 
 
+def _export_doc_examples(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    case: RegressionCase,
+    run_a: Path,
+    run_b: Path,
+    data_dir: Path,
+    split: str,
+    analysis_field: str,
+    xml_mapping: dict,
+    out_dir: Path,
+) -> None:
+    doc_dir = out_dir / 'by-doc' / case.corpus / case.record_id
+    sentinel = doc_dir / '.examples_exported'
+    if sentinel.exists():
+        return
+    try:
+        gold_text, text_a, text_b = extract_texts(
+            case.corpus, case.record_id, run_a, run_b,
+            data_dir, split, analysis_field, xml_mapping,
+        )
+        export_case(
+            doc_dir, case.record_id, case.corpus, analysis_field,
+            gold_text, text_a, text_b,
+            run_a, run_b, data_dir, split,
+        )
+        sentinel.touch()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        LOGGER.warning(
+            'Failed to export examples for %s/%s: %s',
+            case.corpus, case.record_id, exc,
+        )
+
+
 def _run_analysis_loop(  # pylint: disable=too-many-locals
     cases: List[RegressionCase],
     model_chain: List[str],
@@ -497,7 +526,7 @@ def _run_analysis_loop(  # pylint: disable=too-many-locals
     by_doc_dir = out_dir / 'by-doc'
     for case in cases:
         pdf_path = data_dir / split / case.corpus / f'{case.record_id}.pdf'
-        doc_dir = by_doc_dir / case.record_id
+        doc_dir = by_doc_dir / case.corpus / case.record_id
         for model_name in model_chain:
             done += 1
             print(
@@ -588,6 +617,15 @@ def main() -> None:
     if not cases:
         print('Nothing to analyze.', file=sys.stderr)
 
+    register_functions()
+    xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+
+    for case in cases:
+        _export_doc_examples(
+            case, args.run_a, args.run_b, args.data, args.split,
+            args.field, xml_mapping, args.out,
+        )
+
     LOGGER.info('Loading ScienceBeam Parser models: %s', model_chain)
     sbparser_models = _load_sbparser_models(model_chain)
 
@@ -607,10 +645,6 @@ def main() -> None:
         for model_name in model_chain
     ]
 
-    examples_base = (
-        args.run_a / 'examples' / f'vs-{comparison_label(args.run_b)}'
-        / 'regression' / args.field / args.method
-    )
     report = _generate_report(
         analysis_field=args.field,
         run_a=args.run_a,
@@ -618,8 +652,6 @@ def main() -> None:
         total_regressions=total_regressions,
         cases=cases,
         model_summaries=model_summaries,
-        out=args.out,
-        examples_base=examples_base if examples_base.exists() else None,
     )
 
     args.out.mkdir(parents=True, exist_ok=True)
