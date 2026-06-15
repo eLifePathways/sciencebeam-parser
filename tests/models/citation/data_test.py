@@ -75,3 +75,36 @@ class TestIsMonth:
 
     def test_word_gives_0(self):
         assert _get_feature('Lancet', 'is_month') == '0'
+
+
+class TestIsKnownIdentifier:
+    def test_doi_start_token_gives_1(self):
+        # tokens of 10.1016/S0021-9991(70)90001-X with no whitespace between
+        tokens = [
+            ('10', ''), ('.', ''), ('1016', ''), ('/', ''), ('S0021', ''),
+            ('-', ''), ('9991', ''), ('(', ''), ('70', ''), (')', ''),
+            ('90001', ''), ('-', ''), ('X', ' ')
+        ]
+        assert _get_feature_for_tokens(tokens, '10', 'is_known_identifier') == '1'
+
+    def test_doi_bracket_tokens_give_1(self):
+        tokens = [
+            ('10', ''), ('.', ''), ('1016', ''), ('/', ''), ('S0021', ''),
+            ('-', ''), ('9991', ''), ('(', ''), ('70', ''), (')', ''),
+            ('90001', ''), ('-', ''), ('X', ' ')
+        ]
+        assert _get_feature_for_tokens(tokens, '(', 'is_known_identifier') == '1'
+        assert _get_feature_for_tokens(tokens, '70', 'is_known_identifier') == '1'
+        assert _get_feature_for_tokens(tokens, '90001', 'is_known_identifier') == '1'
+
+    def test_doi_prefix_label_not_part_of_identifier(self):
+        # 'doi' and ':' before the DOI are not part of the identifier span
+        tokens = [
+            ('doi', ''), (':', ''), ('10', ''), ('.', ''), ('1016', ''),
+            ('/', ''), ('abcde', ' ')
+        ]
+        assert _get_feature_for_tokens(tokens, 'doi', 'is_known_identifier') == '0'
+        assert _get_feature_for_tokens(tokens, ':', 'is_known_identifier') == '0'
+
+    def test_word_gives_0(self):
+        assert _get_feature('Lancet', 'is_known_identifier') == '0'
