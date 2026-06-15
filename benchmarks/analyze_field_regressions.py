@@ -22,6 +22,7 @@ Usage:
 import argparse
 import json
 import logging
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -97,6 +98,7 @@ class RegressionCase:
     record_id: str
     score_a: float
     score_b: float
+    failure_mode: str = 'unknown'
 
 
 @dataclass
@@ -366,20 +368,39 @@ def _render_feature_table(
 def _render_docs_table(
     cases: List[RegressionCase],
 ) -> List[str]:
-    rows: List[str] = [
-        '## Analyzed documents',
-        '',
-        '| Doc | Corpus | GROBID | ScienceBeam | Δ | Examples |',
-        '|-----|--------|------:|------:|--:|---------|',
-    ]
+    def _not_all_found(mode: str) -> bool:
+        if mode == 'unknown':
+            return False
+        found, _, total = mode.partition('/')
+        return bool(total) and found != total
+
+    show_presence = any(_not_all_found(c.failure_mode) for c in cases)
+    header = '| Doc | Corpus | GROBID | ScienceBeam | Δ |'
+    sep = '|-----|--------|------:|------:|--:|'
+    if show_presence:
+        header += ' In raw text |'
+        sep += '------------|'
+    header += ' Examples |'
+    sep += '---------|'
+    rows: List[str] = ['## Analyzed documents', '', header, sep]
     for case in cases:
         rel = Path('by-doc') / case.corpus / case.record_id
-        row = (
-            f'| {case.record_id} | {case.corpus}'
-            f' | {case.score_b:.2f} | {case.score_a:.2f} | {case.delta:+.2f}'
-            f' | [{case.record_id}]({rel}/) |'
+        cells = [
+            case.record_id, case.corpus,
+            f'{case.score_b:.2f}', f'{case.score_a:.2f}', f'{case.delta:+.2f}',
+        ]
+        if show_presence:
+            cells.append(case.failure_mode)
+        cells.append(f'[{case.record_id}]({rel}/)')
+        rows.append('| ' + ' | '.join(cells) + ' |')
+    if show_presence:
+        rows.append('')
+        rows.append(
+            '_"In raw text": of the gold values found in GROBID\'s prediction,'
+            ' how many also appear in the raw ScienceBeam prediction'
+            ' (whitespace-normalised). Values absent from the raw text'
+            ' may have been retrieved via external metadata lookup._'
         )
-        rows.append(row)
     return rows
 
 
@@ -474,6 +495,96 @@ def _find_regression_cases(
     ]
     total = len(all_cases)
     return all_cases[:limit] if limit else all_cases, total
+
+
+def _normalize_for_comparison(text: str) -> str:
+    return re.sub(r'\s+', '', text)
+
+
+def _get_field_presence(
+    gold_text: str,
+    raw_tei_path: Path,
+) -> Optional[List[Tuple[str, bool]]]:
+    if not raw_tei_path.exists():
+        return None
+    raw_normalized = _normalize_for_comparison(
+        raw_tei_path.read_text(encoding='utf-8', errors='replace')
+    )
+    values = [v.strip() for v in gold_text.split(' | ') if v.strip()]
+    return [(v, _normalize_for_comparison(v) in raw_normalized) for v in values]
+
+
+def _write_field_presence(
+    doc_dir: Path,
+    record_id: str,
+    analysis_field: str,
+    presence: List[Tuple[str, bool, bool, bool]],
+) -> None:
+    rows = [
+        '| Value | In GROBID | In raw text | In ScienceBeam |',
+        '|-------|:---------:|:-----------:|:--------------:|',
+    ]
+    for value, in_grobid, in_raw, in_sb in presence:
+        rows.append(
+            f'| {value}'
+            f' | {"yes" if in_grobid else "no"}'
+            f' | {"yes" if in_raw else "no"}'
+            f' | {"yes" if in_sb else "no"} |'
+        )
+    (doc_dir / f'{record_id}.{analysis_field}.presence.md').write_text(
+        '\n'.join(rows) + '\n', encoding='utf-8'
+    )
+
+
+def _build_presence(
+    gold_text: str,
+    sb_tei: Path,
+    grobid_tei: Path,
+    sb_field_file: Path,
+) -> Optional[List[Tuple[str, bool, bool, bool]]]:
+    sb_presence = _get_field_presence(gold_text, sb_tei)
+    grobid_presence = _get_field_presence(gold_text, grobid_tei)
+    sb_field_text = sb_field_file.read_text(encoding='utf-8') if sb_field_file.exists() else ''
+    if sb_presence is None and grobid_presence is None and not sb_field_text:
+        return None
+    sb_map = dict(sb_presence or [])
+    grobid_map = dict(grobid_presence or [])
+    sb_field_norm = _normalize_for_comparison(sb_field_text)
+    gold_values = [v.strip() for v in gold_text.split(' | ') if v.strip()]
+    return [
+        (v, grobid_map.get(v, False), sb_map.get(v, False),
+         bool(_normalize_for_comparison(v) in sb_field_norm))
+        for v in gold_values
+    ]
+
+
+def _classify_failure_mode(
+    case: RegressionCase,
+    out_dir: Path,
+    analysis_field: str,
+    run_a: Path,
+    run_b: Path,
+) -> str:
+    gold_file = (
+        out_dir / 'by-doc' / case.corpus / case.record_id
+        / f'{case.record_id}.gold.{analysis_field}.txt'
+    )
+    gold_text = gold_file.read_text(encoding='utf-8') if gold_file.exists() else ''
+    if not gold_text:
+        return 'unknown'
+    doc_dir = out_dir / 'by-doc' / case.corpus / case.record_id
+    sb_tei = run_a / 'predictions' / case.corpus / f'{case.record_id}.tei.xml'
+    grobid_tei = run_b / 'predictions' / case.corpus / f'{case.record_id}.tei.xml'
+    sb_field_file = doc_dir / f'{case.record_id}.run-a.{analysis_field}.txt'
+    three_way = _build_presence(gold_text, sb_tei, grobid_tei, sb_field_file)
+    if three_way is None:
+        return 'unknown'
+    _write_field_presence(doc_dir, case.record_id, analysis_field, three_way)
+    grobid_found = [(v, in_raw) for v, in_grobid, in_raw, _ in three_way if in_grobid]
+    if not grobid_found:
+        return 'unknown'
+    found_in_raw = sum(1 for _, in_raw in grobid_found if in_raw)
+    return f'{found_in_raw}/{len(grobid_found)}'
 
 
 def _export_doc_examples(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -624,6 +735,11 @@ def main() -> None:
         _export_doc_examples(
             case, args.run_a, args.run_b, args.data, args.split,
             args.field, xml_mapping, args.out,
+        )
+
+    for case in cases:
+        case.failure_mode = _classify_failure_mode(
+            case, args.out, args.field, args.run_a, args.run_b,
         )
 
     LOGGER.info('Loading ScienceBeam Parser models: %s', model_chain)
