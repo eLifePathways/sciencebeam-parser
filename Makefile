@@ -518,6 +518,7 @@ dev-binary-search-features: .require-COMPARE_DOC_ID
 
 ANALYZE_FIELD ?=
 ANALYZE_LIMIT ?=
+ANALYZE_CONCURRENCY ?=
 ANALYZE_OUT ?= $(SHOW_RUN_A)/field-analysis/$(ANALYZE_FIELD)/$(SHOW_METHOD)
 
 dev-analyze-field-regressions: .require-ANALYZE_FIELD
@@ -531,7 +532,8 @@ dev-analyze-field-regressions: .require-ANALYZE_FIELD
 		--grobid-url $(GROBID_URL) \
 		--parser-url $(SCIENCEBEAM_PARSER_URL) \
 		--out $(ANALYZE_OUT) \
-		$(if $(ANALYZE_LIMIT),--limit $(ANALYZE_LIMIT),)
+		$(if $(ANALYZE_LIMIT),--limit $(ANALYZE_LIMIT),) \
+		$(if $(ANALYZE_CONCURRENCY),--concurrency $(ANALYZE_CONCURRENCY),)
 	@echo "Report written to $(ANALYZE_OUT)/report.md"
 
 

@@ -22,9 +22,13 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import re
 import sys
+import threading
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -626,6 +630,48 @@ def _export_doc_examples(  # pylint: disable=too-many-arguments,too-many-positio
         )
 
 
+DEFAULT_CONCURRENCY = 0  # 0 = auto: max(2, cpu_count)
+
+
+def _resolve_concurrency(concurrency: int) -> int:
+    if concurrency == 0:
+        return max(2, os.cpu_count() or 2)
+    return concurrency
+
+
+def _format_eta(seconds: float) -> str:
+    if seconds >= 3600:
+        return f'{seconds / 3600:.1f}h'
+    if seconds >= 60:
+        return f'{int(seconds) // 60}m{int(seconds) % 60:02d}s'
+    return f'{seconds:.0f}s'
+
+
+class _AnalysisProgress:
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self._done = 0
+        self._lock = threading.Lock()
+        self._t_start = time.monotonic()
+
+    def record(
+        self, corpus: str, record_id: str, model_name: str, elapsed_ms: int, ok: bool
+    ) -> None:
+        with self._lock:
+            self._done += 1
+            done = self._done
+        elapsed = time.monotonic() - self._t_start
+        rate = done / elapsed if elapsed > 0 else 0.0
+        remaining = self.total - done
+        eta = _format_eta(remaining / rate) if rate > 0 else '?'
+        print(
+            f'[{done}/{self.total}] {corpus}/{record_id} {model_name}'
+            f' {"ok" if ok else "err"} {elapsed_ms}ms'
+            f' | {rate:.1f}/s | ~{eta} left',
+            file=sys.stderr,
+        )
+
+
 def _run_analysis_loop(  # pylint: disable=too-many-locals
     cases: List[RegressionCase],
     model_chain: List[str],
@@ -635,26 +681,30 @@ def _run_analysis_loop(  # pylint: disable=too-many-locals
     data_dir: Path,
     split: str,
     out_dir: Path,
+    concurrency: int = DEFAULT_CONCURRENCY,
 ) -> Dict[str, List[Tuple[str, Optional[dict]]]]:
-    model_doc_results: Dict[str, List[Tuple[str, Optional[dict]]]] = {
-        m: [] for m in model_chain
-    }
-    total = len(cases) * len(model_chain)
-    done = 0
     by_doc_dir = out_dir / 'by-doc'
-    for case in cases:
-        pdf_path = data_dir / split / case.corpus / f'{case.record_id}.pdf'
-        doc_dir = by_doc_dir / case.corpus / case.record_id
-        for model_name in model_chain:
-            done += 1
-            print(
-                f'[{done}/{total}] {case.corpus}/{case.record_id} / {model_name}',
-                file=sys.stderr,
-            )
-            model = sbparser_models.get(model_name)
-            if model is None:
-                model_doc_results[model_name].append((case.record_id, None))
-                continue
+    concurrency = _resolve_concurrency(concurrency)
+    work = [
+        (case, model_name)
+        for case in cases
+        for model_name in model_chain
+    ]
+    print(
+        f'Analyzing {len(work)} tasks (concurrency={concurrency})',
+        file=sys.stderr,
+    )
+    progress = _AnalysisProgress(total=len(work))
+
+    def _run_one(
+        case: RegressionCase, model_name: str
+    ) -> Tuple[Optional[dict], int]:
+        t0 = time.monotonic()
+        result = None
+        model = sbparser_models.get(model_name)
+        if model is not None:
+            pdf_path = data_dir / split / case.corpus / f'{case.record_id}.pdf'
+            doc_dir = by_doc_dir / case.corpus / case.record_id
             try:
                 result = _analyze_doc_model(
                     case.record_id, model_name, model,
@@ -666,9 +716,28 @@ def _run_analysis_loop(  # pylint: disable=too-many-locals
                     'Failed %s/%s model=%s: %s',
                     case.corpus, case.record_id, model_name, exc,
                 )
-                result = None
-            model_doc_results[model_name].append((case.record_id, result))
-    return model_doc_results
+        elapsed_ms = round((time.monotonic() - t0) * 1000)
+        progress.record(case.corpus, case.record_id, model_name, elapsed_ms, result is not None)
+        return result, elapsed_ms
+
+    keyed: Dict[Tuple[str, str, str], Optional[dict]] = {}
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        future_map = {
+            executor.submit(_run_one, case, model_name): (case, model_name)
+            for case, model_name in work
+        }
+        for future in as_completed(future_map):
+            case, model_name = future_map[future]
+            result, _ = future.result()
+            keyed[(model_name, case.corpus, case.record_id)] = result
+
+    return {
+        model_name: [
+            (case.record_id, keyed.get((model_name, case.corpus, case.record_id)))
+            for case in cases
+        ]
+        for model_name in model_chain
+    }
 
 
 def main() -> None:
@@ -701,6 +770,8 @@ def main() -> None:
                         help='Output directory for the report')
     parser.add_argument('--limit', type=int, default=None,
                         help='Limit number of regression documents to analyze')
+    parser.add_argument('--concurrency', type=int, default=DEFAULT_CONCURRENCY,
+                        help='Number of concurrent analysis workers (0 = auto, default)')
     args = parser.parse_args()
 
     if args.field not in FIELD_MODEL:
@@ -761,6 +832,7 @@ def main() -> None:
         data_dir=args.data,
         split=args.split,
         out_dir=args.out,
+        concurrency=_resolve_concurrency(args.concurrency),
     )
 
     model_summaries = [
