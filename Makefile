@@ -516,6 +516,25 @@ dev-binary-search-features: .require-COMPARE_DOC_ID
 	@echo "output written to $(COMPARE_DOC_DIR)/$(COMPARE_MODEL).binary_search.txt"
 
 
+ANALYZE_FIELD ?=
+ANALYZE_LIMIT ?=
+ANALYZE_OUT ?= $(SHOW_RUN_A)/field-analysis/$(ANALYZE_FIELD)
+
+dev-analyze-field-regressions: .require-ANALYZE_FIELD
+	$(PYTHON) -m benchmarks.analyze_field_regressions \
+		--field $(ANALYZE_FIELD) \
+		--run-a $(SHOW_RUN_A) \
+		--run-b $(SHOW_RUN_B) \
+		--data benchmarks/data \
+		--split $(BENCHMARK_SPLIT) \
+		--method $(SHOW_METHOD) \
+		--grobid-url $(GROBID_URL) \
+		--parser-url $(SCIENCEBEAM_PARSER_URL) \
+		--out $(ANALYZE_OUT) \
+		$(if $(ANALYZE_LIMIT),--limit $(ANALYZE_LIMIT),)
+	@echo "Report written to $(ANALYZE_OUT)/report.md"
+
+
 ci-lint:
 	$(MAKE) DOCKER_COMPOSE="$(DOCKER_COMPOSE_CI)" docker-lint
 

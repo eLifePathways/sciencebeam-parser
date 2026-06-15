@@ -27,7 +27,6 @@ Usage:
 
 import argparse
 import contextlib
-import difflib
 import json
 import logging
 import sys
@@ -37,84 +36,19 @@ from typing import IO, Iterator, List, Optional, Set, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sciencebeam_trainer_delft.sequence_labelling.reader import (  # noqa: E402
-    load_data_crf_lines
-)
-
 from sciencebeam_parser.app.parser import ScienceBeamParser  # noqa: E402
 from sciencebeam_parser.service.server import get_app_config  # noqa: E402
+from sciencebeam_parser.utils.feature_importance import (  # noqa: E402
+    align_parts,
+    apply_swap,
+    find_differing_features,
+    load_parts,
+    parts_to_feature_lines,
+    run_model,
+)
 
 
 LOGGER = logging.getLogger(__name__)
-
-
-def load_parts(data_path: str) -> List[List[str]]:
-    """Read a .data file; return list of per-line token lists (label included as last element)."""
-    raw = Path(data_path).read_text(encoding='utf-8').splitlines()
-    return [line.split() for line in raw if line.strip()]
-
-
-def parts_to_feature_lines(parts_list: List[List[str]]) -> List[str]:
-    """Strip label (last column) from each token row; return as joined strings for the model."""
-    return [' '.join(parts[:-1]) for parts in parts_list]
-
-
-def align_parts(
-    sbeam_parts: List[List[str]],
-    alt_parts: List[List[str]],
-) -> List[Tuple[int, int]]:
-    """Align sbeam and alt token lists by token text; return list of (si, gi) index pairs."""
-    sbeam_tokens = [p[0] for p in sbeam_parts]
-    alt_tokens = [p[0] for p in alt_parts]
-    matcher = difflib.SequenceMatcher(None, sbeam_tokens, alt_tokens, autojunk=False)
-    pairs = []
-    for opcode, s0, s1, g0, g1 in matcher.get_opcodes():
-        if opcode == 'equal':
-            pairs.extend(zip(range(s0, s1), range(g0, g1)))
-    return pairs
-
-
-def find_differing_features(
-    sbeam: List[List[str]],
-    alt: List[List[str]],
-    feature_names: List[str],
-    aligned_pairs: List[Tuple[int, int]],
-) -> List[str]:
-    """Return the ordered list of feature names that differ at least once across aligned tokens."""
-    differing: Set[str] = set()
-    for si, gi in aligned_pairs:
-        s_parts, a_parts = sbeam[si], alt[gi]
-        for i, name in enumerate(feature_names):
-            if i < len(s_parts) - 1 and i < len(a_parts) - 1:
-                if s_parts[i] != a_parts[i]:
-                    differing.add(name)
-    return [f for f in feature_names if f in differing]
-
-
-def apply_swap(
-    sbeam: List[List[str]],
-    alt: List[List[str]],
-    feature_names: List[str],
-    swap_features: List[str],
-    aligned_pairs: List[Tuple[int, int]],
-) -> List[str]:
-    """Return feature-lines with specified feature columns taken from alt for aligned tokens."""
-    swap_indices = {feature_names.index(f) for f in swap_features}
-    result = [' '.join(parts[:-1]) for parts in sbeam]
-    for si, gi in aligned_pairs:
-        merged = list(sbeam[si])
-        a_parts = alt[gi]
-        for i in swap_indices:
-            if i < len(a_parts) - 1:
-                merged[i] = a_parts[i]
-        result[si] = ' '.join(merged[:-1])
-    return result
-
-
-def run_model(model, lines: List[str]) -> List[str]:
-    texts, features = load_data_crf_lines(lines)
-    tag_result = model.model_impl.predict_labels(texts, features)
-    return [label for _token, label in tag_result[0]]
 
 
 def show_diff(
@@ -188,6 +122,80 @@ def binary_search_features(
     return features
 
 
+def _run_find_important(
+    sbeam_parts: List[List[str]],
+    alt_parts: List[List[str]],
+    feature_names: List[str],
+    aligned_pairs: List[Tuple[int, int]],
+    differing: List[str],
+    model,
+    baseline_labels: List[str],
+    print_results: bool = True,
+    baseline_label: str = 'sbeam',
+    updated_label: str = 'alt(grobid)',
+) -> dict:
+    """Core find-important loop. Returns structured data; optionally prints."""
+    if print_results:
+        print(
+            f'\n--- Individual feature importance'
+            f' (label format: {baseline_label} → {updated_label}) ---'
+        )
+    per_feature = {}
+    for feat in differing:
+        swapped = apply_swap(sbeam_parts, alt_parts, feature_names, [feat], aligned_pairs)
+        labels = run_model(model, swapped)
+        changed_tokens = [
+            {
+                'token_idx': i,
+                'token_text': sbeam_parts[i][0],
+                'sbeam_label': orig,
+                'grobid_label': new,
+            }
+            for i, (orig, new) in enumerate(zip(baseline_labels, labels))
+            if orig != new
+        ]
+        per_feature[feat] = {
+            'label_changes': len(changed_tokens),
+            'changed_tokens': changed_tokens,
+        }
+        if print_results:
+            if changed_tokens:
+                show_diff(
+                    baseline_labels, labels, sbeam_parts,
+                    header=feat,
+                    baseline_label=baseline_label,
+                    updated_label=updated_label,
+                )
+            else:
+                print(f'[{feat}]: 0 label(s) changed')
+    return {
+        'total_tokens': len(baseline_labels),
+        'features_with_diffs': differing,
+        'per_feature': per_feature,
+    }
+
+
+def find_important_data(
+    sbeam_data_path: str,
+    alt_data_path: str,
+    feature_names_path: str,
+    model,
+) -> dict:
+    """Load .data files and run find-important analysis. Returns structured dict, no printing."""
+    feature_names = json.loads(
+        Path(feature_names_path).read_text(encoding='utf-8')
+    )['feature_names']
+    sbeam_parts = load_parts(sbeam_data_path)
+    alt_parts = load_parts(alt_data_path)
+    aligned_pairs = align_parts(sbeam_parts, alt_parts)
+    differing = find_differing_features(sbeam_parts, alt_parts, feature_names, aligned_pairs)
+    baseline_labels = run_model(model, parts_to_feature_lines(sbeam_parts))
+    return _run_find_important(
+        sbeam_parts, alt_parts, feature_names, aligned_pairs, differing,
+        model, baseline_labels, print_results=False,
+    )
+
+
 class _Tee:
     """Write to multiple streams simultaneously."""
     def __init__(self, *streams: IO[str]):
@@ -240,6 +248,11 @@ def main():
                         ))
     parser.add_argument('--output', default=None,
                         help='Also write output to this file (tee; terminal output is kept)')
+    parser.add_argument('--output-json', default=None, dest='output_json',
+                        help=(
+                            'Write find-important results as JSON to this file '
+                            '(requires --find-important)'
+                        ))
     args = parser.parse_args()
 
     feature_names = json.loads(
@@ -248,10 +261,15 @@ def main():
 
     ctx = tee_stdout(args.output) if args.output else contextlib.nullcontext()
     with ctx:
-        _run(args, feature_names)
+        result = _run(args, feature_names)
+
+    if args.output_json is not None and result is not None:
+        out = Path(args.output_json)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, indent=2), encoding='utf-8')
 
 
-def _run(args, feature_names):
+def _run(args, feature_names) -> Optional[dict]:
     sbeam_parts = load_parts(args.data)
     alt_parts = load_parts(args.alt_data)
 
@@ -284,21 +302,11 @@ def _run(args, feature_names):
     updated_label = 'alt(grobid)'
 
     if args.find_important:
-        print(f'\n--- Individual feature importance (label format: {baseline_label} → {updated_label}) ---')
-        for feat in differing:
-            swapped = apply_swap(sbeam_parts, alt_parts, feature_names, [feat], aligned_pairs)
-            labels = run_model(model, swapped)
-            changed = sum(1 for a, b in zip(baseline_labels, labels) if a != b)
-            if changed:
-                show_diff(
-                    baseline_labels, labels, sbeam_parts,
-                    header=feat,
-                    baseline_label=baseline_label,
-                    updated_label=updated_label,
-                )
-            else:
-                print(f'[{feat}]: 0 label(s) changed')
-        return
+        return _run_find_important(
+            sbeam_parts, alt_parts, feature_names, aligned_pairs, differing,
+            model, baseline_labels, print_results=True,
+            baseline_label=baseline_label, updated_label=updated_label,
+        )
 
     if args.binary_search:
         print('\n--- Binary search for minimal feature subset ---')
