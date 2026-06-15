@@ -88,7 +88,7 @@ def _run_label(run: Path) -> str:
         return run.name
 
 
-def _comparison_label(run_b: Path) -> str:
+def comparison_label(run_b: Path) -> str:
     """Derive a short label from run_b path for use in export directory names.
 
     baselines/grobid/0.9.0-crf/train -> grobid-0.9.0-crf
@@ -101,6 +101,9 @@ def _comparison_label(run_b: Path) -> str:
     if len(parts) > 1:
         label = "/".join(parts[:-1])
     return label.replace("/", "-")
+
+
+_comparison_label = comparison_label
 
 
 def find_cases(
@@ -143,7 +146,7 @@ def find_cases(
     return cases
 
 
-def _extract_texts(
+def extract_texts(
     corpus: str,
     record_id: str,
     run_a: Path,
@@ -215,7 +218,7 @@ def _copy_if_exists(src: Path, dst: Path) -> None:
         shutil.copy(src, dst)
 
 
-def _export_case(
+def export_case(
     out_dir: Path,
     record_id: str,
     corpus: str,
@@ -293,7 +296,7 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
     to_show = cases[:limit] if limit is not None else cases
     examples_base = run_a / "examples" / f"vs-{comp_label}" / mode / field / method
     for delta, corp, record_id, score_a, score_b in to_show:
-        gold_text, text_a, text_b = _extract_texts(
+        gold_text, text_a, text_b = extract_texts(
             corp, record_id, run_a, run_b, data_dir, split, field, xml_mapping,
         )
         alto_xml = None
@@ -305,7 +308,7 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
             delta, corp, record_id, score_a, score_b,
             label_a, label_b, gold_text, text_a, text_b,
         )
-        _export_case(
+        export_case(
             examples_base / corp, record_id, corp, field,
             gold_text, text_a, text_b,
             run_a, run_b, data_dir, split,
