@@ -74,6 +74,8 @@ def main() -> None:
                         help=f'Parser URL (default: {PARSER_DEFAULT_URL})')
     parser.add_argument('--out', required=True, type=Path,
                         help='Output directory for the report')
+    parser.add_argument('--corpus', default=None,
+                        help='Restrict analysis to a single corpus (default: all corpora)')
     parser.add_argument('--limit', type=int, default=None,
                         help='Limit number of regression documents to analyze')
     parser.add_argument('--concurrency', type=int, default=DEFAULT_CONCURRENCY,
@@ -102,6 +104,7 @@ def main() -> None:
         analysis_field=args.field,
         method=args.method,
         limit=args.limit,
+        corpus=args.corpus,
     )
 
     print(

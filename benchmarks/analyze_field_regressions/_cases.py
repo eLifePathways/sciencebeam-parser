@@ -18,13 +18,14 @@ def _find_regression_cases(
     analysis_field: str,
     method: str,
     limit: Optional[int],
+    corpus: Optional[str] = None,
 ) -> Tuple[List[RegressionCase], int]:
     cases_raw = find_cases(
         run_a=run_a,
         run_b=run_b,
         field=analysis_field,
         method=method,
-        corpus_filter=None,
+        corpus_filter=corpus,
         mode='regression',
     )
     all_cases = [
