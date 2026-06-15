@@ -24,3 +24,12 @@ def iter_tokenized_tokens(text: str, keep_whitespace: bool = False) -> Iterable[
 
 def get_tokenized_tokens(text: str, **kwargs) -> List[str]:
     return list(iter_tokenized_tokens(text, **kwargs))
+
+
+# Matches GROBID's GrobidDefaultAnalyzer.retokenizeSubdigitsFromLayoutToken:
+# splits at letter→digit and digit→non-digit boundaries (e.g. e1006572 → e + 1006572).
+_SUBDIGIT_SPLIT_PATTERN = re.compile(r'(?<=[^\W\d_])(?=\d)|(?<=\d)(?=\D)')
+
+
+def get_subdigit_tokenized_tokens(text: str) -> List[str]:
+    return _SUBDIGIT_SPLIT_PATTERN.split(text)

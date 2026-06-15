@@ -18,6 +18,7 @@ from sciencebeam_parser.models.model import LayoutDocumentLabelResult, Model
 from sciencebeam_parser.cv_models.cv_model import ComputerVisionModel
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
 from sciencebeam_parser.utils.misc import iter_ids
+from sciencebeam_parser.utils.tokenizer import get_subdigit_tokenized_tokens
 
 from sciencebeam_parser.document.semantic_document import (
     SemanticAffiliationAddress,
@@ -618,6 +619,7 @@ class FullTextProcessor:
     ) -> Iterable[Union[SemanticReference, SemanticInvalidReference]]:
         layout_documents = [
             LayoutDocument.for_blocks([semantic_raw_reference.merged_block])
+            .retokenize(tokenize_fn=get_subdigit_tokenized_tokens)
             for semantic_raw_reference in semantic_raw_references
         ]
         labeled_layout_tokens_list = (
