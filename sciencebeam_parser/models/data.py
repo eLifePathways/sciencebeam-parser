@@ -605,8 +605,8 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         previous_layout_token: Optional[LayoutToken] = None,
         token_index: int = 0,
         token_count: int = 0,
-        document_token_index: int = 0,
-        document_token_count: int = 0,
+        sentence_token_index: int = 0,
+        sentence_token_count: int = 0,
         line_index: int = 0,
         line_count: int = 0,
         concatenated_line_tokens_text: str = '',
@@ -628,8 +628,8 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.document_features_context = document_features_context
         self.token_index = token_index
         self.token_count = token_count
-        self.document_token_index = document_token_index
-        self.document_token_count = document_token_count
+        self.sentence_token_index = sentence_token_index
+        self.sentence_token_count = sentence_token_count
         self.line_index = line_index
         self.line_count = line_count
         self.concatenated_line_tokens_text = concatenated_line_tokens_text
@@ -783,9 +783,8 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
 
     def get_str_sentence_token_relative_position(self) -> str:
         return str(feature_linear_scaling_int(
-            # the document is currently the sentence view
-            self.document_token_index,
-            self.document_token_count,
+            self.sentence_token_index,
+            self.sentence_token_count,
             12
         ))
 
@@ -920,8 +919,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         max_concatenated_line_tokens_length = max(
             concatenated_line_tokens_length_by_line_id.values()
         )
-        # GROBID-compatible line lengths: include inter-token whitespace and a newline,
-        # matching GROBID's accumulated.length() in its look-ahead (nn / currentLineLength).
+        # GROBID-compatible line lengths: include whitespace and a newline (nn / currentLineLength).
         grobid_line_length_by_line_id = {
             id(line): (
                 sum(len(t.text) + (1 if t.whitespace else 0) for t in line.tokens) + 1
@@ -931,7 +929,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         }
         max_grobid_line_length = max(grobid_line_length_by_line_id.values())
         all_tokens = list(layout_document.iter_all_tokens())
-        document_token_count = len(all_tokens)
+        sentence_token_count = sum(1 + (1 if t.whitespace else 0) for t in all_tokens)
         # Pre-compute location name indices if a phrase match is configured.
         # This mirrors GROBID's HeaderParser which runs tokenPositionsLocationNames()
         # before the feature loop and marks tokens within matched spans.
@@ -949,6 +947,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         http_token_indices = _get_http_token_indices(all_tokens)
         identifier_token_indices = _get_identifier_token_indices(all_tokens)
         document_token_index = 0
+        sentence_token_index = 0
         for block in layout_document.iter_all_blocks():
             line_indentation_status_feature.on_new_block()
             block_lines = block.lines
@@ -974,8 +973,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                             document_features_context=self.document_features_context,
                             token_index=token_index,
                             token_count=token_count,
-                            document_token_index=document_token_index,
-                            document_token_count=document_token_count,
+                            sentence_token_index=sentence_token_index,
+                            sentence_token_count=sentence_token_count,
                             line_index=line_index,
                             line_count=line_count,
                             concatenated_line_tokens_text=concatenated_line_tokens_text,
@@ -997,4 +996,5 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                     # GROBID double-counts each space: space token contributes len(' ')+1 = 2.
                     if token.whitespace:
                         grobid_nn += 2 * len(token.whitespace)
+                    sentence_token_index += 1 + (1 if token.whitespace else 0)
                     document_token_index += 1
