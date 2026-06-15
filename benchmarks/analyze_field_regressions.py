@@ -414,25 +414,6 @@ def _generate_report(
             lines += _render_feature_table(ms.features, ms.docs_analyzed)
             lines.append('')
 
-    all_rows = [
-        (ms.model, fs.feature, fs.total_label_changes, fs.docs_affected, ms.docs_analyzed)
-        for ms in model_summaries
-        for fs in ms.features
-    ]
-    all_rows.sort(key=lambda r: r[2], reverse=True)
-    top = all_rows[:10]
-
-    if top:
-        lines += [
-            '## Cross-model summary (top features by total impact)',
-            '',
-            '| Model | Feature | Total Δlabels | Docs |',
-            '|-------|---------|------:|------:|',
-        ]
-        for m, feat, total, docs, analyzed in top:
-            lines.append(f'| {m} | {feat} | {total} | {docs}/{analyzed} |')
-        lines.append('')
-
     return '\n'.join(lines)
 
 
