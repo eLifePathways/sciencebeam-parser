@@ -46,7 +46,7 @@ class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
             FeatureDef('is_known_publisher',
                        lambda f: f.get_dummy_str_is_known_publisher()),
             FeatureDef('is_known_identifier',
-                       lambda f: f.get_dummy_str_is_known_identifier()),
+                       lambda f: f.get_str_is_known_identifier()),
             FeatureDef('punctuation_type', lambda f: f.get_punctuation_type_feature()),
             FeatureDef('sentence_token_relative_position',
                        lambda f: f.get_str_sentence_token_relative_position()),

@@ -28,6 +28,7 @@ _HTTP_URL_PATTERN = re.compile(
     r'(?i)(https?|ftp)\s{0,2}:\s{0,2}//\s{0,2}[-A-Z0-9+&@#/%?=~_()|!:.;]*[-A-Z0-9+&@#/%=~_()]'
     r'|www\s{0,2}\.\s{0,2}[-A-Z0-9+&@#/%?=~_()|!:.;]*[-A-Z0-9+&@#/%=~_()]'
 )
+_DOI_PATTERN = re.compile(r'10\.\d{4,5}/\S+')
 
 
 def _get_pattern_token_indices(
@@ -62,6 +63,10 @@ def _get_email_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
 
 def _get_http_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
     return _get_pattern_token_indices(tokens, _HTTP_URL_PATTERN)
+
+
+def _get_identifier_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
+    return _get_pattern_token_indices(tokens, _DOI_PATTERN, required_substring='10.')
 
 
 MONTH_NAMES = frozenset({
@@ -563,19 +568,10 @@ class CommonLayoutTokenFeatures(ABC):  # pylint: disable=too-many-public-methods
     def get_dummy_str_is_location_name(self) -> str:
         return '0'
 
-    def get_dummy_str_is_country_name(self) -> str:
-        return '0'
-
     def get_dummy_str_is_year(self) -> str:
         return '0'
 
     def get_dummy_str_is_month(self) -> str:
-        return '0'
-
-    def get_dummy_str_is_email(self) -> str:
-        return '0'
-
-    def get_dummy_str_is_http(self) -> str:
         return '0'
 
     def get_dummy_str_is_known_collaboration(self) -> str:
@@ -588,9 +584,6 @@ class CommonLayoutTokenFeatures(ABC):  # pylint: disable=too-many-public-methods
         return '0'
 
     def get_dummy_str_is_known_publisher(self) -> str:
-        return '0'
-
-    def get_dummy_str_is_known_identifier(self) -> str:
         return '0'
 
     def get_dummy_label(self) -> str:
@@ -626,7 +619,8 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         max_grobid_line_length: int = 0,
         is_location_name: bool = False,
         is_email: bool = False,
-        is_http: bool = False
+        is_http: bool = False,
+        is_identifier: bool = False
     ) -> None:
         super().__init__(layout_token)
         self.layout_line = layout_line
@@ -649,6 +643,7 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.is_location_name = is_location_name
         self.is_email = is_email
         self.is_http = is_http
+        self.is_identifier = is_identifier
 
     def get_layout_model_data(self, features: List[str]) -> LayoutModelData:
         return LayoutModelData(
@@ -848,6 +843,9 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
     def get_str_is_http(self) -> str:
         return '1' if self.is_http else '0'
 
+    def get_str_is_known_identifier(self) -> str:
+        return '1' if self.is_identifier else '0'
+
     def get_str_is_http_token_based(self) -> str:
         return get_str_bool_feature_value(
             self.token_text.lower().startswith('http')
@@ -949,6 +947,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
             )
         email_token_indices = _get_email_token_indices(all_tokens)
         http_token_indices = _get_http_token_indices(all_tokens)
+        identifier_token_indices = _get_identifier_token_indices(all_tokens)
         document_token_index = 0
         for block in layout_document.iter_all_blocks():
             line_indentation_status_feature.on_new_block()
@@ -989,7 +988,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                             max_grobid_line_length=max_grobid_line_length,
                             is_location_name=(document_token_index in location_name_indices),
                             is_email=(document_token_index in email_token_indices),
-                            is_http=(document_token_index in http_token_indices)
+                            is_http=(document_token_index in http_token_indices),
+                            is_identifier=(document_token_index in identifier_token_indices)
                         )
                     )
                     previous_layout_token = token
