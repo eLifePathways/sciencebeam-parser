@@ -1,5 +1,8 @@
 venv
 venv_temp
+.venv
+.mypy_cache
+.pytest_cache
 data
 /dist
 build
