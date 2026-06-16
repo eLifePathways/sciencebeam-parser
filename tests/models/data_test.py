@@ -1,8 +1,14 @@
 from abc import ABC, abstractmethod
 
+from typing import List
+
 from sciencebeam_parser.document.layout_document import (
+    LayoutBlock,
+    LayoutDocument,
     LayoutLine,
+    LayoutPage,
     LayoutPageCoordinates,
+    LayoutPageMeta,
     LayoutFont,
     LayoutToken
 )
@@ -10,7 +16,10 @@ from sciencebeam_parser.lookup import SimpleTextLookUp
 from sciencebeam_parser.models.data import (
     AppFeaturesContext,
     ContextAwareLayoutTokenFeatures,
+    ContextAwareLayoutTokenModelDataGenerator,
     DocumentFeaturesContext,
+    FeatureDef,
+    LayoutModelData,
     RelativeFontSizeFeature,
     LineIndentationStatusFeature,
     get_block_status_with_blockend_for_single_token,
@@ -650,6 +659,53 @@ class TestContextAwareLayoutTokenFeaturesIsCommonName:
         assert _make_features('Patil', ctx).get_str_is_common_name() == '0'
 
 
+class TestContextAwareLayoutTokenFeaturesRelativeDocumentPosition:
+    def _make(self, document_char_index: int, document_char_count: int):
+        return ContextAwareLayoutTokenFeatures(
+            LayoutToken('x'),
+            layout_line=LayoutLine.for_text('x'),
+            document_features_context=DocumentFeaturesContext(AppFeaturesContext()),
+            document_char_index=document_char_index,
+            document_char_count=document_char_count
+        )
+
+    def test_returns_0_at_start_of_document(self):
+        assert self._make(0, 100).get_str_relative_document_position() == '0'
+
+    def test_returns_12_at_end_of_document(self):
+        assert self._make(100, 100).get_str_relative_document_position() == '12'
+
+    def test_returns_scaled_value_for_midpoint(self):
+        assert self._make(50, 100).get_str_relative_document_position() == '6'
+
+    def test_returns_0_when_document_char_count_is_zero(self):
+        # No tokens → treated as past-end, returns max bin
+        assert self._make(0, 0).get_str_relative_document_position() == '12'
+
+
+class TestContextAwareLayoutTokenFeaturesRelativePagePosition:
+    def _make(self, page_token_y: float, page_height: float):
+        return ContextAwareLayoutTokenFeatures(
+            LayoutToken('x'),
+            layout_line=LayoutLine.for_text('x'),
+            document_features_context=DocumentFeaturesContext(AppFeaturesContext()),
+            page_token_y=page_token_y,
+            page_height=page_height
+        )
+
+    def test_returns_0_at_top_of_page(self):
+        assert self._make(0.0, 800.0).get_str_relative_page_position() == '0'
+
+    def test_returns_12_at_bottom_of_page(self):
+        assert self._make(800.0, 800.0).get_str_relative_page_position() == '12'
+
+    def test_returns_scaled_value_for_midpoint(self):
+        assert self._make(400.0, 800.0).get_str_relative_page_position() == '6'
+
+    def test_returns_0_when_page_height_is_zero(self):
+        assert self._make(0.0, 0.0).get_str_relative_page_position() == '0'
+
+
 class TestContextAwareLayoutTokenFeaturesIsProperName:
     def test_should_return_0_when_no_lookups_configured(self):
         assert _make_features('Patil').get_str_is_proper_name() == '0'
@@ -670,3 +726,83 @@ class TestContextAwareLayoutTokenFeaturesIsProperName:
             last_name_lookup=SimpleTextLookUp({'Patil'})
         )
         assert _make_features('Innovation', ctx).get_str_is_proper_name() == '0'
+
+
+class _PositionFeaturesDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
+    """Minimal generator that only outputs position features, for loop-level tests."""
+    def __init__(self):
+        super().__init__(DocumentFeaturesContext(AppFeaturesContext()))
+        self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = [
+            FeatureDef('relative_document_position',
+                       lambda f: f.get_str_relative_document_position()),
+            FeatureDef('relative_page_position',
+                       lambda f: f.get_str_relative_page_position()),
+        ]
+
+
+def _make_page_with_token(
+    text: str,
+    y: float,
+    page_number: int,
+    page_height: float = 800.0
+) -> LayoutPage:
+    token = LayoutToken(
+        text,
+        coordinates=LayoutPageCoordinates(
+            x=0, y=y, width=10, height=10, page_number=page_number
+        )
+    )
+    return LayoutPage(
+        blocks=[LayoutBlock(lines=[LayoutLine(tokens=[token])])],
+        meta=LayoutPageMeta(
+            page_number=page_number,
+            coordinates=LayoutPageCoordinates(
+                x=0, y=0, width=600, height=page_height, page_number=page_number
+            )
+        )
+    )
+
+
+def _pos(row: LayoutModelData, feature: str) -> int:
+    gen = _PositionFeaturesDataGenerator()
+    index = gen.feature_names.index(feature)
+    return int(row.data_line.split()[index])
+
+
+class TestIterModelDataForLayoutDocumentPositionFeatures:
+    def test_document_position_does_not_reset_across_pages(self):
+        gen = _PositionFeaturesDataGenerator()
+        page1 = _make_page_with_token('A' * 20, y=100, page_number=1)
+        page2 = _make_page_with_token('B' * 20, y=100, page_number=2)
+        rows = list(gen.iter_model_data_for_layout_document(
+            LayoutDocument(pages=[page1, page2])
+        ))
+        assert _pos(rows[1], 'relative_document_position') > _pos(
+            rows[0], 'relative_document_position'
+        )
+
+    def test_page_position_resets_on_new_page(self):
+        # Token near bottom of page 1 should have a higher page position than
+        # a token near top of page 2.
+        gen = _PositionFeaturesDataGenerator()
+        page1 = _make_page_with_token('a', y=700.0, page_number=1)
+        page2 = _make_page_with_token('b', y=50.0, page_number=2)
+        rows = list(gen.iter_model_data_for_layout_document(
+            LayoutDocument(pages=[page1, page2])
+        ))
+        assert _pos(rows[0], 'relative_page_position') > _pos(
+            rows[1], 'relative_page_position'
+        )
+
+    def test_page_position_is_0_when_page_has_no_coordinates(self):
+        gen = _PositionFeaturesDataGenerator()
+        token = LayoutToken(
+            'word',
+            coordinates=LayoutPageCoordinates(x=0, y=400, width=10, height=10)
+        )
+        page = LayoutPage(
+            blocks=[LayoutBlock(lines=[LayoutLine(tokens=[token])])],
+            meta=LayoutPageMeta(page_number=1, coordinates=None)
+        )
+        rows = list(gen.iter_model_data_for_layout_document(LayoutDocument(pages=[page])))
+        assert rows[0].data_line.split()[0] == '0'

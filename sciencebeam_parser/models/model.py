@@ -162,7 +162,7 @@ class LayoutDocumentLabelResult:
                             continue
                         accepted_line = line
                     if result_page is None:
-                        result_page = LayoutPage(blocks=[])
+                        result_page = LayoutPage(blocks=[], meta=page.meta)
                         layout_document.pages.append(result_page)
                     if result_block is None:
                         result_block = LayoutBlock(lines=[])

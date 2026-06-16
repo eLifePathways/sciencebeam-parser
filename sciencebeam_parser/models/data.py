@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import logging
 import math
 import re
@@ -591,6 +592,7 @@ class CommonLayoutTokenFeatures(ABC):  # pylint: disable=too-many-public-methods
 
 
 _LINESCALE = 10
+_NBBINS_POSITION = 12
 
 
 class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-methods
@@ -620,7 +622,11 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         is_location_name: bool = False,
         is_email: bool = False,
         is_http: bool = False,
-        is_identifier: bool = False
+        is_identifier: bool = False,
+        document_char_index: int = 0,
+        document_char_count: int = 0,
+        page_token_y: float = 0.0,
+        page_height: float = 0.0
     ) -> None:
         super().__init__(layout_token)
         self.layout_line = layout_line
@@ -644,6 +650,10 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.is_email = is_email
         self.is_http = is_http
         self.is_identifier = is_identifier
+        self.document_char_index = document_char_index
+        self.document_char_count = document_char_count
+        self.page_token_y = page_token_y
+        self.page_height = page_height
 
     def get_layout_model_data(self, features: List[str]) -> LayoutModelData:
         return LayoutModelData(
@@ -850,12 +860,22 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
             self.token_text.lower().startswith('http')
         )
 
-    def get_dummy_str_relative_document_position(self):
-        # position within whole document
-        return '0'
+    def get_str_relative_document_position(self) -> str:
+        return str(feature_linear_scaling_int(
+            self.document_char_index,
+            self.document_char_count,
+            _NBBINS_POSITION
+        ))
 
-    def get_dummy_str_relative_page_position(self):
-        return '0'
+    def get_str_relative_page_position(self) -> str:
+        # Matches GROBID's relativePagePosition: linearScaling(token.getY(), page.getHeight(), 12)
+        if self.page_height <= 0:
+            return '0'
+        return str(min(_NBBINS_POSITION, feature_linear_scaling_int(
+            self.page_token_y,
+            self.page_height,
+            _NBBINS_POSITION
+        )))
 
     def get_dummy_str_is_bitmap_around(self) -> str:
         return '0'
@@ -946,55 +966,73 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         email_token_indices = _get_email_token_indices(all_tokens)
         http_token_indices = _get_http_token_indices(all_tokens)
         identifier_token_indices = _get_identifier_token_indices(all_tokens)
+        document_char_count = sum(len(t.text) for t in all_tokens)
+        document_char_index = 0
         document_token_index = 0
         sentence_token_index = 0
-        for block in layout_document.iter_all_blocks():
-            line_indentation_status_feature.on_new_block()
-            block_lines = block.lines
-            line_count = len(block_lines)
-            for line_index, line in enumerate(block_lines):
-                line_indentation_status_feature.on_new_line()
-                line_tokens = line.tokens
-                token_count = len(line_tokens)
-                concatenated_line_tokens_text = ''.join([
-                    token.text for token in line_tokens
-                ])
-                line_token_position = 0
-                grobid_nn = 0
-                grobid_line_length = grobid_line_length_by_line_id[id(line)]
-                for token_index, token in enumerate(line_tokens):
-                    # GROBID's nn includes the current token's length before the feature is emitted.
-                    grobid_nn += len(token.text)
-                    yield from self.iter_model_data_for_context_layout_token_features(
-                        ContextAwareLayoutTokenFeatures(
-                            token,
-                            layout_line=line,
-                            previous_layout_token=previous_layout_token,
-                            document_features_context=self.document_features_context,
-                            token_index=token_index,
-                            token_count=token_count,
-                            sentence_token_index=sentence_token_index,
-                            sentence_token_count=sentence_token_count,
-                            line_index=line_index,
-                            line_count=line_count,
-                            concatenated_line_tokens_text=concatenated_line_tokens_text,
-                            max_concatenated_line_tokens_length=max_concatenated_line_tokens_length,
-                            line_token_position=line_token_position,
-                            relative_font_size_feature=relative_font_size_feature,
-                            line_indentation_status_feature=line_indentation_status_feature,
-                            grobid_nn=grobid_nn,
-                            grobid_line_length=grobid_line_length,
-                            max_grobid_line_length=max_grobid_line_length,
-                            is_location_name=(document_token_index in location_name_indices),
-                            is_email=(document_token_index in email_token_indices),
-                            is_http=(document_token_index in http_token_indices),
-                            is_identifier=(document_token_index in identifier_token_indices)
+        for page in layout_document.pages:
+            page_height = (
+                page.meta.coordinates.height
+                if page.meta.coordinates else 0.0
+            )
+            for block in page.blocks:
+                line_indentation_status_feature.on_new_block()
+                block_lines = block.lines
+                line_count = len(block_lines)
+                for line_index, line in enumerate(block_lines):
+                    line_indentation_status_feature.on_new_line()
+                    line_tokens = line.tokens
+                    token_count = len(line_tokens)
+                    concatenated_line_tokens_text = ''.join([
+                        token.text for token in line_tokens
+                    ])
+                    line_token_position = 0
+                    grobid_nn = 0
+                    grobid_line_length = grobid_line_length_by_line_id[id(line)]
+                    for token_index, token in enumerate(line_tokens):
+                        # GROBID's nn includes current token length before feature is emitted.
+                        grobid_nn += len(token.text)
+                        page_token_y = (
+                            token.coordinates.y
+                            if token.coordinates else 0.0
                         )
-                    )
-                    previous_layout_token = token
-                    line_token_position += len(token.text)
-                    # GROBID double-counts each space: space token contributes len(' ')+1 = 2.
-                    if token.whitespace:
-                        grobid_nn += 2 * len(token.whitespace)
-                    sentence_token_index += 1 + (1 if token.whitespace else 0)
-                    document_token_index += 1
+                        yield from self.iter_model_data_for_context_layout_token_features(
+                            ContextAwareLayoutTokenFeatures(
+                                token,
+                                layout_line=line,
+                                previous_layout_token=previous_layout_token,
+                                document_features_context=self.document_features_context,
+                                token_index=token_index,
+                                token_count=token_count,
+                                sentence_token_index=sentence_token_index,
+                                sentence_token_count=sentence_token_count,
+                                line_index=line_index,
+                                line_count=line_count,
+                                concatenated_line_tokens_text=concatenated_line_tokens_text,
+                                max_concatenated_line_tokens_length=(
+                                    max_concatenated_line_tokens_length
+                                ),
+                                line_token_position=line_token_position,
+                                relative_font_size_feature=relative_font_size_feature,
+                                line_indentation_status_feature=line_indentation_status_feature,
+                                grobid_nn=grobid_nn,
+                                grobid_line_length=grobid_line_length,
+                                max_grobid_line_length=max_grobid_line_length,
+                                is_location_name=(document_token_index in location_name_indices),
+                                is_email=(document_token_index in email_token_indices),
+                                is_http=(document_token_index in http_token_indices),
+                                is_identifier=(document_token_index in identifier_token_indices),
+                                document_char_index=document_char_index,
+                                document_char_count=document_char_count,
+                                page_token_y=page_token_y,
+                                page_height=page_height
+                            )
+                        )
+                        previous_layout_token = token
+                        line_token_position += len(token.text)
+                        # GROBID double-counts each space: space token contributes len(' ')+1 = 2.
+                        if token.whitespace:
+                            grobid_nn += 2 * len(token.whitespace)
+                        sentence_token_index += 1 + (1 if token.whitespace else 0)
+                        document_char_index += len(token.text)
+                        document_token_index += 1

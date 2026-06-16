@@ -3,6 +3,8 @@ from unittest.mock import MagicMock
 
 from sciencebeam_parser.document.layout_document import (
     LayoutPage,
+    LayoutPageCoordinates,
+    LayoutPageMeta,
     get_layout_tokens_for_text,
     join_layout_tokens,
     LayoutDocument,
@@ -127,6 +129,35 @@ class TestLayoutDocumentLabelResult:
         ) == join_layout_tokens(
             tagged_tokens[0][1] + tagged_tokens[2][1]
         )
+
+    def test_should_preserve_page_meta_in_filtered_document(self):
+        page_coords = LayoutPageCoordinates(x=0, y=0, width=612, height=792, page_number=1)
+        page_meta = LayoutPageMeta(page_number=1, coordinates=page_coords)
+        tagged_lines = [
+            (TAG_1, LayoutLine.for_text('section title'))
+        ]
+        layout_model_labels = [
+            LayoutModelLabel(
+                label=TAG_1,
+                label_token_text=line.text,
+                layout_line=line,
+                layout_token=None
+            )
+            for _, line in tagged_lines
+            for _ in line.tokens
+        ]
+        layout_document = LayoutDocument(pages=[LayoutPage(
+            blocks=[LayoutBlock(lines=[line for _, line in tagged_lines])],
+            meta=page_meta
+        )])
+        layout_document_label_result = LayoutDocumentLabelResult(
+            layout_document,
+            layout_model_labels
+        )
+        filtered = layout_document_label_result.get_filtered_document_by_label(TAG_1)
+        assert len(filtered.pages) == 1
+        assert filtered.pages[0].meta.coordinates is not None
+        assert filtered.pages[0].meta.coordinates.height == 792
 
 
 class TestIterEntityValuesPredictedLabels:
