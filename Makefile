@@ -521,6 +521,21 @@ ANALYZE_CORPUS ?=
 ANALYZE_LIMIT ?=
 ANALYZE_CONCURRENCY ?=
 ANALYZE_OUT ?= $(SHOW_RUN_A)/field-analysis/$(ANALYZE_FIELD)/$(SHOW_METHOD)
+GOLD_FAILURE_OUT ?= $(SHOW_RUN_A)/gold-failure-analysis/$(ANALYZE_FIELD)/$(SHOW_METHOD)
+
+dev-analyze-gold-failures: .require-ANALYZE_FIELD
+	$(PYTHON) -m benchmarks.analyze_gold_failures \
+		--field $(ANALYZE_FIELD) \
+		--run $(SHOW_RUN_A) \
+		--data benchmarks/data \
+		--split $(BENCHMARK_SPLIT) \
+		--method $(SHOW_METHOD) \
+		--out $(GOLD_FAILURE_OUT) \
+		$(if $(ANALYZE_CORPUS),--corpus $(ANALYZE_CORPUS),) \
+		$(if $(ANALYZE_LIMIT),--limit $(ANALYZE_LIMIT),) \
+		$(if $(BENCHMARK_PARSER_URL),--parser-url $(BENCHMARK_PARSER_URL),)
+	@echo "Report written to $(GOLD_FAILURE_OUT)/report.md"
+
 
 dev-analyze-field-regressions: .require-ANALYZE_FIELD
 	$(PYTHON) -m benchmarks.analyze_field_regressions \
