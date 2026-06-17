@@ -49,6 +49,23 @@ def _normalize(text: str) -> str:
     return re.sub(r'\s+', '', text)
 
 
+def _normalize_for_presence(text: str) -> str:
+    """Lowercase variant of _normalize used for presence detection only.
+
+    Presence checks (is this value anywhere in the raw TEI?) should be
+    case-insensitive so that ALL-CAPS PDF renderings of a title are not
+    mistakenly classified as NOT_IN_RAW_TEXT.  Similarity scoring still
+    uses _normalize (case-sensitive) so case differences surface in the
+    PARTIAL_WRONG section and near-miss classification.
+    """
+    return _normalize(text).lower()
+
+
+def _strip_xml_tags(text: str) -> str:
+    """Replace each XML/HTML tag with a space to preserve word boundaries."""
+    return re.sub(r'<[^>]+>', ' ', text)
+
+
 def _in_raw_fuzzy(norm_value: str, norm_raw: str) -> bool:
     """Exact substring match, with a sliding-window fallback for single-char differences.
 
@@ -77,21 +94,30 @@ def _parse_pipe_separated(text: Optional[str]) -> List[str]:
     return [v.strip() for v in text.split(' | ') if v.strip()]
 
 
-def _best_edit_sim(gold: str, candidates: List[str]) -> Tuple[Optional[str], float]:
+def _best_edit_sim(
+    gold: str,
+    candidates: List[str],
+    case_insensitive: bool = False,
+) -> Tuple[Optional[str], float]:
     if not candidates:
         return None, 0.0
     norm_gold = _normalize(gold)
+    if case_insensitive:
+        norm_gold = norm_gold.lower()
     best_match: Optional[str] = None
     best_sim = 0.0
     for candidate in candidates:
-        sim = SequenceMatcher(None, norm_gold, _normalize(candidate)).ratio()
+        norm_cand = _normalize(candidate)
+        if case_insensitive:
+            norm_cand = norm_cand.lower()
+        sim = SequenceMatcher(None, norm_gold, norm_cand).ratio()
         if sim > best_sim:
             best_sim = sim
             best_match = candidate
     return best_match, best_sim
 
 
-def assign_failure_modes(
+def assign_failure_modes(  # pylint: disable=too-many-locals
     gold_values: List[str],
     raw_tei_text: Optional[str],
     sb_field_text: Optional[str],
@@ -108,23 +134,34 @@ def assign_failure_modes(
         similarity_threshold: Minimum SequenceMatcher ratio to consider a value
             correctly extracted (default 0.8).
     """
-    norm_raw = _normalize(raw_tei_text) if raw_tei_text else ''
-    norm_sb_full = _normalize(sb_field_text) if sb_field_text else ''
+    # Case-insensitive normalised strings for presence detection only.
+    # ALL-CAPS PDF renderings of titles must not be classified as NOT_IN_RAW_TEXT.
+    norm_raw = _normalize_for_presence(_strip_xml_tags(raw_tei_text)) if raw_tei_text else ''
+    norm_sb_full = _normalize_for_presence(sb_field_text) if sb_field_text else ''
     sb_values = _parse_pipe_separated(sb_field_text)
 
     results = []
     for value in gold_values:
-        norm_value = _normalize(value)
+        norm_value_presence = _normalize_for_presence(value)
 
-        in_raw = bool(norm_value and _in_raw_fuzzy(norm_value, norm_raw))
-        in_sb_field = bool(norm_value and _in_raw_fuzzy(norm_value, norm_sb_full))
+        in_raw = bool(norm_value_presence and _in_raw_fuzzy(norm_value_presence, norm_raw))
+        in_sb_field = bool(
+            norm_value_presence and _in_raw_fuzzy(norm_value_presence, norm_sb_full)
+        )
 
         if not in_raw:
+            # Even though the gold value was not found in the raw text, record whatever
+            # was extracted into the target field so the report can show it.  The
+            # similarity score is computed case-insensitively so that ALL-CAPS PDF
+            # renderings still show high similarity rather than landing in "absent".
+            nr_match, nr_sim = _best_edit_sim(value, sb_values, case_insensitive=True)
             results.append(GoldValueResult(
                 value=value,
                 mode=FailureMode.NOT_IN_RAW_TEXT,
                 in_raw=False,
                 in_sb_field=in_sb_field,
+                best_sb_match=nr_match,
+                best_sb_similarity=round(nr_sim, 3) if nr_match is not None else None,
             ))
         elif not in_sb_field:
             results.append(GoldValueResult(

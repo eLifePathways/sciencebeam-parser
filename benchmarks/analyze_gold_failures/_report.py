@@ -280,6 +280,59 @@ def _see_all_link(mode: FailureMode, total: int) -> str:
     return f'_(showing {SAMPLE_SIZE} of {total} — [see all]({filename}))_'
 
 
+_NR_TABLE_HEADER_NARROW = ['| Doc | Corpus | Gold value |', '| --- | --- | --- |']
+_NR_TABLE_HEADER_WIDE = [
+    '| Doc | Corpus | Gold value | Extracted | Sim |',
+    '| --- | --- | --- | --- | ---: |',
+]
+
+# Similarity threshold for treating a NOT_IN_RAW_TEXT result as a gold/PDF form
+# mismatch rather than a genuine absence.  Above this the extracted field value is
+# clearly the same content rendered differently; below it the two strings are
+# unrelated and the value is treated as truly absent.
+_NR_DIFF_FORM_THRESHOLD = 0.6
+
+
+def _render_not_in_raw_rows(
+    examples: List[Tuple[str, str, GoldValueResult]],
+    wide: bool,
+) -> List[str]:
+    lines = []
+    for corpus, record_id, result in examples:
+        if wide:
+            extracted = result.best_sb_match or '—'
+            sim = (
+                f'{result.best_sb_similarity:.2f}'
+                if result.best_sb_similarity is not None else '—'
+            )
+            lines.append(
+                f'| {record_id} | {corpus} | {result.value} | {extracted} | {sim} |'
+            )
+        else:
+            lines.append(f'| {record_id} | {corpus} | {result.value} |')
+    return lines
+
+
+def _split_not_in_raw(
+    examples: List[Tuple[str, str, GoldValueResult]],
+) -> Tuple[List[Tuple[str, str, GoldValueResult]], List[Tuple[str, str, GoldValueResult]]]:
+    """Partition NOT_IN_RAW_TEXT examples into (absent, diff_form).
+
+    diff_form: best_sb_similarity >= _NR_DIFF_FORM_THRESHOLD — the text was
+               extracted as the correct field type but in a different form.
+    absent:    everything else — no similar extraction found, or nothing extracted.
+    """
+    absent, diff_form = [], []
+    for item in examples:
+        _, _, result = item
+        sim = result.best_sb_similarity or 0.0
+        if sim >= _NR_DIFF_FORM_THRESHOLD:
+            diff_form.append(item)
+        else:
+            absent.append(item)
+    return absent, diff_form
+
+
 def _render_not_in_raw_section(
     agg: FailureModeAggregate,
     summary_total: int,
@@ -290,22 +343,49 @@ def _render_not_in_raw_section(
         f' {agg.docs_affected} doc(s),'
         f' {_pct(agg.total_values, summary_total)})',
         '',
-        '_Gold values absent from raw ScienceBeam TEI output. '
-        'No model training change is likely to recover these directly._',
-        '',
     ]
     examples = agg.examples
     if not examples:
         lines.append('_None._')
-    else:
-        sample = examples[:SAMPLE_SIZE]
-        lines += ['| Doc | Corpus | Gold value |', '| --- | --- | --- |']
-        for corpus, record_id, result in sample:
-            lines.append(f'| {record_id} | {corpus} | {result.value} |')
-        if len(examples) > SAMPLE_SIZE:
-            lines.append('')
-            lines.append(_see_all_link(FailureMode.NOT_IN_RAW_TEXT, len(examples)))
-    lines.append('')
+        lines.append('')
+        return lines
+
+    absent, diff_form = _split_not_in_raw(examples)
+
+    if absent:
+        lines += [
+            f'### Absent from raw text ({len(absent)} value(s))',
+            '',
+            '_Gold values not found in the raw ScienceBeam TEI output and no similar '
+            'value was extracted into the field. '
+            'This may indicate the value is missing from the PDF, or that raw text '
+            'extraction renders it too differently to detect. '
+            'Model training is unlikely to recover these._',
+            '',
+        ]
+        sample = absent[:SAMPLE_SIZE]
+        lines += _NR_TABLE_HEADER_NARROW + _render_not_in_raw_rows(sample, wide=False)
+        if len(absent) > SAMPLE_SIZE:
+            lines += ['', _see_all_link(FailureMode.NOT_IN_RAW_TEXT, len(examples))]
+        lines.append('')
+
+    if diff_form:
+        lines += [
+            f'### Extracted with different form ({len(diff_form)} value(s))',
+            '',
+            '_The gold value was not found in the raw text, but a similar value was '
+            'extracted into the field. '
+            'This is a gold-label / PDF-rendering mismatch '
+            '(e.g. different wording, extra words, ALL CAPS) rather than a model error. '
+            'Consider normalising the gold labels or the extraction post-processing._',
+            '',
+        ]
+        sample = diff_form[:SAMPLE_SIZE]
+        lines += _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(sample, wide=True)
+        if len(diff_form) > SAMPLE_SIZE:
+            lines += ['', _see_all_link(FailureMode.NOT_IN_RAW_TEXT, len(examples))]
+        lines.append('')
+
     return lines
 
 
@@ -545,16 +625,24 @@ def _render_not_in_raw_full(
     summary_total: int,
 ) -> str:
     label = FAILURE_MODE_LABEL[FailureMode.NOT_IN_RAW_TEXT]
+    absent, diff_form = _split_not_in_raw(agg.examples)
     lines = [
         f'# {label} — full list',
         f'_{agg.total_values} value(s), {_pct(agg.total_values, summary_total)} of gold_',
         '',
-        '| Doc | Corpus | Gold value |',
-        '| --- | --- | --- |',
     ]
-    for corpus, record_id, result in agg.examples:
-        lines.append(f'| {record_id} | {corpus} | {result.value} |')
-    lines.append('')
+    if absent:
+        lines += [
+            f'## Absent from raw text ({len(absent)} value(s))',
+            '',
+        ] + _NR_TABLE_HEADER_NARROW + _render_not_in_raw_rows(absent, wide=False)
+        lines.append('')
+    if diff_form:
+        lines += [
+            f'## Extracted with different form ({len(diff_form)} value(s))',
+            '',
+        ] + _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(diff_form, wide=True)
+        lines.append('')
     return '\n'.join(lines)
 
 

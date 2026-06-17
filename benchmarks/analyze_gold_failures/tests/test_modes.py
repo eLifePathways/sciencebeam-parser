@@ -8,7 +8,7 @@ RAW_TEXT = 'Introduction Methods Results Discussion Conclusion'
 SB_FIELD = 'Introduction | Methods | Results'
 
 
-class TestAssignFailureModes:
+class TestAssignFailureModes:  # pylint: disable=too-many-public-methods
     def test_correct_when_value_extracted_and_similar(self):
         results = assign_failure_modes(['Introduction'], RAW_TEXT, SB_FIELD)
         assert len(results) == 1
@@ -101,6 +101,101 @@ class TestAssignFailureModes:
         gold = 'Methoxs'  # 2 chars differ in a 7-char string
         results = assign_failure_modes([gold], raw, None)
         assert results[0].in_raw is False
+
+    def test_not_in_raw_shows_similar_extracted_value(self):
+        # Gold title differs from the extracted title by one extra word and a
+        # missing hyphen — the raw-text fuzzy check can't bridge that gap, so
+        # the result is NOT_IN_RAW_TEXT.  But the extracted value should appear
+        # as best_sb_match so the report can show what was actually extracted.
+        raw = (
+            'A Pan-respiratory Antiviral Chemotype Targeting '
+            'a Transient Host Multiprotein Complex'
+        )
+        gold = (
+            'A Pan-Respiratory Antiviral Chemotype Targeting '
+            'a Host Multi-Protein Complex'
+        )
+        sb_field = (
+            'A Pan-respiratory Antiviral Chemotype Targeting '
+            'a Transient Host Multiprotein Complex'
+        )
+        results = assign_failure_modes([gold], raw, sb_field)
+        assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
+        assert results[0].best_sb_match == sb_field
+        assert results[0].best_sb_similarity is not None
+        assert results[0].best_sb_similarity >= 0.8
+
+    def test_not_in_raw_stores_extracted_value_even_when_unrelated(self):
+        # The extracted field value is always stored so the report can show what
+        # was extracted.  The (low) similarity score tells the user it's unrelated.
+        raw = 'Some completely different text on this page'
+        gold = 'A Pan-Respiratory Antiviral Chemotype'
+        sb_field = 'Some completely different title'
+        results = assign_failure_modes([gold], raw, sb_field)
+        assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
+        assert results[0].best_sb_match == sb_field
+        assert results[0].best_sb_similarity is not None
+        assert results[0].best_sb_similarity < 0.5
+
+    def test_not_in_raw_best_sb_match_is_none_when_nothing_extracted(self):
+        # When sb_field is None (or empty), there's no extracted value to show.
+        raw = 'Some text in the document'
+        gold = 'A title never extracted'
+        results = assign_failure_modes([gold], raw, None)
+        assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
+        assert results[0].best_sb_match is None
+
+    def test_all_caps_title_is_not_not_in_raw_text(self):
+        # PDF rendering may produce ALL-CAPS titles.  Presence detection must be
+        # case-insensitive so these are not falsely classified as NOT_IN_RAW_TEXT.
+        raw = 'ETHNO-MEDICO BOTANICAL STUDY AMONG THE FOUR INDIGENOUS COMMUNITIES'
+        gold = 'Ethno-medico botanical study among the four indigenous communities'
+        sb_field = 'ETHNO-MEDICO BOTANICAL STUDY AMONG THE FOUR INDIGENOUS COMMUNITIES'
+        results = assign_failure_modes([gold], raw, sb_field)
+        assert results[0].in_raw is True
+        assert results[0].mode != FailureMode.NOT_IN_RAW_TEXT
+
+    def test_not_in_raw_all_caps_extracted_has_high_similarity(self):
+        # When gold is mixed-case and the extracted value is ALL CAPS, the
+        # case-insensitive similarity must be high so the entry lands in
+        # "Extracted with different form" not "Absent from raw text".
+        raw = (
+            'IS AUDIO VISUAL METHOD BETTER THAN TRADITIONAL FOR MEDICAL STUDENTS?'
+            ' - A SURVEY REPORT'
+        )
+        gold = (
+            'Is Audio Visual Method Better than Traditional for Medical Students?'
+            ' - A Better Survey Report'
+        )
+        sb_field = (
+            'IS AUDIO VISUAL METHOD BETTER THAN TRADITIONAL FOR MEDICAL STUDENTS?'
+            ' - A SURVEY REPORT'
+        )
+        results = assign_failure_modes([gold], raw, sb_field)
+        # Gold has "A Better Survey Report" but TEI has "A SURVEY REPORT" — genuinely absent.
+        assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
+        # But the extracted title is clearly the same document title, so similarity must be high.
+        assert results[0].best_sb_similarity is not None
+        assert results[0].best_sb_similarity >= 0.6
+
+    def test_inline_markup_in_raw_tei_is_found_in_raw(self):
+        # Title text split across <hi> elements must still be found in raw text.
+        # Without tag stripping the normalized string would have tag markup
+        # between the text fragments, breaking substring search.
+        raw = (
+            '<title level="a" type="main">'
+            '<hi rend="bold">Roles for the long non-coding RNA</hi>'
+            ' <hi rend="bold"><hi rend="italic">Pax6os1/PAX6-AS1</hi></hi>'
+            ' <hi rend="bold">in pancreatic beta cell identity and function</hi>'
+            '</title>'
+        )
+        gold = (
+            'Roles for the long non-coding RNA Pax6os1/PAX6-AS1'
+            ' in pancreatic beta cell identity and function'
+        )
+        results = assign_failure_modes([gold], raw, None)
+        assert results[0].in_raw is True
+        assert results[0].mode == FailureMode.EXTRACTION_FAILED
 
     def test_case_difference_in_sb_field_is_correct_not_extraction_failed(self):
         # Gold JATS: "Synthesis of PAV-431 Resin" (capital R)
