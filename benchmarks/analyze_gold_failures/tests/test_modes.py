@@ -214,10 +214,50 @@ class TestAssignFailureModes:  # pylint: disable=too-many-public-methods
         assert results[0].in_raw is True
         assert results[0].mode != FailureMode.NOT_IN_RAW_TEXT
 
+    def test_not_in_raw_high_raw_sim_low_extracted_sim(self):
+        # Gold has an extra word absent from the PDF title, so in_raw=False.
+        # best_raw_similarity should still be high (the bulk of the text matches),
+        # while best_sb_similarity is low (model extracted something unrelated).
+        # The split uses max(raw_sim, extr_sim) so the high raw_sim is sufficient
+        # to place this in "Present in PDF as different form".
+        raw = (
+            'IS AUDIO VISUAL METHOD THAN TRADITIONAL FOR MEDICAL STUDENTS A SURVEY REPORT'
+        )
+        gold = (
+            'is audio visual method better than traditional for medical students a survey report'
+        )
+        sb_field = 'Completely unrelated extracted text from a different section'
+        results = assign_failure_modes([gold], raw, sb_field)
+        assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
+        assert results[0].best_raw_similarity is not None
+        assert results[0].best_raw_similarity >= 0.6
+        assert results[0].best_sb_similarity is not None
+        assert results[0].best_sb_similarity < 0.6
+
+    def test_not_in_raw_word_order_swap_high_extracted_sim(self):
+        # Gold has subtitle first, PDF has it at the end (word-order swap).
+        # The fixed-window raw similarity may be low, but the extracted title
+        # has high similarity to the gold — evidence the content IS in the PDF.
+        # The split must use max(raw_sim, extr_sim) so this lands in
+        # "Present in PDF as different form" rather than "Absent from source PDF".
+        pdf_title = (
+            'Functional imaging of time on task and the involvement of '
+            'dopaminergic and cholinergic substrates in cognitive effort and reward'
+        )
+        gold = (
+            'Cognitive effort and reward. Functional imaging of time on task and '
+            'the involvement of dopaminergic and cholinergic substrates'
+        )
+        results = assign_failure_modes([gold], pdf_title, pdf_title)
+        assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
+        assert results[0].best_sb_similarity is not None
+        # Extracted sim should be high enough to rescue this from "Absent"
+        assert results[0].best_sb_similarity >= 0.6
+
     def test_not_in_raw_all_caps_extracted_has_high_similarity(self):
         # When gold is mixed-case and the extracted value is ALL CAPS, the
         # case-insensitive similarity must be high so the entry lands in
-        # "Extracted with different form" not "Absent from raw text".
+        # "Present in PDF as different form" not "Absent from source PDF".
         raw = (
             'IS AUDIO VISUAL METHOD BETTER THAN TRADITIONAL FOR MEDICAL STUDENTS?'
             ' - A SURVEY REPORT'

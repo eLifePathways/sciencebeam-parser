@@ -289,10 +289,11 @@ _NR_TABLE_HEADER_WIDE = [
     '| --- | --- | --- | ---: | --- | ---: |',
 ]
 
-# Similarity threshold for treating a NOT_IN_RAW_TEXT result as a gold/PDF form
-# mismatch rather than a genuine absence.  Above this the extracted field value is
-# clearly the same content rendered differently; below it the two strings are
-# unrelated and the value is treated as truly absent.
+# Raw-text similarity threshold for treating a NOT_IN_RAW_TEXT result as a
+# gold/PDF wording mismatch rather than a genuine absence.  Above this the best
+# fixed-length window in the source PDF is clearly the same content in a different
+# form (ALL CAPS, extra/missing words, reordered subtitle); below it the source
+# PDF has no recognisable match and the value is treated as truly absent.
 _NR_DIFF_FORM_THRESHOLD = 0.6
 
 
@@ -326,14 +327,18 @@ def _split_not_in_raw(
 ) -> Tuple[List[Tuple[str, str, GoldValueResult]], List[Tuple[str, str, GoldValueResult]]]:
     """Partition NOT_IN_RAW_TEXT examples into (absent, diff_form).
 
-    diff_form: best_sb_similarity >= _NR_DIFF_FORM_THRESHOLD — the text was
-               extracted as the correct field type but in a different form.
-    absent:    everything else — no similar extraction found, or nothing extracted.
+    diff_form: max(best_raw_similarity, best_sb_similarity) >= _NR_DIFF_FORM_THRESHOLD.
+               Either the source PDF has similar content (raw sim), or the model
+               extracted something similar (extr sim — evidence the content is in the
+               PDF even if the fixed-window scan missed it, e.g. word-order swaps).
+    absent:    everything else — no recognisable match in either the PDF text or the
+               extracted field.  The value may be genuinely absent, incorrectly
+               annotated, or from a different version of the paper.
     """
     absent, diff_form = [], []
     for item in examples:
         _, _, result = item
-        sim = result.best_sb_similarity or 0.0
+        sim = max(result.best_raw_similarity or 0.0, result.best_sb_similarity or 0.0)
         if sim >= _NR_DIFF_FORM_THRESHOLD:
             diff_form.append(item)
         else:
@@ -362,29 +367,29 @@ def _render_not_in_raw_section(
 
     if absent:
         lines += [
-            f'### Absent from raw text ({len(absent)} value(s))',
+            f'### Absent from source PDF ({len(absent)} value(s))',
             '',
-            '_Gold values not found in the raw ScienceBeam TEI output and no similar '
-            'value was extracted into the field. '
-            'This may indicate the value is missing from the PDF, or that raw text '
-            'extraction renders it too differently to detect. '
+            '_Neither the source PDF text nor the extracted field contains a recognisable '
+            'match for the gold value (both raw and extracted similarity < 0.6). '
+            'The value may be genuinely absent from this document, incorrectly '
+            'annotated, or from a different version of the paper. '
             'Model training is unlikely to recover these._',
             '',
         ]
         sample = absent[:SAMPLE_SIZE]
-        lines += _NR_TABLE_HEADER_NARROW + _render_not_in_raw_rows(sample, wide=False)
+        lines += _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(sample, wide=True)
         if len(absent) > SAMPLE_SIZE:
             lines += ['', _see_all_link(FailureMode.NOT_IN_RAW_TEXT, len(examples))]
         lines.append('')
 
     if diff_form:
         lines += [
-            f'### Extracted with different form ({len(diff_form)} value(s))',
+            f'### Present in PDF as different form ({len(diff_form)} value(s))',
             '',
-            '_The gold value was not found in the raw text, but a similar value was '
-            'extracted into the field. '
-            'This is a gold-label / PDF-rendering mismatch '
-            '(e.g. different wording, extra words, ALL CAPS) rather than a model error. '
+            '_A similar form of the gold value exists in the source PDF '
+            '(raw similarity ≥ 0.6) but does not match verbatim — '
+            'e.g. ALL CAPS rendering, extra or missing words, reordered subtitle. '
+            'This is a gold-label / PDF-rendering mismatch rather than a model error. '
             'Consider normalising the gold labels or the extraction post-processing._',
             '',
         ]
@@ -641,13 +646,13 @@ def _render_not_in_raw_full(
     ]
     if absent:
         lines += [
-            f'## Absent from raw text ({len(absent)} value(s))',
+            f'## Absent from source PDF ({len(absent)} value(s))',
             '',
-        ] + _NR_TABLE_HEADER_NARROW + _render_not_in_raw_rows(absent, wide=False)
+        ] + _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(absent, wide=True)
         lines.append('')
     if diff_form:
         lines += [
-            f'## Extracted with different form ({len(diff_form)} value(s))',
+            f'## Present in PDF as different form ({len(diff_form)} value(s))',
             '',
         ] + _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(diff_form, wide=True)
         lines.append('')
