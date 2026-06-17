@@ -280,6 +280,72 @@ def _see_all_link(mode: FailureMode, total: int) -> str:
     return f'_(showing {SAMPLE_SIZE} of {total} — [see all]({filename}))_'
 
 
+_NR_TABLE_HEADER_NARROW = [
+    '| Doc | Corpus | Gold value | Raw sim |',
+    '| --- | --- | --- | ---: |',
+]
+_NR_TABLE_HEADER_WIDE = [
+    '| Doc | Corpus | Gold value | Raw sim | Extracted | Extr sim |',
+    '| --- | --- | --- | ---: | --- | ---: |',
+]
+
+# Raw-text similarity threshold for treating a NOT_IN_RAW_TEXT result as a
+# gold/PDF wording mismatch rather than a genuine absence.  Above this the best
+# fixed-length window in the source PDF is clearly the same content in a different
+# form (ALL CAPS, extra/missing words, reordered subtitle); below it the source
+# PDF has no recognisable match and the value is treated as truly absent.
+_NR_DIFF_FORM_THRESHOLD = 0.6
+
+
+def _render_not_in_raw_rows(
+    examples: List[Tuple[str, str, GoldValueResult]],
+    wide: bool,
+) -> List[str]:
+    lines = []
+    for corpus, record_id, result in examples:
+        raw_sim = (
+            f'{result.best_raw_similarity:.2f}'
+            if result.best_raw_similarity is not None else '—'
+        )
+        if wide:
+            extracted = result.best_sb_match or '—'
+            extr_sim = (
+                f'{result.best_sb_similarity:.2f}'
+                if result.best_sb_similarity is not None else '—'
+            )
+            lines.append(
+                f'| {record_id} | {corpus} | {result.value}'
+                f' | {raw_sim} | {extracted} | {extr_sim} |'
+            )
+        else:
+            lines.append(f'| {record_id} | {corpus} | {result.value} | {raw_sim} |')
+    return lines
+
+
+def _split_not_in_raw(
+    examples: List[Tuple[str, str, GoldValueResult]],
+) -> Tuple[List[Tuple[str, str, GoldValueResult]], List[Tuple[str, str, GoldValueResult]]]:
+    """Partition NOT_IN_RAW_TEXT examples into (absent, diff_form).
+
+    diff_form: max(best_raw_similarity, best_sb_similarity) >= _NR_DIFF_FORM_THRESHOLD.
+               Either the source PDF has similar content (raw sim), or the model
+               extracted something similar (extr sim — evidence the content is in the
+               PDF even if the fixed-window scan missed it, e.g. word-order swaps).
+    absent:    everything else — no recognisable match in either the PDF text or the
+               extracted field.  The value may be genuinely absent, incorrectly
+               annotated, or from a different version of the paper.
+    """
+    absent, diff_form = [], []
+    for item in examples:
+        _, _, result = item
+        sim = max(result.best_raw_similarity or 0.0, result.best_sb_similarity or 0.0)
+        if sim >= _NR_DIFF_FORM_THRESHOLD:
+            diff_form.append(item)
+        else:
+            absent.append(item)
+    return absent, diff_form
+
+
 def _render_not_in_raw_section(
     agg: FailureModeAggregate,
     summary_total: int,
@@ -290,22 +356,49 @@ def _render_not_in_raw_section(
         f' {agg.docs_affected} doc(s),'
         f' {_pct(agg.total_values, summary_total)})',
         '',
-        '_Gold values absent from raw ScienceBeam TEI output. '
-        'No model training change is likely to recover these directly._',
-        '',
     ]
     examples = agg.examples
     if not examples:
         lines.append('_None._')
-    else:
-        sample = examples[:SAMPLE_SIZE]
-        lines += ['| Doc | Corpus | Gold value |', '| --- | --- | --- |']
-        for corpus, record_id, result in sample:
-            lines.append(f'| {record_id} | {corpus} | {result.value} |')
-        if len(examples) > SAMPLE_SIZE:
-            lines.append('')
-            lines.append(_see_all_link(FailureMode.NOT_IN_RAW_TEXT, len(examples)))
-    lines.append('')
+        lines.append('')
+        return lines
+
+    absent, diff_form = _split_not_in_raw(examples)
+
+    if absent:
+        lines += [
+            f'### Absent from source PDF ({len(absent)} value(s))',
+            '',
+            '_Neither the source PDF text nor the extracted field contains a recognisable '
+            'match for the gold value (both raw and extracted similarity < 0.6). '
+            'The value may be genuinely absent from this document, incorrectly '
+            'annotated, or from a different version of the paper. '
+            'Model training is unlikely to recover these._',
+            '',
+        ]
+        sample = absent[:SAMPLE_SIZE]
+        lines += _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(sample, wide=True)
+        if len(absent) > SAMPLE_SIZE:
+            lines += ['', _see_all_link(FailureMode.NOT_IN_RAW_TEXT, len(examples))]
+        lines.append('')
+
+    if diff_form:
+        lines += [
+            f'### Present in PDF as different form ({len(diff_form)} value(s))',
+            '',
+            '_A similar form of the gold value exists in the source PDF '
+            '(raw similarity ≥ 0.6) but does not match verbatim — '
+            'e.g. ALL CAPS rendering, extra or missing words, reordered subtitle. '
+            'This is a gold-label / PDF-rendering mismatch rather than a model error. '
+            'Consider normalising the gold labels or the extraction post-processing._',
+            '',
+        ]
+        sample = diff_form[:SAMPLE_SIZE]
+        lines += _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(sample, wide=True)
+        if len(diff_form) > SAMPLE_SIZE:
+            lines += ['', _see_all_link(FailureMode.NOT_IN_RAW_TEXT, len(examples))]
+        lines.append('')
+
     return lines
 
 
@@ -545,16 +638,24 @@ def _render_not_in_raw_full(
     summary_total: int,
 ) -> str:
     label = FAILURE_MODE_LABEL[FailureMode.NOT_IN_RAW_TEXT]
+    absent, diff_form = _split_not_in_raw(agg.examples)
     lines = [
         f'# {label} — full list',
         f'_{agg.total_values} value(s), {_pct(agg.total_values, summary_total)} of gold_',
         '',
-        '| Doc | Corpus | Gold value |',
-        '| --- | --- | --- |',
     ]
-    for corpus, record_id, result in agg.examples:
-        lines.append(f'| {record_id} | {corpus} | {result.value} |')
-    lines.append('')
+    if absent:
+        lines += [
+            f'## Absent from source PDF ({len(absent)} value(s))',
+            '',
+        ] + _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(absent, wide=True)
+        lines.append('')
+    if diff_form:
+        lines += [
+            f'## Present in PDF as different form ({len(diff_form)} value(s))',
+            '',
+        ] + _NR_TABLE_HEADER_WIDE + _render_not_in_raw_rows(diff_form, wide=True)
+        lines.append('')
     return '\n'.join(lines)
 
 

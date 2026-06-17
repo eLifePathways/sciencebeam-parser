@@ -83,15 +83,18 @@ def _iter_element_text(el: ElementTree.Element) -> str:
 
 
 def _text_similarity(a: str, b: str) -> float:
-    """Simple overlap ratio: shared characters / max length."""
+    """Similarity of a matched substring: 1.0 when one string contains the other verbatim.
+
+    Score = len(gold) / max(len(gold), len(matched_text)).  For a verbatim substring
+    match, matched_text IS the gold value, so the score is 1.0 regardless of how much
+    extra text the element contains.  Ranking between elements that all score 1.0 is
+    left to context scoring (sibling matching).
+    """
     if not a or not b:
         return 0.0
     longer, shorter = (a, b) if len(a) >= len(b) else (b, a)
-    # Score = proportion of the gold value covered by the element text.
-    # An element whose normalised text equals the gold value scores 1.0;
-    # an element containing it as a tiny substring scores close to 0.
     if shorter in longer:
-        return len(shorter) / max(len(longer), 1)
+        return 1.0
     return 0.0
 
 
