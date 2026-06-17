@@ -1,11 +1,38 @@
 from __future__ import annotations
 
-from benchmarks.analyze_gold_failures._modes import assign_failure_modes
+from benchmarks.analyze_gold_failures._modes import assign_failure_modes, _find_best_raw_window
 from benchmarks.analyze_gold_failures._types import FailureMode
 
 
 RAW_TEXT = 'Introduction Methods Results Discussion Conclusion'
 SB_FIELD = 'Introduction | Methods | Results'
+
+
+class TestFindBestRawWindow:
+    def test_exact_match_returns_true_and_1(self):
+        in_raw, sim = _find_best_raw_window('methods', 'introduction methods results')
+        assert in_raw is True
+        assert sim == 1.0
+
+    def test_absent_returns_false_and_low_sim(self):
+        in_raw, sim = _find_best_raw_window('acknowledgements', 'introduction methods results')
+        assert in_raw is False
+        assert sim < 0.5
+
+    def test_best_sim_is_high_for_near_match(self):
+        # Gold has an extra word compared to the raw window — should still score high
+        in_raw, sim = _find_best_raw_window(
+            'isaudiovisualmethodbetterthantraditionalstudents',
+            'isaudiovisualmethodthantraditionalstudents',
+        )
+        assert in_raw is False
+        assert sim >= 0.8
+
+    def test_short_value_requires_exact_match(self):
+        # Values under 8 chars: fuzzy disabled, no sim computed
+        in_raw, sim = _find_best_raw_window('abc', 'abx introduction methods')
+        assert in_raw is False
+        assert sim == 0.0
 
 
 class TestAssignFailureModes:  # pylint: disable=too-many-public-methods
@@ -144,6 +171,38 @@ class TestAssignFailureModes:  # pylint: disable=too-many-public-methods
         results = assign_failure_modes([gold], raw, None)
         assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
         assert results[0].best_sb_match is None
+
+    def test_all_caps_extracted_is_correct_not_partial_wrong(self):
+        # When the extracted value is ALL CAPS but gold is mixed-case, case-insensitive
+        # similarity should be ~1.0, so the result is CORRECT not PARTIAL_WRONG.
+        raw = 'ETHNO-MEDICO BOTANICAL STUDY AMONG THE FOUR INDIGENOUS COMMUNITIES'
+        gold = 'Ethno-medico botanical study among the four indigenous communities'
+        sb_field = 'ETHNO-MEDICO BOTANICAL STUDY AMONG THE FOUR INDIGENOUS COMMUNITIES'
+        results = assign_failure_modes([gold], raw, sb_field)
+        assert results[0].mode == FailureMode.CORRECT
+        assert results[0].best_sb_similarity is not None
+        assert results[0].best_sb_similarity >= 0.99
+
+    def test_not_in_raw_populates_best_raw_similarity(self):
+        # best_raw_similarity reflects how closely the gold matches the raw PDF text.
+        # A value that is verbatim in the raw text scores 1.0; a truly absent value
+        # scores near 0.
+        raw = 'some completely unrelated document text about nothing relevant'
+        gold = 'A title that does not appear anywhere in this document'
+        results = assign_failure_modes([gold], raw, None)
+        assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
+        assert results[0].best_raw_similarity is not None
+        assert results[0].best_raw_similarity < 0.5
+
+    def test_not_in_raw_best_raw_similarity_high_for_near_match(self):
+        # When gold has a small content difference from the PDF (e.g. an extra word),
+        # best_raw_similarity should be high, indicating a gold/PDF form mismatch.
+        raw = 'IS AUDIO VISUAL METHOD THAN TRADITIONAL FOR MEDICAL STUDENTS'
+        gold = 'is audio visual method better than traditional for medical students'
+        results = assign_failure_modes([gold], raw, None)
+        assert results[0].mode == FailureMode.NOT_IN_RAW_TEXT
+        assert results[0].best_raw_similarity is not None
+        assert results[0].best_raw_similarity >= 0.8
 
     def test_all_caps_title_is_not_not_in_raw_text(self):
         # PDF rendering may produce ALL-CAPS titles.  Presence detection must be

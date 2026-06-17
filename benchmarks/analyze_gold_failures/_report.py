@@ -280,10 +280,13 @@ def _see_all_link(mode: FailureMode, total: int) -> str:
     return f'_(showing {SAMPLE_SIZE} of {total} — [see all]({filename}))_'
 
 
-_NR_TABLE_HEADER_NARROW = ['| Doc | Corpus | Gold value |', '| --- | --- | --- |']
+_NR_TABLE_HEADER_NARROW = [
+    '| Doc | Corpus | Gold value | Raw sim |',
+    '| --- | --- | --- | ---: |',
+]
 _NR_TABLE_HEADER_WIDE = [
-    '| Doc | Corpus | Gold value | Extracted | Sim |',
-    '| --- | --- | --- | --- | ---: |',
+    '| Doc | Corpus | Gold value | Raw sim | Extracted | Extr sim |',
+    '| --- | --- | --- | ---: | --- | ---: |',
 ]
 
 # Similarity threshold for treating a NOT_IN_RAW_TEXT result as a gold/PDF form
@@ -299,17 +302,22 @@ def _render_not_in_raw_rows(
 ) -> List[str]:
     lines = []
     for corpus, record_id, result in examples:
+        raw_sim = (
+            f'{result.best_raw_similarity:.2f}'
+            if result.best_raw_similarity is not None else '—'
+        )
         if wide:
             extracted = result.best_sb_match or '—'
-            sim = (
+            extr_sim = (
                 f'{result.best_sb_similarity:.2f}'
                 if result.best_sb_similarity is not None else '—'
             )
             lines.append(
-                f'| {record_id} | {corpus} | {result.value} | {extracted} | {sim} |'
+                f'| {record_id} | {corpus} | {result.value}'
+                f' | {raw_sim} | {extracted} | {extr_sim} |'
             )
         else:
-            lines.append(f'| {record_id} | {corpus} | {result.value} |')
+            lines.append(f'| {record_id} | {corpus} | {result.value} | {raw_sim} |')
     return lines
 
 

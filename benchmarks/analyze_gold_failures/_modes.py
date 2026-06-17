@@ -66,26 +66,47 @@ def _strip_xml_tags(text: str) -> str:
     return re.sub(r'<[^>]+>', ' ', text)
 
 
-def _in_raw_fuzzy(norm_value: str, norm_raw: str) -> bool:
-    """Exact substring match, with a sliding-window fallback for single-char differences.
+def _find_best_raw_window(norm_value: str, norm_raw: str) -> Tuple[bool, float]:
+    """Return (passes_threshold, best_similarity) for norm_value against norm_raw.
 
-    Uses a fast character-mismatch counter (not SequenceMatcher) so the per-window
-    cost is O(n) rather than O(n²). Allows 1 mismatch per 30 characters, minimum 1.
-    Only activates for values of 8+ characters; shorter strings require exact match
-    to avoid false positives.
+    Scans every fixed-length window of norm_raw using a fast character-mismatch
+    counter (O(n·m), not SequenceMatcher) to find the best-matching position, then
+    computes a proper SequenceMatcher ratio on that window to get a meaningful
+    similarity score that handles insertions/deletions.
+
+    passes_threshold: True when the best window has ≤ max(1, n//30) mismatches
+                      (same tolerance as the old _in_raw_fuzzy).
+    best_similarity:  SequenceMatcher ratio in [0, 1] of the best window found.
+                      1.0 for an exact substring match; lower when content differs.
     """
+    if not norm_value or not norm_raw:
+        return False, 0.0
     if norm_value in norm_raw:
-        return True
+        return True, 1.0
     n = len(norm_value)
     if n < 8:
-        return False
+        return False, 0.0
+    raw_len = len(norm_raw)
+    if raw_len < n:
+        sim = SequenceMatcher(None, norm_value, norm_raw).ratio()
+        return False, round(sim, 3)
     max_mismatches = max(1, n // 30)
-    for start in range(len(norm_raw) - n + 1):
-        window = norm_raw[start:start + n]
-        mismatches = sum(a != b for a, b in zip(norm_value, window))
-        if mismatches <= max_mismatches:
-            return True
-    return False
+    best_start = 0
+    best_mismatches = n
+    for start in range(raw_len - n + 1):
+        mismatches = sum(a != b for a, b in zip(norm_value, norm_raw[start:start + n]))
+        if mismatches < best_mismatches:
+            best_mismatches = mismatches
+            best_start = start
+    best_window = norm_raw[best_start:best_start + n]
+    sim = SequenceMatcher(None, norm_value, best_window).ratio()
+    return best_mismatches <= max_mismatches, round(sim, 3)
+
+
+def _in_raw_fuzzy(norm_value: str, norm_raw: str) -> bool:
+    """Presence-only wrapper over _find_best_raw_window."""
+    in_raw, _ = _find_best_raw_window(norm_value, norm_raw)
+    return in_raw
 
 
 def _parse_pipe_separated(text: Optional[str]) -> List[str]:
@@ -144,16 +165,18 @@ def assign_failure_modes(  # pylint: disable=too-many-locals
     for value in gold_values:
         norm_value_presence = _normalize_for_presence(value)
 
-        in_raw = bool(norm_value_presence and _in_raw_fuzzy(norm_value_presence, norm_raw))
+        in_raw, best_raw_sim = (
+            _find_best_raw_window(norm_value_presence, norm_raw)
+            if norm_value_presence else (False, 0.0)
+        )
         in_sb_field = bool(
             norm_value_presence and _in_raw_fuzzy(norm_value_presence, norm_sb_full)
         )
 
         if not in_raw:
-            # Even though the gold value was not found in the raw text, record whatever
-            # was extracted into the target field so the report can show it.  The
-            # similarity score is computed case-insensitively so that ALL-CAPS PDF
-            # renderings still show high similarity rather than landing in "absent".
+            # Record whatever was extracted so the report can show it alongside the
+            # raw-text similarity.  Both similarity scores are case-insensitive so
+            # ALL-CAPS PDF renderings appear close rather than unrelated.
             nr_match, nr_sim = _best_edit_sim(value, sb_values, case_insensitive=True)
             results.append(GoldValueResult(
                 value=value,
@@ -162,6 +185,7 @@ def assign_failure_modes(  # pylint: disable=too-many-locals
                 in_sb_field=in_sb_field,
                 best_sb_match=nr_match,
                 best_sb_similarity=round(nr_sim, 3) if nr_match is not None else None,
+                best_raw_similarity=best_raw_sim,
             ))
         elif not in_sb_field:
             results.append(GoldValueResult(
@@ -171,7 +195,9 @@ def assign_failure_modes(  # pylint: disable=too-many-locals
                 in_sb_field=False,
             ))
         else:
-            best_match, best_sim = _best_edit_sim(value, sb_values)
+            # Use case-insensitive similarity so ALL-CAPS extracted values score
+            # correctly rather than appearing as near-zero matches.
+            best_match, best_sim = _best_edit_sim(value, sb_values, case_insensitive=True)
             mode = (
                 FailureMode.CORRECT
                 if best_sim >= similarity_threshold

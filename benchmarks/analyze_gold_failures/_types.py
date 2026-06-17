@@ -35,6 +35,10 @@ class GoldValueResult:
     in_sb_field: bool
     best_sb_match: Optional[str] = None
     best_sb_similarity: Optional[float] = None
+    # Similarity of the best-matching fixed-length window in the raw TEI text.
+    # Only populated for NOT_IN_RAW_TEXT results; implicitly ~1.0 for all other modes
+    # (since in_raw=True guarantees the gold appears in the raw text).
+    best_raw_similarity: Optional[float] = None
 
 
 @dataclass
