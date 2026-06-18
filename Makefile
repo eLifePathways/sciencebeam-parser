@@ -57,6 +57,9 @@ GROBID_WAIT_INTERVAL ?= 5
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 BENCHMARK_CONCURRENCY ?= 0
 
+TRAINING_DATA_OUTPUT ?= data/generated-training-data
+TRAINING_DATA_NUM_WORKERS ?= 1
+
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
 SHOW_CORPUS ?= biorxiv
@@ -268,6 +271,18 @@ dev-benchmark-with-baselines:
 		--runs benchmarks/runs \
 		--parser-url $(BENCHMARK_PARSER_URL) \
 		--concurrency $(BENCHMARK_CONCURRENCY) \
+		$(ARGS)
+
+
+dev-generate-training-data:
+	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
+	$(PYTHON) -m sciencebeam_parser.training.cli.generate_data \
+		--source-path 'benchmarks/data/train/*/*.pdf' \
+		--source-xml-path 'benchmarks/data/train/*/*.jats.xml' \
+		--output-path $(TRAINING_DATA_OUTPUT)/train \
+		--use-directory-structure \
+		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
+		--debug \
 		$(ARGS)
 
 

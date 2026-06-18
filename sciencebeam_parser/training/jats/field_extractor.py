@@ -1,0 +1,286 @@
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+
+from lxml import etree
+
+from sciencebeam_parser.training.jats.field_vocab import (
+    JatsFieldNames,
+    JatsSubFieldNames,
+)
+
+
+@dataclass
+class JatsFieldValue:
+    text: str
+    field_name: str
+    sub_field_name: Optional[str] = None
+
+
+def _element_text(el: etree._Element) -> str:
+    return ' '.join(' '.join(el.itertext()).split())
+
+
+def _iter_sub_field_values(
+    parent_el: etree._Element,
+    field_name: str,
+    sub_xpath_by_sub_field: Sequence[tuple],
+) -> Iterator[JatsFieldValue]:
+    """Yield one JatsFieldValue per sub-field span found in parent_el."""
+    for sub_field_name, xpath in sub_xpath_by_sub_field:
+        for child in parent_el.xpath(xpath):
+            text = _element_text(child)
+            if text:
+                yield JatsFieldValue(
+                    text=text,
+                    field_name=field_name,
+                    sub_field_name=sub_field_name,
+                )
+
+
+# Sub-field XPaths for references (relative to each <ref> element)
+_REFERENCE_SUB_FIELDS = [
+    (JatsSubFieldNames.REFERENCE_LABEL,           './label'),
+    (JatsSubFieldNames.REFERENCE_AUTHOR,          './/string-name[not(ancestor::person-group)]'),
+    (JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,   './/article-title'),
+    (JatsSubFieldNames.REFERENCE_SOURCE,          './/source'),
+    (JatsSubFieldNames.REFERENCE_YEAR,            './/year'),
+    (JatsSubFieldNames.REFERENCE_VOLUME,          './/volume'),
+    (JatsSubFieldNames.REFERENCE_ISSUE,           './/issue'),
+    (JatsSubFieldNames.REFERENCE_FPAGE,           './/fpage'),
+    (JatsSubFieldNames.REFERENCE_LPAGE,           './/lpage'),
+    (JatsSubFieldNames.REFERENCE_PUBLISHER_NAME,  './/publisher-name'),
+    (JatsSubFieldNames.REFERENCE_PUBLISHER_LOC,   './/publisher-loc'),
+    (JatsSubFieldNames.REFERENCE_DOI,             './/pub-id[@pub-id-type="doi"]'),
+    (JatsSubFieldNames.REFERENCE_PMID,            './/pub-id[@pub-id-type="pmid"]'),
+    (JatsSubFieldNames.REFERENCE_PMCID,           './/pub-id[@pub-id-type="pmcid"]'),
+]
+
+# Sub-field XPaths for affiliations (relative to each aff element)
+_AFF_SUB_FIELDS = [
+    (JatsSubFieldNames.AUTHOR_AFF_LABEL,       './label'),
+    (JatsSubFieldNames.AUTHOR_AFF_INSTITUTION, './institution'),
+    (JatsSubFieldNames.AUTHOR_AFF_DEPARTMENT,
+     './addr-line/named-content[@content-type="department"]'),
+    (JatsSubFieldNames.AUTHOR_AFF_CITY,
+     './addr-line/named-content[@content-type="city"]'),
+    (JatsSubFieldNames.AUTHOR_AFF_POSTCODE,
+     './addr-line/named-content[@content-type="postcode"]'),
+    (JatsSubFieldNames.AUTHOR_AFF_REGION,      './addr-line/named-content[@content-type="state"]'),
+    (JatsSubFieldNames.AUTHOR_AFF_COUNTRY,     './country'),
+]
+
+
+def _iter_aff_elements(root: etree._Element) -> Iterator[etree._Element]:
+    yield from root.xpath(
+        'front/article-meta/contrib-group/aff'
+        '| front/article-meta/contrib-group/contrib/aff'
+        '| front/article-meta/aff'
+    )
+
+
+class JatsFieldExtractor:
+    """Extract (text, field_name, sub_field_name) triples from a JATS <article> root."""
+
+    def iter_field_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        yield from self._iter_front_values(root)
+        yield from self._iter_body_values(root)
+        yield from self._iter_back_values(root)
+
+    def _emit(
+        self,
+        elements: List[etree._Element],
+        field_name: str,
+    ) -> Iterator[JatsFieldValue]:
+        for el in elements:
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=field_name)
+
+    # ── Front matter ──────────────────────────────────────────────────────────
+
+    def _iter_front_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        yield from self._iter_front_metadata_values(root)
+        yield from self._iter_front_contrib_values(root)
+
+    def _iter_front_metadata_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        for el in root.xpath('front/article-meta/title-group/article-title'):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.TITLE)
+
+        for el in root.xpath('front/article-meta/abstract'):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.ABSTRACT)
+
+        # Per GROBID annotation guidelines, the whole keyword list is one <keyword>
+        # element; the generic "Keywords" label is left untagged.  Combine all <kwd>
+        # children of a <kwd-group> into a single field value.
+        for kwd_group in root.xpath('front/article-meta/kwd-group'):
+            for title_el in kwd_group.xpath('./title'):
+                text = _element_text(title_el)
+                if text:
+                    yield JatsFieldValue(text=text, field_name=JatsFieldNames.KEYWORDS_TITLE)
+            kwd_texts = [
+                _element_text(kwd_el)
+                for kwd_el in kwd_group.xpath('./kwd')
+                if _element_text(kwd_el)
+            ]
+            if kwd_texts:
+                yield JatsFieldValue(
+                    text=', '.join(kwd_texts),
+                    field_name=JatsFieldNames.KEYWORDS,
+                )
+
+        for el in root.xpath(
+            'front/article-meta/article-categories'
+            '/subj-group/subject[@subj-group-type="display-channel"]'
+        ):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.MANUSCRIPT_TYPE)
+
+    def _iter_front_contrib_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        for el in root.xpath(
+            'front/article-meta/contrib-group'
+            '/contrib[not(@contrib-type) or @contrib-type="author"]/name'
+        ):
+            # JATS stores names in Surname-Given order; PDFs display Given-Surname.
+            # Emit in Given-Surname order so the needle matches the PDF author line.
+            given = (el.findtext('given-names') or '').strip()
+            surname = (el.findtext('surname') or '').strip()
+            text = ' '.join(p for p in [given, surname] if p) or _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR)
+
+        for aff_el in _iter_aff_elements(root):
+            text = _element_text(aff_el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_AFF)
+            yield from _iter_sub_field_values(
+                aff_el, JatsFieldNames.AUTHOR_AFF, _AFF_SUB_FIELDS
+            )
+
+        for el in root.xpath('front/article-meta/author-notes/*'):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_NOTES)
+
+        for el in root.xpath('front/article-meta/fpage | front/article-meta/lpage'):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.PAGE_NO)
+
+    # ── Body ──────────────────────────────────────────────────────────────────
+
+    def _iter_body_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        body = root.find('body')
+        if body is None:
+            return
+        # Build document-order index so that section titles, paragraphs, figures,
+        # and tables are yielded interleaved as they appear in the XML, not grouped
+        # by type.  If section titles are all emitted first the aligner's
+        # body_content_end advances past the early paragraphs before they are matched.
+        position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
+        entries: List[Tuple[int, JatsFieldValue]] = []
+
+        for el in body.xpath('.//sec/title'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.BODY_SECTION_TITLE)))
+
+        for el in body.xpath('.//p[not(ancestor::fig) and not(ancestor::table-wrap)]'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.BODY_SECTION_PARAGRAPH)))
+
+        for el in body.xpath('.//fig'):
+            children = el.xpath('./label') + el.xpath('./caption')
+            text = (_element_text(el) if not children
+                    else ' '.join(_element_text(c) for c in children if _element_text(c)))
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.BODY_FIGURE)))
+
+        for el in body.xpath('.//table-wrap'):
+            children = el.xpath('./label') + el.xpath('./caption')
+            text = (_element_text(el) if not children
+                    else ' '.join(_element_text(c) for c in children if _element_text(c)))
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.BODY_TABLE)))
+
+        for _, fv in sorted(entries):
+            yield fv
+
+    # ── Back matter ───────────────────────────────────────────────────────────
+
+    def _iter_back_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        yield from self._iter_back_narrative_values(root)
+        yield from self._iter_back_reference_values(root)
+
+    def _iter_back_narrative_values(  # pylint: disable=too-many-branches
+        self, root: etree._Element
+    ) -> Iterator[JatsFieldValue]:
+        position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
+        entries: List[Tuple[int, JatsFieldValue]] = []
+
+        for el in root.xpath('//ack//title'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.ACK_SECTION_TITLE)))
+
+        for el in root.xpath('//ack//p'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.ACK_SECTION_PARAGRAPH)))
+
+        for el in root.xpath('//app-group/title'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.APPENDIX_GROUP_TITLE)))
+
+        for el in root.xpath('//app'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.APPENDIX)))
+
+        for el in root.xpath('back//sec[not(ancestor::ack)]/title'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.BACK_SECTION_TITLE)))
+
+        for el in root.xpath(
+            'back//sec[not(ancestor::ack)]/p[not(ancestor::ack)]'
+            ' | back//p[not(ancestor::sec) and not(ancestor::ack)]'
+        ):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.BACK_SECTION_PARAGRAPH)))
+
+        for _, fv in sorted(entries):
+            yield fv
+
+    def _iter_back_reference_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        for el in root.xpath('back/ref-list/title'):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.REFERENCE_LIST_TITLE
+                )
+
+        for ref_el in root.xpath('back/ref-list/ref'):
+            text = _element_text(ref_el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.REFERENCE)
+            yield from _iter_sub_field_values(
+                ref_el, JatsFieldNames.REFERENCE, _REFERENCE_SUB_FIELDS
+            )

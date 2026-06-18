@@ -1,9 +1,12 @@
+# pylint: disable=too-many-lines
 from abc import ABC, abstractmethod
 import argparse
 import logging
 import os
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence
 
 from lxml import etree
 
@@ -42,6 +45,16 @@ from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.app.parser import ScienceBeamParser
 from sciencebeam_parser.utils.media_types import MediaTypes
+from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
+from sciencebeam_parser.training.jats.field_vocab import (
+    AFF_LABEL_BY_SUB_FIELD,
+    CITATION_LABEL_BY_SUB_FIELD,
+    FULLTEXT_LABEL_BY_FIELD,
+    HEADER_LABEL_BY_FIELD,
+)
+from sciencebeam_parser.training.jats.field_extractor import JatsFieldExtractor
+from sciencebeam_parser.training.jats.aligner import LayoutDocumentJatsAligner
+from sciencebeam_parser.training.jats.segmentation import SegmentationLabelDeriver
 
 
 LOGGER = logging.getLogger(__name__)
@@ -92,6 +105,32 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         '--debug',
         action='store_true',
         help='Enable debug logging'
+    )
+    parser.add_argument(
+        '--source-xml-path',
+        type=str,
+        required=False,
+        help='Glob pattern to JATS XML files; matched to PDFs by filename stem'
+    )
+    parser.add_argument(
+        '--required-fields',
+        type=str,
+        nargs='*',
+        default=[],
+        help='JATS field names that must be present AND aligned; skip document if any are missing'
+    )
+    parser.add_argument(
+        '--require-matching-fields',
+        type=str,
+        nargs='*',
+        default=[],
+        help='JATS field names that must align if present in JATS XML'
+    )
+    parser.add_argument(
+        '--num-workers',
+        type=int,
+        default=1,
+        help='Number of parallel worker processes (default: 1)'
     )
     return parser.parse_args(argv)
 
@@ -175,6 +214,8 @@ class TrainingDataDocumentContext(NamedTuple):
     use_directory_structure: bool
     model_result_cache: ModelResultCache
     gzip_enabled: bool
+    jats_annotated_document: Optional[JatsAnnotatedLayoutDocument] = None
+    jats_segmentation_labels: Optional[Dict[int, str]] = None
 
     @property
     def source_name(self) -> str:
@@ -286,10 +327,36 @@ def get_labeled_layout_tokens_for_model_and_layout_document(
     return labeled_layout_tokens_list[0]
 
 
+def _get_jats_segmentation_label_result(
+    layout_document: LayoutDocument,
+    jats_segmentation_labels: Dict[int, str],
+) -> LayoutDocumentLabelResult:
+    """Build a LayoutDocumentLabelResult from JATS-derived per-line segmentation labels."""
+    layout_model_labels = [
+        LayoutModelLabel(
+            label=jats_segmentation_labels.get(id(line), '<body>'),
+            label_token_text=line.text,
+            layout_line=line,
+            layout_token=None,
+        )
+        for block in layout_document.iter_all_blocks()
+        for line in block.lines
+    ]
+    return LayoutDocumentLabelResult(
+        layout_document=layout_document,
+        layout_model_label_iterable=layout_model_labels,
+    )
+
+
 def get_segmentation_label_result(
     layout_document: LayoutDocument,
     document_context: TrainingDataDocumentContext
 ) -> LayoutDocumentLabelResult:
+    if document_context.jats_segmentation_labels is not None:
+        return _get_jats_segmentation_label_result(
+            layout_document=layout_document,
+            jats_segmentation_labels=document_context.jats_segmentation_labels,
+        )
     segmentation_label_model_data_lists = list(
         iter_labeled_model_data_list_for_model_and_layout_documents(
             model=document_context.fulltext_models.segmentation_model,
@@ -303,6 +370,24 @@ def get_segmentation_label_result(
         labeled_model_data_iterable=segmentation_label_model_data_lists[0],
         layout_document=layout_document
     )
+
+
+JatsLabelFn = Callable[
+    [JatsAnnotatedLayoutDocument, Dict[int, str], LayoutModelData],
+    Optional[str]
+]
+
+
+def _apply_jats_labels_to_model_data_list(
+    model_data_list: Sequence[LayoutModelData],
+    annotated: JatsAnnotatedLayoutDocument,
+    jats_seg_labels: Dict[int, str],
+    label_fn: JatsLabelFn,
+) -> Sequence[LabeledLayoutModelData]:
+    return [
+        LabeledLayoutModelData.from_model_data(md, label=label_fn(annotated, jats_seg_labels, md))
+        for md in model_data_list
+    ]
 
 
 class AbstractModelTrainingDataGenerator(ABC):
@@ -413,6 +498,10 @@ class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenera
     ) -> Iterable[LayoutDocument]:
         pass
 
+    def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        """Return a JATS label function, or None to skip JATS labeling for this model."""
+        return None
+
     def iter_model_data_list(
         self,
         layout_document: LayoutDocument,
@@ -423,6 +512,23 @@ class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenera
             layout_document,
             document_context=document_context
         ))
+        annotated = document_context.jats_annotated_document
+        jats_seg_labels = document_context.jats_segmentation_labels
+        jats_label_fn = self.get_jats_label_fn()  # pylint: disable=assignment-from-none
+        if annotated is not None and jats_seg_labels is not None and jats_label_fn is not None:
+            unlabeled_lists = list(
+                iter_unlabeled_model_data_list_for_model_and_layout_documents(
+                    model=model,
+                    model_layout_documents=model_layout_documents,
+                    document_context=document_context,
+                )
+            )
+            return [
+                _apply_jats_labels_to_model_data_list(
+                    mdl, annotated, jats_seg_labels, jats_label_fn
+                )
+                for mdl in unlabeled_lists
+            ]
         return iter_model_data_list_for_model_and_layout_documents(
             model=model,
             model_layout_documents=model_layout_documents,
@@ -441,10 +547,32 @@ class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
     ) -> Iterable[LayoutDocument]:
         return [layout_document]
 
+    def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        def fn(
+            _annotated: JatsAnnotatedLayoutDocument,
+            seg_labels: Dict[int, str],
+            md: LayoutModelData,
+        ) -> Optional[str]:
+            return seg_labels.get(id(md.layout_line)) if md.layout_line else None
+        return fn
+
 
 class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.header_model
+
+    def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        def fn(
+            annotated: JatsAnnotatedLayoutDocument,
+            _seg_labels: Dict[int, str],
+            md: LayoutModelData,
+        ) -> Optional[str]:
+            token = md.layout_token
+            if not token:
+                return None
+            field_name = annotated.get_token_field(token)
+            return HEADER_LABEL_BY_FIELD.get(field_name or '') if field_name else None
+        return fn
 
     def iter_model_layout_documents(
         self,
@@ -468,6 +596,19 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
 class AffiliationAddressModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.affiliation_address_model
+
+    def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        def fn(
+            annotated: JatsAnnotatedLayoutDocument,
+            _seg_labels: Dict[int, str],
+            md: LayoutModelData,
+        ) -> Optional[str]:
+            token = md.layout_token
+            if not token:
+                return None
+            sub_field = annotated.get_token_sub_field(token)
+            return AFF_LABEL_BY_SUB_FIELD.get(sub_field or '') if sub_field else None
+        return fn
 
     def iter_model_layout_documents(
         self,
@@ -648,6 +789,19 @@ class FullTextModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.fulltext_model
 
+    def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        def fn(
+            annotated: JatsAnnotatedLayoutDocument,
+            _seg_labels: Dict[int, str],
+            md: LayoutModelData,
+        ) -> Optional[str]:
+            token = md.layout_token
+            if not token:
+                return None
+            field_name = annotated.get_token_field(token)
+            return FULLTEXT_LABEL_BY_FIELD.get(field_name or '') if field_name else None
+        return fn
+
     def iter_model_layout_documents(
         self,
         layout_document: LayoutDocument,
@@ -772,6 +926,19 @@ class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.citation_model
 
+    def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        def fn(
+            annotated: JatsAnnotatedLayoutDocument,
+            _seg_labels: Dict[int, str],
+            md: LayoutModelData,
+        ) -> Optional[str]:
+            token = md.layout_token
+            if not token:
+                return None
+            sub_field = annotated.get_token_sub_field(token)
+            return CITATION_LABEL_BY_SUB_FIELD.get(sub_field or '') if sub_field else None
+        return fn
+
     def iter_model_layout_documents(
         self,
         layout_document: LayoutDocument,
@@ -812,6 +979,21 @@ class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
         ]
 
 
+def _build_jats_annotations(
+    layout_document: LayoutDocument,
+    jats_xml_filename: str,
+) -> Optional[JatsAnnotatedLayoutDocument]:
+    try:
+        with auto_download_input_file(jats_xml_filename, auto_decompress=True) as local_xml:
+            root = etree.parse(local_xml).getroot()
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.warning('Failed to load JATS XML: %r', jats_xml_filename, exc_info=True)
+        return None
+    field_values = list(JatsFieldExtractor().iter_field_values(root))
+    LOGGER.debug('JATS field values count: %d', len(field_values))
+    return LayoutDocumentJatsAligner().align(layout_document, field_values)
+
+
 def generate_training_data_for_layout_document(
     layout_document: LayoutDocument,
     *,
@@ -821,9 +1003,21 @@ def generate_training_data_for_layout_document(
     fulltext_models: FullTextModels,
     use_model: bool,
     use_directory_structure: bool,
-    gzip_enabled: bool = False
+    gzip_enabled: bool = False,
+    jats_xml_filename: Optional[str] = None,
 ):
     model_result_cache = ModelResultCache()
+    jats_annotated: Optional[JatsAnnotatedLayoutDocument] = None
+    jats_seg_labels: Optional[Dict[int, str]] = None
+    if jats_xml_filename:
+        jats_annotated = _build_jats_annotations(layout_document, jats_xml_filename)
+        if jats_annotated:
+            jats_seg_labels = SegmentationLabelDeriver().derive_labels(
+                layout_document, jats_annotated
+            )
+            LOGGER.debug(
+                'JATS coverage ratio: %.2f', jats_annotated.coverage_ratio()
+            )
     document_context = TrainingDataDocumentContext(
         output_path=output_path,
         source_filename=source_filename,
@@ -832,7 +1026,9 @@ def generate_training_data_for_layout_document(
         use_model=use_model,
         use_directory_structure=use_directory_structure,
         model_result_cache=model_result_cache,
-        gzip_enabled=gzip_enabled
+        gzip_enabled=gzip_enabled,
+        jats_annotated_document=jats_annotated,
+        jats_segmentation_labels=jats_seg_labels,
     )
     training_data_generators = [
         SegmentationModelTrainingDataGenerator(),
@@ -867,6 +1063,23 @@ def get_layout_document_for_source_filename(
             return layout_document
 
 
+def _find_jats_xml_for_source(
+    source_filename: str,
+    xml_file_list: Sequence[str],
+) -> Optional[str]:
+    """Find the XML file whose stem matches the PDF stem, stripping compound extensions."""
+    source_stem = os.path.splitext(os.path.basename(source_filename))[0]
+    for xml_filename in xml_file_list:
+        xml_stem = os.path.basename(xml_filename)
+        while True:
+            xml_stem, ext = os.path.splitext(xml_stem)
+            if xml_stem == source_stem:
+                return xml_filename
+            if not ext:
+                break
+    return None
+
+
 def generate_training_data_for_source_filename(
     source_filename: str,
     *,
@@ -874,13 +1087,21 @@ def generate_training_data_for_source_filename(
     sciencebeam_parser: ScienceBeamParser,
     use_model: bool,
     use_directory_structure: bool,
-    gzip_enabled: bool
+    gzip_enabled: bool,
+    xml_file_list: Optional[Sequence[str]] = None,
 ):
     LOGGER.debug('use_model: %r', use_model)
     layout_document = get_layout_document_for_source_filename(
         source_filename,
         sciencebeam_parser=sciencebeam_parser
     )
+    jats_xml_filename: Optional[str] = None
+    if xml_file_list:
+        jats_xml_filename = _find_jats_xml_for_source(source_filename, xml_file_list)
+        if jats_xml_filename:
+            LOGGER.info('Using JATS XML: %r', jats_xml_filename)
+        else:
+            LOGGER.warning('No matching JATS XML found for: %r', source_filename)
     generate_training_data_for_layout_document(
         layout_document=layout_document,
         output_path=output_path,
@@ -891,7 +1112,8 @@ def generate_training_data_for_source_filename(
         fulltext_models=sciencebeam_parser.fulltext_models,
         use_model=use_model,
         use_directory_structure=use_directory_structure,
-        gzip_enabled=gzip_enabled
+        gzip_enabled=gzip_enabled,
+        jats_xml_filename=jats_xml_filename,
     )
 
 
@@ -904,6 +1126,106 @@ def get_source_file_list_or_fail(
     return source_file_list
 
 
+def _format_eta(seconds: float) -> str:
+    if seconds >= 3600:
+        return f'{seconds / 3600:.1f}h'
+    if seconds >= 60:
+        return f'{int(seconds) // 60}m{int(seconds) % 60:02d}s'
+    return f'{seconds:.0f}s'
+
+
+class _Progress:
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.n_ok = 0
+        self.n_err = 0
+        self._t_start = time.monotonic()
+
+    @property
+    def completed(self) -> int:
+        return self.n_ok + self.n_err
+
+    def record(self, source_filename: str, ok: bool, elapsed_s: float) -> None:
+        if ok:
+            self.n_ok += 1
+        else:
+            self.n_err += 1
+        elapsed_total = time.monotonic() - self._t_start
+        done = self.completed
+        rate = done / elapsed_total if elapsed_total > 0 else 0.0
+        remaining = self.total - done
+        eta = _format_eta(remaining / rate) if rate > 0 else '?'
+        status = 'ok' if ok else 'err'
+        LOGGER.info(
+            '[%d/%d] %s %s %.1fs | %.2f doc/s | ~%s left',
+            done, self.total,
+            os.path.basename(source_filename), status, elapsed_s, rate, eta,
+        )
+
+
+# Module-level worker state, initialised once per worker process.
+_worker_sciencebeam_parser: Optional[ScienceBeamParser] = None
+
+
+def _worker_init() -> None:
+    global _worker_sciencebeam_parser  # pylint: disable=global-statement
+    config = AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
+    _worker_sciencebeam_parser = ScienceBeamParser.from_config(config)
+
+
+def _worker_process(kwargs: dict) -> bool:
+    assert _worker_sciencebeam_parser is not None
+    try:
+        generate_training_data_for_source_filename(
+            kwargs['source_filename'],
+            output_path=kwargs['output_path'],
+            sciencebeam_parser=_worker_sciencebeam_parser,
+            use_model=kwargs['use_model'],
+            use_directory_structure=kwargs['use_directory_structure'],
+            gzip_enabled=kwargs['gzip_enabled'],
+            xml_file_list=kwargs['xml_file_list'],
+        )
+        return True
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.exception('Failed to process %r', kwargs['source_filename'])
+        return False
+
+
+def _run_parallel_workers(
+    source_file_list: Sequence[str],
+    output_path: str,
+    args: argparse.Namespace,
+    xml_file_list: Optional[Sequence[str]],
+    progress: '_Progress',
+    num_workers: int,
+) -> None:
+    common_kwargs = {
+        'output_path': output_path,
+        'use_model': args.use_model,
+        'use_directory_structure': args.use_directory_structure,
+        'gzip_enabled': args.gzip,
+        'xml_file_list': xml_file_list,
+    }
+    work_items = [
+        {'source_filename': sf, **common_kwargs}
+        for sf in source_file_list
+    ]
+    with ProcessPoolExecutor(
+        max_workers=num_workers,
+        initializer=_worker_init,
+    ) as executor:
+        future_to_sf = {
+            executor.submit(_worker_process, item): item['source_filename']
+            for item in work_items
+        }
+        t_submitted = time.monotonic()
+        for future in as_completed(future_to_sf):
+            source_filename = future_to_sf[future]
+            elapsed_s = time.monotonic() - t_submitted
+            ok = future.result()
+            progress.record(source_filename, ok=ok, elapsed_s=elapsed_s)
+
+
 def run(args: argparse.Namespace):
     LOGGER.info('args: %r', args)
     source_file_list = get_source_file_list_or_fail(args.source_path)
@@ -911,30 +1233,55 @@ def run(args: argparse.Namespace):
         source_file_list = source_file_list[:args.limit]
     LOGGER.info('source files: %d', len(source_file_list))
     output_path = args.output_path
-    config = AppConfig.load_yaml(
-        DEFAULT_CONFIG_FILE
-    )
+    config = AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
     sciencebeam_parser = ScienceBeamParser.from_config(config)
     LOGGER.info('output_path: %r', output_path)
+    xml_file_list: Optional[Sequence[str]] = None
+    if args.source_xml_path:
+        xml_file_list = list(glob(args.source_xml_path))
+        LOGGER.info('JATS XML files: %d', len(xml_file_list))
     # Note: creating the directory may not be necessary, but provides early feedback
     makedirs(output_path, exist_ok=True)
-    for source_filename in source_file_list:
-        generate_training_data_for_source_filename(
-            source_filename,
-            output_path=output_path,
-            sciencebeam_parser=sciencebeam_parser,
-            use_model=args.use_model,
-            use_directory_structure=args.use_directory_structure,
-            gzip_enabled=args.gzip
+    total = len(source_file_list)
+    progress = _Progress(total)
+    num_workers = getattr(args, 'num_workers', 1)
+
+    if num_workers > 1:
+        _run_parallel_workers(
+            source_file_list, output_path, args, xml_file_list, progress, num_workers,
         )
+    else:
+        for source_filename in source_file_list:
+            t0 = time.monotonic()
+            try:
+                generate_training_data_for_source_filename(
+                    source_filename,
+                    output_path=output_path,
+                    sciencebeam_parser=sciencebeam_parser,
+                    use_model=args.use_model,
+                    use_directory_structure=args.use_directory_structure,
+                    gzip_enabled=args.gzip,
+                    xml_file_list=xml_file_list,
+                )
+                progress.record(source_filename, ok=True, elapsed_s=time.monotonic() - t0)
+            except Exception:  # pylint: disable=broad-except
+                LOGGER.exception('Failed to process %r', source_filename)
+                progress.record(source_filename, ok=False, elapsed_s=time.monotonic() - t0)
+
+    if progress.n_err:
+        LOGGER.warning('%d/%d documents failed', progress.n_err, total)
+    LOGGER.info('Done. Processed %d/%d documents.', progress.n_ok, total)
 
 
 def main(argv: Optional[List[str]] = None):
     LOGGER.debug('argv: %r', argv)
     args = parse_args(argv)
     if args.debug:
-        for name in [__name__, 'sciencebeam_parser', 'sciencebeam_trainer_delft']:
-            logging.getLogger(name).setLevel('DEBUG')
+        # Only enable DEBUG for the training CLI itself.  Library loggers
+        # (model inference, aligner per-field traces) stay at INFO to avoid
+        # flooding the output with thousands of internal messages.
+        logging.getLogger(__name__).setLevel('DEBUG')
+        logging.getLogger('sciencebeam_parser.training').setLevel('DEBUG')
     run(args)
 
 
