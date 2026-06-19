@@ -206,6 +206,29 @@ class TestAffiliation:
         addr = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.AUTHOR_AFF_ADDR]
         assert addr == []
 
+    def test_institution_tail_excluded_when_no_country_or_addr_line(self):
+        # Guard: institution tail is only address content when a <country> or <addr-line>
+        # confirms the aff has structured address content.  Without that anchor the tail
+        # may be continuation of the institution/department name: some publishers split a
+        # single department name across two <institution> tags, leaving the second half
+        # as the tail of the first — e.g.
+        #   <institution>Dept of Microbiology</institution>, Immunology and Parasitology,
+        #   <institution>University X</institution>, City, Country
+        # "Immunology and Parasitology" is NOT an address.
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<aff id="a1">'
+            '<label>1</label>'
+            '<institution>Departamento de Microbiologia</institution>'
+            ', Imunologia e Parasitologia, '
+            '<institution>Universidade Federal de Santa Catarina</institution>'
+            ', Florianopolis, Brasil'
+            '</aff>'
+            '</article-meta></front></article>'
+        )
+        addr = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.AUTHOR_AFF_ADDR]
+        assert addr == []
+
 
 class TestReference:
     def test_extracts_reference_text(self):

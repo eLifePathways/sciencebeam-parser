@@ -86,7 +86,13 @@ def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
       (no <addr-line>), e.g. '<institution>UCL</institution>, London WC1N 1EH,
       <country>UK</country>'
     - Unstructured (label-only affs): returns nothing; address cannot be determined
+
+    Institution tail text is only included when the aff also has a <country> or
+    <addr-line> element.  Without that anchor the tail may be continuation of the
+    institution name rather than a geographic address (e.g. a department name split
+    across two <institution> tags).
     """
+    has_structured_addr = bool(aff_el.xpath('./country | ./addr-line'))
     parts: List[str] = []
     for child in aff_el:
         tag = _local_tag(child)
@@ -94,8 +100,10 @@ def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
             text = _element_text(child)
             if text:
                 parts.append(text)
-        elif tag == 'institution':
-            # Tail text after </institution> is city/postcode when no <addr-line> is present
+        elif tag == 'institution' and has_structured_addr:
+            # Tail text after </institution> is city/postcode when no <addr-line> is present.
+            # Only collected when a <country> or <addr-line> confirms this aff has structured
+            # address content, to avoid misclassifying department-name continuations.
             tail = ' '.join((child.tail or '').split()).strip(', ')
             if tail:
                 parts.append(tail)
