@@ -4,8 +4,8 @@ from typing import Dict, Optional, Tuple
 from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken
 
 
-# id(token) -> (field_name, sub_field_name_or_None)
-TokenLabelById = Dict[int, Tuple[str, Optional[str]]]
+# id(token) -> (field_name, sub_field_name_or_None, instance_id)
+TokenLabelById = Dict[int, Tuple[str, Optional[str], int]]
 
 
 @dataclass
@@ -21,13 +21,18 @@ class JatsAnnotatedLayoutDocument:
         entry = self.token_label_by_id.get(id(token))
         return entry[1] if entry is not None else None
 
+    def get_token_instance(self, token: LayoutToken) -> int:
+        entry = self.token_label_by_id.get(id(token))
+        return entry[2] if entry is not None else 0
+
     def set_token_label(
         self,
         token: LayoutToken,
         field_name: str,
         sub_field_name: Optional[str] = None,
+        instance_id: int = 0,
     ) -> None:
-        self.token_label_by_id[id(token)] = (field_name, sub_field_name)
+        self.token_label_by_id[id(token)] = (field_name, sub_field_name, instance_id)
 
     def coverage_ratio(self) -> float:
         total = sum(1 for _ in self.layout_document.iter_all_tokens())

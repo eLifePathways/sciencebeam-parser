@@ -314,6 +314,7 @@ class LayoutDocumentJatsAligner:
         parent_match_by_field: Dict[str, Tuple[int, int]] = {}
         missed_by_field: Dict[str, int] = {}
         matched_count = 0
+        instance_by_field: Dict[str, int] = {}
 
         for fv in field_values:
             search_start, search_end = _search_range(
@@ -373,9 +374,15 @@ class LayoutDocumentJatsAligner:
                 reference_floor = max(reference_floor, a_end)
             if fv.sub_field_name is None:
                 parent_match_by_field[fv.field_name] = (a_start, a_end)
+                instance_by_field[fv.field_name] = (
+                    instance_by_field.get(fv.field_name, 0) + 1
+                )
+            instance_id = instance_by_field.get(fv.field_name, 0)
             matched_tokens = token_index.tokens_in_range(a_start, a_end)
             for token in matched_tokens:
-                annotated.set_token_label(token, fv.field_name, fv.sub_field_name)
+                annotated.set_token_label(
+                    token, fv.field_name, fv.sub_field_name, instance_id
+                )
 
         total = len(field_values)
         if missed_by_field:

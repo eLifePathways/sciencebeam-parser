@@ -175,6 +175,37 @@ class TestAffiliation:
         assert len(sub) == 1
         assert sub[0].text == 'USA'
 
+    def test_addr_bulk_includes_institution_tail_when_no_addr_line(self):
+        # Bioarxiv-style affs: <institution>UCL, GOSH</institution>, London WC1N 1EH,
+        # <country>United Kingdom</country>  — city/postcode in institution tail, no <addr-line>.
+        # The AUTHOR_AFF_ADDR bulk value must cover "London WC1N 1EH United Kingdom" so
+        # those tokens get the <address> label rather than staying in <affiliation>.
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<aff id="a1">'
+            '<label>1</label>'
+            '<institution>UCL, GOSH</institution>'
+            ', London WC1N 1EH, '
+            '<country>United Kingdom</country>'
+            '</aff>'
+            '</article-meta></front></article>'
+        )
+        addr = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.AUTHOR_AFF_ADDR]
+        assert len(addr) == 1
+        assert 'London WC1N 1EH' in addr[0].text
+        assert 'United Kingdom' in addr[0].text
+
+    def test_addr_bulk_empty_when_aff_fully_unstructured(self):
+        # Label-only affs (no <institution>, <addr-line>, <country>) cannot be split;
+        # no AUTHOR_AFF_ADDR value should be emitted.
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<aff id="a1"><label>1</label>Institut Barcelona Spain</aff>'
+            '</article-meta></front></article>'
+        )
+        addr = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.AUTHOR_AFF_ADDR]
+        assert addr == []
+
 
 class TestReference:
     def test_extracts_reference_text(self):

@@ -70,6 +70,38 @@ _AFF_SUB_FIELDS = [
 ]
 
 
+def _local_tag(el: etree._Element) -> str:
+    tag = el.tag
+    if isinstance(tag, str) and tag.startswith('{'):
+        return tag.split('}', 1)[1]
+    return tag if isinstance(tag, str) else ''
+
+
+def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
+    """Collect address text from an <aff> in document order.
+
+    Covers three JATS patterns:
+    - Structured: <addr-line> and/or <country> elements
+    - Semi-structured: <institution> present but city/postcode sit in its tail text
+      (no <addr-line>), e.g. '<institution>UCL</institution>, London WC1N 1EH,
+      <country>UK</country>'
+    - Unstructured (label-only affs): returns nothing; address cannot be determined
+    """
+    parts: List[str] = []
+    for child in aff_el:
+        tag = _local_tag(child)
+        if tag in ('addr-line', 'country'):
+            text = _element_text(child)
+            if text:
+                parts.append(text)
+        elif tag == 'institution':
+            # Tail text after </institution> is city/postcode when no <addr-line> is present
+            tail = ' '.join((child.tail or '').split()).strip(', ')
+            if tail:
+                parts.append(tail)
+    return parts
+
+
 def _iter_aff_elements(root: etree._Element) -> Iterator[etree._Element]:
     yield from root.xpath(
         'front/article-meta/contrib-group/aff'
@@ -182,6 +214,16 @@ class JatsFieldExtractor:
             text = _element_text(aff_el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_AFF)
+            # Emit a bulk address value BEFORE individual sub-fields so that commas
+            # between city and country also get the AUTHOR_AFF_ADDR sub-field label
+            # (individual city/country sub-fields overwrite their own tokens afterward).
+            addr_texts = _aff_addr_parts(aff_el)
+            if addr_texts:
+                yield JatsFieldValue(
+                    text=' '.join(addr_texts),
+                    field_name=JatsFieldNames.AUTHOR_AFF,
+                    sub_field_name=JatsSubFieldNames.AUTHOR_AFF_ADDR,
+                )
             yield from _iter_sub_field_values(
                 aff_el, JatsFieldNames.AUTHOR_AFF, _AFF_SUB_FIELDS
             )

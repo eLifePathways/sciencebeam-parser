@@ -6,7 +6,7 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
 from lxml import etree
 
@@ -51,6 +51,7 @@ from sciencebeam_parser.training.jats.field_vocab import (
     CITATION_LABEL_BY_SUB_FIELD,
     FULLTEXT_LABEL_BY_FIELD,
     HEADER_LABEL_BY_FIELD,
+    JatsSubFieldNames,
 )
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldExtractor
 from sciencebeam_parser.training.jats.aligner import LayoutDocumentJatsAligner
@@ -562,16 +563,47 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
         return document_context.fulltext_models.header_model
 
     def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        # Stateful closure: emit B-/I- IOB prefix so the TEI generator can create
+        # separate <byline><affiliation> blocks for each JATS <aff> element.
+        # Address sub-fields (city, region, postcode, country, bulk addr range) are
+        # mapped to <address> instead of <affiliation>.
+        _HEADER_ADDRESS_SUB_FIELDS = frozenset({
+            JatsSubFieldNames.AUTHOR_AFF_ADDR,
+            JatsSubFieldNames.AUTHOR_AFF_CITY,
+            JatsSubFieldNames.AUTHOR_AFF_POSTCODE,
+            JatsSubFieldNames.AUTHOR_AFF_REGION,
+            JatsSubFieldNames.AUTHOR_AFF_COUNTRY,
+        })
+        prev_label_instance: Optional[Tuple[str, int]] = None
+
         def fn(
             annotated: JatsAnnotatedLayoutDocument,
             _seg_labels: Dict[int, str],
             md: LayoutModelData,
         ) -> Optional[str]:
+            nonlocal prev_label_instance
             token = md.layout_token
             if not token:
+                prev_label_instance = None
                 return None
             field_name = annotated.get_token_field(token)
-            return HEADER_LABEL_BY_FIELD.get(field_name or '') if field_name else None
+            if not field_name:
+                prev_label_instance = None
+                return None
+            sub_field_name = annotated.get_token_sub_field(token)
+            if sub_field_name in _HEADER_ADDRESS_SUB_FIELDS:
+                label: Optional[str] = '<address>'
+            else:
+                label = HEADER_LABEL_BY_FIELD.get(field_name)
+            if label is None:
+                prev_label_instance = None
+                return None
+            instance_id = annotated.get_token_instance(token)
+            label_instance = (label, instance_id)
+            prefix = 'B' if label_instance != prev_label_instance else 'I'
+            prev_label_instance = label_instance
+            return f'{prefix}-{label}'
+
         return fn
 
     def iter_model_layout_documents(

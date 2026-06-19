@@ -187,3 +187,31 @@ class TestLayoutDocumentJatsAligner:
         aff_tokens = list(doc.iter_all_lines())[1].tokens
         canada_in_aff = next(t for t in aff_tokens if 'canada' in t.text.lower())
         assert annotated.get_token_sub_field(canada_in_aff) == JatsSubFieldNames.AUTHOR_AFF_COUNTRY
+
+    def test_consecutive_affiliations_have_distinct_instance_ids(self):
+        # Each JATS <aff> must produce a separate TEI <affiliation> element.  The
+        # mechanism relies on the aligner assigning a distinct instance_id to each
+        # main (sub_field_name=None) AUTHOR_AFF field value so the header label fn
+        # emits B- on the first token of every new affiliation — even when no
+        # <address> tokens appear between them to force a label change.
+        aff1_text = '1 Institut Barcelona Spain'
+        aff2_text = '2 Cochrane Iberoamerica Madrid Spain'
+        doc = _make_doc(aff1_text, aff2_text)
+        fvs = [
+            JatsFieldValue(aff1_text, JatsFieldNames.AUTHOR_AFF),
+            JatsFieldValue(aff2_text, JatsFieldNames.AUTHOR_AFF),
+        ]
+        annotated = self._align(doc, fvs)
+        aff1_tokens = list(doc.iter_all_lines())[0].tokens
+        aff2_tokens = list(doc.iter_all_lines())[1].tokens
+        assert all(
+            annotated.get_token_field(t) == JatsFieldNames.AUTHOR_AFF
+            for t in aff1_tokens + aff2_tokens
+        )
+        # First aff → instance 1, second aff → instance 2: must differ
+        assert annotated.get_token_instance(aff1_tokens[0]) == 1
+        assert annotated.get_token_instance(aff2_tokens[0]) == 2
+        assert (
+            annotated.get_token_instance(aff1_tokens[0])
+            != annotated.get_token_instance(aff2_tokens[0])
+        )
