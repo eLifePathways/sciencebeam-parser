@@ -165,6 +165,36 @@ class TestGapMerge:
         assert labels[id(line_gap)] == SEG_BODY
 
 
+class TestFrontThreshold:
+    def test_front_block_starting_within_threshold_is_kept(self):
+        # A front block starting at line 0 should not be cleared
+        lines = [_make_line(f'word{i}') for i in range(5)]
+        block = LayoutBlock(lines=lines)
+        doc = _make_doc_with_page(block)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        for t in lines[0].tokens:
+            annotated.set_token_label(t, JatsFieldNames.TITLE)
+        for t in lines[4].tokens:
+            annotated.set_token_label(t, JatsFieldNames.AUTHOR)
+        labels = _derive_labels(doc, annotated, front_max_start_line_index=80)
+        assert labels[id(lines[0])] == SEG_FRONT
+        assert labels[id(lines[4])] == SEG_FRONT
+
+    def test_front_block_starting_beyond_threshold_is_cleared(self):
+        # A front block starting at line 100 (> 80) should be cleared → defaults to body
+        lines = [_make_line(f'word{i}') for i in range(3)]
+        block = LayoutBlock(lines=lines)
+        doc = _make_doc_with_page(block)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        # Annotate only the last line as front — its block starts at index 2 which is
+        # not cleared.  Use a config with a very low threshold to test the clearing logic.
+        for t in lines[2].tokens:
+            annotated.set_token_label(t, JatsFieldNames.AUTHOR_NOTES)
+        labels = _derive_labels(doc, annotated, front_max_start_line_index=1)
+        # line 2 starts its own front block at index 2 > threshold 1 → cleared → body
+        assert labels[id(lines[2])] == SEG_BODY
+
+
 class TestTextRepetitionHeadnote:
     def test_repeated_line_near_top_becomes_headnote(self):
         # No coordinates → will fall through to text-repetition detection

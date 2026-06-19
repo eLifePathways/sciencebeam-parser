@@ -30,8 +30,11 @@ SEG_FOOTNOTE = '<footnote>'
 _HEADNOTE_Y_RATIO = 0.08
 _FOOTNOTE_Y_RATIO = 0.92
 
-# Line index threshold: front blocks starting beyond this are cleared
-_DEFAULT_FRONT_MAX_START_LINE_INDEX = 40
+# Line index threshold: front blocks starting beyond this are cleared.
+# ORE papers have a second front-matter page (author roles, competing interests,
+# grant info, copyright) that can start at line ~60+, so the threshold is set high
+# enough to preserve those blocks when they match JATS front-matter fields.
+_DEFAULT_FRONT_MAX_START_LINE_INDEX = 80
 # Headnotes are expected in the first few lines (index ≤ this)
 _DEFAULT_PAGE_HEADER_MAX_FIRST_LINE_INDEX = 5
 

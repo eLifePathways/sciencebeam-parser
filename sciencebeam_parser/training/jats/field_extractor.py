@@ -125,6 +125,7 @@ class JatsFieldExtractor:
         yield from self._iter_front_values(root)
         yield from self._iter_body_values(root)
         yield from self._iter_back_values(root)
+        yield from self._iter_sub_article_values(root)
 
     def _emit(
         self,
@@ -180,6 +181,23 @@ class JatsFieldExtractor:
             text = _element_text(el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.MANUSCRIPT_TYPE)
+
+        yield from self._iter_front_publication_values(root)
+
+    def _iter_front_publication_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """Funding statements and copyright / licence text from front matter."""
+        for el in root.xpath('front/article-meta/funding-group/funding-statement'):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.FUNDING)
+
+        for el in root.xpath(
+            'front/article-meta/permissions/copyright-statement'
+            ' | front/article-meta/permissions/license/license-p'
+        ):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.COPYRIGHT)
 
     def _iter_front_contrib_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         # Per GROBID annotation guidelines, all author tokens in the byline (including
@@ -359,3 +377,26 @@ class JatsFieldExtractor:
             yield from _iter_sub_field_values(
                 ref_el, JatsFieldNames.REFERENCE, _REFERENCE_SUB_FIELDS
             )
+
+    # ── Sub-articles (ORE peer-review reports, etc.) ──────────────────────────
+
+    def _iter_sub_article_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """Yield paragraph/title text from <sub-article> elements as SUB_ARTICLE values.
+
+        ORE papers embed peer-review reports as sub-articles.  Extracting their
+        content in document order lets the aligner map those PDF pages to the
+        SUB_ARTICLE field, which the segmentation model labels as <other> rather
+        than <body>.
+        """
+        position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
+        entries: List[Tuple[int, JatsFieldValue]] = []
+
+        for sub_article in root.xpath('.//sub-article'):
+            for el in sub_article.xpath('.//title | .//p'):
+                text = _element_text(el)
+                if text:
+                    entries.append((position[el], JatsFieldValue(
+                        text=text, field_name=JatsFieldNames.SUB_ARTICLE)))
+
+        for _, fv in sorted(entries):
+            yield fv

@@ -10,6 +10,9 @@ class JatsFieldNames:
     AUTHOR = 'author'
     AUTHOR_AFF = 'author_aff'
     AUTHOR_NOTES = 'author_notes'
+    FUNDING = 'funding'
+    COPYRIGHT = 'copyright'
+    SUB_ARTICLE = 'sub_article'
     BODY_SECTION_TITLE = 'body_section_title'
     BODY_SECTION_PARAGRAPH = 'body_section_paragraph'
     BODY_FIGURE = 'body_figure'
@@ -60,6 +63,9 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.AUTHOR:                 '<header>',
     JatsFieldNames.AUTHOR_AFF:             '<header>',
     JatsFieldNames.AUTHOR_NOTES:           '<header>',
+    JatsFieldNames.FUNDING:               '<header>',
+    JatsFieldNames.COPYRIGHT:             '<header>',
+    JatsFieldNames.SUB_ARTICLE:           '<other>',
     JatsFieldNames.BODY_SECTION_TITLE:     '<body>',
     JatsFieldNames.BODY_SECTION_PARAGRAPH: '<body>',
     JatsFieldNames.BODY_FIGURE:            '<body>',

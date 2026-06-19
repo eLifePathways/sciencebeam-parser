@@ -294,3 +294,102 @@ class TestAcknowledgement:
         ack = [v for v in fvs if v.field_name == JatsFieldNames.ACK_SECTION_PARAGRAPH]
         assert len(ack) == 1
         assert 'thank' in ack[0].text
+
+
+class TestFunding:
+    def test_extracts_funding_statement(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<funding-group>'
+            '<funding-statement>Supported by grant 123.</funding-statement>'
+            '</funding-group>'
+            '</article-meta></front></article>'
+        )
+        funding = [v for v in fvs if v.field_name == JatsFieldNames.FUNDING]
+        assert len(funding) == 1
+        assert 'grant 123' in funding[0].text
+
+    def test_extracts_multiple_funding_statements(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<funding-group>'
+            '<funding-statement>Grant A funded this.</funding-statement>'
+            '<funding-statement>The funder had no role.</funding-statement>'
+            '</funding-group>'
+            '</article-meta></front></article>'
+        )
+        funding = [v for v in fvs if v.field_name == JatsFieldNames.FUNDING]
+        assert len(funding) == 2
+
+
+class TestCopyright:
+    def test_extracts_copyright_statement(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<permissions>'
+            '<copyright-statement>Copyright 2022 Author et al.</copyright-statement>'
+            '</permissions>'
+            '</article-meta></front></article>'
+        )
+        cr = [v for v in fvs if v.field_name == JatsFieldNames.COPYRIGHT]
+        assert len(cr) == 1
+        assert '2022' in cr[0].text
+
+    def test_extracts_license_paragraph(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<permissions>'
+            '<license>'
+            '<license-p>Open access under CC-BY 4.0.</license-p>'
+            '</license>'
+            '</permissions>'
+            '</article-meta></front></article>'
+        )
+        cr = [v for v in fvs if v.field_name == JatsFieldNames.COPYRIGHT]
+        assert len(cr) == 1
+        assert 'CC-BY' in cr[0].text
+
+
+class TestSubArticle:
+    def test_extracts_sub_article_paragraphs(self):
+        fvs = _field_values_for(
+            '<article>'
+            '<sub-article article-type="peer-review">'
+            '<body><p>This manuscript is well written.</p></body>'
+            '</sub-article>'
+            '</article>'
+        )
+        sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
+        assert len(sub) == 1
+        assert 'well written' in sub[0].text
+
+    def test_extracts_sub_article_titles(self):
+        fvs = _field_values_for(
+            '<article>'
+            '<sub-article article-type="peer-review">'
+            '<front><title>Reviewer Report</title></front>'
+            '<body><p>Some comments.</p></body>'
+            '</sub-article>'
+            '</article>'
+        )
+        sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
+        texts = [v.text for v in sub]
+        assert any('Reviewer Report' in t for t in texts)
+        assert any('comments' in t for t in texts)
+
+    def test_main_article_body_not_labeled_as_sub_article(self):
+        fvs = _field_values_for(
+            '<article>'
+            '<body><sec><title>Introduction</title>'
+            '<p>Main article text.</p></sec></body>'
+            '<sub-article article-type="peer-review">'
+            '<body><p>Review text.</p></body>'
+            '</sub-article>'
+            '</article>'
+        )
+        sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
+        body = [v for v in fvs if v.field_name == JatsFieldNames.BODY_SECTION_PARAGRAPH]
+        assert len(sub) == 1
+        assert 'Review text' in sub[0].text
+        assert len(body) == 1
+        assert 'Main article' in body[0].text
