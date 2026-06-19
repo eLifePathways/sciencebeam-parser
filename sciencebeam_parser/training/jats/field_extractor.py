@@ -113,9 +113,10 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.ABSTRACT)
 
-        # Per GROBID annotation guidelines, the whole keyword list is one <keyword>
-        # element; the generic "Keywords" label is left untagged.  Combine all <kwd>
-        # children of a <kwd-group> into a single field value.
+        # Per GROBID annotation guidelines, the "Keywords" heading is not annotated
+        # in the header model.  It is still emitted as KEYWORDS_TITLE so that the
+        # segmentation model can label it as <header>.  Combine all <kwd> children
+        # of a <kwd-group> into a single KEYWORDS field value.
         for kwd_group in root.xpath('front/article-meta/kwd-group'):
             for title_el in kwd_group.xpath('./title'):
                 text = _element_text(title_el)
@@ -141,17 +142,41 @@ class JatsFieldExtractor:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.MANUSCRIPT_TYPE)
 
     def _iter_front_contrib_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
-        for el in root.xpath(
-            'front/article-meta/contrib-group'
-            '/contrib[not(@contrib-type) or @contrib-type="author"]/name'
-        ):
-            # JATS stores names in Surname-Given order; PDFs display Given-Surname.
-            # Emit in Given-Surname order so the needle matches the PDF author line.
-            given = (el.findtext('given-names') or '').strip()
-            surname = (el.findtext('surname') or '').strip()
-            text = ' '.join(p for p in [given, surname] if p) or _element_text(el)
-            if text:
-                yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR)
+        # Per GROBID annotation guidelines, all author tokens in the byline (including
+        # affiliation markers and separating punctuation) are labelled <author>.
+        # Emit one merged field value per contrib-group so the aligner covers the
+        # whole byline span, including commas, "&", etc. between individual names.
+        # JATS stores names in Surname-Given order; PDFs display Given-Surname, so
+        # each name part is reversed.  Affiliation/fn/corresp xref markers are
+        # appended to each name so the combined needle matches the PDF author line.
+        for contrib_group in root.xpath('front/article-meta/contrib-group'):
+            author_parts = []
+            for contrib in contrib_group.xpath(
+                'contrib[not(@contrib-type) or @contrib-type="author"]'
+            ):
+                name_el = contrib.find('name')
+                if name_el is None:
+                    continue
+                given = (name_el.findtext('given-names') or '').strip()
+                surname = (name_el.findtext('surname') or '').strip()
+                name_text = (
+                    ' '.join(p for p in [given, surname] if p) or _element_text(name_el)
+                )
+                if not name_text:
+                    continue
+                markers = [
+                    x.text.strip()
+                    for x in contrib.xpath(
+                        'xref[@ref-type="aff" or @ref-type="fn" or @ref-type="corresp"]'
+                    )
+                    if x.text and x.text.strip()
+                ]
+                author_parts.append(' '.join([name_text] + markers))
+            if author_parts:
+                yield JatsFieldValue(
+                    text=' '.join(author_parts),
+                    field_name=JatsFieldNames.AUTHOR,
+                )
 
         for aff_el in _iter_aff_elements(root):
             text = _element_text(aff_el)

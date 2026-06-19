@@ -78,7 +78,6 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
 HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.TITLE:            '<title>',
     JatsFieldNames.ABSTRACT:         '<abstract>',
-    JatsFieldNames.KEYWORDS_TITLE:   '<keyword>',
     JatsFieldNames.KEYWORDS:         '<keyword>',
     JatsFieldNames.AUTHOR:           '<author>',
     JatsFieldNames.AUTHOR_AFF:       '<affiliation>',

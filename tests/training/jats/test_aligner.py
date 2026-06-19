@@ -162,7 +162,6 @@ class TestLayoutDocumentJatsAligner:
         annotated = self._align(doc, fvs)
         kw_tokens = list(doc.iter_all_lines())[1].tokens
         kw_by_text = {t.text.lower().strip(','): t for t in kw_tokens}
-        # "Keywords" (the title) should be unlabelled; the rest should be keyword
         assert annotated.get_token_field(kw_by_text['keywords']) == JatsFieldNames.KEYWORDS_TITLE
         assert annotated.get_token_field(kw_by_text['confidence']) == JatsFieldNames.KEYWORDS
         assert annotated.get_token_field(kw_by_text['bayesian']) == JatsFieldNames.KEYWORDS

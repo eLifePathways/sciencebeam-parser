@@ -67,7 +67,81 @@ class TestAuthor:
         )
         authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
         assert len(authors) == 1
-        assert 'Smith' in authors[0].text
+        assert authors[0].text == 'John Smith'
+
+    def test_authors_merged_per_contrib_group(self):
+        # All authors in one <contrib-group> are emitted as a single AUTHOR field
+        # value so the aligner labels the full byline (including separators).
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<contrib-group>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Smith</surname><given-names>John</given-names></name>'
+            '<xref ref-type="aff">1</xref>'
+            '</contrib>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Jones</surname><given-names>Mary</given-names></name>'
+            '<xref ref-type="aff">1</xref>'
+            '<xref ref-type="corresp">*</xref>'
+            '</contrib>'
+            '</contrib-group>'
+            '</article-meta></front></article>'
+        )
+        authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
+        assert len(authors) == 1
+        assert authors[0].text == 'John Smith 1 Mary Jones 1 *'
+
+    def test_author_multiple_contrib_groups_emit_separately(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<contrib-group>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Smith</surname><given-names>John</given-names></name>'
+            '</contrib>'
+            '</contrib-group>'
+            '<contrib-group>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Jones</surname><given-names>Mary</given-names></name>'
+            '</contrib>'
+            '</contrib-group>'
+            '</article-meta></front></article>'
+        )
+        authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
+        assert len(authors) == 2
+        assert authors[0].text == 'John Smith'
+        assert authors[1].text == 'Mary Jones'
+
+
+class TestKeywords:
+    def test_extracts_keyword_values(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<kwd-group>'
+            '<title>Keywords</title>'
+            '<kwd>machine learning</kwd>'
+            '<kwd>deep learning</kwd>'
+            '</kwd-group>'
+            '</article-meta></front></article>'
+        )
+        keywords = [v for v in fvs if v.field_name == JatsFieldNames.KEYWORDS]
+        assert len(keywords) == 1
+        assert keywords[0].text == 'machine learning, deep learning'
+
+    def test_keywords_title_extracted_for_segmentation(self):
+        # KEYWORDS_TITLE is emitted so the segmentation model can label the heading
+        # line as <header>.  It is intentionally absent from HEADER_LABEL_BY_FIELD
+        # so the header model leaves the "Keywords" token unlabelled.
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<kwd-group>'
+            '<title>Keywords</title>'
+            '<kwd>machine learning</kwd>'
+            '</kwd-group>'
+            '</article-meta></front></article>'
+        )
+        kw_titles = [v for v in fvs if v.field_name == JatsFieldNames.KEYWORDS_TITLE]
+        assert len(kw_titles) == 1
+        assert kw_titles[0].text == 'Keywords'
 
 
 class TestAffiliation:
