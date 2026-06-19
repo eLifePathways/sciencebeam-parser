@@ -1243,11 +1243,16 @@ def _run_serial(
     progress: '_Progress',
     document_timeout: int = 0,
 ) -> None:
-    """Run documents sequentially in a single worker process.
+    """Run documents sequentially.
 
-    Uses multiprocessing.Pool so that pool.terminate() can kill a worker
-    that is stuck inside a C extension (signal.alarm cannot interrupt C code).
-    The pool is recreated after each timeout so subsequent documents can run.
+    When document_timeout == 0: runs inline in the current process.  This
+    avoids subprocess-spawn overhead and works correctly with test mocks on
+    platforms that use the 'spawn' start method (e.g. macOS).
+
+    When document_timeout > 0: uses multiprocessing.Pool so that
+    pool.terminate() can kill a worker stuck inside a C extension
+    (signal.alarm cannot interrupt C code).  The pool is recreated after
+    each timeout so subsequent documents can run.
     """
     common_kwargs = {
         'output_path': output_path,
@@ -1256,15 +1261,25 @@ def _run_serial(
         'gzip_enabled': args.gzip,
         'xml_file_list': xml_file_list,
     }
+
+    if document_timeout == 0:
+        # No timeout needed — run inline without spawning a subprocess.
+        _worker_init()
+        for source_filename in source_file_list:
+            kwargs = {'source_filename': source_filename, **common_kwargs}
+            t0 = time.monotonic()
+            ok = _worker_process(kwargs)
+            progress.record(source_filename, ok=ok, elapsed_s=time.monotonic() - t0)
+        return
+
     pool = multiprocessing.Pool(1, initializer=_worker_init)  # pylint: disable=consider-using-with
-    timeout_arg = document_timeout if document_timeout > 0 else None
     try:
         for source_filename in source_file_list:
             kwargs = {'source_filename': source_filename, **common_kwargs}
             t0 = time.monotonic()
             async_result = pool.apply_async(_worker_process, (kwargs,))
             try:
-                ok = async_result.get(timeout=timeout_arg)
+                ok = async_result.get(timeout=document_timeout)
             except multiprocessing.TimeoutError:
                 LOGGER.warning(
                     'Document exceeded %ds timeout, skipping: %r',
