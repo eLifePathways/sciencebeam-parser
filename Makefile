@@ -59,6 +59,9 @@ BENCHMARK_CONCURRENCY ?= 0
 
 TRAINING_DATA_OUTPUT ?= data/generated-training-data
 TRAINING_DATA_NUM_WORKERS ?= 1
+# Per-document timeout in seconds; 0 disables. Skips outlier PDFs (e.g. 73-page, 38 MB)
+# that cause the JATS aligner to run for many minutes.
+TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
 
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
@@ -282,6 +285,7 @@ dev-generate-training-data:
 		--output-path $(TRAINING_DATA_OUTPUT)/train \
 		--use-directory-structure \
 		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
+		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
 		--debug \
 		$(ARGS)
 

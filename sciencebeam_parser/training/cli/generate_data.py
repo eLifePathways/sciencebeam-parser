@@ -3,8 +3,9 @@ from abc import ABC, abstractmethod
 import argparse
 import logging
 import os
+import multiprocessing
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
@@ -132,6 +133,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=int,
         default=1,
         help='Number of parallel worker processes (default: 1)'
+    )
+    parser.add_argument(
+        '--document-timeout',
+        type=int,
+        default=0,
+        metavar='SECONDS',
+        help=(
+            'Per-document time limit in seconds (0 = no limit). '
+            'Documents that exceed this limit are skipped with a warning. '
+            'Single-worker mode uses SIGALRM; multi-worker mode uses future timeout.'
+        )
     )
     return parser.parse_args(argv)
 
@@ -1223,14 +1235,20 @@ def _worker_process(kwargs: dict) -> bool:
         return False
 
 
-def _run_parallel_workers(
+def _run_serial(
     source_file_list: Sequence[str],
     output_path: str,
     args: argparse.Namespace,
     xml_file_list: Optional[Sequence[str]],
     progress: '_Progress',
-    num_workers: int,
+    document_timeout: int = 0,
 ) -> None:
+    """Run documents sequentially in a single worker process.
+
+    Uses multiprocessing.Pool so that pool.terminate() can kill a worker
+    that is stuck inside a C extension (signal.alarm cannot interrupt C code).
+    The pool is recreated after each timeout so subsequent documents can run.
+    """
     common_kwargs = {
         'output_path': output_path,
         'use_model': args.use_model,
@@ -1238,24 +1256,81 @@ def _run_parallel_workers(
         'gzip_enabled': args.gzip,
         'xml_file_list': xml_file_list,
     }
-    work_items = [
-        {'source_filename': sf, **common_kwargs}
+    pool = multiprocessing.Pool(1, initializer=_worker_init)  # pylint: disable=consider-using-with
+    timeout_arg = document_timeout if document_timeout > 0 else None
+    try:
+        for source_filename in source_file_list:
+            kwargs = {'source_filename': source_filename, **common_kwargs}
+            t0 = time.monotonic()
+            async_result = pool.apply_async(_worker_process, (kwargs,))
+            try:
+                ok = async_result.get(timeout=timeout_arg)
+            except multiprocessing.TimeoutError:
+                LOGGER.warning(
+                    'Document exceeded %ds timeout, skipping: %r',
+                    document_timeout, source_filename,
+                )
+                pool.terminate()
+                pool.join()
+                # pylint: disable-next=consider-using-with
+                pool = multiprocessing.Pool(1, initializer=_worker_init)
+                ok = False
+            except Exception:  # pylint: disable=broad-except
+                LOGGER.exception('Failed to process %r', source_filename)
+                ok = False
+            progress.record(source_filename, ok=ok, elapsed_s=time.monotonic() - t0)
+    finally:
+        pool.close()
+        pool.join()
+
+
+def _run_parallel_workers(
+    source_file_list: Sequence[str],
+    output_path: str,
+    args: argparse.Namespace,
+    xml_file_list: Optional[Sequence[str]],
+    progress: '_Progress',
+    num_workers: int,
+    document_timeout: int = 0,
+) -> None:
+    """Process documents in parallel using a multiprocessing.Pool.
+
+    All documents are submitted upfront so workers stay busy.  Results are
+    collected in submission order; pool.terminate() at the end kills any worker
+    that is still stuck in a C extension after its timeout.
+    """
+    common_kwargs = {
+        'output_path': output_path,
+        'use_model': args.use_model,
+        'use_directory_structure': args.use_directory_structure,
+        'gzip_enabled': args.gzip,
+        'xml_file_list': xml_file_list,
+    }
+    # pylint: disable-next=consider-using-with
+    pool = multiprocessing.Pool(num_workers, initializer=_worker_init)
+    timeout_arg = document_timeout if document_timeout > 0 else None
+    work = [
+        (sf, pool.apply_async(_worker_process, ({'source_filename': sf, **common_kwargs},)))
         for sf in source_file_list
     ]
-    with ProcessPoolExecutor(
-        max_workers=num_workers,
-        initializer=_worker_init,
-    ) as executor:
-        future_to_sf = {
-            executor.submit(_worker_process, item): item['source_filename']
-            for item in work_items
-        }
-        t_submitted = time.monotonic()
-        for future in as_completed(future_to_sf):
-            source_filename = future_to_sf[future]
-            elapsed_s = time.monotonic() - t_submitted
-            ok = future.result()
-            progress.record(source_filename, ok=ok, elapsed_s=elapsed_s)
+    try:
+        for source_filename, async_result in work:
+            t0 = time.monotonic()
+            try:
+                ok = async_result.get(timeout=timeout_arg)
+            except multiprocessing.TimeoutError:
+                LOGGER.warning(
+                    'Document exceeded %ds timeout, skipping: %r',
+                    document_timeout, source_filename,
+                )
+                ok = False
+            except Exception:  # pylint: disable=broad-except
+                LOGGER.exception('Failed to process %r', source_filename)
+                ok = False
+            progress.record(source_filename, ok=ok, elapsed_s=time.monotonic() - t0)
+    finally:
+        pool.terminate()
+        pool.join()
 
 
 def run(args: argparse.Namespace):
@@ -1265,8 +1340,6 @@ def run(args: argparse.Namespace):
         source_file_list = source_file_list[:args.limit]
     LOGGER.info('source files: %d', len(source_file_list))
     output_path = args.output_path
-    config = AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
-    sciencebeam_parser = ScienceBeamParser.from_config(config)
     LOGGER.info('output_path: %r', output_path)
     xml_file_list: Optional[Sequence[str]] = None
     if args.source_xml_path:
@@ -1277,28 +1350,18 @@ def run(args: argparse.Namespace):
     total = len(source_file_list)
     progress = _Progress(total)
     num_workers = getattr(args, 'num_workers', 1)
+    document_timeout: int = getattr(args, 'document_timeout', 0)
 
     if num_workers > 1:
         _run_parallel_workers(
             source_file_list, output_path, args, xml_file_list, progress, num_workers,
+            document_timeout=document_timeout,
         )
     else:
-        for source_filename in source_file_list:
-            t0 = time.monotonic()
-            try:
-                generate_training_data_for_source_filename(
-                    source_filename,
-                    output_path=output_path,
-                    sciencebeam_parser=sciencebeam_parser,
-                    use_model=args.use_model,
-                    use_directory_structure=args.use_directory_structure,
-                    gzip_enabled=args.gzip,
-                    xml_file_list=xml_file_list,
-                )
-                progress.record(source_filename, ok=True, elapsed_s=time.monotonic() - t0)
-            except Exception:  # pylint: disable=broad-except
-                LOGGER.exception('Failed to process %r', source_filename)
-                progress.record(source_filename, ok=False, elapsed_s=time.monotonic() - t0)
+        _run_serial(
+            source_file_list, output_path, args, xml_file_list, progress,
+            document_timeout=document_timeout,
+        )
 
     if progress.n_err:
         LOGGER.warning('%d/%d documents failed', progress.n_err, total)
