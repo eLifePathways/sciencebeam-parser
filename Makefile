@@ -295,18 +295,17 @@ dev-fetch-training-source:
 
 
 dev-generate-training-data:
-	@if [ ! -d "$(TRAINING_DATA_OUTPUT)" ]; then \
+	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
 		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
 		echo "       Clone the output repo and symlink it to data/generated-training-data,"; \
 		echo "       or pass TRAINING_DATA_OUTPUT=/path/to/repo on the command line."; \
-		exit 1; \
-	fi
+		exit 1; }
 	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
-	$(PYTHON) -m sciencebeam_parser.training.cli.generate_data \
-		--source-path '$(SOURCE_TRAINING_DATA)/$(SOURCE_TRAINING_SPLIT)/*/*.pdf' \
-		--source-xml-path '$(SOURCE_TRAINING_DATA)/$(SOURCE_TRAINING_SPLIT)/*/*.jats.xml' \
-		--output-path $(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT) \
-		--use-directory-structure \
+	$(PYTHON) -m benchmarks.generate_training_data_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--source-data $(SOURCE_TRAINING_DATA) \
+		--output-path $(TRAINING_DATA_OUTPUT) \
+		--split $(SOURCE_TRAINING_SPLIT) \
 		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
 		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
 		--debug \
