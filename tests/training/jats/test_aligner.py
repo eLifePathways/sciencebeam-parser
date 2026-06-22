@@ -215,3 +215,50 @@ class TestLayoutDocumentJatsAligner:
             annotated.get_token_instance(aff1_tokens[0])
             != annotated.get_token_instance(aff2_tokens[0])
         )
+
+    def test_abstract_does_not_label_sidebar_content(self):
+        # PDFs sometimes have a sidebar (e.g. Open Peer Review box) between the
+        # first and second page of an abstract.  The JATS abstract needle contains
+        # no sidebar text, so Smith-Waterman creates only tiny (size ≤ 4) scatter
+        # blocks while traversing the sidebar.  Those blocks must NOT cause sidebar
+        # tokens to be labelled as abstract.
+        page1 = (
+            'Every day important healthcare decisions are made with incomplete '
+            'information about the effects of the healthcare interventions '
+            'available. It is necessary to invest in strategies that allow access '
+            'to reliable and updated evidence on which to base health decisions.'
+        )
+        # Sidebar: distinct proper-noun vocabulary with no 5+-char substring in page1/page2
+        sidebar = (
+            'Open Peer Approval Ingrid Schmitt Lozano Maastricht '
+            'Pontificia Universidad Catolica panel assessment'
+        )
+        page2 = (
+            'The project will be developed in three complementary phases. '
+            'Expected results include an effective capacity-building strategy '
+            'for health system organizations to implement the living evidence model.'
+        )
+        abstract_text = page1 + ' ' + page2
+        # Doc reading order: page1, then sidebar, then page2 (three separate lines)
+        doc = _make_doc(page1, sidebar, page2)
+        fvs = [_fv(abstract_text, JatsFieldNames.ABSTRACT)]
+        annotated = self._align(doc, fvs)
+
+        lines = list(doc.iter_all_lines())
+        sidebar_tokens = lines[1].tokens
+        labeled_sidebar = [
+            t.text for t in sidebar_tokens
+            if annotated.get_token_field(t) == JatsFieldNames.ABSTRACT
+        ]
+        assert labeled_sidebar == [], (
+            f'Sidebar tokens incorrectly labelled as abstract: {labeled_sidebar}'
+        )
+
+        # Page-2 abstract content (not the very first boundary token) must be labelled
+        page2_tokens = lines[2].tokens
+        page2_by_text = {t.text.lower(): t for t in page2_tokens}
+        for word in ('expected', 'capacity', 'building', 'organizations'):
+            if word in page2_by_text:
+                assert annotated.get_token_field(page2_by_text[word]) == JatsFieldNames.ABSTRACT, (
+                    f"Page-2 abstract token '{word}' was not labelled"
+                )

@@ -67,6 +67,14 @@ _REFERENCE_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.REFERENCE,
 })
 
+# Fields that appear entirely after the main body and reference sections
+# (e.g. ORE peer-review sub-articles).  Searched from last_match_end rather than
+# from the front-matter window, preventing author-response text (which often quotes
+# the paper verbatim) from overwriting body / figure tokens via the global fallback.
+_POST_BODY_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.SUB_ARTICLE,
+})
+
 # Smith-Waterman scoring: match=2, mismatch=-1, gap=-1
 _SCORING = SimpleScoring(match_score=2, mismatch_score=-1, gap_score=-1)
 
@@ -79,6 +87,31 @@ _WINDOW_NEEDLE_MULTIPLIER = 6
 # identical text elsewhere in the document.
 _SUB_FIELD_PARENT_BUFFER = 200
 _SUB_FIELD_PARENT_PRE_BUFFER = 0
+
+# Anchor+chain labelling strategy:
+# Smith-Waterman produces many tiny (1–4 char) matching blocks while traversing
+# interleaved sidebar content.  Those blocks must not cause sidebar tokens to be
+# labelled.  We use two constants:
+#
+#   _MIN_ANCHOR_BLOCK_SIZE: a block is an "anchor" only if it is at least this
+#     many characters long.  Sidebar words are almost never exact multi-word
+#     substrings of the abstract/keywords needle, so their SW blocks stay small.
+#
+#   _MAX_HAYSTACK_GAP_TO_FILL: a small (non-anchor) block is included only if it
+#     starts within this many characters of the previous *included* block end.
+#     This fills legitimate intra-field gaps (e.g. the 2-char comma gap between
+#     "confidence, bayesian," and "ddm") without re-entering a sidebar whose
+#     last anchor lies hundreds of chars earlier.
+#
+# Fallback: when a field value produces NO anchor blocks at all (the entire text
+# is shorter than _MIN_ANCHOR_BLOCK_SIZE), every block is labelled so short
+# fields are never silently dropped.
+_MIN_ANCHOR_BLOCK_SIZE = 5
+_MAX_HAYSTACK_GAP_TO_FILL = 3
+
+# Type alias for the return value of _fuzzy_match_field_value:
+#   (abs_start, abs_end, [(block_start, block_end), ...])
+_MatchResult = Tuple[int, int, List[Tuple[int, int]]]
 
 
 @dataclass
@@ -195,10 +228,11 @@ def _fuzzy_search_in_window(
     window_start: int,
     window_end: int,
     threshold: float,
-) -> Optional[Tuple[int, int]]:
+) -> Optional[_MatchResult]:
     """Try to find `needle` in haystack[window_start:window_end].
 
-    Returns (abs_start, abs_end) if quality >= threshold, else None.
+    Returns (abs_start, abs_end, [(block_start, block_end), ...]) if quality >=
+    threshold, else None.  Block ranges are in absolute haystack coordinates.
     """
     window = haystack[window_start:window_end]
     sm = LocalSequenceMatcher(a=window, b=needle, scoring=_SCORING)
@@ -212,7 +246,11 @@ def _fuzzy_search_in_window(
     a_start = matched_blocks[0][0] + window_start
     last = matched_blocks[-1]
     a_end = last[0] + last[2] + window_start
-    return a_start, a_end
+    abs_block_ranges: List[Tuple[int, int]] = [
+        (ai + window_start, ai + size + window_start)
+        for ai, _bi, size in matched_blocks
+    ]
+    return a_start, a_end, abs_block_ranges
 
 
 def _fuzzy_match_field_value(
@@ -221,7 +259,7 @@ def _fuzzy_match_field_value(
     config: AlignmentConfig,
     search_start: int,
     search_end: Optional[int] = None,
-) -> Optional[Tuple[int, int]]:
+) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
         return None
@@ -273,7 +311,10 @@ def _search_range(
         # skip over all reference positions.
         ref_start = max(0, reference_floor - 200) if reference_floor > 0 else max(0, body_floor)
         return ref_start, None
-    if fv.field_name in _ANCHOR_FIELDS:
+    if fv.field_name in _ANCHOR_FIELDS or fv.field_name in _POST_BODY_FIELDS:
+        # Anchor fields (abstract, title) and post-body fields (sub-articles) both
+        # search from last_match_end so they follow reading order and cannot fall
+        # back to the front-matter window.
         return max(0, last_match_end - 200), None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
@@ -284,6 +325,34 @@ def _search_range(
         start = max(keywords_floor, front_matter_end) if is_keywords else 0
         return start, front_matter_end + _FRONT_MATTER_BUFFER
     return max(0, last_match_end - 200), None
+
+
+def _label_tokens_for_blocks(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    block_ranges: List[Tuple[int, int]],
+    field_name: str,
+    sub_field_name: Optional[str],
+    instance_id: int,
+) -> None:
+    """Label tokens using anchor+chain strategy (see module constants for rationale)."""
+    has_anchor = any(be - bs >= _MIN_ANCHOR_BLOCK_SIZE for bs, be in block_ranges)
+    prev_included_end: Optional[int] = None
+    for block_start, block_end in block_ranges:
+        is_anchor = (block_end - block_start) >= _MIN_ANCHOR_BLOCK_SIZE
+        within_gap = (
+            prev_included_end is not None
+            and block_start - prev_included_end <= _MAX_HAYSTACK_GAP_TO_FILL
+        )
+        if has_anchor and not is_anchor and not within_gap:
+            continue
+        fill_start = block_start
+        if within_gap:
+            assert prev_included_end is not None
+            fill_start = prev_included_end
+        for token in token_index.tokens_in_range(fill_start, block_end):
+            annotated.set_token_label(token, field_name, sub_field_name, instance_id)
+        prev_included_end = block_end
 
 
 class LayoutDocumentJatsAligner:
@@ -357,7 +426,7 @@ class LayoutDocumentJatsAligner:
                     )
                 continue
             matched_count += 1
-            a_start, a_end = match_range
+            a_start, a_end, block_ranges = match_range
             last_match_end = max(last_match_end, a_end)
             if fv.field_name in _ANCHOR_FIELDS:
                 body_floor = max(body_floor, a_end)
@@ -378,11 +447,10 @@ class LayoutDocumentJatsAligner:
                     instance_by_field.get(fv.field_name, 0) + 1
                 )
             instance_id = instance_by_field.get(fv.field_name, 0)
-            matched_tokens = token_index.tokens_in_range(a_start, a_end)
-            for token in matched_tokens:
-                annotated.set_token_label(
-                    token, fv.field_name, fv.sub_field_name, instance_id
-                )
+            _label_tokens_for_blocks(
+                annotated, token_index, block_ranges,
+                fv.field_name, fv.sub_field_name, instance_id,
+            )
 
         total = len(field_values)
         if missed_by_field:
