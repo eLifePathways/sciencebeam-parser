@@ -63,6 +63,15 @@ TRAINING_DATA_NUM_WORKERS ?= 1
 # that cause the JATS aligner to run for many minutes.
 TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
 
+# Source training data (PDF + JATS XML) downloaded from the HF dataset.
+# TRAINING_DATA_OUTPUT must point to a checkout of the output repo; create a
+# symlink at data/generated-training-data or override the variable directly:
+#   make dev-generate-training-data TRAINING_DATA_OUTPUT=/path/to/output-repo
+SOURCE_TRAINING_CONFIG ?= benchmarks/training-source.yml
+SOURCE_TRAINING_DATA ?= data/source-training-data
+SOURCE_TRAINING_MODE ?= smoke
+SOURCE_TRAINING_SPLIT ?= train
+
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
 SHOW_CORPUS ?= biorxiv
@@ -277,12 +286,26 @@ dev-benchmark-with-baselines:
 		$(ARGS)
 
 
+dev-fetch-training-source:
+	$(PYTHON) -m benchmarks.fetch_training_source_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--mode $(SOURCE_TRAINING_MODE) \
+		--split $(SOURCE_TRAINING_SPLIT) \
+		--output-path $(SOURCE_TRAINING_DATA)
+
+
 dev-generate-training-data:
+	@if [ ! -d "$(TRAINING_DATA_OUTPUT)" ]; then \
+		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
+		echo "       Clone the output repo and symlink it to data/generated-training-data,"; \
+		echo "       or pass TRAINING_DATA_OUTPUT=/path/to/repo on the command line."; \
+		exit 1; \
+	fi
 	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
 	$(PYTHON) -m sciencebeam_parser.training.cli.generate_data \
-		--source-path 'benchmarks/data/train/*/*.pdf' \
-		--source-xml-path 'benchmarks/data/train/*/*.jats.xml' \
-		--output-path $(TRAINING_DATA_OUTPUT)/train \
+		--source-path '$(SOURCE_TRAINING_DATA)/$(SOURCE_TRAINING_SPLIT)/*/*.pdf' \
+		--source-xml-path '$(SOURCE_TRAINING_DATA)/$(SOURCE_TRAINING_SPLIT)/*/*.jats.xml' \
+		--output-path $(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT) \
 		--use-directory-structure \
 		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
 		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \

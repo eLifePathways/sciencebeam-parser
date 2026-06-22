@@ -59,7 +59,11 @@ def fetch_data(  # pylint: disable=too-many-locals
             continue
 
         filename, id_column = _get_corpus_filename_and_id_column(corpus_cfg)
-        LOGGER.info("Fetching corpus %r (mode=%s, n=%d)", corpus, mode, sample_sizes[corpus])
+        raw_n = sample_sizes[corpus]
+        LOGGER.info(
+            "Fetching corpus %r (mode=%s, n=%s)", corpus, mode,
+            raw_n if raw_n is not None else "all",
+        )
 
         if local_root:
             parquet_path = str(Path(local_root) / filename)
@@ -76,7 +80,7 @@ def fetch_data(  # pylint: disable=too-many-locals
         # only the selected rows to avoid loading all PDFs into memory.
         pf = pq.ParquetFile(parquet_path)
         all_ids = pf.read(columns=[id_column]).column(id_column).to_pylist()
-        n = min(sample_sizes[corpus], len(all_ids))
+        n = len(all_ids) if raw_n is None else min(raw_n, len(all_ids))
         picked = _sample_indices(len(all_ids), n, seed)
 
         corpus_dir = data_dir / split / corpus
@@ -135,8 +139,10 @@ def fetch_gold(  # pylint: disable=too-many-locals
             continue
 
         filename, id_column = _get_corpus_filename_and_id_column(corpus_cfg)
+        raw_n = sample_sizes[corpus]
         LOGGER.info(
-            "Fetching gold for corpus %r (mode=%s, n=%d)", corpus, mode, sample_sizes[corpus]
+            "Fetching gold for corpus %r (mode=%s, n=%s)", corpus, mode,
+            raw_n if raw_n is not None else "all",
         )
 
         if local_root:
@@ -152,7 +158,7 @@ def fetch_gold(  # pylint: disable=too-many-locals
 
         pf = pq.ParquetFile(parquet_path)
         all_ids = pf.read(columns=[id_column]).column(id_column).to_pylist()
-        n = min(sample_sizes[corpus], len(all_ids))
+        n = len(all_ids) if raw_n is None else min(raw_n, len(all_ids))
         picked = _sample_indices(len(all_ids), n, seed)
 
         corpus_dir = data_dir / split / corpus
@@ -180,3 +186,23 @@ def fetch_gold(  # pylint: disable=too-many-locals
         LOGGER.info("Corpus %r: materialised %d gold records to %s", corpus, n, corpus_dir)
 
     return records
+
+
+def fetch_training_source(
+    cfg: Dict[str, Any], mode: str, split: str, data_dir: Path
+) -> List[Dict[str, str]]:
+    """Fetch PDF + JATS XML for CC-BY corpora only.
+
+    Reads ``cc_by_corpora`` from the config to determine which corpora are
+    permitted.  Corpora absent from that list are silently skipped so that
+    the allow-list can be extended without changing call sites.
+
+    Delegates to :func:`fetch_data` after building a filtered config.
+    """
+    allowed = set(cfg.get("cc_by_corpora", []))
+    filtered_sampling = {
+        m: {corpus: n for corpus, n in sizes.items() if corpus in allowed}
+        for m, sizes in cfg.get("sampling", {}).items()
+    }
+    filtered_cfg = {**cfg, "sampling": filtered_sampling}
+    return fetch_data(filtered_cfg, mode, split, data_dir)

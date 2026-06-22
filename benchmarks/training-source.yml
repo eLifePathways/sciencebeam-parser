@@ -1,0 +1,33 @@
+dataset:
+  repo_id: elifepathways/sciencebeam-v2-benchmarking
+  revision: main
+  splits:
+    train:
+      ore:
+        file: ore-jats/train-00000-of-00001.parquet
+        id_column: ppr_id
+      scielo_preprints-jats:
+        file: scielo-preprints-jats/train-00000-of-00001.parquet
+        id_column: ppr_id
+
+# Corpora confirmed CC-BY 4.0.  Others are excluded until per-record licence
+# data is available in the dataset.
+cc_by_corpora:
+  - ore
+  - scielo_preprints-jats
+
+# Dataset row counts at revision main:
+#   ore: 199, scielo_preprints-jats: 1000
+sampling:
+  smoke:
+    ore: 5
+    scielo_preprints-jats: 10
+  small:
+    ore: 20
+    scielo_preprints-jats: 50
+  full:
+    ore: null   # all records
+    scielo_preprints-jats: null
+
+seeds:
+  sample: 42
