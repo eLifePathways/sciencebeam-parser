@@ -4,6 +4,19 @@ services:
     # SCIENCEBEAM_PARSER_URL=http://localhost:8080) can reach the parser.
     ports:
       - "8080:8070"
+    # Serve the API using the locally trained DeLFT header model.
+    # Env overrides are applied after profile resolution, so this wins over the
+    # active grobid_crf profile's Wapiti header model.
+    environment:
+      # Preload all models at startup (single-threaded) so concurrent benchmark
+      # requests don't race to download/compile into the same cache and corrupt it.
+      - SCIENCEBEAM_PARSER__PRELOAD_ON_STARTUP=true
+      # Uncomment the two lines below to serve the locally trained DeLFT header
+      # model; leave commented for the stock Wapiti header (baseline).
+      # - SCIENCEBEAM_PARSER__MODELS__HEADER__PATH=/opt/sciencebeam_parser/benchmarks/data/trained_model/header/header-full-v1.tar.gz
+      # - SCIENCEBEAM_PARSER__MODELS__HEADER__ENGINE=delft
+    volumes:
+      - ./benchmarks:/opt/sciencebeam_parser/benchmarks
 
   sciencebeam-parser-cv:
     ports:
