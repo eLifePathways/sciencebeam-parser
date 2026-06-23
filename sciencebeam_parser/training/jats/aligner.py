@@ -187,6 +187,14 @@ class _TokenIndex:
             result_indices = filled
         return [self.tokens[i] for i in result_indices]
 
+    def is_token_start(self, pos: int) -> bool:
+        """Return True if pos is the first character of a layout token (not mid-token)."""
+        if pos <= 0:
+            return True
+        if pos >= len(self._token_index_at):
+            return False
+        return self._token_index_at[pos - 1] != self._token_index_at[pos]
+
 
 def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
     all_tokens: List[LayoutToken] = []
@@ -327,6 +335,51 @@ def _search_range(
     return max(0, last_match_end - 200), None
 
 
+def _pre_anchor_indices(
+    block_ranges: List[Tuple[int, int]]
+) -> Optional[Set[int]]:
+    """Return indices of non-anchor blocks tightly preceding the first anchor.
+
+    Returns None when there are no anchor blocks at all (caller should label
+    every block unconditionally).  Otherwise walks backward from the block
+    just before the first anchor; stops when the gap exceeds
+    _MAX_HAYSTACK_GAP_TO_FILL.  The result covers DOI-prefix segments
+    ("10", ".", "1128", "/") that precede a longer segment but should still
+    be labeled.
+    """
+    first_anchor_idx = next(
+        (i for i, (bs, be) in enumerate(block_ranges) if be - bs >= _MIN_ANCHOR_BLOCK_SIZE),
+        None,
+    )
+    if first_anchor_idx is None:
+        return None
+    result: Set[int] = set()
+    prev_start = block_ranges[first_anchor_idx][0]
+    for i in range(first_anchor_idx - 1, -1, -1):
+        _, be = block_ranges[i]
+        if prev_start - be <= _MAX_HAYSTACK_GAP_TO_FILL:
+            result.add(i)
+            prev_start = block_ranges[i][0]
+        else:
+            break
+    return result
+
+
+def _is_haystack_token_start(token_index: _TokenIndex, pos: int) -> bool:
+    """Return True if pos is the first character of a layout token in the haystack.
+
+    A SW matching block may start mid-token when a single character in the tail of
+    a longer token happens to match the first character of the needle (e.g. the
+    final 'o' of "introdução" matching needle "o crescimento...").  Including such
+    a block in the pre-anchor fill would cause tokens_in_range to return the preceding
+    token and overwrite its label — typically a heading label with a paragraph label.
+
+    DOI sub-tokens ("10", ".", "3233", "/") always occupy their own token and always
+    start at a token boundary, so they are unaffected by this guard.
+    """
+    return token_index.is_token_start(pos)
+
+
 def _label_tokens_for_blocks(
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -335,21 +388,40 @@ def _label_tokens_for_blocks(
     sub_field_name: Optional[str],
     instance_id: int,
 ) -> None:
-    """Label tokens using anchor+chain strategy (see module constants for rationale)."""
-    has_anchor = any(be - bs >= _MIN_ANCHOR_BLOCK_SIZE for bs, be in block_ranges)
+    """Label tokens using anchor+chain strategy (see module constants for rationale).
+
+    The forward anchor+chain is extended by a backward pre-anchor pass: non-anchor
+    blocks that immediately precede the first anchor (tight gap ≤ _MAX_HAYSTACK_GAP_TO_FILL)
+    are included, so dense sub-tokens like DOI segments ("10", ".", "1128", "/")
+    that appear before the first long segment are not silently dropped.  Blocks with
+    a larger gap before the first anchor (sidebar text, page headers) remain excluded.
+
+    Pre-anchor blocks that start mid-token (tail characters of a longer token
+    incidentally matching the needle start) are skipped to prevent overwriting labels
+    already set by earlier field values on that token.
+    """
+    pre_anchor = _pre_anchor_indices(block_ranges)
+    if pre_anchor is None:
+        # No anchor blocks at all: label everything so short field values are preserved.
+        for block_start, block_end in block_ranges:
+            for token in token_index.tokens_in_range(block_start, block_end):
+                annotated.set_token_label(token, field_name, sub_field_name, instance_id)
+        return
     prev_included_end: Optional[int] = None
-    for block_start, block_end in block_ranges:
+    for i, (block_start, block_end) in enumerate(block_ranges):
         is_anchor = (block_end - block_start) >= _MIN_ANCHOR_BLOCK_SIZE
         within_gap = (
             prev_included_end is not None
             and block_start - prev_included_end <= _MAX_HAYSTACK_GAP_TO_FILL
         )
-        if has_anchor and not is_anchor and not within_gap:
+        if not is_anchor and not within_gap and i not in pre_anchor:
             continue
-        fill_start = block_start
-        if within_gap:
-            assert prev_included_end is not None
-            fill_start = prev_included_end
+        if i in pre_anchor and not within_gap and not _is_haystack_token_start(
+            token_index, block_start
+        ):
+            continue
+        fill_start = prev_included_end if within_gap else block_start
+        assert fill_start is not None
         for token in token_index.tokens_in_range(fill_start, block_end):
             annotated.set_token_label(token, field_name, sub_field_name, instance_id)
         prev_included_end = block_end

@@ -262,3 +262,108 @@ class TestLayoutDocumentJatsAligner:
                 assert annotated.get_token_field(page2_by_text[word]) == JatsFieldNames.ABSTRACT, (
                     f"Page-2 abstract token '{word}' was not labelled"
                 )
+
+    def test_doi_sub_field_all_tokens_labeled(self):
+        # The DOI tokenises into many short sub-tokens (2, 1, 4, 1, 3, 8 chars each).
+        # Without special handling the anchor+chain filter only labels the last long
+        # segment; all preceding dot/slash/digit segments should also be labeled.
+        ref_text = 'Smith J 2020 Some paper J Virol 10.1128/mBio.00524-13'
+        doi = '10.1128/mBio.00524-13'
+        doc = _make_doc(ref_text)
+        fvs = [
+            _fv(ref_text, JatsFieldNames.REFERENCE),
+            _fv(doi, JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_DOI),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        doi_tokens = [
+            t for t in tokens
+            if annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_DOI
+        ]
+        doi_text = ''.join(t.text for t in doi_tokens)
+        assert doi_text == doi, (
+            f'Expected DOI tokens "{doi}", got "{doi_text}"'
+        )
+
+    def test_doi_sub_field_labeled_when_split_across_line_break(self):
+        # DOI split at end-of-line hyphen: PDF tokenizer emits a bare '-' as the last
+        # token of the first line, which the aligner strips (skip_tokens).  All
+        # prefix sub-tokens before the join must still receive the DOI sub-field label.
+        ref_text = 'Smith J 2020 Some paper JRS 10.3233/JRS-201017'
+        doi = '10.3233/JRS-201017'
+        # Two-line doc: first line ends with the hyphen, second line has the suffix.
+        doc = _make_doc('Smith J 2020 Some paper JRS 10.3233/JRS-', '201017')
+        fvs = [
+            _fv(ref_text, JatsFieldNames.REFERENCE),
+            _fv(doi, JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_DOI),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        doi_tokens = [
+            t for t in tokens
+            if annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_DOI
+        ]
+        doi_labeled_text = ''.join(t.text for t in doi_tokens)
+        # tokens_in_range re-includes the bare '-' skip token because it follows the
+        # labeled 'JRS' token, so the full hyphenated form is reconstructed.
+        expected_labeled = '10.3233/JRS-201017'
+        assert doi_labeled_text == expected_labeled, (
+            f'Expected labeled DOI text "{expected_labeled}", got "{doi_labeled_text}"'
+        )
+
+    def test_reference_spanning_page_break_does_not_label_headnote(self):
+        # A reference whose text spans a PDF page break has a running page header
+        # ("Journal Name 2025, 5:251") interleaved between its pre-break and
+        # post-break tokens.  The SW blocks for a reference sub-field (e.g. article
+        # title) that crosses the break must NOT cause the headnote line to be
+        # labeled as a reference field.
+        # The anchor+chain filter handles this: the large gap between the last
+        # pre-break anchor block and the headnote blocks means they are not
+        # within_gap and are not part of pre_anchor, so they are dropped.
+        headnote = 'Journal Name 2025, 5:251 Last updated: 13 MAR 2026'
+        ref_text = (
+            'Smith J 2020 Clogging phenomenon in continuous casting of steel '
+            'a review Steel Res Int 10.1002/srin.201800'
+        )
+        # Doc layout: ref pre-break line, then the running headnote, then ref suffix
+        doc = _make_doc(
+            'Smith J 2020 Clogging phenomenon in continuous casting of steel',
+            headnote,
+            'a review Steel Res Int 10.1002/srin.201800',
+        )
+        fvs = [
+            _fv(ref_text, JatsFieldNames.REFERENCE),
+            _fv(
+                'Clogging phenomenon in continuous casting of steel a review',
+                JatsFieldNames.REFERENCE,
+                JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,
+            ),
+        ]
+        annotated = self._align(doc, fvs)
+        lines = list(doc.iter_all_lines())
+        headnote_tokens = lines[1].tokens
+        labeled_headnote = [
+            t.text for t in headnote_tokens
+            if annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_ARTICLE_TITLE
+        ]
+        assert labeled_headnote == [], (
+            f'Headnote tokens incorrectly labeled as reference sub-field: {labeled_headnote}'
+        )
+
+    def test_heading_label_not_overwritten_by_paragraph_mid_token_match(self):
+        # Regression: SW alignment for a paragraph starting with "O crescimento"
+        # finds the last 'o' of "Introdução" (the heading token's tail char) as a
+        # spurious 2-char block ('o ').  Without the token-boundary guard in the
+        # pre-anchor pass, tokens_in_range on that block returns the "Introdução"
+        # heading token and overwrites its BODY_SECTION_TITLE label with
+        # BODY_SECTION_PARAGRAPH.
+        doc = _make_doc('Introdução', 'O crescimento da pandemia do Covid')
+        fvs = [
+            _fv('Introdução', JatsFieldNames.BODY_SECTION_TITLE),
+            _fv('O crescimento da pandemia do Covid', JatsFieldNames.BODY_SECTION_PARAGRAPH),
+        ]
+        annotated = self._align(doc, fvs)
+        heading_token = list(doc.iter_all_lines())[0].tokens[0]
+        assert annotated.get_token_field(heading_token) == JatsFieldNames.BODY_SECTION_TITLE, (
+            f'Heading token label was overwritten to {annotated.get_token_field(heading_token)!r}'
+        )
