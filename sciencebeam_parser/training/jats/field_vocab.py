@@ -115,7 +115,7 @@ CITATION_LABEL_BY_SUB_FIELD: Dict[str, str] = {
     JatsSubFieldNames.REFERENCE_ISSUE:           '<issue>',
     JatsSubFieldNames.REFERENCE_FPAGE:           '<pages>',
     JatsSubFieldNames.REFERENCE_LPAGE:           '<pages>',
-    JatsSubFieldNames.REFERENCE_DOI:             '<web>',
+    JatsSubFieldNames.REFERENCE_DOI:             '<idno>',
     JatsSubFieldNames.REFERENCE_PMID:            '<pubnum>',
     JatsSubFieldNames.REFERENCE_PMCID:           '<pubnum>',
     JatsSubFieldNames.REFERENCE_LABEL:           '<note>',
