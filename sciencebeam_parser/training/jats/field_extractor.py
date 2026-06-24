@@ -40,7 +40,7 @@ def _iter_sub_field_values(
 # Sub-field XPaths for references (relative to each <ref> element)
 _REFERENCE_SUB_FIELDS = [
     (JatsSubFieldNames.REFERENCE_LABEL,           './label'),
-    (JatsSubFieldNames.REFERENCE_AUTHOR,          './/string-name[not(ancestor::person-group)]'),
+    (JatsSubFieldNames.REFERENCE_AUTHOR,          './/person-group[@person-group-type="author"]'),
     (JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,   './/article-title'),
     (JatsSubFieldNames.REFERENCE_SOURCE,          './/source'),
     (JatsSubFieldNames.REFERENCE_YEAR,            './/year'),
