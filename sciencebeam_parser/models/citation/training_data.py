@@ -38,6 +38,7 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
     '<location>': ROOT_TRAINING_XML_ELEMENT_PATH + ['pubPlace'],
     '<tech>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="report"]'],
     '<web>': ROOT_TRAINING_XML_ELEMENT_PATH + ['ptr[@type="web"]'],
+    '<idno>': ROOT_TRAINING_XML_ELEMENT_PATH + ['idno[@type="DOI"]'],
     '<pubnum>': ROOT_TRAINING_XML_ELEMENT_PATH + ['idno'],
     '<note>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note']
 }

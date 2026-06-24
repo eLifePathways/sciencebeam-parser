@@ -50,6 +50,13 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
     '<institution>': ROOT_TRAINING_XML_ELEMENT_PATH + ['byline', 'affiliation']
 }
 
+# Each new <affiliation> (B- prefix) resets to the front level so it gets its own
+# <byline> wrapper rather than being appended to the author byline or a previous
+# affiliation byline.
+RESET_TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
+    '<affiliation>': ROOT_TRAINING_XML_ELEMENT_PATH,
+}
+
 
 class HeaderTeiTrainingDataGenerator(AbstractTeiTrainingDataGenerator):
     DEFAULT_TEI_FILENAME_SUFFIX = '.header.tei.xml'
@@ -60,6 +67,7 @@ class HeaderTeiTrainingDataGenerator(AbstractTeiTrainingDataGenerator):
             root_training_xml_element_path=ROOT_TRAINING_XML_ELEMENT_PATH,
             training_xml_element_path_by_label=TRAINING_XML_ELEMENT_PATH_BY_LABEL,
             element_maker=TEI_E,
+            reset_training_xml_element_path_by_label=RESET_TRAINING_XML_ELEMENT_PATH_BY_LABEL,
             default_tei_filename_suffix=(
                 HeaderTeiTrainingDataGenerator.DEFAULT_TEI_FILENAME_SUFFIX
             ),

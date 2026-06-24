@@ -57,6 +57,21 @@ GROBID_WAIT_INTERVAL ?= 5
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 BENCHMARK_CONCURRENCY ?= 0
 
+TRAINING_DATA_OUTPUT ?= data/generated-training-data
+TRAINING_DATA_NUM_WORKERS ?= 1
+# Per-document timeout in seconds; 0 disables. Skips outlier PDFs (e.g. 73-page, 38 MB)
+# that cause the JATS aligner to run for many minutes.
+TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
+
+# Source training data (PDF + JATS XML) downloaded from the HF dataset.
+# TRAINING_DATA_OUTPUT must point to a checkout of the output repo; create a
+# symlink at data/generated-training-data or override the variable directly:
+#   make dev-generate-training-data TRAINING_DATA_OUTPUT=/path/to/output-repo
+SOURCE_TRAINING_CONFIG ?= benchmarks/training-source.yml
+SOURCE_TRAINING_DATA ?= data/source-training-data
+SOURCE_TRAINING_MODE ?= smoke
+SOURCE_TRAINING_SPLIT ?= train
+
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
 SHOW_CORPUS ?= biorxiv
@@ -268,6 +283,32 @@ dev-benchmark-with-baselines:
 		--runs benchmarks/runs \
 		--parser-url $(BENCHMARK_PARSER_URL) \
 		--concurrency $(BENCHMARK_CONCURRENCY) \
+		$(ARGS)
+
+
+dev-fetch-training-source:
+	$(PYTHON) -m benchmarks.fetch_training_source_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--mode $(SOURCE_TRAINING_MODE) \
+		--split $(SOURCE_TRAINING_SPLIT) \
+		--output-path $(SOURCE_TRAINING_DATA)
+
+
+dev-generate-training-data:
+	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
+		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
+		echo "       Clone the output repo and symlink it to data/generated-training-data,"; \
+		echo "       or pass TRAINING_DATA_OUTPUT=/path/to/repo on the command line."; \
+		exit 1; }
+	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
+	$(PYTHON) -m benchmarks.generate_training_data_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--source-data $(SOURCE_TRAINING_DATA) \
+		--output-path $(TRAINING_DATA_OUTPUT) \
+		--split $(SOURCE_TRAINING_SPLIT) \
+		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
+		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
+		--debug \
 		$(ARGS)
 
 
