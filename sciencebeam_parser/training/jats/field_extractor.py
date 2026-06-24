@@ -40,7 +40,6 @@ def _iter_sub_field_values(
 # Sub-field XPaths for references (relative to each <ref> element)
 _REFERENCE_SUB_FIELDS = [
     (JatsSubFieldNames.REFERENCE_LABEL,           './label'),
-    (JatsSubFieldNames.REFERENCE_AUTHOR,          './/person-group[@person-group-type="author"]'),
     (JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,   './/article-title'),
     (JatsSubFieldNames.REFERENCE_SOURCE,          './/source'),
     (JatsSubFieldNames.REFERENCE_YEAR,            './/year'),
@@ -70,6 +69,28 @@ _AFF_SUB_FIELDS = [
     (JatsSubFieldNames.AUTHOR_AFF_REGION,      './addr-line/named-content[@content-type="state"]'),
     (JatsSubFieldNames.AUTHOR_AFF_COUNTRY,     './country'),
 ]
+
+
+def _person_group_text(pg_el: etree._Element) -> str:
+    """Collect author name text and append 'et al.' when <etal/> is present."""
+    text = ' '.join(' '.join(pg_el.itertext()).split())
+    if pg_el.xpath('etal'):
+        text = (text + ' et al.').strip()
+    return text
+
+
+def _iter_reference_author_values(
+    ref_el: etree._Element,
+    field_name: str,
+) -> Iterator[JatsFieldValue]:
+    for pg_el in ref_el.xpath('.//person-group[@person-group-type="author"]'):
+        text = _person_group_text(pg_el)
+        if text:
+            yield JatsFieldValue(
+                text=text,
+                field_name=field_name,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+            )
 
 
 def _local_tag(el: etree._Element) -> str:
@@ -376,6 +397,7 @@ class JatsFieldExtractor:
             text = _element_text(ref_el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.REFERENCE)
+            yield from _iter_reference_author_values(ref_el, JatsFieldNames.REFERENCE)
             yield from _iter_sub_field_values(
                 ref_el, JatsFieldNames.REFERENCE, _REFERENCE_SUB_FIELDS
             )

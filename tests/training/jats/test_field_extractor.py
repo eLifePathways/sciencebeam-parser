@@ -260,6 +260,21 @@ class TestReference:
         assert 'Smith' in sub[0].text
         assert 'Jones' in sub[0].text
 
+    def test_reference_author_includes_et_al(self):
+        fvs = _field_values_for(
+            '<article><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<person-group person-group-type="author">'
+            '<name><surname>Smith</surname><given-names>A</given-names></name>'
+            '<etal/>'
+            '</person-group>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.REFERENCE_AUTHOR]
+        assert len(sub) == 1
+        assert sub[0].text == 'Smith A et al.'
+
     def test_extracts_reference_article_title_subfield(self):
         fvs = _field_values_for(
             '<article><back><ref-list>'
