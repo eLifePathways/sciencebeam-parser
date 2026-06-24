@@ -265,6 +265,45 @@ class TestReference:
         sub = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.REFERENCE_YEAR]
         assert sub[0].text == '2020'
 
+    def test_extracts_reference_doi_subfield(self):
+        fvs = _field_values_for(
+            '<article><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<pub-id pub-id-type="doi">10.1234/test</pub-id>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.REFERENCE_DOI]
+        assert len(sub) == 1
+        assert sub[0].text == '10.1234/test'
+
+    def test_extracts_reference_web_subfield_for_url_ext_link(self):
+        fvs = _field_values_for(
+            '<article xmlns:xlink="http://www.w3.org/1999/xlink"><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<ext-link ext-link-type="uri"'
+            ' xlink:href="http://www.doi.org/10.5281/zenodo.6647010">'
+            'http://www.doi.org/10.5281/zenodo.6647010'
+            '</ext-link>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.REFERENCE_WEB]
+        assert len(sub) == 1
+        assert sub[0].text == 'http://www.doi.org/10.5281/zenodo.6647010'
+
+    def test_reference_web_ignores_reference_source_ext_link(self):
+        fvs = _field_values_for(
+            '<article xmlns:xlink="http://www.w3.org/1999/xlink"><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<ext-link ext-link-type="uri"'
+            ' xlink:href="https://example.com/paper">Reference Source</ext-link>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.REFERENCE_WEB]
+        assert len(sub) == 0
+
 
 class TestBodySections:
     def test_extracts_body_section_title(self):

@@ -53,6 +53,8 @@ _REFERENCE_SUB_FIELDS = [
     (JatsSubFieldNames.REFERENCE_DOI,             './/pub-id[@pub-id-type="doi"]'),
     (JatsSubFieldNames.REFERENCE_PMID,            './/pub-id[@pub-id-type="pmid"]'),
     (JatsSubFieldNames.REFERENCE_PMCID,           './/pub-id[@pub-id-type="pmcid"]'),
+    (JatsSubFieldNames.REFERENCE_WEB,
+     './/ext-link[@ext-link-type="uri"][starts-with(normalize-space(.), "http")]'),
 ]
 
 # Sub-field XPaths for affiliations (relative to each aff element)

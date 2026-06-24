@@ -41,6 +41,7 @@ class JatsSubFieldNames:
     REFERENCE_DOI = 'reference-doi'
     REFERENCE_PMID = 'reference-pmid'
     REFERENCE_PMCID = 'reference-pmcid'
+    REFERENCE_WEB = 'reference-web'
     REFERENCE_LABEL = 'reference-label'
     REFERENCE_PUBLISHER_NAME = 'reference-publisher-name'
     REFERENCE_PUBLISHER_LOC = 'reference-publisher-loc'
@@ -118,6 +119,7 @@ CITATION_LABEL_BY_SUB_FIELD: Dict[str, str] = {
     JatsSubFieldNames.REFERENCE_DOI:             '<idno>',
     JatsSubFieldNames.REFERENCE_PMID:            '<pubnum>',
     JatsSubFieldNames.REFERENCE_PMCID:           '<pubnum>',
+    JatsSubFieldNames.REFERENCE_WEB:             '<web>',
     JatsSubFieldNames.REFERENCE_LABEL:           '<note>',
     JatsSubFieldNames.REFERENCE_PUBLISHER_NAME:  '<publisher>',
     JatsSubFieldNames.REFERENCE_PUBLISHER_LOC:   '<location>',
