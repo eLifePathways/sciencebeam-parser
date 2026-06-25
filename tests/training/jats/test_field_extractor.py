@@ -244,6 +244,43 @@ class TestReference:
         assert len(refs) >= 1
         assert 'A Study' in refs[0].text
 
+    def test_extracts_reference_author_subfield(self):
+        fvs = _field_values_for(
+            '<article><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<person-group person-group-type="author">'
+            '<name><surname>Smith</surname><given-names>A</given-names></name>'
+            '<name><surname>Jones</surname><given-names>B C</given-names></name>'
+            '</person-group>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.REFERENCE_AUTHOR]
+        assert len(sub) == 2
+        assert sub[0].text == 'Smith A'
+        assert sub[1].text == 'Jones B C'
+        # fallback_text is set to surname only for per-name author matching fallback
+        assert sub[0].fallback_text == 'Smith'
+        assert sub[1].fallback_text == 'Jones'
+
+    def test_reference_author_includes_et_al(self):
+        fvs = _field_values_for(
+            '<article><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<person-group person-group-type="author">'
+            '<name><surname>Smith</surname><given-names>A</given-names></name>'
+            '<etal/>'
+            '</person-group>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = [v for v in fvs if v.sub_field_name == JatsSubFieldNames.REFERENCE_AUTHOR]
+        assert len(sub) == 2
+        assert sub[0].text == 'Smith A'
+        assert sub[1].text == 'et al.'
+        # et al. has no surname fallback
+        assert sub[1].fallback_text is None
+
     def test_extracts_reference_article_title_subfield(self):
         fvs = _field_values_for(
             '<article><back><ref-list>'

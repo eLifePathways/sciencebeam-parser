@@ -14,6 +14,7 @@ class JatsFieldValue:
     text: str
     field_name: str
     sub_field_name: Optional[str] = None
+    fallback_text: Optional[str] = None
 
 
 def _element_text(el: etree._Element) -> str:
@@ -40,7 +41,6 @@ def _iter_sub_field_values(
 # Sub-field XPaths for references (relative to each <ref> element)
 _REFERENCE_SUB_FIELDS = [
     (JatsSubFieldNames.REFERENCE_LABEL,           './label'),
-    (JatsSubFieldNames.REFERENCE_AUTHOR,          './/string-name[not(ancestor::person-group)]'),
     (JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,   './/article-title'),
     (JatsSubFieldNames.REFERENCE_SOURCE,          './/source'),
     (JatsSubFieldNames.REFERENCE_YEAR,            './/year'),
@@ -70,6 +70,41 @@ _AFF_SUB_FIELDS = [
     (JatsSubFieldNames.AUTHOR_AFF_REGION,      './addr-line/named-content[@content-type="state"]'),
     (JatsSubFieldNames.AUTHOR_AFF_COUNTRY,     './country'),
 ]
+
+
+def _iter_reference_author_values(
+    ref_el: etree._Element,
+    field_name: str,
+) -> Iterator[JatsFieldValue]:
+    """Yield one JatsFieldValue per <name> in each author person-group, then
+    'et al.' if <etal/> is present.  Per-name emission lets the aligner
+    match each author independently, so a JATS/PDF format mismatch on one
+    name (e.g. given-names abbreviation style) cannot cut off the next name.
+
+    Each name value carries a fallback_text set to just the surname, so the
+    aligner can retry with surname-only matching when the full JATS name text
+    (e.g. 'Maier BE') does not match the PDF representation ('MAIER, B. F.').
+    """
+    for pg_el in ref_el.xpath('.//person-group[@person-group-type="author"]'):
+        for name_el in pg_el.xpath('name'):
+            text = _element_text(name_el)
+            if not text:
+                continue
+            surname_el = name_el.find('surname')
+            raw_surname = (surname_el.text or '').strip() if surname_el is not None else ''
+            fallback = raw_surname if raw_surname and raw_surname != text else None
+            yield JatsFieldValue(
+                text=text,
+                field_name=field_name,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text=fallback,
+            )
+        if pg_el.xpath('etal'):
+            yield JatsFieldValue(
+                text='et al.',
+                field_name=field_name,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+            )
 
 
 def _local_tag(el: etree._Element) -> str:
@@ -376,6 +411,7 @@ class JatsFieldExtractor:
             text = _element_text(ref_el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.REFERENCE)
+            yield from _iter_reference_author_values(ref_el, JatsFieldNames.REFERENCE)
             yield from _iter_sub_field_values(
                 ref_el, JatsFieldNames.REFERENCE, _REFERENCE_SUB_FIELDS
             )
