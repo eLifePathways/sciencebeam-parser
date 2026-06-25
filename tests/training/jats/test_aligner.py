@@ -7,6 +7,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPage,
 )
 from sciencebeam_parser.training.jats.aligner import AlignmentConfig, LayoutDocumentJatsAligner
+from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
 
@@ -20,7 +21,7 @@ def _fv(text: str, field: str = JatsFieldNames.BODY_SECTION_TITLE, sub: Optional
     return JatsFieldValue(text=text, field_name=field, sub_field_name=sub)
 
 
-class TestLayoutDocumentJatsAligner:
+class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
     def _align(self, doc, field_values, **kwargs):
         config = AlignmentConfig(**kwargs) if kwargs else None
         return LayoutDocumentJatsAligner(config).align(doc, field_values)
@@ -366,4 +367,520 @@ class TestLayoutDocumentJatsAligner:
         heading_token = list(doc.iter_all_lines())[0].tokens[0]
         assert annotated.get_token_field(heading_token) == JatsFieldNames.BODY_SECTION_TITLE, (
             f'Heading token label was overwritten to {annotated.get_token_field(heading_token)!r}'
+        )
+
+    def test_per_name_authors_label_last_initial(self):
+        # Regression: when the whole person-group was one needle, a JATS/PDF
+        # format mismatch on an earlier name (e.g. "BE" vs "B. F.") could cause
+        # the SW to terminate before labelling the last author's given-name initial.
+        # Per-name emission gives each name its own independent SW run.
+        doc = _make_doc('MAIER, B. F.; BROCKMANN, D. Some title 2020')
+        fvs = [
+            _fv('MAIER, B. F.; BROCKMANN, D. Some title 2020', JatsFieldNames.REFERENCE),
+            _fv('Maier BE', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Brockmann D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        d_token = next(
+            (t for t in tokens if normalize_for_alignment(t.text) == 'd'),
+            None,
+        )
+        assert d_token is not None, 'No token matching "D" found in document'
+        assert annotated.get_token_sub_field(d_token) == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            f'"D." token sub-field was {annotated.get_token_sub_field(d_token)!r}, '
+            'expected REFERENCE_AUTHOR'
+        )
+
+    def test_trailing_period_after_last_initial_is_labeled(self):
+        # The PDF tokeniser splits 'D.' into two tokens 'D' and '.'.
+        # The period is not in the JATS text, so it must be attached by the
+        # trailing-period pass rather than by SW.
+        doc = _make_doc('BROCKMANN, D. Some title 2020')
+        fvs = [
+            _fv('BROCKMANN, D. Some title 2020', JatsFieldNames.REFERENCE),
+            _fv('Brockmann D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        # '.' immediately after 'D' should be REFERENCE_AUTHOR
+        d_idx = next(
+            i for i, t in enumerate(tokens) if normalize_for_alignment(t.text) == 'd'
+        )
+        period_token = tokens[d_idx + 1]
+        assert period_token.text == '.', 'Expected period token after D'
+        assert annotated.get_token_sub_field(period_token) == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            f'Period after D should be REFERENCE_AUTHOR, got '
+            f'{annotated.get_token_sub_field(period_token)!r}'
+        )
+
+    def test_gap_fill_merges_per_name_author_spans(self):
+        # Between two per-name author matches, separator tokens (comma, semicolon,
+        # initials with periods) should be filled in as REFERENCE_AUTHOR so that
+        # all author tokens form a single <author> element.
+        doc = _make_doc('Smith A. B.; Jones C. D. Some title 2020')
+        fvs = [
+            _fv('Smith A. B.; Jones C. D. Some title 2020', JatsFieldNames.REFERENCE),
+            _fv('Smith AB', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Jones CD', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        # Every token up to and including the final 'D.' of Jones should be REFERENCE_AUTHOR
+        smith_idx = next(i for i, t in enumerate(tokens) if t.text == 'Smith')
+        jones_idx = next(i for i, t in enumerate(tokens) if t.text == 'Jones')
+        # Tokens between Smith and Jones (exclusive) are separator/initial tokens
+        between = tokens[smith_idx + 1: jones_idx]
+        assert len(between) > 0
+        assert all(
+            annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_AUTHOR
+            for t in between
+        ), 'Gap tokens between Smith and Jones should all be REFERENCE_AUTHOR'
+
+    def test_surname_fallback_labels_initial_mismatch(self):
+        # When JATS given-names ('BE') do not match the PDF representation
+        # ('B. F.'), the aligner should fall back to surname-only matching so
+        # that at least the surname token is labeled REFERENCE_AUTHOR.  The gap
+        # fill then extends to cover the initials between the two surnames.
+        doc = _make_doc('MAIER, B. F.; BROCKMANN, D. Some title 2020')
+        fvs = [
+            _fv('MAIER, B. F.; BROCKMANN, D. Some title 2020', JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text='Maier BE',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text='Maier',
+            ),
+            _fv('Brockmann D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        maier_token = next(
+            (t for t in tokens if normalize_for_alignment(t.text) == 'maier'), None
+        )
+        assert maier_token is not None
+        assert annotated.get_token_sub_field(maier_token) == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            'MAIER token should be REFERENCE_AUTHOR via surname fallback'
+        )
+        # Gap fill should also label the tokens between MAIER and BROCKMANN
+        brockmann_idx = next(
+            i for i, t in enumerate(tokens)
+            if normalize_for_alignment(t.text) == 'brockmann'
+        )
+        maier_idx = next(
+            i for i, t in enumerate(tokens)
+            if normalize_for_alignment(t.text) == 'maier'
+        )
+        gap_tokens = tokens[maier_idx + 1: brockmann_idx]
+        assert all(
+            annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_AUTHOR
+            for t in gap_tokens
+        ), 'All tokens between MAIER and BROCKMANN should be REFERENCE_AUTHOR via gap fill'
+
+    def test_mid_token_within_gap_block_not_labeled(self):
+        # When SW matches a short block that starts mid-token (e.g. 't' inside 'staff'
+        # when searching for author initial 'T'), that token must NOT be labeled.
+        # Regression: GUARDIAN T matched second 'guardian' in 'guardian staff'
+        # because 't' inside 'staff' was closer (gap 1) than the real 'T' (gap 2).
+        doc = _make_doc('GUARDIAN, T. Guardian staff 2020')
+        fvs = [
+            _fv('GUARDIAN, T. Guardian staff 2020', JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text='Guardian T',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text='Guardian',
+            ),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        staff_token = next((t for t in tokens if t.text == 'staff'), None)
+        assert staff_token is not None
+        assert annotated.get_token_sub_field(staff_token) != JatsSubFieldNames.REFERENCE_AUTHOR, (
+            '"staff" token should not be labeled REFERENCE_AUTHOR (mid-word "t" matched by SW)'
+        )
+        # The correct first occurrence 'GUARDIAN' should be labeled
+        guardian_upper = next((t for t in tokens if t.text == 'GUARDIAN'), None)
+        assert guardian_upper is not None
+        assert annotated.get_token_sub_field(guardian_upper) == (
+            JatsSubFieldNames.REFERENCE_AUTHOR
+        ), '"GUARDIAN" (first occurrence) should be labeled via surname fallback'
+
+    def test_mid_token_fallback_extends_with_given_names(self):
+        # After the mid-token fallback selects the surname-only earlier match,
+        # the given-names initial should be found within the gap and also labeled.
+        # Regression: GUARDIAN, T. — only "GUARDIAN" was labeled, not ", T."
+        doc = _make_doc('GUARDIAN, T. Guardian staff 2020')
+        fvs = [
+            _fv('GUARDIAN, T. Guardian staff 2020', JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text='Guardian T',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text='Guardian',
+            ),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        t_token = next((t for t in tokens if t.text == 'T'), None)
+        assert t_token is not None
+        assert annotated.get_token_sub_field(t_token) == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            '"T" initial should be labeled REFERENCE_AUTHOR after surname fallback extension'
+        )
+
+    def test_author_gap_fill_bridges_unlabeled_period_before_et_al(self):
+        # When "Chowell G" and "et al." are separate needles, the "." between "G" and
+        # "et al." has no label from SW (parent bibl text skips "et al."). The gap fill
+        # must bridge it so all tokens become one <author> element.
+        doc = _make_doc('CHOWELL, G. et al. Phenomenological models 2016')
+        fvs = [
+            _fv('CHOWELL G Phenomenological models 2016', JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text='Chowell G',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text='Chowell',
+            ),
+            JatsFieldValue(
+                text='et al.',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+            ),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        period_after_g = tokens[3]  # 'CHOWELL'=0, ','=1, 'G'=2, '.'=3
+        assert period_after_g.text == '.', f'Expected "." got {period_after_g.text!r}'
+        sub = annotated.get_token_sub_field(period_after_g)
+        assert sub == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            '"." after G should be labeled via gap fill'
+        )
+
+    def test_author_gap_fill_bridges_middle_initial_before_et_al(self):
+        # "Vasconcelos GL" with "et al." as a separate needle — the ". L." between
+        # "G" and "et al." in the PDF are not in the JATS author text and must be
+        # bridged by gap fill so all tokens merge into one <author> element.
+        doc = _make_doc('VASCONCELOS, G. L. et al. Modelling fatality 2020')
+        fvs = [
+            _fv('VASCONCELOS GL Modelling fatality 2020', JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text='Vasconcelos GL',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text='Vasconcelos',
+            ),
+            JatsFieldValue(
+                text='et al.',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+            ),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        l_token = next((t for t in tokens if t.text == 'L'), None)
+        assert l_token is not None
+        assert annotated.get_token_sub_field(l_token) == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            '"L" middle initial should be labeled REFERENCE_AUTHOR via gap fill'
+        )
+
+    def test_reference_label_does_not_block_year(self):
+        # REFERENCE_LABEL "1" can match the "1" in "1987" if the citation number is
+        # outside the parent bibl match range.  The masking that REFERENCE_LABEL adds
+        # must not block REFERENCE_YEAR from labeling "1987".
+        doc = _make_doc('Lewis RW Roberts PM Applied Scientific Research 1987')
+        fvs = [
+            _fv('1 Lewis RW Roberts PM Applied Scientific Research 1987',
+                JatsFieldNames.REFERENCE),
+            _fv('1', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('Applied Scientific Research', JatsFieldNames.REFERENCE,
+                JatsSubFieldNames.REFERENCE_SOURCE),
+            _fv('1987', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        year_token = next((t for t in tokens if t.text == '1987'), None)
+        assert year_token is not None
+        sub = annotated.get_token_sub_field(year_token)
+        assert sub == JatsSubFieldNames.REFERENCE_YEAR, (
+            f'"1987" should be reference-year, got {sub!r}'
+        )
+
+    def test_regular_fallback_extends_with_given_names(self):
+        # When the full JATS name (e.g. "Hsieh Y-H") fails SW quality against the PDF
+        # (e.g. "HSIEH, Y.-H.") and falls back to surname only ("Hsieh"), the
+        # given-names initial from the original needle ("Y") should still be labeled.
+        doc = _make_doc('HSIEH, Y.-H. Richards model 2009')
+        fvs = [
+            _fv('HSIEH, Y.-H. Richards model 2009', JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text='Hsieh Y-H',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text='Hsieh',
+            ),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        y_token = next((t for t in tokens if t.text == 'Y'), None)
+        assert y_token is not None, 'Expected "Y" token in doc'
+        sub = annotated.get_token_sub_field(y_token)
+        assert sub == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            f'"Y" initial should be labeled REFERENCE_AUTHOR after fallback, got {sub!r}'
+        )
+
+    def test_masked_sub_field_prevents_duplicate_match(self):
+        # When the same author name appears twice in a reference, masking ensures
+        # the second sub-field value matches the second occurrence rather than
+        # re-matching the first (already-masked) position.
+        doc = _make_doc('Jones A and Jones A 2020')
+        fvs = [
+            _fv('Jones A and Jones A 2020', JatsFieldNames.REFERENCE),
+            _fv('Jones A', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Jones A', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        jones_tokens = [t for t in tokens if t.text == 'Jones']
+        assert len(jones_tokens) == 2, f'Expected 2 "Jones" tokens, got {len(jones_tokens)}'
+        assert all(
+            annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_AUTHOR
+            for t in jones_tokens
+        ), 'Both "Jones" tokens should be labeled REFERENCE_AUTHOR'
+
+    # ── Comprehensive reference sub-field tests ──────────────────────────────
+
+    def _ref_fv(self, text: str, sub: str, fallback: str = '') -> JatsFieldValue:
+        return JatsFieldValue(
+            text=text,
+            field_name=JatsFieldNames.REFERENCE,
+            sub_field_name=sub,
+            fallback_text=fallback or None,
+        )
+
+    def test_year_within_doi_not_relabeled_as_year(self):
+        # When the year digits only appear inside the DOI span, REFERENCE_YEAR must
+        # not claim them.  The DOI (longer needle) is processed first via longest-first
+        # ordering, its range is masked, and REFERENCE_YEAR finds nothing.
+        doc = _make_doc(
+            'Smith A article title A 10.12345/test.2001.56'
+        )
+        doi = '10.12345/test.2001.56'
+        fvs = [
+            _fv('Smith A article title A ' + doi, JatsFieldNames.REFERENCE),
+            self._ref_fv('Smith A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Smith'),
+            self._ref_fv('article title A', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+            self._ref_fv('2001', JatsSubFieldNames.REFERENCE_YEAR),
+            self._ref_fv(doi, JatsSubFieldNames.REFERENCE_DOI),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        sub_fields = [annotated.get_token_sub_field(t) for t in tokens]
+        assert JatsSubFieldNames.REFERENCE_YEAR not in sub_fields, (
+            'Year digits inside DOI should not be labeled as REFERENCE_YEAR'
+        )
+        doi_tokens = [
+            t.text for t in tokens
+            if annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_DOI
+        ]
+        assert doi_tokens, 'DOI should be labeled'
+
+    def test_all_sub_fields_labeled_in_full_reference(self):
+        # End-to-end: all standard sub-fields of a single reference are labeled.
+        # Year appears standalone; DOI does not contain the year digits.
+        doc = _make_doc(
+            'Smith A 1999 article title A source A 11 7 101 10.12345/test.paper.56'
+        )
+        fvs = [
+            _fv('Smith A 1999 article title A source A 11 7 101 10.12345/test.paper.56',
+                JatsFieldNames.REFERENCE),
+            self._ref_fv('Smith A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Smith'),
+            self._ref_fv('article title A', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+            self._ref_fv('source A', JatsSubFieldNames.REFERENCE_SOURCE),
+            self._ref_fv('1999', JatsSubFieldNames.REFERENCE_YEAR),
+            self._ref_fv('11', JatsSubFieldNames.REFERENCE_VOLUME),
+            self._ref_fv('7', JatsSubFieldNames.REFERENCE_ISSUE),
+            self._ref_fv('101', JatsSubFieldNames.REFERENCE_FPAGE),
+            self._ref_fv('10.12345/test.paper.56', JatsSubFieldNames.REFERENCE_DOI),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        by_text = {t.text: annotated.get_token_sub_field(t) for t in tokens}
+        assert by_text.get('Smith') == JatsSubFieldNames.REFERENCE_AUTHOR
+        assert by_text.get('1999') == JatsSubFieldNames.REFERENCE_YEAR
+        assert by_text.get('source') == JatsSubFieldNames.REFERENCE_SOURCE
+        assert by_text.get('11') == JatsSubFieldNames.REFERENCE_VOLUME
+        assert by_text.get('7') == JatsSubFieldNames.REFERENCE_ISSUE
+        assert by_text.get('101') == JatsSubFieldNames.REFERENCE_FPAGE
+
+    def test_multiple_authors_separated_by_comma_all_labeled(self):
+        # Both "Smith, A" and "Johnson, B" merged into one <author> span.
+        doc = _make_doc('Smith A, Johnson B 2001 article title A')
+        fvs = [
+            _fv('Smith A, Johnson B 2001 article title A', JatsFieldNames.REFERENCE),
+            self._ref_fv('Smith A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Smith'),
+            self._ref_fv('Johnson B', JatsSubFieldNames.REFERENCE_AUTHOR, 'Johnson'),
+            self._ref_fv('2001', JatsSubFieldNames.REFERENCE_YEAR),
+            self._ref_fv('article title A', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        by_text = {t.text: annotated.get_token_sub_field(t) for t in tokens}
+        assert by_text.get('Smith') == JatsSubFieldNames.REFERENCE_AUTHOR
+        assert by_text.get('Johnson') == JatsSubFieldNames.REFERENCE_AUTHOR
+        # year and title must not bleed into author span
+        assert by_text.get('2001') == JatsSubFieldNames.REFERENCE_YEAR
+
+    def test_dot_after_initial_included_in_author(self):
+        # "Smith, A." — the trailing dot after "A" should be labeled as author.
+        doc = _make_doc('Smith, A. 2001 article title A')
+        fvs = [
+            _fv('Smith, A. 2001 article title A', JatsFieldNames.REFERENCE),
+            self._ref_fv('Smith A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Smith'),
+            self._ref_fv('2001', JatsSubFieldNames.REFERENCE_YEAR),
+            self._ref_fv('article title A', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        dot_after_a = next(
+            (t for i, t in enumerate(tokens)
+             if t.text == '.' and i > 0 and tokens[i - 1].text == 'A'),
+            None,
+        )
+        assert dot_after_a is not None, 'Expected "." after "A" token'
+        sub = annotated.get_token_sub_field(dot_after_a)
+        assert sub == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            f'"." after initial should be REFERENCE_AUTHOR, got {sub!r}'
+        )
+
+    def test_et_al_included_in_author_span(self):
+        # "Smith A et al." — "et al." as separate needle merges with prior author.
+        doc = _make_doc('Smith A et al. article title A 2001')
+        fvs = [
+            _fv('Smith A et al. article title A 2001', JatsFieldNames.REFERENCE),
+            self._ref_fv('Smith A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Smith'),
+            self._ref_fv('et al.', JatsSubFieldNames.REFERENCE_AUTHOR),
+            self._ref_fv('article title A', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+            self._ref_fv('2001', JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        et_token = next((t for t in tokens if t.text == 'et'), None)
+        al_token = next((t for t in tokens if t.text == 'al'), None)
+        assert et_token is not None and al_token is not None
+        assert annotated.get_token_sub_field(et_token) == JatsSubFieldNames.REFERENCE_AUTHOR
+        assert annotated.get_token_sub_field(al_token) == JatsSubFieldNames.REFERENCE_AUTHOR
+
+    def test_multiple_references_no_cross_contamination(self):
+        # Sub-fields of reference 1 must not bleed into reference 2's tokens.
+        doc = _make_doc(
+            '1 Smith A title one source one 2001',
+            '2 Jones B title two source two 2002',
+        )
+        ref1_parent = '1 Smith A title one source one 2001'
+        ref2_parent = '2 Jones B title two source two 2002'
+        fvs = [
+            _fv(ref1_parent, JatsFieldNames.REFERENCE),
+            self._ref_fv('Smith A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Smith'),
+            self._ref_fv('title one', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+            self._ref_fv('source one', JatsSubFieldNames.REFERENCE_SOURCE),
+            self._ref_fv('2001', JatsSubFieldNames.REFERENCE_YEAR),
+            _fv(ref2_parent, JatsFieldNames.REFERENCE),
+            self._ref_fv('Jones B', JatsSubFieldNames.REFERENCE_AUTHOR, 'Jones'),
+            self._ref_fv('title two', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+            self._ref_fv('source two', JatsSubFieldNames.REFERENCE_SOURCE),
+            self._ref_fv('2002', JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        by_text = {t.text: annotated.get_token_sub_field(t) for t in tokens}
+        assert by_text.get('Smith') == JatsSubFieldNames.REFERENCE_AUTHOR
+        assert by_text.get('Jones') == JatsSubFieldNames.REFERENCE_AUTHOR
+        assert by_text.get('2001') == JatsSubFieldNames.REFERENCE_YEAR
+        assert by_text.get('2002') == JatsSubFieldNames.REFERENCE_YEAR
+
+    def test_label_with_same_digits_as_year_still_gets_year_labeled(self):
+        # If citation label is "2001" (same as year), length-ordering ensures the
+        # year sub-field wins its position (same length → original order preserved;
+        # both appear in different positions in the doc so no conflict).
+        doc = _make_doc('2001 Smith A title one 2001')
+        fvs = [
+            _fv('2001 Smith A title one 2001', JatsFieldNames.REFERENCE),
+            self._ref_fv('2001', JatsSubFieldNames.REFERENCE_LABEL),
+            self._ref_fv('Smith A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Smith'),
+            self._ref_fv('title one', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+            self._ref_fv('2001', JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        year_tokens = [t for t in tokens if t.text == '2001']
+        assert len(year_tokens) == 2
+        # At least one of the two "2001" tokens should be labeled as reference-year
+        sub_fields = [annotated.get_token_sub_field(t) for t in year_tokens]
+        assert JatsSubFieldNames.REFERENCE_YEAR in sub_fields, (
+            f'Expected reference-year in sub-fields, got {sub_fields}'
+        )
+
+    def test_varying_spaces_in_author_name_still_matched(self):
+        # The old tool's test: "Smith ,J .A ." (PDF format with odd spacing) should
+        # match JATS author "Smith J. A".
+        doc = _make_doc('Smith ,J .A . 2001 article title A')
+        fvs = [
+            _fv('Smith ,J .A . 2001 article title A', JatsFieldNames.REFERENCE),
+            self._ref_fv('Smith J. A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Smith'),
+            self._ref_fv('2001', JatsSubFieldNames.REFERENCE_YEAR),
+            self._ref_fv('article title A', JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        smith = next((t for t in tokens if t.text == 'Smith'), None)
+        assert smith is not None
+        assert annotated.get_token_sub_field(smith) == JatsSubFieldNames.REFERENCE_AUTHOR
+
+    def test_sub_field_longer_than_label_wins_position(self):
+        # Structural regression guard: REFERENCE_YEAR (4 chars) must be processed before
+        # REFERENCE_LABEL (1 char) regardless of their order in the JATS document.
+        # Explicit ordering of fvs puts LABEL before YEAR to verify the sort is applied.
+        doc = _make_doc('Smith A source A 1987')
+        fvs = [
+            _fv('1 Smith A source A 1987', JatsFieldNames.REFERENCE),
+            self._ref_fv('1', JatsSubFieldNames.REFERENCE_LABEL),   # 1 char — before year
+            self._ref_fv('source A', JatsSubFieldNames.REFERENCE_SOURCE),
+            self._ref_fv('1987', JatsSubFieldNames.REFERENCE_YEAR),  # 4 chars
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        year_tok = next((t for t in tokens if t.text == '1987'), None)
+        assert year_tok is not None
+        assert annotated.get_token_sub_field(year_tok) == JatsSubFieldNames.REFERENCE_YEAR, (
+            'REFERENCE_YEAR should win "1987" even when REFERENCE_LABEL is listed first in fvs'
+        )
+
+    def test_hyphenated_surname_labeled_when_jats_has_extra_given_name(self):
+        # When JATS has an extra given name absent from the PDF, the SW produces
+        # overlapping mid-token blocks; the within-gap guard must advance
+        # prev_included_end through them to keep the hyphen within gap reach.
+        doc = _make_doc('Braun, Lena Silva-Braun, Meier')
+        fvs = [
+            _fv('Braun, Lena Silva-Braun, Meier', JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text='Braun Lena Kristina Silva-Braun',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text='Braun',
+            ),
+            JatsFieldValue(
+                text='Meier',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text='Meier',
+            ),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        author_tokens = [
+            t.text for t in tokens
+            if annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_AUTHOR
+        ]
+        assert '-' in author_tokens, (
+            f'Hyphen in "Silva-Braun" must be REFERENCE_AUTHOR; got: {author_tokens}'
         )

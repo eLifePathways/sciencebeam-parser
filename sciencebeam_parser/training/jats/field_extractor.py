@@ -14,6 +14,7 @@ class JatsFieldValue:
     text: str
     field_name: str
     sub_field_name: Optional[str] = None
+    fallback_text: Optional[str] = None
 
 
 def _element_text(el: etree._Element) -> str:
@@ -71,23 +72,36 @@ _AFF_SUB_FIELDS = [
 ]
 
 
-def _person_group_text(pg_el: etree._Element) -> str:
-    """Collect author name text and append 'et al.' when <etal/> is present."""
-    text = ' '.join(' '.join(pg_el.itertext()).split())
-    if pg_el.xpath('etal'):
-        text = (text + ' et al.').strip()
-    return text
-
-
 def _iter_reference_author_values(
     ref_el: etree._Element,
     field_name: str,
 ) -> Iterator[JatsFieldValue]:
+    """Yield one JatsFieldValue per <name> in each author person-group, then
+    'et al.' if <etal/> is present.  Per-name emission lets the aligner
+    match each author independently, so a JATS/PDF format mismatch on one
+    name (e.g. given-names abbreviation style) cannot cut off the next name.
+
+    Each name value carries a fallback_text set to just the surname, so the
+    aligner can retry with surname-only matching when the full JATS name text
+    (e.g. 'Maier BE') does not match the PDF representation ('MAIER, B. F.').
+    """
     for pg_el in ref_el.xpath('.//person-group[@person-group-type="author"]'):
-        text = _person_group_text(pg_el)
-        if text:
+        for name_el in pg_el.xpath('name'):
+            text = _element_text(name_el)
+            if not text:
+                continue
+            surname_el = name_el.find('surname')
+            raw_surname = (surname_el.text or '').strip() if surname_el is not None else ''
+            fallback = raw_surname if raw_surname and raw_surname != text else None
             yield JatsFieldValue(
                 text=text,
+                field_name=field_name,
+                sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
+                fallback_text=fallback,
+            )
+        if pg_el.xpath('etal'):
+            yield JatsFieldValue(
+                text='et al.',
                 field_name=field_name,
                 sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
             )

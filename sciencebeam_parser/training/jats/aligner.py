@@ -7,7 +7,7 @@ from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
-from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
+from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 
 
@@ -108,6 +108,9 @@ _SUB_FIELD_PARENT_PRE_BUFFER = 0
 # fields are never silently dropped.
 _MIN_ANCHOR_BLOCK_SIZE = 5
 _MAX_HAYSTACK_GAP_TO_FILL = 3
+# Maximum number of non-author tokens permitted between two author spans before
+# the gap fill gives up.  Covers up to ~5 initials with periods and separators.
+_MAX_AUTHOR_GAP_TOKENS = 10
 
 # Type alias for the return value of _fuzzy_match_field_value:
 #   (abs_start, abs_end, [(block_start, block_end), ...])
@@ -230,6 +233,51 @@ def _match_quality(
     return matched / needle_len
 
 
+def _extend_match_for_needle_tail(
+    window: str,
+    needle: str,
+    window_start: int,
+    abs_a_end: int,
+    matched_blocks: List[Tuple[int, int, int]],
+    abs_block_ranges: List[Tuple[int, int]],
+) -> Tuple[int, List[Tuple[int, int]]]:
+    """Greedily extend the SW match to cover any unmatched needle suffix.
+
+    Smith-Waterman terminates when extending the match would not increase the
+    score.  A single-character suffix separated from the last block by one or
+    two gap characters produces a net-zero extension (e.g. two gap penalties
+    cancel one match bonus), so SW stops early.  This function scans forward
+    within _MAX_HAYSTACK_GAP_TO_FILL characters of the current match end for
+    the first unmatched needle character and appends consecutive matches as an
+    extra block, mirroring the pre-anchor fill logic on the other end.
+
+    Example: needle "brockmann d", match ends at "brockmann "; " , d" in the
+    haystack has "d" at gap 2, which is within the fill threshold.
+    """
+    last_needle_end = max(bi + size for _, bi, size in matched_blocks)
+    needle_tail = needle[last_needle_end:]
+    if not needle_tail:
+        return abs_a_end, abs_block_ranges
+
+    win_pos = abs_a_end - window_start
+    first_pos = window[win_pos: win_pos + _MAX_HAYSTACK_GAP_TO_FILL + 1].find(needle_tail[0])
+    if first_pos == -1:
+        return abs_a_end, abs_block_ranges
+
+    tail_start = win_pos + first_pos
+    match_count = 0
+    for tc in needle_tail:
+        if tail_start + match_count >= len(window) or window[tail_start + match_count] != tc:
+            break
+        match_count += 1
+
+    if not match_count:
+        return abs_a_end, abs_block_ranges
+
+    ext_start = window_start + tail_start
+    return ext_start + match_count, abs_block_ranges + [(ext_start, ext_start + match_count)]
+
+
 def _fuzzy_search_in_window(
     haystack: str,
     needle: str,
@@ -241,6 +289,9 @@ def _fuzzy_search_in_window(
 
     Returns (abs_start, abs_end, [(block_start, block_end), ...]) if quality >=
     threshold, else None.  Block ranges are in absolute haystack coordinates.
+    After the SW match, a greedy tail extension fills any unmatched needle
+    suffix whose first character falls within _MAX_HAYSTACK_GAP_TO_FILL chars
+    of the current match end (mirrors the pre-anchor fill on the trailing side).
     """
     window = haystack[window_start:window_end]
     sm = LocalSequenceMatcher(a=window, b=needle, scoring=_SCORING)
@@ -258,15 +309,45 @@ def _fuzzy_search_in_window(
         (ai + window_start, ai + size + window_start)
         for ai, _bi, size in matched_blocks
     ]
+    a_end, abs_block_ranges = _extend_match_for_needle_tail(
+        window, needle, window_start, a_end, matched_blocks, abs_block_ranges
+    )
     return a_start, a_end, abs_block_ranges
 
 
-def _fuzzy_match_field_value(
+def _get_unmasked_segments(
+    search_start: int,
+    search_end: int,
+    masked_ranges: List[Tuple[int, int]],
+) -> List[Tuple[int, int]]:
+    """Split [search_start, search_end) into segments that don't overlap masked_ranges.
+
+    Masked boundaries are hard: SW runs on each segment independently and
+    cannot produce a match that spans across a masked span.
+    """
+    clipped = sorted(
+        (max(m0, search_start), min(m1, search_end))
+        for m0, m1 in masked_ranges
+        if m0 < search_end and m1 > search_start
+    )
+    segments: List[Tuple[int, int]] = []
+    cur = search_start
+    for m_start, m_end in clipped:
+        if cur < m_start:
+            segments.append((cur, m_start))
+        cur = max(cur, m_end)
+    if cur < search_end:
+        segments.append((cur, search_end))
+    return segments
+
+
+def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
     token_index: _TokenIndex,
     field_value: JatsFieldValue,
     config: AlignmentConfig,
     search_start: int,
     search_end: Optional[int] = None,
+    masked_ranges: Optional[List[Tuple[int, int]]] = None,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -275,23 +356,29 @@ def _fuzzy_match_field_value(
     haystack = token_index.haystack
     hay_end = len(haystack) if search_end is None else min(search_end, len(haystack))
 
-    need_len = len(needle)
+    segments: List[Tuple[int, int]] = (
+        _get_unmasked_segments(search_start, hay_end, masked_ranges)
+        if masked_ranges
+        else [(search_start, hay_end)]
+    )
 
+    need_len = len(needle)
     window_size = max(
         _DEFAULT_MIN_WINDOW,
         min(config.max_window, need_len * _WINDOW_NEEDLE_MULTIPLIER),
     )
     stride = max(1, window_size - need_len - 20)
 
-    start = search_start
-    while start < hay_end:
-        end = min(start + window_size, hay_end)
-        result = _fuzzy_search_in_window(haystack, needle, start, end, config.threshold)
-        if result is not None:
-            return result
-        if end >= hay_end:
-            break
-        start += stride
+    for seg_start, seg_end in segments:
+        start = seg_start
+        while start < seg_end:
+            end = min(start + window_size, seg_end)
+            result = _fuzzy_search_in_window(haystack, needle, start, end, config.threshold)
+            if result is not None:
+                return result
+            if end >= seg_end:
+                break
+            start += stride
 
     return None
 
@@ -380,6 +467,73 @@ def _is_haystack_token_start(token_index: _TokenIndex, pos: int) -> bool:
     return token_index.is_token_start(pos)
 
 
+def _extend_match_with_given_names_tail(
+    match_range: '_MatchResult',
+    original_text: str,
+    fallback_text: str,
+    token_index: '_TokenIndex',
+) -> '_MatchResult':
+    """After a surname-fallback match, try to extend it with the given-names portion.
+
+    When the mid-token fallback preference selects the fallback (surname-only) match,
+    the given-names initial (e.g. "T" from "Guardian T") is missing.  This function
+    searches within _MAX_HAYSTACK_GAP_TO_FILL chars of the fallback match end for the
+    first character of the given-names and extends the block list if found.
+    """
+    given_tail = normalize_for_alignment(original_text)[
+        len(normalize_for_alignment(fallback_text)):
+    ].lstrip()
+    if not given_tail:
+        return match_range
+    fb_end = match_range[1]
+    win = token_index.haystack[fb_end: fb_end + _MAX_HAYSTACK_GAP_TO_FILL + 1 + len(given_tail)]
+    idx = win.find(given_tail[0])
+    if idx == -1 or idx > _MAX_HAYSTACK_GAP_TO_FILL:
+        return match_range
+    abs_tail_start = fb_end + idx
+    if not token_index.is_token_start(abs_tail_start):
+        return match_range
+    match_count = 0
+    for i, char in enumerate(given_tail):
+        if abs_tail_start + i >= len(token_index.haystack):
+            break
+        if token_index.haystack[abs_tail_start + i] != char:
+            break
+        match_count += 1
+    if not match_count:
+        return match_range
+    tail_end = abs_tail_start + match_count
+    return (
+        match_range[0],
+        max(match_range[1], tail_end),
+        match_range[2] + [(abs_tail_start, tail_end)],
+    )
+
+
+def _has_mid_token_within_gap_blocks(
+    block_ranges: List[Tuple[int, int]],
+    token_index: '_TokenIndex',
+) -> bool:
+    """Return True if block_ranges contains a non-anchor within-gap block that starts mid-token.
+
+    This identifies SW matches that achieved quality only by reaching into the middle of a
+    word — e.g. 't' inside 'staff' when searching for author initial 'T'.  When a fallback
+    needle (surname only) exists, the aligner can instead try the fallback to find the
+    correct earlier occurrence.
+    """
+    prev_end: Optional[int] = None
+    for block_start, block_end in block_ranges:
+        is_anchor = (block_end - block_start) >= _MIN_ANCHOR_BLOCK_SIZE
+        within_gap = (
+            prev_end is not None
+            and block_start - prev_end <= _MAX_HAYSTACK_GAP_TO_FILL
+        )
+        if within_gap and not is_anchor and not token_index.is_token_start(block_start):
+            return True
+        prev_end = block_end
+    return False
+
+
 def _label_tokens_for_blocks(
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -420,11 +574,133 @@ def _label_tokens_for_blocks(
             token_index, block_start
         ):
             continue
+        if within_gap and not is_anchor and not _is_haystack_token_start(
+            token_index, block_start
+        ):
+            prev_included_end = block_end
+            continue
         fill_start = prev_included_end if within_gap else block_start
         assert fill_start is not None
         for token in token_index.tokens_in_range(fill_start, block_end):
             annotated.set_token_label(token, field_name, sub_field_name, instance_id)
         prev_included_end = block_end
+
+
+def _fill_sub_field_gaps(
+    annotated: JatsAnnotatedLayoutDocument,
+    tokens: List[LayoutToken],
+    field_name: str,
+    sub_field_name: str,
+) -> None:
+    """Fill token gaps between consecutive sub_field spans of the same instance.
+
+    When author names are aligned per-name, separator tokens (commas, semicolons,
+    initials with periods) between consecutively matched names remain unlabeled.
+    This merges them into a single contiguous span so that all author tokens end
+    up in one <author> element — matching the grobid training data convention.
+
+    Gaps wider than _MAX_AUTHOR_GAP_TOKENS tokens are left unfilled to avoid
+    accidentally absorbing subsequent reference fields (title, year, etc.).
+    """
+    last_instance: Optional[int] = None
+    pending: List[LayoutToken] = []
+
+    for token in tokens:
+        entry = annotated.token_label_by_id.get(id(token))
+        if (
+            entry is not None
+            and entry[0] == field_name
+            and entry[1] == sub_field_name
+        ):
+            if last_instance is not None and entry[2] == last_instance and pending:
+                for pt in pending:
+                    annotated.set_token_label(pt, field_name, sub_field_name, last_instance)
+            last_instance = entry[2]
+            pending = []
+        elif last_instance is not None and (
+            entry is None
+            or (entry[0] == field_name and entry[2] == last_instance)
+        ):
+            # Include unlabeled tokens (entry is None) and same-instance reference tokens
+            # in the gap between two author spans.  The parent bibl SW match does not cover
+            # separators like "." between an initial and "et al.", so those tokens have no
+            # label at this point.
+            if len(pending) < _MAX_AUTHOR_GAP_TOKENS:
+                pending.append(token)
+            else:
+                last_instance = None
+                pending = []
+        else:
+            last_instance = None
+            pending = []
+
+
+def _attach_sub_field_trailing_periods(
+    annotated: JatsAnnotatedLayoutDocument,
+    tokens: List[LayoutToken],
+    field_name: str,
+    sub_field_name: str,
+) -> None:
+    """Relabel a bare '.' token that immediately follows a sub_field-labeled token.
+
+    The PDF tokeniser splits 'D.' into 'D' and '.'.  The period is not in the
+    JATS text, so SW and gap-fill logic miss it.  This pass attaches such periods,
+    mirroring reference_annotator.get_suffix_extended_token_tags in the old tool.
+    """
+    last_was_sub = False
+    last_instance = 0
+
+    for token in tokens:
+        entry = annotated.token_label_by_id.get(id(token))
+        if (
+            entry is not None
+            and entry[0] == field_name
+            and entry[1] == sub_field_name
+        ):
+            last_was_sub = True
+            last_instance = entry[2]
+        elif (
+            last_was_sub
+            and entry is not None
+            and entry[0] == field_name
+            and normalize_for_alignment(token.text or '') == '.'
+        ):
+            annotated.set_token_label(token, field_name, sub_field_name, last_instance)
+        else:
+            last_was_sub = False
+
+
+def _sort_reference_sub_fields_by_length(
+    field_values: List[JatsFieldValue],
+) -> List[JatsFieldValue]:
+    """Within each reference's sub-field group, sort by descending normalized-needle length.
+
+    Processing longer needles first means a short REFERENCE_LABEL "1" cannot claim a
+    position that REFERENCE_YEAR "1987" should own: the year matches and masks first, so
+    the label either lands on the true citation number or fails gracefully.  Authors and
+    other sub-fields follow the same rule — within each group the longest needle wins the
+    best position, and shorter needles fill remaining unmasked positions.
+    """
+    result: List[JatsFieldValue] = []
+    pending: List[JatsFieldValue] = []
+
+    def _flush() -> None:
+        if pending:
+            pending.sort(
+                key=lambda fv: len(normalize_for_alignment(fv.text)),
+                reverse=True,
+            )
+            result.extend(pending)
+            pending.clear()
+
+    for fv in field_values:
+        if fv.sub_field_name is None:
+            _flush()
+            result.append(fv)
+        else:
+            pending.append(fv)
+    _flush()
+    return result
 
 
 class LayoutDocumentJatsAligner:
@@ -433,7 +709,7 @@ class LayoutDocumentJatsAligner:
     def __init__(self, config: Optional[AlignmentConfig] = None) -> None:
         self.config = config or AlignmentConfig()
 
-    def align(  # pylint: disable=too-many-locals,too-many-branches
+    def align(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
         self,
         layout_document: LayoutDocument,
         field_values: List[JatsFieldValue],
@@ -441,6 +717,11 @@ class LayoutDocumentJatsAligner:
         annotated = JatsAnnotatedLayoutDocument(layout_document=layout_document)
         if not field_values:
             return annotated
+
+        # Within each reference, longer sub-field needles are matched first.
+        # This prevents short needles (e.g. REFERENCE_LABEL "1") from claiming a
+        # position that a longer needle (e.g. REFERENCE_YEAR "1987") should own.
+        field_values = _sort_reference_sub_fields_by_length(field_values)
 
         token_index = _build_token_index(layout_document)
         if not token_index.haystack:
@@ -456,6 +737,9 @@ class LayoutDocumentJatsAligner:
         missed_by_field: Dict[str, int] = {}
         matched_count = 0
         instance_by_field: Dict[str, int] = {}
+        # Per-parent masked ranges: reset each time a new main-field match is
+        # established so that sub-fields of one parent don't bleed into the next.
+        sub_field_masked_ranges: Dict[str, List[Tuple[int, int]]] = {}
 
         for fv in field_values:
             search_start, search_end = _search_range(
@@ -463,10 +747,45 @@ class LayoutDocumentJatsAligner:
                 front_matter_end, keywords_floor, reference_floor,
                 parent_match_by_field,
             )
+            masked = (
+                sub_field_masked_ranges.get(fv.field_name)
+                if fv.sub_field_name is not None
+                else None
+            )
             match_range = _fuzzy_match_field_value(
                 token_index, fv, self.config,
                 search_start=search_start, search_end=search_end,
+                masked_ranges=masked,
             )
+            # If primary match relied on a mid-token within-gap block (e.g. 't'
+            # inside 'staff' matching the initial 'T' in "Guardian T"), the SW
+            # found a false-positive at a later occurrence.  Try the fallback
+            # (surname only) which ignores the ambiguous initial; if it lands
+            # earlier, prefer it.
+            if (
+                match_range is not None
+                and fv.sub_field_name is not None
+                and fv.fallback_text
+                and _has_mid_token_within_gap_blocks(match_range[2], token_index)
+            ):
+                _fallback_fv = JatsFieldValue(
+                    text=fv.fallback_text,
+                    field_name=fv.field_name,
+                    sub_field_name=fv.sub_field_name,
+                )
+                _earlier_match = _fuzzy_match_field_value(
+                    token_index, _fallback_fv, self.config,
+                    search_start=search_start, search_end=search_end,
+                    masked_ranges=masked,
+                )
+                if _earlier_match is not None and _earlier_match[0] < match_range[0]:
+                    match_range = _earlier_match
+                    # Extend surname-only fallback match with given-names initial
+                    # (e.g. "T" from "Guardian T") found within gap of surname end.
+                    assert fv.fallback_text is not None
+                    match_range = _extend_match_with_given_names_tail(
+                        match_range, fv.text, fv.fallback_text, token_index,
+                    )
             # Front-matter region constraint is soft: if a field value (e.g. an
             # affiliation that appears near the end of the paper) is not found
             # within the preferred region, fall back to a global search.  Sub-field
@@ -491,6 +810,25 @@ class LayoutDocumentJatsAligner:
                     token_index, fv, self.config,
                     search_start=body_floor, search_end=None,
                 )
+            # Sub-field fallback: retry with fallback_text (e.g. surname only)
+            # when the primary JATS name text does not match the PDF text.
+            if match_range is None and fv.sub_field_name is not None and fv.fallback_text:
+                fallback_fv = JatsFieldValue(
+                    text=fv.fallback_text,
+                    field_name=fv.field_name,
+                    sub_field_name=fv.sub_field_name,
+                )
+                match_range = _fuzzy_match_field_value(
+                    token_index, fallback_fv, self.config,
+                    search_start=search_start, search_end=search_end,
+                    masked_ranges=masked,
+                )
+                if match_range is not None:
+                    # Extend surname-only match with given-names initial from
+                    # the original needle (e.g. "Y.-H." after "HSIEH").
+                    match_range = _extend_match_with_given_names_tail(
+                        match_range, fv.text, fv.fallback_text, token_index,
+                    )
             if match_range is None:
                 if fv.sub_field_name is None:
                     missed_by_field[fv.field_name] = (
@@ -515,14 +853,32 @@ class LayoutDocumentJatsAligner:
                 reference_floor = max(reference_floor, a_end)
             if fv.sub_field_name is None:
                 parent_match_by_field[fv.field_name] = (a_start, a_end)
+                sub_field_masked_ranges[fv.field_name] = []
                 instance_by_field[fv.field_name] = (
                     instance_by_field.get(fv.field_name, 0) + 1
+                )
+            else:
+                sub_field_masked_ranges.setdefault(fv.field_name, []).append(
+                    (a_start, a_end)
                 )
             instance_id = instance_by_field.get(fv.field_name, 0)
             _label_tokens_for_blocks(
                 annotated, token_index, block_ranges,
                 fv.field_name, fv.sub_field_name, instance_id,
             )
+
+        # Merge per-name REFERENCE_AUTHOR spans into a single <author> element.
+        # Separator tokens (commas, semicolons, initials with periods) between
+        # consecutively matched names remain unlabeled after per-name SW; these
+        # two passes fill the gaps and attach trailing periods on abbreviations.
+        _fill_sub_field_gaps(
+            annotated, token_index.tokens,
+            JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR,
+        )
+        _attach_sub_field_trailing_periods(
+            annotated, token_index.tokens,
+            JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR,
+        )
 
         total = len(field_values)
         if missed_by_field:
