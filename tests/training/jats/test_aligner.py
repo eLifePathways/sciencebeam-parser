@@ -727,6 +727,21 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         assert by_text.get('200') == JatsSubFieldNames.REFERENCE_LPAGE
         assert by_text.get('2020') != JatsSubFieldNames.REFERENCE_LPAGE
 
+    def test_exact_sw_match_preferred_over_earlier_gap_match(self):
+        # Needle "2020b" gap-matches "2020" (quality 0.8) before the exact "2020b".
+        # The exact contiguous match must win even though it appears later.
+        doc = _make_doc('Author A 2020 title source 2020b')
+        fvs = [
+            _fv('Author A 2020 title source 2020b', JatsFieldNames.REFERENCE),
+            self._ref_fv('Author A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Author'),
+            self._ref_fv('2020b', JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        by_text = {t.text: annotated.get_token_sub_field(t) for t in tokens}
+        assert by_text.get('2020b') == JatsSubFieldNames.REFERENCE_YEAR
+        assert by_text.get('2020') != JatsSubFieldNames.REFERENCE_YEAR
+
     def test_multiple_authors_separated_by_comma_all_labeled(self):
         # Both "Smith, A" and "Johnson, B" merged into one <author> span.
         doc = _make_doc('Smith A, Johnson B 2001 article title A')

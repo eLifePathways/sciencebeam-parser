@@ -363,6 +363,12 @@ def _is_pure_number(text: str) -> bool:
     return bool(re.fullmatch(r'\d+', text))
 
 
+def _is_exact_sw_match(result: _MatchResult, needle_len: int) -> bool:
+    """True when SW found the needle as one contiguous block (no gaps)."""
+    _, _, blocks = result
+    return len(blocks) == 1 and (blocks[0][1] - blocks[0][0]) == needle_len
+
+
 def _exact_number_match(
     token_index: _TokenIndex,
     needle: str,
@@ -416,18 +422,22 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
     )
     stride = max(1, window_size - need_len - 20)
 
+    gap_match: Optional[_MatchResult] = None
     for seg_start, seg_end in segments:
         start = seg_start
         while start < seg_end:
             end = min(start + window_size, seg_end)
             result = _fuzzy_search_in_window(haystack, needle, start, end, config.threshold)
             if result is not None:
-                return result
+                if _is_exact_sw_match(result, need_len):
+                    return result
+                if gap_match is None:
+                    gap_match = result
             if end >= seg_end:
                 break
             start += stride
 
-    return None
+    return gap_match
 
 
 def _search_range(
