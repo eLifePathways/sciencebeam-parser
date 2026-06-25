@@ -712,6 +712,21 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         assert by_text.get('7') == JatsSubFieldNames.REFERENCE_ISSUE
         assert by_text.get('101') == JatsSubFieldNames.REFERENCE_FPAGE
 
+    def test_page_number_not_matched_inside_year(self):
+        # "200" (lpage) must match the exact token "200", not the "200" inside "2020".
+        doc = _make_doc('Author A 181-200, acesso em 2020')
+        fvs = [
+            _fv('Author A 181-200, acesso em 2020', JatsFieldNames.REFERENCE),
+            self._ref_fv('Author A', JatsSubFieldNames.REFERENCE_AUTHOR, 'Author'),
+            self._ref_fv('181', JatsSubFieldNames.REFERENCE_FPAGE),
+            self._ref_fv('200', JatsSubFieldNames.REFERENCE_LPAGE),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        by_text = {t.text: annotated.get_token_sub_field(t) for t in tokens}
+        assert by_text.get('200') == JatsSubFieldNames.REFERENCE_LPAGE
+        assert by_text.get('2020') != JatsSubFieldNames.REFERENCE_LPAGE
+
     def test_multiple_authors_separated_by_comma_all_labeled(self):
         # Both "Smith, A" and "Johnson, B" merged into one <author> span.
         doc = _make_doc('Smith A, Johnson B 2001 article title A')

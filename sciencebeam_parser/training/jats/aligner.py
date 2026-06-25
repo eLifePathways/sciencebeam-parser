@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
@@ -198,6 +199,23 @@ class _TokenIndex:
             return False
         return self._token_index_at[pos - 1] != self._token_index_at[pos]
 
+    def is_in_token(self, pos: int) -> bool:
+        """Return True if pos is within a token (not a space between tokens)."""
+        if pos < 0 or pos >= len(self._token_index_at):
+            return False
+        return self._token_index_at[pos] != _NO_TOKEN_INDEX
+
+    def is_token_boundary_after(self, pos: int) -> bool:
+        """Return True if the character at pos is the last in its token (or pos is past end)."""
+        if pos >= len(self._token_index_at):
+            return True
+        if not self.is_in_token(pos):
+            return True
+        next_pos = pos + 1
+        if next_pos >= len(self._token_index_at):
+            return True
+        return self._token_index_at[pos] != self._token_index_at[next_pos]
+
 
 def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
     all_tokens: List[LayoutToken] = []
@@ -341,6 +359,32 @@ def _get_unmasked_segments(
     return segments
 
 
+def _is_pure_number(text: str) -> bool:
+    return bool(re.fullmatch(r'\d+', text))
+
+
+def _exact_number_match(
+    token_index: _TokenIndex,
+    needle: str,
+    segments: List[Tuple[int, int]],
+) -> Optional[_MatchResult]:
+    haystack = token_index.haystack
+    needle_len = len(needle)
+    for seg_start, seg_end in segments:
+        pos = seg_start
+        while pos <= seg_end - needle_len:
+            idx = haystack.find(needle, pos, seg_end)
+            if idx == -1:
+                break
+            end = idx + needle_len
+            if (token_index.is_in_token(idx)
+                    and token_index.is_token_start(idx)
+                    and token_index.is_token_boundary_after(end - 1)):
+                return idx, end, [(idx, end)]
+            pos = idx + 1
+    return None
+
+
 def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
     token_index: _TokenIndex,
     field_value: JatsFieldValue,
@@ -361,6 +405,9 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
         if masked_ranges
         else [(search_start, hay_end)]
     )
+
+    if _is_pure_number(needle):
+        return _exact_number_match(token_index, needle, segments)
 
     need_len = len(needle)
     window_size = max(
