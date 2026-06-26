@@ -118,6 +118,13 @@ _MAX_AUTHOR_GAP_TOKENS = 10
 #   (abs_start, abs_end, [(block_start, block_end), ...])
 _MatchResult = Tuple[int, int, List[Tuple[int, int]]]
 
+# When a parent REFERENCE match fails at the primary threshold (0.8), retry at this
+# lower value.  JATS author initials may be concatenated ("CA") while the PDF expands
+# them ("C. A."), and institutional refs can omit boilerplate text that pads the needle
+# without appearing in the PDF reference list.  Keeping this above 0.5 is enough to
+# reject genuinely absent references while recovering these near-threshold cases.
+_REFERENCE_PARENT_MIN_THRESHOLD = 0.65
+
 
 @dataclass
 class AlignmentConfig:
@@ -966,6 +973,27 @@ class LayoutDocumentJatsAligner:
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config,
                     search_start=body_floor, search_end=None,
+                )
+            # Parent REFERENCE fallback: retry with a relaxed threshold when the
+            # full-text parent match just misses 0.8.  JATS may concatenate initials
+            # ("CA") or order publisher/place differently from the PDF reference list,
+            # reducing quality without indicating a wrong match.  Only applied to
+            # parent matches (sub_field_name is None) of the REFERENCE field so that
+            # sub-field containment and other fields keep the stricter threshold.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                and fv.field_name in _REFERENCE_FIELDS
+                and _REFERENCE_PARENT_MIN_THRESHOLD < self.config.threshold
+            ):
+                _relaxed_config = AlignmentConfig(
+                    threshold=_REFERENCE_PARENT_MIN_THRESHOLD,
+                    max_window=self.config.max_window,
+                )
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, _relaxed_config,
+                    search_start=search_start, search_end=search_end,
+                    masked_ranges=masked,
                 )
             # Sub-field fallback: retry with fallback_text (e.g. surname only)
             # when the primary JATS name text does not match the PDF text.

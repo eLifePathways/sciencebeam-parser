@@ -21,6 +21,31 @@ def _element_text(el: etree._Element) -> str:
     return ' '.join(' '.join(el.itertext()).split())
 
 
+def _reference_parent_text(ref_el: etree._Element) -> str:
+    """Extract parent-match text for a <ref>, skipping <pub-id> subtrees.
+
+    PMID/PMCID values appear in JATS <pub-id> elements but rarely in PDF
+    reference lists.  Including them in the SW needle inflates its length
+    without adding matched characters, pushing match quality below the 0.8
+    threshold and causing the entire reference to go unmatched.  DOI text is
+    also excluded here — it is handled by the dedicated REFERENCE_DOI
+    sub-field match, so the parent only needs the bibliographic prose.
+    """
+    parts: List[str] = []
+    for child in ref_el.iter():
+        tag = child.tag
+        local = tag.split('}', 1)[1] if isinstance(tag, str) and tag.startswith('{') else tag
+        if local == 'pub-id':
+            if child.tail:
+                parts.append(child.tail)
+            continue
+        if child.text:
+            parts.append(child.text)
+        if child is not ref_el and child.tail:
+            parts.append(child.tail)
+    return ' '.join(' '.join(parts).split())
+
+
 def _iter_sub_field_values(
     parent_el: etree._Element,
     field_name: str,
@@ -408,7 +433,7 @@ class JatsFieldExtractor:
                 )
 
         for ref_el in root.xpath('back/ref-list/ref'):
-            text = _element_text(ref_el)
+            text = _reference_parent_text(ref_el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.REFERENCE)
             yield from _iter_reference_author_values(ref_el, JatsFieldNames.REFERENCE)
