@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import logging
 import re
 from dataclasses import dataclass
@@ -363,6 +364,100 @@ def _is_pure_number(text: str) -> bool:
     return bool(re.fullmatch(r'\d+', text))
 
 
+_BRACKET_LABEL_RE = re.compile(r'^(\[)(.+)(\])$|^(\()(.+)(\))$')
+
+# How far before the first segment start to search for the bracket label inner content.
+# Needed because the parent SW match may start at "]" (skipping the preceding "[" and
+# the inner number), so the sub-field search range starts after the label tokens.
+_BRACKET_LABEL_BACK_BUFFER = 10
+
+
+def _find_inner_token(
+    token_index: _TokenIndex,
+    inner: str,
+    segments: List[Tuple[int, int]],
+) -> Optional[_MatchResult]:
+    """Locate `inner` as a standalone token within segments; pure-number fast path."""
+    if _is_pure_number(inner):
+        return _exact_number_match(token_index, inner, segments)
+    haystack = token_index.haystack
+    inner_len = len(inner)
+    for seg_start, seg_end in segments:
+        pos = seg_start
+        while pos <= seg_end - inner_len:
+            idx = haystack.find(inner, pos, seg_end)
+            if idx == -1:
+                break
+            end = idx + inner_len
+            if (token_index.is_in_token(idx)
+                    and token_index.is_token_start(idx)
+                    and token_index.is_token_boundary_after(end - 1)):
+                return (idx, end, [(idx, end)])
+            pos = idx + 1
+    return None
+
+
+def _try_bracket_label_match(  # pylint: disable=too-many-locals
+    token_index: _TokenIndex,
+    needle: str,
+    segments: List[Tuple[int, int]],
+) -> Optional[_MatchResult]:
+    """Match bracket-style labels like [1] or (2) whose tokens are split by the PDF tokeniser.
+
+    When the PDF tokeniser produces three tokens "[", "1", "]" the haystack has
+    "[ 1 ]".  Smith-Waterman cannot match "[1]" across those spaces because the
+    scoring library's traceback terminates early at gap moves, yielding quality < threshold.
+
+    This function strips the outer brackets, matches the inner content, then extends
+    the match range to cover the bracket tokens that immediately surround the hit.
+    The search extends _BRACKET_LABEL_BACK_BUFFER chars before the first segment start
+    because the parent SW match often begins at "]", leaving "[" and the number before
+    its first matched block (and thus outside the nominal search range).
+    """
+    m = _BRACKET_LABEL_RE.fullmatch(needle)
+    if not m:
+        return None
+    if m.group(1):
+        open_b, inner, close_b = m.group(1), m.group(2), m.group(3)
+    else:
+        open_b, inner, close_b = m.group(4), m.group(5), m.group(6)
+
+    extended = (
+        [(max(0, segments[0][0] - _BRACKET_LABEL_BACK_BUFFER), segments[0][1])]
+        + list(segments[1:])
+    ) if segments else segments
+
+    inner_match = _find_inner_token(token_index, inner, extended)
+    if inner_match is None:
+        return None
+
+    m_start, m_end, blocks = inner_match
+    haystack = token_index.haystack
+
+    # Extend to include adjacent opening bracket token (up to 2 chars before m_start).
+    new_start = m_start
+    new_blocks: List[Tuple[int, int]] = list(blocks)
+    for pos in range(max(0, m_start - 2), m_start):
+        if (haystack[pos] == open_b
+                and token_index.is_in_token(pos)
+                and token_index.is_token_start(pos)):
+            new_start = pos
+            new_blocks = [(pos, pos + 1)] + new_blocks
+            break
+
+    # Extend to include adjacent closing bracket token (up to 2 chars after m_end).
+    new_end = m_end
+    for pos in range(m_end, min(m_end + 2, len(haystack))):
+        if (haystack[pos] == close_b
+                and token_index.is_in_token(pos)
+                and token_index.is_token_start(pos)):
+            new_end = pos + 1
+            new_blocks = new_blocks + [(pos, pos + 1)]
+            break
+
+    return new_start, new_end, new_blocks
+
+
 def _is_exact_sw_match(result: _MatchResult, needle_len: int) -> bool:
     """True when SW found the needle as one contiguous block (no gaps)."""
     _, _, blocks = result
@@ -436,6 +531,11 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
             if end >= seg_end:
                 break
             start += stride
+
+    if gap_match is None:
+        bracket_match = _try_bracket_label_match(token_index, needle, segments)
+        if bracket_match is not None:
+            return bracket_match
 
     return gap_match
 

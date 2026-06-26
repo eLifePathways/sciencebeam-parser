@@ -1131,7 +1131,10 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                 )
             line_instance_id = line_first_instance_cache[line_id]
             if line_instance_id is None:
-                return None
+                # Gap-fill: a line with no annotated reference tokens (e.g. "DOI:"
+                # prefix before the URL) continues the current bibl rather than
+                # breaking out to listBibl level.
+                return '<reference>' if last_instance_id is not None else None
             if line_instance_id != last_instance_id and last_instance_id is not None:
                 last_instance_id = line_instance_id
                 return 'B-<reference>'

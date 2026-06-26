@@ -628,6 +628,65 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             f'"Y" initial should be labeled REFERENCE_AUTHOR after fallback, got {sub!r}'
         )
 
+    def test_bracket_label_tokens_are_labeled_reference_label(self):
+        # Reference labels like "[1]" tokenize as three separate tokens "[", "1", "]".
+        # The haystack has "[ 1 ]" with spaces; SW cannot match "[1]" contiguously.
+        # _try_bracket_label_match strips the brackets, finds "1" via exact match,
+        # then extends the range to include the adjacent bracket tokens.
+        doc = _make_doc(
+            '[ 1 ] Richards FA A flexible growth function 1959',
+            '[ 2 ] Jones B Another title 2020',
+        )
+        fvs = [
+            _fv('[1] Richards FA A flexible growth function 1959', JatsFieldNames.REFERENCE),
+            _fv('[1]', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('Richards FA', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('1959', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
+            _fv('[2] Jones B Another title 2020', JatsFieldNames.REFERENCE),
+            _fv('[2]', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('Jones B', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('2020', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        label_tokens = [
+            t for t in tokens
+            if annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_LABEL
+        ]
+        label_texts = [t.text for t in label_tokens]
+        assert label_texts == ['[', '1', ']', '[', '2', ']'], (
+            f'Expected 6 bracket label tokens, got {label_texts!r}'
+        )
+
+    def test_bracket_label_tokens_labeled_when_parent_starts_at_closing_bracket(self):
+        # The parent SW match for "[1] Richards..." often starts at "]" (position 4 in
+        # "[ 1 ] ...") because the SW can't match "[1]" across spaces and skips to "]".
+        # The REFERENCE_LABEL sub-field search must extend backward to find "[" and "1".
+        doc = _make_doc('[ 1 ] Richards FA long title here Journal 1999')
+        fvs = [
+            _fv(
+                '[1] Richards FA long title here Journal 1999',
+                JatsFieldNames.REFERENCE,
+            ),
+            _fv('[1]', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('long title here', JatsFieldNames.REFERENCE,
+                JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+            _fv('Journal', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_SOURCE),
+            _fv('1999', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        bracket_open = next((t for t in tokens if t.text == '['), None)
+        assert bracket_open is not None
+        assert annotated.get_token_sub_field(bracket_open) == JatsSubFieldNames.REFERENCE_LABEL, (
+            '"[" should be labeled REFERENCE_LABEL, not left unlabeled'
+        )
+        num_token = next((t for t in tokens if t.text == '1'), None)
+        assert num_token is not None
+        assert annotated.get_token_sub_field(num_token) == JatsSubFieldNames.REFERENCE_LABEL, (
+            '"1" should be labeled REFERENCE_LABEL'
+        )
+
     def test_masked_sub_field_prevents_duplicate_match(self):
         # When the same author name appears twice in a reference, masking ensures
         # the second sub-field value matches the second occurrence rather than

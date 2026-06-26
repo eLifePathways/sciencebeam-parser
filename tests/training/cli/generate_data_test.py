@@ -1019,6 +1019,37 @@ class TestReferenceSegmenterJatsLabelFn:
         for idx in range(1, len(line2.tokens)):
             assert label_fn(annotated, {}, _make_md(line2, idx)) == '<reference>'
 
+    def test_unannotated_line_between_references_is_gap_filled(self):
+        # "DOI:" may appear on a line by itself with no annotated reference tokens
+        # (JATS only stores the DOI value, not the "DOI:" prefix).  Returning None
+        # for that line would back the TEI writer up to listBibl level, creating a
+        # spurious <bibl> for the URL that follows.  The fix gap-fills to '<reference>'
+        # so "DOI:" stays inside the current bibl.
+        line1 = LayoutLine.for_text('Smith J 2020 A title DOI')
+        line_doi = LayoutLine.for_text('DOI:')          # no annotated tokens
+        line_url = LayoutLine.for_text('10.1234/abcd')
+        refs_doc = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock(lines=[line1, line_doi, line_url])
+        ])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=refs_doc)
+        for t in line1.tokens:
+            annotated.set_token_label(t, JatsFieldNames.REFERENCE, instance_id=1)
+        for t in line_url.tokens:
+            annotated.set_token_label(t, JatsFieldNames.REFERENCE, instance_id=1)
+        # line_doi tokens are intentionally unannotated
+
+        label_fn = ReferenceSegmenterModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+
+        # Advance through line1 tokens
+        for idx in range(len(line1.tokens)):
+            label_fn(annotated, {}, _make_md(line1, idx))
+        # "DOI:" line has no annotations → gap-fill returns '<reference>', not None
+        doi_label = label_fn(annotated, {}, _make_md(line_doi, 0))
+        assert doi_label == '<reference>', (
+            f'Unannotated line after a reference should gap-fill to <reference>, got {doi_label!r}'
+        )
+
 
 # ── CitationModelTrainingDataGenerator JATS path ──────────────────────────────
 
