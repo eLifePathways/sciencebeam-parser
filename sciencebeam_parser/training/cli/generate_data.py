@@ -146,6 +146,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             'Single-worker mode uses SIGALRM; multi-worker mode uses future timeout.'
         )
     )
+    parser.add_argument(
+        '--models',
+        type=str,
+        nargs='+',
+        default=None,
+        metavar='MODEL',
+        help=(
+            'Models to generate training data for. '
+            'If omitted, all models are generated. '
+            'Valid names: segmentation, header, affiliation-address, name-header, '
+            'fulltext, figure, table, reference-segmenter, citation, name-citation.'
+        )
+    )
     return parser.parse_args(argv)
 
 
@@ -405,6 +418,11 @@ def _apply_jats_labels_to_model_data_list(
 
 
 class AbstractModelTrainingDataGenerator(ABC):
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        pass
+
     def get_pre_file_path_suffix(self) -> str:
         return ''
 
@@ -551,6 +569,8 @@ class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenera
 
 
 class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'segmentation'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.segmentation_model
 
@@ -572,6 +592,8 @@ class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
 
 
 class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'header'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.header_model
 
@@ -639,6 +661,8 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
 
 
 class AffiliationAddressModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'affiliation-address'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.affiliation_address_model
 
@@ -696,6 +720,8 @@ class AffiliationAddressModelTrainingDataGenerator(AbstractDocumentModelTraining
 
 
 class NameHeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'name-header'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.name_header_model
 
@@ -750,6 +776,8 @@ class NameHeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGene
 
 
 class NameCitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'name-citation'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.name_citation_model
 
@@ -864,6 +892,8 @@ class NameCitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
 
 
 class FullTextModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'fulltext'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.fulltext_model
 
@@ -898,6 +928,8 @@ class FullTextModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
 
 
 class FigureModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'figure'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.figure_model
 
@@ -939,6 +971,8 @@ class FigureModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
 
 
 class TableModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'table'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.table_model
 
@@ -1030,6 +1064,8 @@ def _split_references_by_jats_instance(
 
 
 class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'reference-segmenter'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.reference_segmenter_model
 
@@ -1088,6 +1124,8 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
 
 
 class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
+    model_name = 'citation'
+
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.citation_model
 
@@ -1148,6 +1186,28 @@ class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
         ]
 
 
+def _select_generators(
+    enabled_models: Optional[frozenset],
+) -> List['AbstractModelTrainingDataGenerator']:
+    all_gens: List[AbstractModelTrainingDataGenerator] = [
+        SegmentationModelTrainingDataGenerator(),
+        HeaderModelTrainingDataGenerator(),
+        AffiliationAddressModelTrainingDataGenerator(),
+        NameHeaderModelTrainingDataGenerator(),
+        FullTextModelTrainingDataGenerator(),
+        FigureModelTrainingDataGenerator(),
+        TableModelTrainingDataGenerator(),
+        ReferenceSegmenterModelTrainingDataGenerator(),
+        CitationModelTrainingDataGenerator(),
+        NameCitationModelTrainingDataGenerator(),
+    ]
+    if enabled_models is None:
+        return all_gens
+    selected = [g for g in all_gens if g.model_name in enabled_models]
+    LOGGER.info('enabled models: %s', sorted(enabled_models))
+    return selected
+
+
 def _build_jats_annotations(
     layout_document: LayoutDocument,
     jats_xml_filename: str,
@@ -1174,6 +1234,7 @@ def generate_training_data_for_layout_document(
     use_directory_structure: bool,
     gzip_enabled: bool = False,
     jats_xml_filename: Optional[str] = None,
+    enabled_models: Optional[frozenset] = None,
 ):
     model_result_cache = ModelResultCache()
     jats_annotated: Optional[JatsAnnotatedLayoutDocument] = None
@@ -1199,19 +1260,7 @@ def generate_training_data_for_layout_document(
         jats_annotated_document=jats_annotated,
         jats_segmentation_labels=jats_seg_labels,
     )
-    training_data_generators = [
-        SegmentationModelTrainingDataGenerator(),
-        HeaderModelTrainingDataGenerator(),
-        AffiliationAddressModelTrainingDataGenerator(),
-        NameHeaderModelTrainingDataGenerator(),
-        FullTextModelTrainingDataGenerator(),
-        FigureModelTrainingDataGenerator(),
-        TableModelTrainingDataGenerator(),
-        ReferenceSegmenterModelTrainingDataGenerator(),
-        CitationModelTrainingDataGenerator(),
-        NameCitationModelTrainingDataGenerator()
-    ]
-    for training_data_generator in training_data_generators:
+    for training_data_generator in _select_generators(enabled_models):
         training_data_generator.generate_data_for_layout_document(
             layout_document=layout_document,
             document_context=document_context
@@ -1258,6 +1307,7 @@ def generate_training_data_for_source_filename(
     use_directory_structure: bool,
     gzip_enabled: bool,
     xml_file_list: Optional[Sequence[str]] = None,
+    enabled_models: Optional[frozenset] = None,
 ):
     LOGGER.debug('use_model: %r', use_model)
     layout_document = get_layout_document_for_source_filename(
@@ -1283,6 +1333,7 @@ def generate_training_data_for_source_filename(
         use_directory_structure=use_directory_structure,
         gzip_enabled=gzip_enabled,
         jats_xml_filename=jats_xml_filename,
+        enabled_models=enabled_models,
     )
 
 
@@ -1353,6 +1404,7 @@ def _worker_process(kwargs: dict) -> bool:
             use_directory_structure=kwargs['use_directory_structure'],
             gzip_enabled=kwargs['gzip_enabled'],
             xml_file_list=kwargs['xml_file_list'],
+            enabled_models=kwargs['enabled_models'],
         )
         return True
     except Exception:  # pylint: disable=broad-except
@@ -1385,6 +1437,7 @@ def _run_serial(
         'use_directory_structure': args.use_directory_structure,
         'gzip_enabled': args.gzip,
         'xml_file_list': xml_file_list,
+        'enabled_models': args.enabled_models,
     }
 
     if document_timeout == 0:
@@ -1445,6 +1498,7 @@ def _run_parallel_workers(
         'use_directory_structure': args.use_directory_structure,
         'gzip_enabled': args.gzip,
         'xml_file_list': xml_file_list,
+        'enabled_models': args.enabled_models,
     }
     # pylint: disable-next=consider-using-with
     pool = multiprocessing.Pool(num_workers, initializer=_worker_init)
@@ -1485,6 +1539,7 @@ def run(args: argparse.Namespace):
     if args.source_xml_path:
         xml_file_list = list(glob(args.source_xml_path))
         LOGGER.info('JATS XML files: %d', len(xml_file_list))
+    args.enabled_models = frozenset(args.models) if args.models else None
     # Note: creating the directory may not be necessary, but provides early feedback
     makedirs(output_path, exist_ok=True)
     total = len(source_file_list)
