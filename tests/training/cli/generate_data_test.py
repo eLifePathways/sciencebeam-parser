@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import logging
 import os
 import re
@@ -809,6 +810,49 @@ class TestSplitReferencesByJatsInstance:
         assert 'References' not in _doc_text(result[0])
         assert 'Smith' in _doc_text(result[0])
 
+    def test_splits_block_at_instance_boundary(self):
+        # Two references share one LayoutBlock (Burguete/Carvalho pattern):
+        # line 1 belongs to instance 1, line 2 belongs to instance 2.
+        # The block must be split so each reference gets its own sub-document.
+        line1 = LayoutLine.for_text('Burguete 2020 Title Journal')
+        line2 = LayoutLine.for_text('Carvalho 2019 Another Paper')
+        shared_block = LayoutBlock(lines=[line1, line2])
+        refs_doc = LayoutDocument(pages=[LayoutPage(blocks=[shared_block])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=refs_doc)
+        for token in line1.tokens:
+            annotated.set_token_label(token, JatsFieldNames.REFERENCE, instance_id=1)
+        for token in line2.tokens:
+            annotated.set_token_label(token, JatsFieldNames.REFERENCE, instance_id=2)
+
+        result = _split_references_by_jats_instance(refs_doc, annotated)
+
+        assert len(result) == 2
+        assert 'Burguete' in _doc_text(result[0])
+        assert 'Carvalho' not in _doc_text(result[0])
+        assert 'Carvalho' in _doc_text(result[1])
+        assert 'Burguete' not in _doc_text(result[1])
+
+    def test_excludes_headnote_lines_from_gap_fill(self):
+        # A page header that slipped into the references sub-document must not
+        # be included in any reference's sub-document.
+        ref1_block = LayoutBlock.for_text('Smith 2020 doi')
+        header_line = LayoutLine.for_text('Journal Name | Volume 1 | 2020')
+        header_block = LayoutBlock(lines=[header_line])
+        ref2_block = LayoutBlock.for_text('Jones 2019 Article')
+        refs_doc = LayoutDocument(
+            pages=[LayoutPage(blocks=[ref1_block, header_block, ref2_block])]
+        )
+        annotated = JatsAnnotatedLayoutDocument(layout_document=refs_doc)
+        _annotate_block_as_reference(ref1_block, annotated, instance_id=1)
+        _annotate_block_as_reference(ref2_block, annotated, instance_id=2)
+        jats_seg_labels = {id(header_line): '<headnote>'}
+
+        result = _split_references_by_jats_instance(refs_doc, annotated, jats_seg_labels)
+
+        assert len(result) == 2
+        assert 'Journal Name' not in _doc_text(result[0])
+        assert 'Journal Name' not in _doc_text(result[1])
+
 
 # ── ReferenceSegmenterModelTrainingDataGenerator JATS label fn ───────────────
 
@@ -863,9 +907,117 @@ class TestReferenceSegmenterJatsLabelFn:
         label_fn = ReferenceSegmenterModelTrainingDataGenerator().get_jats_label_fn()
         assert label_fn is not None
 
-        # All tokens on the line get '<label>' because at least one is REFERENCE_LABEL
-        for idx in range(len(line.tokens)):
-            assert label_fn(annotated, {}, _make_md(line, idx)) == '<label>'
+        # Only the REFERENCE_LABEL token itself gets '<label>'; the rest get '<reference>'
+        assert label_fn(annotated, {}, _make_md(line, 0)) == '<label>'
+        for idx in range(1, len(line.tokens)):
+            assert label_fn(annotated, {}, _make_md(line, idx)) == '<reference>'
+
+    def test_unlabeled_token_on_reference_line_gets_reference_not_label(self):
+        # "10. Author Name..." where "10." is REFERENCE_LABEL and the rest are plain REFERENCE.
+        # An additional unlabeled token on the same line should expand to '<reference>',
+        # NOT '<label>'.
+        line = LayoutLine.for_text('10. Author Name unlabeled')
+        refs_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=refs_doc)
+        annotated.set_token_label(
+            line.tokens[0], JatsFieldNames.REFERENCE,
+            sub_field_name=JatsSubFieldNames.REFERENCE_LABEL, instance_id=1,
+        )
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.REFERENCE, instance_id=1)
+        annotated.set_token_label(line.tokens[2], JatsFieldNames.REFERENCE, instance_id=1)
+        # tokens[3] ("unlabeled") has no annotation
+
+        label_fn = ReferenceSegmenterModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+
+        assert label_fn(annotated, {}, _make_md(line, 0)) == '<label>'      # "10."
+        assert label_fn(annotated, {}, _make_md(line, 1)) == '<reference>'  # "Author"
+        assert label_fn(annotated, {}, _make_md(line, 2)) == '<reference>'  # "Name"
+        assert label_fn(annotated, {}, _make_md(line, 3)) == '<reference>'  # "unlabeled" expanded
+
+    def test_plain_reference_transition_emits_b_prefix_for_bibl_boundary(self):
+        # When a plain <reference> token starts a new instance (no <label>),
+        # the label fn returns 'B-<reference>' so the TEI generator creates a new
+        # <bibl> without losing the token.
+        line1 = LayoutLine.for_text('Smith 2020')
+        line2 = LayoutLine.for_text('Doe 2019')
+        refs_doc = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock(lines=[line1, line2])
+        ])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=refs_doc)
+        for t in line1.tokens:
+            annotated.set_token_label(t, JatsFieldNames.REFERENCE, instance_id=1)
+        for t in line2.tokens:
+            annotated.set_token_label(t, JatsFieldNames.REFERENCE, instance_id=2)
+
+        label_fn = ReferenceSegmenterModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+
+        # All of line 1 → '<reference>' (first instance, no prior instance)
+        for idx in range(len(line1.tokens)):
+            assert label_fn(annotated, {}, _make_md(line1, idx)) == '<reference>'
+        # First token of line 2 → 'B-<reference>' (B-prefix creates new bibl)
+        assert label_fn(annotated, {}, _make_md(line2, 0)) == 'B-<reference>'
+        # Remaining tokens of line 2 → '<reference>' (same instance, no transition)
+        for idx in range(1, len(line2.tokens)):
+            assert label_fn(annotated, {}, _make_md(line2, idx)) == '<reference>'
+
+    def test_unlabeled_token_on_new_instance_line_emits_b_reference(self):
+        # "9. Moraes R." — "9." is unlabeled but "Moraes R." is annotated as instance 2.
+        # The label fn should emit 'B-<reference>' for "9." so it claims the whole line
+        # for the new bibl, rather than appending "9." to the previous bibl.
+        line1 = LayoutLine.for_text('https://some.url/paper')
+        line2 = LayoutLine.for_text('9. Moraes R. Title')
+        refs_doc = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock(lines=[line1, line2])
+        ])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=refs_doc)
+        for t in line1.tokens:
+            annotated.set_token_label(t, JatsFieldNames.REFERENCE, instance_id=1)
+        # "9." (line2.tokens[0]) is intentionally NOT annotated (unlabeled in JATS)
+        for t in line2.tokens[1:]:
+            annotated.set_token_label(t, JatsFieldNames.REFERENCE, instance_id=2)
+
+        label_fn = ReferenceSegmenterModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+
+        for idx in range(len(line1.tokens)):
+            label_fn(annotated, {}, _make_md(line1, idx))  # advance state
+        # "9." is unlabeled but its line's first annotated token is instance 2 → B-prefix
+        assert label_fn(annotated, {}, _make_md(line2, 0)) == 'B-<reference>'
+        # Remaining tokens (annotated as instance 2) → same instance, no transition
+        for idx in range(1, len(line2.tokens)):
+            assert label_fn(annotated, {}, _make_md(line2, idx)) == '<reference>'
+
+    def test_label_token_at_instance_transition_emits_b_label(self):
+        # When a REFERENCE_LABEL token starts a new instance the label fn returns
+        # 'B-<label>' so the reset mechanism (which fires only on B-prefix) creates a
+        # new <bibl> with the label text correctly placed inside it.
+        line1 = LayoutLine.for_text('Smith 2020')
+        line2 = LayoutLine.for_text('[2] Doe 2019')
+        refs_doc = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock(lines=[line1, line2])
+        ])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=refs_doc)
+        for t in line1.tokens:
+            annotated.set_token_label(t, JatsFieldNames.REFERENCE, instance_id=1)
+        annotated.set_token_label(
+            line2.tokens[0], JatsFieldNames.REFERENCE,
+            sub_field_name=JatsSubFieldNames.REFERENCE_LABEL, instance_id=2,
+        )
+        for t in line2.tokens[1:]:
+            annotated.set_token_label(t, JatsFieldNames.REFERENCE, instance_id=2)
+
+        label_fn = ReferenceSegmenterModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+
+        for idx in range(len(line1.tokens)):
+            label_fn(annotated, {}, _make_md(line1, idx))  # advance state
+        # REFERENCE_LABEL at instance transition → 'B-<label>' (triggers reset + new bibl)
+        assert label_fn(annotated, {}, _make_md(line2, 0)) == 'B-<label>'
+        # Remaining tokens of line 2 → '<reference>'
+        for idx in range(1, len(line2.tokens)):
+            assert label_fn(annotated, {}, _make_md(line2, idx)) == '<reference>'
 
 
 # ── CitationModelTrainingDataGenerator JATS path ──────────────────────────────
