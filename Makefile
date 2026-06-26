@@ -62,6 +62,8 @@ TRAINING_DATA_NUM_WORKERS ?= 1
 # Per-document timeout in seconds; 0 disables. Skips outlier PDFs (e.g. 73-page, 38 MB)
 # that cause the JATS aligner to run for many minutes.
 TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
+# Models to generate training data for (space-separated). Override to add more.
+TRAINING_DATA_MODELS ?= segmentation header affiliation-address reference-segmenter citation
 
 # Source training data (PDF + JATS XML) downloaded from the HF dataset.
 # TRAINING_DATA_OUTPUT must point to a checkout of the output repo; create a
@@ -308,6 +310,7 @@ dev-generate-training-data:
 		--split $(SOURCE_TRAINING_SPLIT) \
 		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
 		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
+		--models $(TRAINING_DATA_MODELS) \
 		--debug \
 		$(ARGS)
 
