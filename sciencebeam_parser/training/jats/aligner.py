@@ -88,9 +88,7 @@ _WINDOW_NEEDLE_MULTIPLIER = 6
 # matched range.  Keeps short sub-field values (e.g. "USA", "2020") from matching
 # identical text elsewhere in the document.
 _SUB_FIELD_PARENT_BUFFER = 200
-# How far before the parent match start to extend the sub-field search.  Labels like
-# "1." appear immediately before the parent text (which is JATS without the label), so
-# the parent SW match starts after them.  A small back-buffer re-includes them.
+# Pure-number labels precede the JATS parent text; this extends the search backward.
 _SUB_FIELD_PARENT_PRE_BUFFER = 20
 
 # Anchor+chain labelling strategy:
@@ -585,15 +583,11 @@ def _search_range(
     """Return (search_start, search_end) for fv given current position state."""
     if fv.sub_field_name is not None and fv.field_name in parent_match_by_field:
         p_start, p_end = parent_match_by_field[fv.field_name]
-        # Extend backward only for labels: the JATS parent text excludes the label
-        # ("1.", "2.", ...), so the parent match starts after it.  Other sub-fields
-        # (e.g. country) must stay strictly inside the parent range to avoid matching
-        # identical text in an earlier reference or affiliation.
-        pre = (
-            _SUB_FIELD_PARENT_PRE_BUFFER
-            if fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
-            else 0
+        is_pure_number_label = (
+            fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
+            and _is_pure_number(fv.text)
         )
+        pre = _SUB_FIELD_PARENT_PRE_BUFFER if is_pure_number_label else 0
         return max(0, p_start - pre), p_end + _SUB_FIELD_PARENT_BUFFER
     if fv.field_name in _BODY_CONTENT_FIELDS:
         return max(0, max(body_floor, body_content_end) - 200), None

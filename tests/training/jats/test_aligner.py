@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 from typing import Optional
 
 from sciencebeam_parser.document.layout_document import (
@@ -972,4 +973,75 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         ]
         assert '-' in author_tokens, (
             f'Hyphen in "Silva-Braun" must be REFERENCE_AUTHOR; got: {author_tokens}'
+        )
+
+    def test_pure_number_label_found_before_parent_match(self):
+        # JATS strips the numeric label from the parent reference text, so the SW
+        # match for the parent starts after the label token.  The pre-buffer extends the
+        # sub-field search just far enough back to reach "1" before "Smith".
+        doc = _make_doc('1. Smith J title here 2020')
+        fvs = [
+            _fv('Smith J title here 2020', JatsFieldNames.REFERENCE),
+            _fv('1', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('Smith J', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('2020', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        label_token = next((t for t in tokens if t.text == '1'), None)
+        assert label_token is not None, 'Expected "1" token in doc'
+        sub = annotated.get_token_sub_field(label_token)
+        assert sub == JatsSubFieldNames.REFERENCE_LABEL, (
+            f'"1" should be REFERENCE_LABEL; got {sub!r}'
+        )
+
+    def test_suffixed_label_not_false_matched_in_preceding_doi(self):
+        # Suffixed labels like "20-" are not pure numbers, so no pre-buffer is applied.
+        # Without this guard, "20" inside the parent text would also match the "20" inside
+        # a preceding DOI fragment like "2020-0248".
+        doc = _make_doc(
+            'Preceding ref doi 2020-0248',
+            '20- Kato T study title Stress Health 2015',
+        )
+        fvs = [
+            _fv('Preceding ref doi 2020-0248', JatsFieldNames.REFERENCE),
+            _fv('20- Kato T study title Stress Health 2015', JatsFieldNames.REFERENCE),
+            _fv('20-', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('Kato T', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        # "2020" from the first line must not be labeled as REFERENCE_LABEL
+        doi_2020 = next((t for t in tokens if t.text == '2020'), None)
+        assert doi_2020 is not None
+        assert annotated.get_token_sub_field(doi_2020) != JatsSubFieldNames.REFERENCE_LABEL, (
+            '"2020" in the preceding DOI must not be labeled REFERENCE_LABEL'
+        )
+        # "20" from the second line (the actual label start) must be labeled
+        label_tokens = [
+            t for t in tokens
+            if annotated.get_token_sub_field(t) == JatsSubFieldNames.REFERENCE_LABEL
+        ]
+        label_texts = [t.text for t in label_tokens]
+        assert '20' in label_texts, (
+            f'"20" on line 2 should be REFERENCE_LABEL; got {label_texts!r}'
+        )
+
+    def test_pure_number_label_found_with_extra_text_before_parent(self):
+        # When the JATS parent text begins at the publication name (e.g. "Emenda
+        # Constitucional..."), the label and the publisher name ("Brasil.") both sit
+        # before p_start — the gap can be ~14 chars.  The pre-buffer must cover it.
+        doc = _make_doc('17. Brasil. Title about health 2020')
+        fvs = [
+            _fv('Title about health 2020', JatsFieldNames.REFERENCE),
+            _fv('17', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('2020', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        label_token = next((t for t in tokens if t.text == '17'), None)
+        assert label_token is not None, 'Expected "17" token in doc'
+        sub = annotated.get_token_sub_field(label_token)
+        assert sub == JatsSubFieldNames.REFERENCE_LABEL, (
+            f'"17" should be REFERENCE_LABEL even when parent starts 14 chars later; got {sub!r}'
         )
