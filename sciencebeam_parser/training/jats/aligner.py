@@ -121,9 +121,10 @@ _MatchResult = Tuple[int, int, List[Tuple[int, int]]]
 # When a parent REFERENCE match fails at the primary threshold (0.8), retry at this
 # lower value.  JATS author initials may be concatenated ("CA") while the PDF expands
 # them ("C. A."), and institutional refs can omit boilerplate text that pads the needle
-# without appearing in the PDF reference list.  Keeping this above 0.5 is enough to
-# reject genuinely absent references while recovering these near-threshold cases.
-_REFERENCE_PARENT_MIN_THRESHOLD = 0.65
+# without appearing in the PDF reference list.  0.55 is sufficient to capture truncated
+# PDF references (e.g. a ref whose year/volume/URL are absent, giving quality ~0.60)
+# while rejecting genuinely absent ones.
+_REFERENCE_PARENT_MIN_THRESHOLD = 0.55
 
 
 @dataclass
