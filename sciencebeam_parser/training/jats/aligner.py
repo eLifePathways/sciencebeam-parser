@@ -90,6 +90,10 @@ _WINDOW_NEEDLE_MULTIPLIER = 6
 _SUB_FIELD_PARENT_BUFFER = 200
 # Pure-number labels precede the JATS parent text; this extends the search backward.
 _SUB_FIELD_PARENT_PRE_BUFFER = 20
+# Digit-prefix labels (e.g. "1-") may also precede the parent match start because SW
+# aligns the parent by skipping the label digit, leaving p_start at the suffix char.
+# A small buffer is enough — single-digit + space = 2 chars.
+_SUB_FIELD_LABEL_DIGIT_PRE_BUFFER = 3
 
 # Anchor+chain labelling strategy:
 # Smith-Waterman produces many tiny (1–4 char) matching blocks while traversing
@@ -374,6 +378,7 @@ def _is_pure_number(text: str) -> bool:
 
 
 _BRACKET_LABEL_RE = re.compile(r'^(\[)(.+)(\])$|^(\()(.+)(\))$')
+_LABEL_DIGIT_PREFIX_RE = re.compile(r'^(\d+)(.+)$')
 
 # How far before the first segment start to search for the bracket label inner content.
 # Needed because the parent SW match may start at "]" (skipping the preceding "[" and
@@ -465,6 +470,31 @@ def _try_bracket_label_match(  # pylint: disable=too-many-locals
             break
 
     return new_start, new_end, new_blocks
+
+
+def _try_numeric_prefix_label_match(
+    token_index: _TokenIndex,
+    label_needle: str,
+    segments: List[Tuple[int, int]],
+) -> Optional[_MatchResult]:
+    """Match labels like "1-" when SW fails because the PDF has "1 -" (space between
+    digit and suffix).  Finds the digit prefix as an exact token via _exact_number_match
+    then extends the match to cover the immediately adjacent suffix characters."""
+    m = _LABEL_DIGIT_PREFIX_RE.match(label_needle)
+    if not m:
+        return None
+    numeric_part, suffix = m.group(1), m.group(2)
+    result = _exact_number_match(token_index, numeric_part, segments)
+    if result is None:
+        return None
+    num_start, num_end, num_blocks = result
+    haystack = token_index.haystack
+    pos = num_end
+    while pos < len(haystack) and haystack[pos] == ' ':
+        pos += 1
+    if haystack[pos:pos + len(suffix)] == suffix:
+        return num_start, pos + len(suffix), num_blocks + [(pos, pos + len(suffix))]
+    return result
 
 
 def _is_exact_sw_match(result: _MatchResult, needle_len: int) -> bool:
@@ -567,6 +597,11 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
         if bracket_match is not None:
             return bracket_match
 
+    if gap_match is None and field_value.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL:
+        prefix_match = _try_numeric_prefix_label_match(token_index, needle, segments)
+        if prefix_match is not None:
+            return prefix_match
+
     return gap_match
 
 
@@ -587,7 +622,15 @@ def _search_range(
             fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
             and _is_pure_number(fv.text)
         )
-        pre = _SUB_FIELD_PARENT_PRE_BUFFER if is_pure_number_label else 0
+        if is_pure_number_label:
+            pre = _SUB_FIELD_PARENT_PRE_BUFFER
+        elif (
+            fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
+            and bool(_LABEL_DIGIT_PREFIX_RE.match(fv.text))
+        ):
+            pre = _SUB_FIELD_LABEL_DIGIT_PRE_BUFFER
+        else:
+            pre = 0
         return max(0, p_start - pre), p_end + _SUB_FIELD_PARENT_BUFFER
     if fv.field_name in _BODY_CONTENT_FIELDS:
         return max(0, max(body_floor, body_content_end) - 200), None

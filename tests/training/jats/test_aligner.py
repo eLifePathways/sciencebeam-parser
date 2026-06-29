@@ -1045,3 +1045,39 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         assert sub == JatsSubFieldNames.REFERENCE_LABEL, (
             f'"17" should be REFERENCE_LABEL even when parent starts 14 chars later; got {sub!r}'
         )
+
+    def test_single_digit_suffixed_label_found(self):
+        # Labels like "1-" fail SW matching because the PDF tokeniser produces "1 - …"
+        # (space between digit and dash), giving quality=0.5 < threshold.  The parent SW
+        # match also skips "1", so p_start lands at "-" (position 2).  The small
+        # digit-prefix pre-buffer and _try_numeric_prefix_label_match together fix this.
+        doc = _make_doc(
+            '1- Adebisi YA Sex workers should not be forgotten Am J Trop Med Hyg 2020',
+            '2- Li Q Early transmission dynamics N Engl J Med 2020',
+        )
+        fvs = [
+            _fv(
+                '1- Adebisi YA Sex workers should not be forgotten Am J Trop Med Hyg 2020',
+                JatsFieldNames.REFERENCE,
+            ),
+            _fv('1-', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('Adebisi YA', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('2020', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
+            _fv(
+                '2- Li Q Early transmission dynamics N Engl J Med 2020',
+                JatsFieldNames.REFERENCE,
+            ),
+            _fv('2-', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv('Li Q', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('2020', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        ref1_label = next(t for t in tokens if t.text == '1')
+        assert annotated.get_token_sub_field(ref1_label) == JatsSubFieldNames.REFERENCE_LABEL, (
+            '"1" (label of first ref) should be REFERENCE_LABEL'
+        )
+        ref2_label = next(t for t in tokens if t.text == '2')
+        assert annotated.get_token_sub_field(ref2_label) == JatsSubFieldNames.REFERENCE_LABEL, (
+            '"2" (label of second ref) should be REFERENCE_LABEL'
+        )
