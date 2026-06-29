@@ -1,4 +1,5 @@
 import logging
+import re
 
 from lxml import etree
 
@@ -11,6 +12,9 @@ from sciencebeam_parser.models.citation.extract import (
     get_detected_external_identifier_type_for_text
 )
 from sciencebeam_parser.utils.xml import get_text_content
+
+# Matches "388 - 412", "281-282", "1199 -1207" etc.
+_PAGE_RANGE_RE = re.compile(r'^(\S+)\s*[-–]\s*(\S+)$')
 
 
 LOGGER = logging.getLogger(__name__)
@@ -68,6 +72,13 @@ class CitationTeiTrainingDataGenerator(AbstractTeiTrainingDataGenerator):
             if not external_identifier_type:
                 continue
             idno_element.attrib['type'] = external_identifier_type
+        for page_el in tei_xpath(xml_root, '//tei:biblScope[@unit="page"]'):
+            full_text = ' '.join(page_el.itertext()).replace('\n', ' ').strip()
+            full_text = re.sub(r'\s+', ' ', full_text)
+            m = _PAGE_RANGE_RE.match(full_text)
+            if m and 'from' not in page_el.attrib:
+                page_el.attrib['from'] = m.group(1)
+                page_el.attrib['to'] = m.group(2)
         return xml_root
 
 
