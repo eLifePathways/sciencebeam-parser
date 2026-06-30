@@ -947,8 +947,7 @@ def _attach_sub_field_trailing_periods(
             last_instance = entry[2]
         elif (
             last_was_sub
-            and entry is not None
-            and entry[0] == field_name
+            and (entry is None or entry[0] == field_name)
             and normalize_for_alignment(token.text or '') == '.'
         ):
             annotated.set_token_label(token, field_name, sub_field_name, last_instance)

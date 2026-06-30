@@ -415,6 +415,25 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             f'{annotated.get_token_sub_field(period_token)!r}'
         )
 
+    def test_trailing_period_unlabeled_by_outer_match_is_attached(self):
+        # When the gap between the last initial and the next matched word exceeds
+        # _MAX_HAYSTACK_GAP_TO_FILL, the abbreviation period is outside the outer
+        # SW match range (entry=None). The trailing-period pass must still attach it.
+        doc = _make_doc('Zorblax, C. A. (2010). Some title.')
+        fvs = [
+            _fv('Zorblax CA Some title 2010', JatsFieldNames.REFERENCE),
+            _fv('Zorblax CA', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        a_idx = next(i for i, t in enumerate(tokens) if normalize_for_alignment(t.text) == 'a')
+        period_token = tokens[a_idx + 1]
+        assert period_token.text == '.', 'Expected period token after A'
+        assert annotated.get_token_sub_field(period_token) == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            f'Period after A should be REFERENCE_AUTHOR, got '
+            f'{annotated.get_token_sub_field(period_token)!r}'
+        )
+
     def test_gap_fill_merges_per_name_author_spans(self):
         # Between two per-name author matches, separator tokens (comma, semicolon,
         # initials with periods) should be filled in as REFERENCE_AUTHOR so that
