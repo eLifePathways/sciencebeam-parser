@@ -70,8 +70,8 @@ TRAINING_DATA_MODELS ?= segmentation header affiliation-address reference-segmen
 # symlink at data/generated-training-data or override the variable directly:
 #   make dev-generate-training-data TRAINING_DATA_OUTPUT=/path/to/output-repo
 SOURCE_TRAINING_CONFIG ?= benchmarks/training-source.yml
-SOURCE_TRAINING_DATA ?= data/source-training-data
 SOURCE_TRAINING_MODE ?= smoke
+SOURCE_TRAINING_DATA ?= data/source-training-data/$(SOURCE_TRAINING_MODE)
 SOURCE_TRAINING_SPLIT ?= train
 
 SHOW_FIELD ?=
