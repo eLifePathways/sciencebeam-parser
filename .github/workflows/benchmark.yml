@@ -53,18 +53,23 @@ jobs:
           github.ref == 'refs/heads/main' && 'medium' ||
           'smoke'
         }}
-      BENCHMARK_PROFILE: >-
-        ${{
-          contains(github.event.pull_request.labels.*.name, 'profile:grobid_crf') && 'grobid_crf' ||
-          contains(github.event.pull_request.labels.*.name, 'profile:biorxiv_elife') && 'biorxiv_elife' ||
-          contains(github.event.pull_request.labels.*.name, 'profile:grobid_custom_hybrid') && 'grobid_custom_hybrid' ||
-          inputs.profile ||
-          'grobid_crf'
-        }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/validation
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Resolve benchmark profile
+        env:
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          DISPATCH_PROFILE: ${{ inputs.profile }}
+        run: |
+          LABEL_PROFILE=$(echo "$PR_LABELS_JSON" | jq -r '.[] | select(startswith("profile:")) | sub("^profile:"; "")' | head -n1)
+          PROFILE="${LABEL_PROFILE:-${DISPATCH_PROFILE:-grobid_crf}}"
+          if ! [[ "$PROFILE" =~ ^[A-Za-z0-9_]+$ ]]; then
+            echo "::error::Invalid profile '$PROFILE' (from label or input) - only letters, digits and underscores are allowed"
+            exit 1
+          fi
+          echo "BENCHMARK_PROFILE=$PROFILE" >> "$GITHUB_ENV"
 
       - name: Set image tag
         id: image_tag
