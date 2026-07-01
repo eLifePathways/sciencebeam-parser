@@ -20,11 +20,17 @@ cc_by_corpora:
 #   ore: 199, scielo_preprints-jats: 1000
 sampling:
   smoke:
-    ore: 5
+    ore: 10
     scielo_preprints-jats: 10
   small:
-    ore: 20
+    ore: 25
+    scielo_preprints-jats: 25
+  medium:
+    ore: 50
     scielo_preprints-jats: 50
+  large:
+    ore: 100
+    scielo_preprints-jats: 100
   full:
     ore: null   # all records
     scielo_preprints-jats: null
