@@ -57,6 +57,7 @@ jobs:
         ${{
           contains(github.event.pull_request.labels.*.name, 'profile:grobid_crf') && 'grobid_crf' ||
           contains(github.event.pull_request.labels.*.name, 'profile:biorxiv_elife') && 'biorxiv_elife' ||
+          contains(github.event.pull_request.labels.*.name, 'profile:grobid_custom_hybrid') && 'grobid_custom_hybrid' ||
           inputs.profile ||
           'grobid_crf'
         }}
