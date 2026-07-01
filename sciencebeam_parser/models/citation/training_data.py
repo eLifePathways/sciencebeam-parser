@@ -3,7 +3,8 @@ import re
 
 from lxml import etree
 
-from sciencebeam_parser.document.tei.common import tei_xpath
+from sciencebeam_parser.document.semantic_document import SemanticExternalIdentifierTypes
+from sciencebeam_parser.document.tei.common import TEI_NS_PREFIX, tei_xpath
 from sciencebeam_parser.models.training_data import (
     AbstractTeiTrainingDataGenerator,
     AbstractTrainingTeiParser
@@ -12,6 +13,15 @@ from sciencebeam_parser.models.citation.extract import (
     get_detected_external_identifier_type_for_text
 )
 from sciencebeam_parser.utils.xml import get_text_content
+
+# get_post_processed_xml_root tags <idno> elements with any detected identifier type
+# (not just DOI); all but DOI should still resolve back to the <pubnum> label
+_PUBNUM_EXTERNAL_IDENTIFIER_TYPES = (
+    SemanticExternalIdentifierTypes.ARXIV,
+    SemanticExternalIdentifierTypes.PII,
+    SemanticExternalIdentifierTypes.PMCID,
+    SemanticExternalIdentifierTypes.PMID,
+)
 
 # Matches "388 - 412", "281-282", "1199 -1207" etc.
 _PAGE_RANGE_RE = re.compile(r'^(\S+)\s*[-–]\s*(\S+)$')
@@ -91,3 +101,7 @@ class CitationTrainingTeiParser(AbstractTrainingTeiParser):
             ),
             use_tei_namespace=True
         )
+        for external_identifier_type in _PUBNUM_EXTERNAL_IDENTIFIER_TYPES:
+            self.label_by_relative_element_path_map[
+                ('{}idno[@type="{}"]'.format(TEI_NS_PREFIX, external_identifier_type),)
+            ] = '<pubnum>'
