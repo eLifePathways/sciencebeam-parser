@@ -1,6 +1,7 @@
 import logging
 from typing import Sequence, Union
 
+import pytest
 from lxml import etree
 from lxml.builder import E
 
@@ -45,7 +46,8 @@ ROOT_TRAINING_XML_ELEMENT_PATH = ['text']
 
 TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
     '<head>': ROOT_TRAINING_XML_ELEMENT_PATH + ['head'],
-    '<paragraph>': ROOT_TRAINING_XML_ELEMENT_PATH + ['p']
+    '<paragraph>': ROOT_TRAINING_XML_ELEMENT_PATH + ['p'],
+    '<page>': ROOT_TRAINING_XML_ELEMENT_PATH + ['biblScope[@unit="page"]']
 }
 
 
@@ -143,6 +145,31 @@ class TestTrainingTeiParser:
             labeled_layout_tokens[0].layout_token.line_meta
             != labeled_layout_tokens[1].layout_token.line_meta
         )
+
+    def test_should_ignore_from_and_to_attributes_when_matching_element_path(self):
+        # e.g. <biblScope unit="page" from="1619" to="1621"> added by
+        # CitationTeiTrainingDataGenerator.get_post_processed_xml_root for sciencebeam-judge;
+        # from/to must not affect which label the element resolves to
+        tei_root = _get_training_tei_with_text([
+            E('biblScope', {'unit': 'page', 'from': '1619', 'to': '1621'}, TOKEN_1, E('lb')),
+            '\n'
+        ])
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<page>')
+        ]]
+
+    def test_should_raise_error_for_element_with_more_than_one_matching_attribute(self):
+        tei_root = _get_training_tei_with_text([
+            E('biblScope', {'unit': 'page', 'other': 'value'}, TOKEN_1, E('lb')),
+            '\n'
+        ])
+        with pytest.raises(ValueError):
+            SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+                tei_root
+            )
 
     def test_unannotated_tokens_after_annotated_span_use_O(self):
         # training_data.py emits plain 'O' for all unannotated tokens regardless of
