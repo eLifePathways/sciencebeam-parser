@@ -682,13 +682,24 @@ def _search_range(
             and bool(_LABEL_DIGIT_PREFIX_RE.match(fv.text))
         ):
             pre = _SUB_FIELD_LABEL_DIGIT_PRE_BUFFER
-        elif fv.sub_field_name == JatsSubFieldNames.REFERENCE_AUTHOR:
+        elif fv.sub_field_name in {
+            JatsSubFieldNames.REFERENCE_AUTHOR,
+            JatsSubFieldNames.REFERENCE_SOURCE,
+        }:
+            # Source can precede the parent's SW match start when the PDF orders
+            # source before article-title but the JATS parent text has them reversed.
+            # SW then latches onto the article-title anchor and sets p_start after
+            # the source, so we need the same backward buffer as for authors.
             pre = _SUB_FIELD_REFERENCE_AUTHOR_PRE_BUFFER
         else:
             pre = 0
-        # For authors: never extend before the end of the previous reference.
+        # For authors and source: never extend before the end of the previous
+        # reference (prevents sub-field matches from bleeding into earlier bibls).
         sub_start = max(p_start - pre, pre_parent_ref_floor) \
-            if fv.sub_field_name == JatsSubFieldNames.REFERENCE_AUTHOR \
+            if fv.sub_field_name in {
+                JatsSubFieldNames.REFERENCE_AUTHOR,
+                JatsSubFieldNames.REFERENCE_SOURCE,
+            } \
             else p_start - pre
         return max(0, sub_start), p_end + _SUB_FIELD_PARENT_BUFFER
     if fv.field_name in _BODY_CONTENT_FIELDS:

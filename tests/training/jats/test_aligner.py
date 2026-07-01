@@ -1281,6 +1281,72 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         )
         assert annotated.get_token_sub_field(al_token) != JatsSubFieldNames.REFERENCE_AUTHOR
 
+    def test_reference_source_found_when_it_precedes_parent_match_start(self):
+        # The JATS parent text for a reference concatenates sub-fields in JATS element
+        # order (author → article-title → source).  The PDF text may instead have the
+        # source immediately after the author and before the article-title.  SW then
+        # latches onto the article-title anchor and produces a parent match start that
+        # is AFTER the source in the haystack, causing the source sub-field search
+        # (anchored at p_start) to miss the source.
+        #
+        # Reproduces the GEOCAPES pattern: institutional author whose name also starts
+        # the source, appearing in the order author → source → article-title in the PDF.
+        doc = _make_doc(
+            # preceding reference (establishes pre_parent_ref_floor)
+            'Zorblax A 2001 Title of Prev Article Source of Prev',
+            # GEOCAPES-like reference: author → source → article-title in PDF text
+            'Zorbax. Zorbax Research Group Source. Article Title Here.',
+        )
+        fvs = [
+            # preceding reference
+            _fv('Zorblax A 2001 Title of Prev Article Source of Prev',
+                JatsFieldNames.REFERENCE),
+            _fv('Zorblax A', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Source of Prev', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_SOURCE),
+            # GEOCAPES-like reference: JATS order is author → article-title → source
+            # but PDF text order is author → source → article-title
+            _fv('Zorbax Article Title Here',  # parent: author + article-title (no source)
+                JatsFieldNames.REFERENCE),
+            _fv('Zorbax', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Article Title Here', JatsFieldNames.REFERENCE,
+                JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+            _fv('Zorbax Research Group Source', JatsFieldNames.REFERENCE,
+                JatsSubFieldNames.REFERENCE_SOURCE),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        source_token = next(t for t in tokens if t.text == 'Research')
+        assert annotated.get_token_sub_field(source_token) == JatsSubFieldNames.REFERENCE_SOURCE, (
+            '"Research" is part of the source that precedes the parent SW match start; '
+            'the backward pre-buffer must allow the source search to reach it'
+        )
+        author_token = next(t for t in tokens if t.text == 'Zorbax')
+        assert annotated.get_token_sub_field(author_token) == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            '"Zorbax" is the author; REFERENCE_AUTHOR must retain its backward pre-buffer '
+            'so the author is not displaced by the source pre-buffer fix'
+        )
+
+    def test_reference_author_found_when_parent_match_starts_after_author(self):
+        # When the JATS parent text contains only the article-title (no author), the parent
+        # SW match anchors at the title, making p_start land after the author in the haystack.
+        # The REFERENCE_AUTHOR backward pre-buffer must extend the search back to reach it.
+        # This reproduces the GEOCAPES regression where adding a REFERENCE_SOURCE pre-buffer
+        # accidentally zeroed REFERENCE_AUTHOR's pre-buffer by removing its elif branch.
+        doc = _make_doc('Zorblax Very Long Article Title Here End.')
+        fvs = [
+            _fv('Very Long Article Title Here End', JatsFieldNames.REFERENCE),
+            _fv('Zorblax', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Very Long Article Title Here End', JatsFieldNames.REFERENCE,
+                JatsSubFieldNames.REFERENCE_ARTICLE_TITLE),
+        ]
+        annotated = self._align(doc, fvs)
+        tokens = list(doc.iter_all_tokens())
+        author_token = next(t for t in tokens if t.text == 'Zorblax')
+        assert annotated.get_token_sub_field(author_token) == JatsSubFieldNames.REFERENCE_AUTHOR, (
+            'Author precedes the parent SW match start; the backward pre-buffer must allow '
+            'the author search to reach back to it'
+        )
+
     def test_reference_author_found_when_prev_ref_source_appears_later_in_haystack(self):
         # Simulates a two-column PDF layout: ref 1's source text physically appears in the
         # token stream AFTER ref 2's author tokens.  Before this fix, reference_floor
