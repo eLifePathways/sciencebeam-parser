@@ -207,7 +207,9 @@ sequence_model_profiles:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/table'
       engine: 'wapiti'
     reference_segmenter:
-      path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/dev/2026-07-01-delft-grobid-reference-segmenter-CustomBidLSTM_CRF-grobid_090-scielo_preprints-v1.tar.gz'
+      # TODO: switch back once the release is public
+      # path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/dev/2026-07-01-delft-grobid-reference-segmenter-CustomBidLSTM_CRF-grobid_090-scielo_preprints-v1.tar.gz'
+      path: 'gs://sciencebeam-v2-models/delft/reference-segmenter/models/2026-07-01_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore/reference-segmenter/'
     citation:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/citation'
       engine: 'wapiti'
