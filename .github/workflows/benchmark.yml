@@ -40,7 +40,6 @@ jobs:
       contents: read
       packages: read
       pull-requests: write
-      id-token: write  # required to mint the WIF token for GCS access
 
     env:
       BENCHMARK_SPLIT: validation
@@ -59,12 +58,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Authenticate to GCP (temporary access to private model bucket)
+      - name: Write GCS model reader key (temporary access to private model bucket)
         id: gcp_auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/476793733249/locations/global/workloadIdentityPools/sciencebeam-parser-github/providers/github-provider
-          service_account: sciencebeam-parser-ci@sciencebeam-v2.iam.gserviceaccount.com
+        env:
+          GCS_MODEL_READER_SA_KEY_B64: ${{ secrets.GCS_MODEL_READER_SA_KEY_B64 }}
+        run: |
+          KEY_PATH="${RUNNER_TEMP}/gcs-model-reader-key.json"
+          printf '%s' "$GCS_MODEL_READER_SA_KEY_B64" | base64 -d > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "key_path=$KEY_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Resolve benchmark profile
         env:
@@ -153,7 +155,7 @@ jobs:
           fi
           docker run -d --name sciencebeam-parser -p 8080:8070 \
             -e SCIENCEBEAM_PARSER__PRELOAD_ON_STARTUP=true \
-            -v "${{ steps.gcp_auth.outputs.credentials_file_path }}:/creds/gcp-key.json:ro" \
+            -v "${{ steps.gcp_auth.outputs.key_path }}:/creds/gcp-key.json:ro" \
             -e GOOGLE_APPLICATION_CREDENTIALS=/creds/gcp-key.json \
             "${PROFILE_ENV[@]}" ${{ steps.image_tag.outputs.value }}
 
