@@ -59,6 +59,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Authenticate to GCP (temporary access to private model bucket)
+        id: gcp_auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/476793733249/locations/global/workloadIdentityPools/sciencebeam-parser-github/providers/github-provider
+          service_account: sciencebeam-parser-ci@sciencebeam-v2.iam.gserviceaccount.com
+
       - name: Resolve benchmark profile
         env:
           PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
@@ -137,13 +144,6 @@ jobs:
             --runs benchmarks/runs/${{ github.sha }} \
             --predictions-repo sciencebeam-eval-predictions \
             --baseline-only
-
-      - name: Authenticate to GCP (temporary access to private model bucket)
-        id: gcp_auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/476793733249/locations/global/workloadIdentityPools/sciencebeam-parser-github/providers/github-provider
-          service_account: sciencebeam-parser-ci@sciencebeam-v2.iam.gserviceaccount.com
 
       - name: Start sciencebeam-parser
         run: |
