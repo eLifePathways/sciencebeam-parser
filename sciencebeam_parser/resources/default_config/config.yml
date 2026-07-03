@@ -180,43 +180,13 @@ sequence_model_profiles:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/citation'
       engine: 'wapiti'
   grobid_custom_hybrid:
-    segmentation:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/segmentation'
-      engine: 'wapiti'
-      use_first_token_of_block: true
-    header:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/header'
-      engine: 'wapiti'
-      persist_indentation_reference_across_blocks: true
-    name_header:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/name/header'
-      engine: 'wapiti'
-    name_citation:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/name/citation'
-      engine: 'wapiti'
-    affiliation_address:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/affiliation-address'
-      engine: 'wapiti'
-    fulltext:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/fulltext'
-      engine: 'wapiti'
-    figure:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/figure'
-      engine: 'wapiti'
-    table:
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/table'
-      engine: 'wapiti'
+    extends: grobid_crf_0_9_0
     reference_segmenter:
       # TODO: switch back once the release is public
       # path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/dev/2026-07-01-delft-grobid-reference-segmenter-CustomBidLSTM_CRF-grobid_090-scielo_preprints-v1.tar.gz'
       # path: 'gs://sciencebeam-v2-models/delft/reference-segmenter/models/2026-07-01_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore/reference-segmenter/'
       path: 'gs://sciencebeam-v2-models/wapiti/reference-segmenter/models/2026-07-01_wapiti_grobid_090_scielo_preprints_ore/reference-segmenter'
       engine: 'wapiti'
-    citation:
-      # TODO: switch back once a public release is available
-      path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/citation'
-      engine: 'wapiti'
-      # path: 'gs://sciencebeam-v2-models/delft/citation/models/2026-07-01_CustomBidLSTM_CRF_grobid_090/citation/'
 
 profiles:
   biorxiv_elife:

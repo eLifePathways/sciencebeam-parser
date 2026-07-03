@@ -2,7 +2,7 @@ import logging
 import os
 import copy
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, FrozenSet, Optional, Union
 
 import yaml
 
@@ -25,6 +25,29 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
         else:
             result[key] = copy.deepcopy(value)
     return result
+
+
+def _resolve_sequence_model_profile(
+    seq_profiles: dict,
+    name: str,
+    _seen: FrozenSet[str] = frozenset()
+) -> dict:
+    if name not in seq_profiles:
+        raise ValueError(
+            f'Unknown sequence_model_profile {name!r}. Available: {sorted(seq_profiles)}'
+        )
+    if name in _seen:
+        raise ValueError(
+            f'Circular extends detected for sequence_model_profile {name!r} '
+            f'(chain: {" -> ".join([*_seen, name])})'
+        )
+    profile = seq_profiles[name]
+    base_name = profile.get('extends')
+    overlay = {key: value for key, value in profile.items() if key != 'extends'}
+    if not base_name:
+        return overlay
+    base = _resolve_sequence_model_profile(seq_profiles, base_name, _seen | {name})
+    return _deep_merge(base, overlay)
 
 
 class AppConfig:
@@ -87,7 +110,7 @@ class AppConfig:
                     f'Profile {resolved!r} references unknown sequence_model_profile '
                     f'{seq_name!r}. Available: {sorted(seq_profiles)}'
                 )
-            overlay['models'] = seq_profiles[seq_name]
+            overlay['models'] = _resolve_sequence_model_profile(seq_profiles, seq_name)
 
         for key, value in profile.items():
             if key != 'sequence_models':
