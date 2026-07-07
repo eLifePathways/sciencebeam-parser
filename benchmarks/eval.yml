@@ -13,7 +13,7 @@ dataset:
         variant: v1
       pkp:
         file: pkp-jats/train-00000-of-00001.parquet
-        id_column: ppr_id
+        id_column: article_id
         variant: v2
       scielo_br:
         file: scielo_br-jats/train-00000-of-00001.parquet
@@ -38,7 +38,7 @@ dataset:
         variant: v1
       pkp:
         file: pkp-jats/validation-00000-of-00001.parquet
-        id_column: ppr_id
+        id_column: article_id
         variant: v2
       scielo_br:
         file: scielo_br-jats/validation-00000-of-00001.parquet
