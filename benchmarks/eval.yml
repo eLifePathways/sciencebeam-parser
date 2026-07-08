@@ -13,8 +13,8 @@ dataset:
         variant: v1
       pkp:
         file: pkp-jats/train-00000-of-00001.parquet
-        id_column: ppr_id
-        variant: v1
+        id_column: article_id
+        variant: v2
       scielo_br:
         file: scielo_br-jats/train-00000-of-00001.parquet
         id_column: ppr_id
@@ -22,7 +22,7 @@ dataset:
       scielo_mx:
         file: scielo_mx-jats/train-00000-of-00001.parquet
         id_column: ppr_id
-        variant: v1
+        variant: v2
       scielo_preprints-jats:
         file: scielo-preprints-jats/train-00000-of-00001.parquet
         id_column: ppr_id
@@ -38,8 +38,8 @@ dataset:
         variant: v1
       pkp:
         file: pkp-jats/validation-00000-of-00001.parquet
-        id_column: ppr_id
-        variant: v1
+        id_column: article_id
+        variant: v2
       scielo_br:
         file: scielo_br-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
@@ -47,7 +47,7 @@ dataset:
       scielo_mx:
         file: scielo_mx-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
-        variant: v1
+        variant: v2
       scielo_preprints-jats:
         file: scielo-preprints-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
