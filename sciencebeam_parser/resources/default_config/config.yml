@@ -181,6 +181,9 @@ sequence_model_profiles:
       engine: 'wapiti'
   grobid_custom_hybrid:
     extends: grobid_crf_0_9_0
+    citation:
+      path: 's://sciencebeam-v2-models/wapiti/citation/models/2026-08-04_wapiti_grobid_090_grobid_only/citation/'
+      engine: 'wapiti'
     reference_segmenter:
       # TODO: switch back once the release is public
       # path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/dev/2026-07-01-delft-grobid-reference-segmenter-CustomBidLSTM_CRF-grobid_090-scielo_preprints-v1.tar.gz'
