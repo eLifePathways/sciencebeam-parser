@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -180,3 +181,75 @@ class TestRepoPredictionsStore:
         with patch("subprocess.run", _make_git_mock({key: payload})):
             result = store.read_metadata("grobid", "0.9", "default", "train")
         assert result == {"mode": "medium", "image": "grobid:0.9"}
+
+
+class TestRepoStoreDoneIdsAreVariantAware:
+    """A record counts as done only if its prediction is filed under the variant in use.
+
+    The manifest is per split and variant-blind, so without this a variant bump
+    leaves records marked done whose predictions live under the old variant: the
+    run then fetches nothing and scores zero documents, instead of regenerating
+    against the corpus the bump was announcing.
+    """
+
+    _MANIFEST = (
+        json.dumps({"corpus": "biorxiv", "record_id": "r1", "status": "ok"}) + "\n"
+        + json.dumps({"corpus": "biorxiv", "record_id": "r2", "status": "ok"}) + "\n"
+    )
+    _KEY = ("show", "HEAD:grobid/0.9/default/train/manifest.jsonl")
+
+    def _store(self, tmp_path: Path) -> RepoPredictionsStore:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        return RepoPredictionsStore(repo_dir=repo)
+
+    def _git_mock(self, listings: dict):
+        def fake_git(cmd, **_kwargs):
+            args = tuple(cmd[3:])
+            if args[:1] == ("show",):
+                text = self._MANIFEST if args == self._KEY else ""
+                return subprocess.CompletedProcess(cmd, 0 if text else 1, text, "")
+            if args[:1] == ("ls-tree",):
+                return subprocess.CompletedProcess(cmd, 0, listings.get(args[-1], ""), "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return fake_git
+
+    def test_counts_records_stored_under_the_named_variant(self, tmp_path: Path):
+        listings = {
+            "grobid/0.9/default/biorxiv/v1/train/":
+                "grobid/0.9/default/biorxiv/v1/train/r1.tei.xml\n"
+                "grobid/0.9/default/biorxiv/v1/train/r2.tei.xml\n",
+        }
+        with patch("subprocess.run", self._git_mock(listings)):
+            done = self._store(tmp_path).get_done_ids(
+                "grobid", "0.9", "default", "train", {"biorxiv": "v1"}
+            )
+        assert done == {("biorxiv", "r1"), ("biorxiv", "r2")}
+
+    def test_a_bumped_variant_makes_records_not_done(self, tmp_path: Path):
+        listings = {
+            "grobid/0.9/default/biorxiv/v1/train/":
+                "grobid/0.9/default/biorxiv/v1/train/r1.tei.xml\n",
+            "grobid/0.9/default/biorxiv/v2/train/": "",
+        }
+        with patch("subprocess.run", self._git_mock(listings)):
+            done = self._store(tmp_path).get_done_ids(
+                "grobid", "0.9", "default", "train", {"biorxiv": "v2"}
+            )
+        assert done == set()
+
+    def test_a_record_the_manifest_claims_but_never_stored_is_not_done(self, tmp_path: Path):
+        listings = {
+            "grobid/0.9/default/biorxiv/v1/train/":
+                "grobid/0.9/default/biorxiv/v1/train/r1.tei.xml\n",
+        }
+        with patch("subprocess.run", self._git_mock(listings)):
+            done = self._store(tmp_path).get_done_ids(
+                "grobid", "0.9", "default", "train", {"biorxiv": "v1"}
+            )
+        assert done == {("biorxiv", "r1")}
+
+    def test_without_variants_it_trusts_the_manifest(self, tmp_path: Path):
+        with patch("subprocess.run", self._git_mock({})):
+            done = self._store(tmp_path).get_done_ids("grobid", "0.9", "default", "train")
+        assert done == {("biorxiv", "r1"), ("biorxiv", "r2")}

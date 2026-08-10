@@ -141,7 +141,7 @@ def _run_baseline(  # pylint: disable=too-many-locals
     include: Optional[Iterable[str]] = None,
 ) -> Optional[Tuple[str, Path]]:
     run_dir = runs_dir / "baselines" / tool / version / profile / split
-    done_ids = store.get_done_ids(tool, version, profile, split)
+    done_ids = store.get_done_ids(tool, version, profile, split, corpus_variants)
     missing = expected_ids - done_ids
     LOGGER.info(
         "=== Baseline %s/%s (profile=%s): %d/%d predictions ===",
