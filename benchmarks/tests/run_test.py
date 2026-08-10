@@ -146,6 +146,43 @@ class TestRunBenchmark:
     @patch("benchmarks.run.run_score")
     @patch("benchmarks.run.run_predict")
     @patch("benchmarks.run.fetch_gold")
+    def test_takes_what_the_store_has_before_generating_the_rest(
+        self, mock_gold, mock_predict, mock_score, _mock_wait,
+        _mock_start, _mock_stop, tmp_path: Path,
+    ):
+        """A partly-populated store is used, not discarded.
+
+        Generating is per document and slow -- tens of seconds each -- so a run
+        missing one prediction must not re-predict the ones it already has.
+        """
+        mock_gold.return_value = self._gold_records()
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        # pylint: disable-next=protected-access
+        run_dir = store._run_dir("grobid", "0.9.0-crf", "default", "train")
+        manifest = run_dir / "predictions" / "manifest.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("".join(
+            json.dumps({"corpus": "biorxiv", "record_id": f"r{i}", "status": "ok"}) + "\n"
+            for i in range(8)  # two of the ten gold records are absent
+        ))
+
+        def fake_score(_cfg, score_run_dir, *_a, **_kw):
+            self._make_summary(score_run_dir)
+
+        mock_score.side_effect = fake_score
+        with patch.object(store, "fetch", wraps=store.fetch) as mock_fetch:
+            run_benchmark(_CONFIG, "smoke", "train", tmp_path / "data", runs_dir,
+                          store, baseline_only=True)
+            mock_fetch.assert_called_once()
+        mock_predict.assert_called_once()
+
+    @patch("benchmarks.run._docker_stop")
+    @patch("benchmarks.run._docker_start")
+    @patch("benchmarks.run._wait_healthy")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
     def test_fetches_from_store_when_complete(
         self, mock_gold, mock_predict, mock_score, _mock_wait,
         mock_start, _mock_stop, tmp_path: Path,

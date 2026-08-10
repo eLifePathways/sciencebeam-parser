@@ -66,7 +66,15 @@ class LocalPredictionsStore:
 
 @dataclass
 class RepoPredictionsStore:
-    """Predictions stored in a checked-out sciencebeam-eval-predictions git repo."""
+    """Predictions stored in a checked-out sciencebeam-eval-predictions git repo.
+
+    That repo must stay private. It holds TEI extracted from the PLOS
+    RSRCH-2064 manuscripts, which carry no redistribution grant, and a
+    prediction is close to the whole text of the document it came from.
+    Publishing the repo, or publishing predictions from it by any other route,
+    needs that revisited first — and note it cannot simply be undone later,
+    since deleting files does not remove them from git history.
+    """
 
     repo_dir: Path
 

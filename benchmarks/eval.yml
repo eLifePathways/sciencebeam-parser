@@ -49,6 +49,10 @@ dataset:
       # uniformly, from the ranks its published manifest records. `optional` keeps it
       # out of a run that did not ask for it: the manuscripts are not
       # redistributable, so reaching for them is a decision, not a default.
+      #
+      # Predictions over it are stored in sciencebeam-eval-predictions, which must
+      # therefore stay private — a prediction is close to the whole text of the
+      # manuscript it came from. See RepoPredictionsStore.
       plos-manuscripts:
         repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
         revision: plos-rsrch-2064-v002

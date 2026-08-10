@@ -148,22 +148,28 @@ def _run_baseline(  # pylint: disable=too-many-locals
         tool, version, profile, len(done_ids), len(expected_ids),
     )
 
+    if missing and not generate:
+        LOGGER.warning(
+            "Missing %d predictions for %s/%s (profile=%s) but generate=false, skipping",
+            len(missing), tool, version, profile,
+        )
+        return None
+
+    # Take whatever the store has before generating the rest. `run_predict` skips
+    # records already in the run's manifest, which `fetch` copies, so one absent
+    # document no longer costs a re-prediction of every other — which at ~24s per
+    # document for the parser and ~20s for a PLOS manuscript is most of an hour.
+    if done_ids:
+        LOGGER.info("Fetching %d existing prediction(s) from the store", len(done_ids))
+        store.fetch(tool, version, profile, split, run_dir, corpus_variants)
+
     if missing:
-        if not generate:
-            LOGGER.warning(
-                "Missing %d predictions for %s/%s (profile=%s) but generate=false, skipping",
-                len(missing), tool, version, profile,
-            )
-            return None
         _generate_predictions(config, mode, split, data_dir, run_dir,
                               tool, version, profile, concurrency, include=include)
         store.push(tool, version, profile, split, run_dir, corpus_variants, {
             "tool": tool, "version": version, "profile": profile,
             "split": split, "mode": mode,
         })
-    else:
-        LOGGER.info("All predictions present, fetching from store")
-        store.fetch(tool, version, profile, split, run_dir, corpus_variants)
 
     run_score(config, run_dir, data_dir, out_path=None, split_override=split,
               include=include)
