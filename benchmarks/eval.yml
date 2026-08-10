@@ -1,6 +1,10 @@
 dataset:
+  # Pinned rather than `main`: these corpora are rebuilt in place, most recently
+  # to drop rows whose ground truth an audit found unusable, and following the
+  # branch means every recorded aggregate moves with the next rebuild without
+  # anything erroring. The tag is b3ce8af8487495462a2589e80f9fdfe31c736ef4.
   repo_id: elifepathways/sciencebeam-v2-benchmarking
-  revision: main
+  revision: benchmark-v001
   splits:
     train:
       # The split to read closely when working out why an extraction failed, which
