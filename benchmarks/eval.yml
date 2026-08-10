@@ -3,6 +3,17 @@ dataset:
   revision: main
   splits:
     train:
+      # The split to read closely when working out why an extraction failed, which
+      # is why it is the one `run.py` defaults to.
+      plos:
+        repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
+        revision: plos-rsrch-2064-v002
+        path: train/
+        manifest: splits/plos-rsrch-2064-v002.csv
+        stratum: journal
+        id_column: id
+        variant: plos-v002
+        optional: true
       biorxiv:
         file: biorxiv-jats/train-00000-of-00001.parquet
         id_column: ppr_id
@@ -36,12 +47,12 @@ dataset:
       # redistributable, so reaching for them is a decision, not a default.
       plos:
         repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
-        revision: plos-rsrch-2064-v001
+        revision: plos-rsrch-2064-v002
         path: validation/
-        manifest: splits/plos-rsrch-2064-v001.csv
+        manifest: splits/plos-rsrch-2064-v002.csv
         stratum: journal
         id_column: id
-        variant: plos-v001
+        variant: plos-v002
         optional: true
       biorxiv:
         file: biorxiv-jats/validation-00000-of-00001.parquet
@@ -73,12 +84,12 @@ dataset:
     test:
       plos:
         repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
-        revision: plos-rsrch-2064-v001
+        revision: plos-rsrch-2064-v002
         path: test/
-        manifest: splits/plos-rsrch-2064-v001.csv
+        manifest: splits/plos-rsrch-2064-v002.csv
         stratum: journal
         id_column: id
-        variant: plos-v001
+        variant: plos-v002
         optional: true
 
 # Dataset row counts at revision main:
