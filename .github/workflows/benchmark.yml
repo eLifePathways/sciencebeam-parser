@@ -71,7 +71,7 @@ jobs:
       BENCHMARK_CORPORA: >-
         ${{
           (contains(github.event.pull_request.labels.*.name, 'benchmark:plos') ||
-           inputs.include_plos) && '--include-corpus plos' || ''
+           inputs.include_plos) && '--include-corpus plos-manuscripts' || ''
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/validation
 
