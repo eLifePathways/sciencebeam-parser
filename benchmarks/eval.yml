@@ -29,7 +29,7 @@ dataset:
       pkp:
         file: pkp-jats/train-00000-of-00001.parquet
         id_column: article_id
-        variant: v1
+        variant: v2
       scielo_br:
         file: scielo_br-jats/train-00000-of-00001.parquet
         id_column: ppr_id
@@ -37,7 +37,7 @@ dataset:
       scielo_mx:
         file: scielo_mx-jats/train-00000-of-00001.parquet
         id_column: ppr_id
-        variant: v1
+        variant: v2
       scielo_preprints-jats:
         file: scielo-preprints-jats/train-00000-of-00001.parquet
         id_column: ppr_id
@@ -73,7 +73,7 @@ dataset:
       pkp:
         file: pkp-jats/validation-00000-of-00001.parquet
         id_column: article_id
-        variant: v1
+        variant: v2
       scielo_br:
         file: scielo_br-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
@@ -81,7 +81,7 @@ dataset:
       scielo_mx:
         file: scielo_mx-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
-        variant: v1
+        variant: v2
       scielo_preprints-jats:
         file: scielo-preprints-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
@@ -102,8 +102,9 @@ dataset:
 
 # Rough split sizes, as a guide for choosing mode sizes rather than a limit. The
 # shared corpora are rebuilt from time to time — most recently to drop rows whose
-# ground truth an audit found unusable — and `revision: main` follows that, so read
-# these as "about this, or a bit more" (validation / train, read 2026-08):
+# ground truth an audit found unusable — so these hold until the pinned revision above
+# is bumped, and read as "about this, or a bit more" (validation / train, at
+# benchmark-v001):
 #   biorxiv 43/30, ore 59/37, pkp 204/143,
 #   scielo_br 184/128, scielo_mx 42/31, scielo_preprints-jats 127/85
 # A mode asking for more than a split holds takes all of it rather than failing, so
@@ -112,7 +113,7 @@ dataset:
 # plos-manuscripts is sized in multiples of its 14 journals, since a sample smaller than that
 # cannot contain one document from each, and being balanced across journals is the
 # property the corpus was built for. Its `full` is null rather than a count because
-# its splits differ in size (test 331, validation 132) and one number cannot be
+# its splits differ in size (test 332, validation 132) and one number cannot be
 # right for both.
 sampling:
   smoke:
