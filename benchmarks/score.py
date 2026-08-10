@@ -18,6 +18,8 @@ from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
 from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
+from benchmarks.fetch import included_corpora
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -236,7 +238,11 @@ def run_score(  # pylint: disable=too-many-locals
 
     split = split_override or (run_record or {}).get("split", "train")
 
-    corpora = list(config["dataset"]["splits"][split].keys())
+    # The corpora the run actually covered, which is not every corpus of the split
+    # once one of them is opt-in: scoring an absent corpus only produces a warning
+    # and an empty section in the report. Without a run record, the corpora a run
+    # covers by default is the closest available answer.
+    corpora = (run_record or {}).get("corpora") or included_corpora(config, split)
 
     corpus_results: Dict[str, Any] = {}
     for corpus in corpora:

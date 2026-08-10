@@ -7,12 +7,12 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
 import yaml
 
-from benchmarks.fetch import fetch_data
+from benchmarks.fetch import fetch_data, resolved_sources
 
 LOGGER = logging.getLogger(__name__)
 
@@ -177,7 +177,7 @@ async def _run_predict_async(
     return progress.n_ok, progress.n_err
 
 
-def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     config: dict,
     mode: str,
     split: str,
@@ -187,8 +187,10 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
     parser_image: Optional[str],
     profile: Optional[str],
     concurrency: int = DEFAULT_CONCURRENCY,
+    include: Optional[Iterable[str]] = None,
 ) -> None:
-    records = fetch_data(config, mode, split, data_dir)
+    records = fetch_data(config, mode, split, data_dir, include=include)
+    sources = resolved_sources(config, split, include)
     done = _load_done(run_dir)
 
     t_start = time.monotonic()
@@ -205,11 +207,13 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
     (run_dir / "run.json").write_text(json.dumps({
         "parser_image": parser_image,
         "profile": profile,
-        "dataset_repo_id": config["dataset"]["repo_id"],
-        "dataset_revision": config["dataset"]["revision"],
+        # Per corpus rather than one dataset-wide pair, since a corpus may live in
+        # its own repo at its own revision. This is what says afterwards which
+        # revision a number was measured against.
+        "sources": sources,
         "split": split,
         "mode": mode,
-        "corpora": list(config["dataset"]["splits"][split].keys()),
+        "corpora": list(sources),
         "fields": config["fields"],
         "n_records": n_ok,
         "n_errors": n_err,
@@ -252,6 +256,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--concurrency", type=int, default=DEFAULT_CONCURRENCY,
         help="Concurrent requests to the parser (0 = auto: max(2, cpu_count))",
     )
+    parser.add_argument(
+        "--include-corpus", action="append", default=None, dest="include_corpus",
+        metavar="CORPUS",
+        help=(
+            "Also run an opt-in corpus, repeatable. Opt-in corpora are left out by"
+            " default because they are private"
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -269,6 +281,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         parser_image=args.parser_image,
         profile=args.profile,
         concurrency=args.concurrency,
+        include=args.include_corpus,
     )
 
 

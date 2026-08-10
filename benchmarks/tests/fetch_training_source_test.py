@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
 
 from benchmarks.fetch import fetch_training_source
-
 
 _BASE_CONFIG = {
     "dataset": {
@@ -26,93 +28,54 @@ _BASE_CONFIG = {
 }
 
 
-def _make_parquet_mock(ids: list) -> MagicMock:
-    pf = MagicMock()
-    id_col = MagicMock()
-    id_col.to_pylist.return_value = ids
-    pf.read.return_value.column.return_value = id_col
+def _write_corpus(path: Path, ids: list) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table({
+            "ppr_id": ids,
+            "xml": [f"<article id='{record_id}'/>" for record_id in ids],
+            "pdf": [f"%PDF-{record_id}".encode() for record_id in ids],
+        }),
+        path,
+    )
 
-    batch = MagicMock()
-    batch.num_rows = len(ids)
 
-    def _col(name):
-        col = MagicMock()
-        col.__getitem__ = lambda self, i: _cell(ids[i] if name == "ppr_id" else b"pdf")
-        return col
-
-    def _cell(val):
-        m = MagicMock()
-        m.as_py.return_value = val
-        return m
-
-    batch.column = _col
-    pf.iter_batches.return_value = [batch]
-    return pf
+@pytest.fixture(name="repo")
+def _repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "repo"
+    _write_corpus(root / "ore" / "train.parquet", [f"ore{i}" for i in range(5)])
+    _write_corpus(root / "biorxiv" / "train.parquet", [f"bx{i}" for i in range(5)])
+    monkeypatch.setenv("BENCH_LOCAL_PARQUET_DIR", str(root))
+    return root
 
 
 class TestFetchTrainingSource:
-    def test_only_fetches_cc_by_corpora(self, tmp_path: Path):
-        ore_pf = _make_parquet_mock(["ore1", "ore2", "ore3"])
-        biorxiv_pf = _make_parquet_mock(["bx1", "bx2", "bx3"])
-
-        def _parquet_file(path):
-            return ore_pf if "ore" in path else biorxiv_pf
-
-        with patch("benchmarks.fetch.hf_hub_download", return_value="fake.parquet"), \
-             patch("benchmarks.fetch.pq.ParquetFile", side_effect=_parquet_file):
-            records = fetch_training_source(_BASE_CONFIG, "smoke", "train", tmp_path)
-
-        corpora = {r["corpus"] for r in records}
+    def test_only_fetches_cc_by_corpora(self, repo: Path):
+        records = fetch_training_source(_BASE_CONFIG, "smoke", "train", repo / "out")
+        corpora = {record["corpus"] for record in records}
         assert "ore" in corpora
         assert "biorxiv" not in corpora
 
-    def test_full_mode_none_fetches_all_records(self, tmp_path: Path):
-        ids = [f"ore{i}" for i in range(5)]
-        pf = _make_parquet_mock(ids)
+    def test_full_mode_none_fetches_all_records(self, repo: Path):
+        records = fetch_training_source(_BASE_CONFIG, "full", "train", repo / "out")
+        assert len(records) == 5
 
-        with patch("benchmarks.fetch.hf_hub_download", return_value="fake.parquet"), \
-             patch("benchmarks.fetch.pq.ParquetFile", return_value=pf):
-            records = fetch_training_source(_BASE_CONFIG, "full", "train", tmp_path)
-
-        assert len(records) == len(ids)
-
-    def test_empty_cc_by_corpora_fetches_nothing(self, tmp_path: Path):
+    def test_empty_cc_by_corpora_fetches_nothing(self, repo: Path):
         cfg = {**_BASE_CONFIG, "cc_by_corpora": []}
-        pf = _make_parquet_mock(["id1", "id2"])
-        with patch("benchmarks.fetch.hf_hub_download", return_value="fake.parquet"), \
-             patch("benchmarks.fetch.pq.ParquetFile", return_value=pf):
-            records = fetch_training_source(cfg, "smoke", "train", tmp_path)
-        assert not records
+        assert not fetch_training_source(cfg, "smoke", "train", repo / "out")
 
-    def test_writes_pdf_and_xml(self, tmp_path: Path):
-        pf = _make_parquet_mock(["ore1", "ore2"])
-        # Provide xml column too
-        batch = MagicMock()
-        batch.num_rows = 2
+    def test_a_corpus_outside_the_allow_list_is_never_read(self, repo: Path):
+        """The gate has to hold even when the corpus is configured and sized.
 
-        def _col(name):
-            col = MagicMock()
-            if name == "ppr_id":
-                col.__getitem__ = lambda self, i: _cell(["ore1", "ore2"][i])
-            elif name == "pdf":
-                col.__getitem__ = lambda self, i: _cell(b"pdfcontent")
-            else:
-                col.__getitem__ = lambda self, i: _cell("<xml/>")
-            return col
+        `biorxiv` stands in for PLOS here: present in the split, present in
+        `sampling`, absent from `cc_by_corpora`, and therefore never fetched.
+        """
+        fetch_training_source(_BASE_CONFIG, "smoke", "train", repo / "out")
+        assert not (repo / "out" / "train" / "biorxiv").exists()
 
-        def _cell(val):
-            m = MagicMock()
-            m.as_py.return_value = val
-            return m
-
-        batch.column = _col
-        pf.iter_batches.return_value = [batch]
-
-        with patch("benchmarks.fetch.hf_hub_download", return_value="fake.parquet"), \
-             patch("benchmarks.fetch.pq.ParquetFile", return_value=pf):
-            records = fetch_training_source(_BASE_CONFIG, "smoke", "train", tmp_path)
-
+    def test_writes_pdf_and_xml(self, repo: Path):
+        records = fetch_training_source(_BASE_CONFIG, "smoke", "train", repo / "out")
         assert len(records) == 2
-        for r in records:
-            assert Path(r["pdf_path"]).exists()
-            assert Path(r["xml_path"]).exists()
+        for record in records:
+            assert Path(record["pdf_path"]).read_bytes().startswith(b"%PDF-")
+            assert Path(record["xml_path"]).read_text(encoding="utf-8").startswith("<article")
