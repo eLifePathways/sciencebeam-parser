@@ -70,6 +70,18 @@ class TestGetCorpusVariants:
         config = {"dataset": {"splits": {"train": {"biorxiv": {}}}}}
         assert _get_corpus_variants(config, "train") == {"biorxiv": "v1"}
 
+    def test_leaves_out_an_opt_in_corpus_nobody_asked_for(self):
+        config = {"dataset": {"splits": {"train": {
+            "biorxiv": {"variant": "v1"},
+            "plos": {"variant": "plos-v002", "optional": True},
+        }}}}
+        # Predictions for a corpus the run did not cover must be neither looked
+        # for in the store nor pushed to it.
+        assert _get_corpus_variants(config, "train") == {"biorxiv": "v1"}
+        assert _get_corpus_variants(config, "train", ["plos"]) == {
+            "biorxiv": "v1", "plos": "plos-v002",
+        }
+
 
 class TestMakeLabel:
     def test_grobid_uses_tool_and_version(self):

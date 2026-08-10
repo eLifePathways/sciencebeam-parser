@@ -165,7 +165,8 @@ def _run_baseline(  # pylint: disable=too-many-locals
         LOGGER.info("All predictions present, fetching from store")
         store.fetch(tool, version, profile, split, run_dir, corpus_variants)
 
-    run_score(config, run_dir, data_dir, out_path=None, split_override=split)
+    run_score(config, run_dir, data_dir, out_path=None, split_override=split,
+              include=include)
     metadata = store.read_metadata(tool, version, profile, split)
     label = _make_label(tool, version, profile, metadata)
     summary_path = run_dir / "summary.json"
@@ -218,7 +219,8 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     run_predict(config, mode, split, data_dir, primary_run_dir,
                 parser_url, parser_image, parser_profile, concurrency,
                 include=include)
-    run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split)
+    run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split,
+              include=include)
 
     if push_current:
         store.push("sciencebeam-parser", "main", profile, split,

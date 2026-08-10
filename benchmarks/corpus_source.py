@@ -234,10 +234,32 @@ def read_manifest_ids_by_stratum(
             f"corpus {source.corpus!r}: no rows for split {wanted_split!r} in "
             f"{source.manifest}"
         )
-    return {
+    ids_by_stratum = {
         stratum: [record_id for _, record_id in sorted(ranked)]
         for stratum, ranked in by_stratum.items()
     }
+    _check_ids_unique(ids_by_stratum, manifest_path, wanted_split)
+    return ids_by_stratum
+
+
+def _check_ids_unique(
+    ids_by_stratum: Mapping[str, Sequence[str]], manifest_path: str, split: Optional[str]
+) -> None:
+    """Sampling identifies a document by id, so a repeated one is a corrupt manifest.
+
+    Checked across strata rather than within one, since the same id under two strata
+    would be selected twice and materialised as two records of one document.
+    """
+    seen: Dict[str, str] = {}
+    for stratum, ids in sorted(ids_by_stratum.items()):
+        for record_id in ids:
+            if record_id in seen:
+                raise CorpusConfigError(
+                    f"{manifest_path}: id {record_id!r} appears twice in split "
+                    f"{split!r}, under {seen[record_id]!r} and {stratum!r}. Sampling "
+                    f"identifies a document by its id, so ids have to be unique"
+                )
+            seen[record_id] = stratum
 
 
 def _check_manifest_columns(

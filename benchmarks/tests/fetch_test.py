@@ -255,6 +255,21 @@ class TestFetchStratified:
         # And both read the corpus from the one place its entry resolves to.
         assert resolved_sources(cfg, "validation")["plos"]["revision"] == "corpus-v001"
 
+    def test_rejects_an_id_repeated_in_the_manifest(self, repo: Path):
+        """Sampling identifies a document by id, as the one-file path also requires.
+
+        Across strata rather than within one: the same id under two journals would
+        otherwise be selected twice and materialised as two records of one document.
+        """
+        manifest = repo / "splits" / "corpus-v001.csv"
+        rows = manifest.read_text(encoding="utf-8").splitlines()
+        manifest.write_text(
+            "\n".join(rows + ["aaa-00,bbb,98,validation"]) + "\n", encoding="utf-8"
+        )
+        cfg = _config({"plos": STRATIFIED_ENTRY}, {"plos": 3})
+        with pytest.raises(CorpusConfigError, match="appears twice"):
+            fetch_gold(cfg, "smoke", "validation", repo / "out")
+
     def test_reports_a_manifest_that_does_not_match_the_data(self, repo: Path):
         entry = {**STRATIFIED_ENTRY, "manifest_split": "test"}
         cfg = _config({"plos": entry}, {"plos": 3})
