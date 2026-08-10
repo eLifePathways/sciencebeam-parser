@@ -92,8 +92,15 @@ dataset:
         variant: plos-v002
         optional: true
 
-# Dataset row counts at revision main:
-#   biorxiv: 158, ore: 199, pkp: 200, scielo_br: 200, scielo_mx: 112, scielo_preprints-jats: 1000
+# Rough split sizes, as a guide for choosing mode sizes rather than a limit. The
+# shared corpora are rebuilt from time to time — most recently to drop rows whose
+# ground truth an audit found unusable — and `revision: main` follows that, so read
+# these as "about this, or a bit more" (validation / train, read 2026-08):
+#   biorxiv 43/30, ore 59/37, pkp 204/143,
+#   scielo_br 184/128, scielo_mx 42/31, scielo_preprints-jats 127/85
+# A mode asking for more than a split holds takes all of it rather than failing, so
+# `large` and `full` coincide for the smaller corpora, and `medium` does too for
+# biorxiv, ore and scielo_mx on train.
 # plos is sized in multiples of its 14 journals, since a sample smaller than that
 # cannot contain one document from each, and being balanced across journals is the
 # property the corpus was built for. Its `full` is null rather than a count because
@@ -132,14 +139,17 @@ sampling:
     scielo_br: 100
     scielo_mx: 100
     scielo_preprints-jats: 100
+  # null is every record of whichever split is being run. A count here would be a
+  # count of some past rebuild, and would silently stop meaning "full" at the next
+  # one — as it had for pkp, where 200 was 4 short of its validation split.
   full:
-    biorxiv: 158
-    ore: 199
-    pkp: 200
-    plos: null   # all of whichever split is being run
-    scielo_br: 200
-    scielo_mx: 112
-    scielo_preprints-jats: 1000
+    biorxiv: null
+    ore: null
+    pkp: null
+    plos: null
+    scielo_br: null
+    scielo_mx: null
+    scielo_preprints-jats: null
 
 parser:
   # Per-document conversion timeout (seconds). Large PDFs can exceed the
