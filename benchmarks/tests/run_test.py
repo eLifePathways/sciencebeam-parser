@@ -7,6 +7,8 @@ from unittest.mock import patch
 from benchmarks.predictions_store import LocalPredictionsStore
 from benchmarks.run import (
     _baseline_env_vars,
+    _covered_corpora,
+    _run_baseline,
     _get_corpus_variants,
     _make_label,
     _tool_docker_config,
@@ -309,3 +311,71 @@ class TestRunBenchmark:
         sbp_push = [c for c in push_calls if c[0] == "sciencebeam-parser"]
         assert len(sbp_push) == 1
         assert sbp_push[0][2] == "grobid_crf"  # profile
+
+
+class TestCoveredCorpora:
+    def test_counts_a_corpus_only_when_every_record_is_stored(self):
+        expected = {("a", "1"), ("a", "2"), ("b", "1")}
+        assert _covered_corpora(expected, {("a", "1"), ("a", "2")}) == {"a"}
+
+    def test_partial_coverage_does_not_count(self):
+        expected = {("a", "1"), ("a", "2")}
+        assert _covered_corpora(expected, {("a", "1")}) == set()
+
+    def test_nothing_stored_covers_nothing(self):
+        assert _covered_corpora({("a", "1")}, set()) == set()
+
+
+class TestBaselineThatDoesNotGenerate:
+    """A stored baseline contributes the corpora it has, not all or nothing.
+
+    An opt-in corpus cannot be in a stored baseline unless a run that asked for it
+    pushed one, so requiring every corpus drops the baseline from the comparison
+    the moment such a corpus is included.
+    """
+
+    def _store_with(self, runs_dir: Path, records) -> LocalPredictionsStore:
+        store = LocalPredictionsStore(runs_dir)
+        # pylint: disable-next=protected-access
+        run_dir = store._run_dir("sciencebeam-parser", "main", "grobid_crf", "validation")
+        manifest = run_dir / "predictions" / "manifest.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("".join(
+            json.dumps({"corpus": c, "record_id": r, "status": "ok"}) + "\n"
+            for c, r in records
+        ))
+        return store
+
+    def _run(self, store, runs_dir: Path, expected_ids, variants, include=None):
+        with patch("benchmarks.run.run_score") as mock_score, \
+             patch.object(store, "fetch", wraps=store.fetch) as mock_fetch:
+            mock_score.side_effect = lambda _c, run_dir, *_a, **_kw: (
+                run_dir.mkdir(parents=True, exist_ok=True),
+                (run_dir / "summary.json").write_text("{}"),
+            )
+            result = _run_baseline(
+                _CONFIG, "smoke", "validation", runs_dir / "data", runs_dir,
+                "sciencebeam-parser", "main", "grobid_crf", False,
+                expected_ids, variants, store, 0, include,
+            )
+        return result, mock_fetch
+
+    def test_compares_the_corpora_it_has(self, tmp_path: Path):
+        runs_dir = tmp_path / "runs"
+        store = self._store_with(runs_dir, [("biorxiv", "r1"), ("biorxiv", "r2")])
+        expected = {("biorxiv", "r1"), ("biorxiv", "r2"), ("plos-manuscripts", "p1")}
+        result, mock_fetch = self._run(
+            store, runs_dir, expected,
+            {"biorxiv": "v1", "plos-manuscripts": "v002"}, ["plos-manuscripts"],
+        )
+        assert result is not None, "the baseline should still contribute biorxiv"
+        # The corpus it cannot cover is left out of what it fetches and scores.
+        assert mock_fetch.call_args.args[5] == {"biorxiv": "v1"}
+
+    def test_skips_only_when_it_covers_nothing(self, tmp_path: Path):
+        runs_dir = tmp_path / "runs"
+        store = self._store_with(runs_dir, [])
+        result, _ = self._run(
+            store, runs_dir, {("biorxiv", "r1")}, {"biorxiv": "v1"},
+        )
+        assert result is None

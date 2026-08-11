@@ -96,6 +96,23 @@ def _get_corpus_variants(
     return result
 
 
+def _covered_corpora(expected_ids: set, done_ids: set) -> set:
+    """Corpora whose every expected record is already in the store.
+
+    Partial coverage does not count: a corpus scored over fewer documents than the
+    run it is compared against reads as a difference in the tool rather than in
+    which documents were measured.
+    """
+    by_corpus: dict = {}
+    for corpus, record_id in expected_ids:
+        by_corpus.setdefault(corpus, set()).add(record_id)
+    return {
+        corpus
+        for corpus, record_ids in by_corpus.items()
+        if all((corpus, record_id) in done_ids for record_id in record_ids)
+    }
+
+
 def _make_label(tool: str, version: str, profile: str, metadata: Optional[dict]) -> str:
     if metadata and metadata.get("image"):
         base = metadata["image"]
@@ -142,18 +159,41 @@ def _run_baseline(  # pylint: disable=too-many-locals
 ) -> Optional[Tuple[str, Path]]:
     run_dir = runs_dir / "baselines" / tool / version / profile / split
     done_ids = store.get_done_ids(tool, version, profile, split, corpus_variants)
+
+    if not generate:
+        # A baseline that will not generate contributes the corpora it fully covers,
+        # rather than dropping out over the ones it does not. An opt-in corpus is
+        # absent from a stored baseline by construction — only a run that asked for
+        # that corpus could have pushed predictions for it — so requiring every
+        # corpus would remove this baseline from the comparison whenever one is
+        # included. The same applies to a mode larger than the one it was stored at.
+        covered = _covered_corpora(expected_ids, done_ids)
+        if not covered:
+            LOGGER.warning(
+                "No complete stored predictions for %s/%s (profile=%s), skipping",
+                tool, version, profile,
+            )
+            return None
+        left_out = sorted({corpus for corpus, _ in expected_ids} - covered)
+        if left_out:
+            LOGGER.warning(
+                "Baseline %s/%s (profile=%s) has no complete stored predictions for "
+                "%s and does not generate; comparing the corpora it does have",
+                tool, version, profile, ", ".join(left_out),
+            )
+        expected_ids = {entry for entry in expected_ids if entry[0] in covered}
+        corpus_variants = {
+            corpus: variant
+            for corpus, variant in corpus_variants.items()
+            if corpus in covered
+        }
+        include = [corpus for corpus in (include or ()) if corpus in covered]
+
     missing = expected_ids - done_ids
     LOGGER.info(
         "=== Baseline %s/%s (profile=%s): %d/%d predictions ===",
         tool, version, profile, len(done_ids), len(expected_ids),
     )
-
-    if missing and not generate:
-        LOGGER.warning(
-            "Missing %d predictions for %s/%s (profile=%s) but generate=false, skipping",
-            len(missing), tool, version, profile,
-        )
-        return None
 
     # Take whatever the store has before generating the rest. `run_predict` skips
     # records already in the run's manifest, which `fetch` copies, so one absent
