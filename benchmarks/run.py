@@ -96,21 +96,16 @@ def _get_corpus_variants(
     return result
 
 
-def _covered_corpora(expected_ids: set, done_ids: set) -> set:
-    """Corpora whose every expected record is already in the store.
-
-    Partial coverage does not count: a corpus scored over fewer documents than the
-    run it is compared against reads as a difference in the tool rather than in
-    which documents were measured.
-    """
-    by_corpus: dict = {}
+def _coverage(expected_ids: set, done_ids: set) -> dict:
+    """Per corpus, how many of the expected records the store has, and how many
+    are expected."""
+    counts: dict = {}
     for corpus, record_id in expected_ids:
-        by_corpus.setdefault(corpus, set()).add(record_id)
-    return {
-        corpus
-        for corpus, record_ids in by_corpus.items()
-        if all((corpus, record_id) in done_ids for record_id in record_ids)
-    }
+        entry = counts.setdefault(corpus, [0, 0])
+        entry[1] += 1
+        if (corpus, record_id) in done_ids:
+            entry[0] += 1
+    return {corpus: (have, want) for corpus, (have, want) in counts.items()}
 
 
 def _make_label(tool: str, version: str, profile: str, metadata: Optional[dict]) -> str:
@@ -161,27 +156,38 @@ def _run_baseline(  # pylint: disable=too-many-locals
     done_ids = store.get_done_ids(tool, version, profile, split, corpus_variants)
 
     if not generate:
-        # A baseline that will not generate contributes the corpora it fully covers,
-        # rather than dropping out over the ones it does not. An opt-in corpus is
-        # absent from a stored baseline by construction — only a run that asked for
-        # that corpus could have pushed predictions for it — so requiring every
-        # corpus would remove this baseline from the comparison whenever one is
-        # included. The same applies to a mode larger than the one it was stored at.
-        covered = _covered_corpora(expected_ids, done_ids)
+        # A baseline that will not generate contributes what it has, rather than
+        # dropping out over what it lacks. An opt-in corpus is absent from a stored
+        # baseline by construction — only a run that asked for that corpus could
+        # have pushed predictions for it — so requiring every corpus would remove
+        # this baseline from the comparison whenever one is included. A mode larger
+        # than the one it was stored at leaves it short the same way.
+        #
+        # Where it covers a corpus only partly it still contributes, and the report
+        # is what surfaces that: it prints each run's document count per corpus and
+        # calls out a difference, since a delta across unequal document sets
+        # reflects which documents were measured as well as how the tool behaved.
+        coverage = _coverage(expected_ids, done_ids)
+        covered = {corpus for corpus, (have, _) in coverage.items() if have}
         if not covered:
             LOGGER.warning(
-                "No complete stored predictions for %s/%s (profile=%s), skipping",
+                "No stored predictions for %s/%s (profile=%s), skipping",
                 tool, version, profile,
             )
             return None
-        left_out = sorted({corpus for corpus, _ in expected_ids} - covered)
-        if left_out:
+        short = {
+            corpus: counts for corpus, counts in coverage.items()
+            if counts[0] < counts[1]
+        }
+        if short:
             LOGGER.warning(
-                "Baseline %s/%s (profile=%s) has no complete stored predictions for "
-                "%s and does not generate; comparing the corpora it does have",
-                tool, version, profile, ", ".join(left_out),
+                "Baseline %s/%s (profile=%s) does not generate and is short of "
+                "stored predictions for %s; comparing what it has",
+                tool, version, profile,
+                ", ".join(f"{corpus} {have}/{want}"
+                          for corpus, (have, want) in sorted(short.items())),
             )
-        expected_ids = {entry for entry in expected_ids if entry[0] in covered}
+        expected_ids = {entry for entry in expected_ids if entry in done_ids}
         corpus_variants = {
             corpus: variant
             for corpus, variant in corpus_variants.items()

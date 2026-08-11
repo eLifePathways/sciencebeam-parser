@@ -89,6 +89,24 @@ def _render_field_table(  # pylint: disable=too-many-locals
     return lines
 
 
+def _unequal_docs_note(counts_by_label: List[Tuple[str, int]]) -> List[str]:
+    """Call out a comparison whose columns do not cover the same documents.
+
+    The counts are printed either way, but they are easy to read past, and a delta
+    between columns of unequal length reflects which documents each run covered as
+    much as how it behaved. A baseline that was stored at a smaller mode, or that
+    predates a corpus, is short by construction rather than by failing.
+    """
+    if len({n for _, n in counts_by_label}) <= 1:
+        return []
+    listed = ", ".join(f"{label} {n}" for label, n in counts_by_label)
+    return [
+        f"> ⚠️ **Unequal document sets** ({listed}). Deltas below reflect which "
+        f"documents each run covered as well as how it performed.",
+        "",
+    ]
+
+
 def _render_corpus_section(
     corpus: str,
     labeled_summaries: List[Tuple[str, dict]],
@@ -96,11 +114,12 @@ def _render_corpus_section(
     field_measures: dict,
     field_scoring_types: dict,
 ) -> List[str]:
-    counts = " | ".join(
-        f"**{label}**: {s.get('corpora', {}).get(corpus, {}).get('n', 0)} docs"
+    counts_by_label = [
+        (label, s.get("corpora", {}).get(corpus, {}).get("n", 0))
         for label, s in labeled_summaries
-    )
-    lines = [counts, ""]
+    ]
+    counts = " | ".join(f"**{label}**: {n} docs" for label, n in counts_by_label)
+    lines = [counts, ""] + _unequal_docs_note(counts_by_label)
     lines.extend(_render_field_table(
         labeled_summaries, field_names, field_measures, field_scoring_types,
         _corpus_f1_getter(corpus),
@@ -119,15 +138,17 @@ def _render_overall_section(  # pylint: disable=too-many-locals
     n_total = sum(
         primary_summary.get("corpora", {}).get(c, {}).get("n", 0) for c in corpora
     )
-    total_counts = " | ".join(
-        f"**{label}**: {sum(s.get('corpora', {}).get(c, {}).get('n', 0) for c in corpora)} docs"
+    counts_by_label = [
+        (label, sum(s.get("corpora", {}).get(c, {}).get("n", 0) for c in corpora))
         for label, s in labeled_summaries
-    )
+    ]
+    total_counts = " | ".join(f"**{label}**: {n} docs" for label, n in counts_by_label)
     lines = [
         f"### Overall ({n_total} docs across {len(corpora)} corpora)",
         "",
         total_counts,
         "",
+        *_unequal_docs_note(counts_by_label),
     ]
     lines.extend(_render_field_table(
         labeled_summaries, field_names, field_measures, field_scoring_types,

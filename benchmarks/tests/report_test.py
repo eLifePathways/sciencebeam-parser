@@ -9,6 +9,7 @@ from benchmarks.report import (
     _get_overall_f1,
     _parse_labeled_summary,
     _render_comparison_report,
+    _unequal_docs_note,
 )
 
 
@@ -283,3 +284,16 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
         assert report.count("<details>") == 2
         assert "<summary><b>biorxiv</b>" in report
         assert "<summary><b>ore</b>" in report
+
+
+class TestUnequalDocsNote:
+    def test_silent_when_every_run_covered_the_same_documents(self):
+        assert _unequal_docs_note([("grobid", 10), ("local", 10)]) == []
+
+    def test_calls_out_a_difference_with_the_counts(self):
+        note = _unequal_docs_note([("grobid", 10), ("local", 14)])
+        assert note and "Unequal document sets" in note[0]
+        assert "grobid 10" in note[0] and "local 14" in note[0]
+
+    def test_a_corpus_absent_from_one_run_counts_as_unequal(self):
+        assert _unequal_docs_note([("grobid", 0), ("local", 14)])

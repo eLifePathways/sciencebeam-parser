@@ -7,7 +7,7 @@ from unittest.mock import patch
 from benchmarks.predictions_store import LocalPredictionsStore
 from benchmarks.run import (
     _baseline_env_vars,
-    _covered_corpora,
+    _coverage,
     _run_baseline,
     _get_corpus_variants,
     _make_label,
@@ -313,17 +313,16 @@ class TestRunBenchmark:
         assert sbp_push[0][2] == "grobid_crf"  # profile
 
 
-class TestCoveredCorpora:
-    def test_counts_a_corpus_only_when_every_record_is_stored(self):
+class TestCoverage:
+    def test_reports_stored_and_expected_per_corpus(self):
         expected = {("a", "1"), ("a", "2"), ("b", "1")}
-        assert _covered_corpora(expected, {("a", "1"), ("a", "2")}) == {"a"}
+        assert _coverage(expected, {("a", "1"), ("a", "2")}) == {"a": (2, 2), "b": (0, 1)}
 
-    def test_partial_coverage_does_not_count(self):
-        expected = {("a", "1"), ("a", "2")}
-        assert _covered_corpora(expected, {("a", "1")}) == set()
+    def test_partial_coverage_is_reported_not_discarded(self):
+        assert _coverage({("a", "1"), ("a", "2")}, {("a", "1")}) == {"a": (1, 2)}
 
-    def test_nothing_stored_covers_nothing(self):
-        assert _covered_corpora({("a", "1")}, set()) == set()
+    def test_nothing_stored(self):
+        assert _coverage({("a", "1")}, set()) == {"a": (0, 1)}
 
 
 class TestBaselineThatDoesNotGenerate:
@@ -370,6 +369,16 @@ class TestBaselineThatDoesNotGenerate:
         )
         assert result is not None, "the baseline should still contribute biorxiv"
         # The corpus it cannot cover is left out of what it fetches and scores.
+        assert mock_fetch.call_args.args[5] == {"biorxiv": "v1"}
+
+    def test_contributes_a_corpus_it_covers_only_partly(self, tmp_path: Path):
+        """Scored over what it has; the report is what flags the shorter column."""
+        runs_dir = tmp_path / "runs"
+        store = self._store_with(runs_dir, [("biorxiv", "r1")])
+        result, mock_fetch = self._run(
+            store, runs_dir, {("biorxiv", "r1"), ("biorxiv", "r2")}, {"biorxiv": "v1"},
+        )
+        assert result is not None
         assert mock_fetch.call_args.args[5] == {"biorxiv": "v1"}
 
     def test_skips_only_when_it_covers_nothing(self, tmp_path: Path):
