@@ -5,7 +5,7 @@ import json
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import yaml
 
@@ -17,6 +17,8 @@ from sciencebeam_judge.evaluation.score_aggregation import (
 from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
 from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
+
+from benchmarks.fetch import included_corpora
 
 LOGGER = logging.getLogger(__name__)
 
@@ -209,12 +211,13 @@ def _render_report(  # pylint: disable=too-many-locals
     return "\n".join(lines)
 
 
-def run_score(  # pylint: disable=too-many-locals
+def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     config: dict,
     run_dir: Path,
     data_dir: Path,
     out_path: Optional[Path],
     split_override: Optional[str] = None,
+    include: Optional[Iterable[str]] = None,
 ) -> None:
     register_functions()
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
@@ -236,7 +239,16 @@ def run_score(  # pylint: disable=too-many-locals
 
     split = split_override or (run_record or {}).get("split", "train")
 
-    corpora = list(config["dataset"]["splits"][split].keys())
+    # The corpora the run actually covered, which is not every corpus of the split
+    # once one of them is opt-in: scoring an absent corpus only produces a warning
+    # and an empty section in the report. The run record is the authority, but it
+    # only exists where predictions were generated — a run whose predictions all
+    # came from the store has none, so the caller's opt-in set has to be honoured
+    # here too, or an opt-in corpus is fetched and predicted and then silently left
+    # out of the summary and the comparison built from it.
+    corpora = (run_record or {}).get("corpora") or included_corpora(
+        config, split, include
+    )
 
     corpus_results: Dict[str, Any] = {}
     for corpus in corpora:
@@ -274,6 +286,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument(
         "--split", default=None, help="Dataset split override (default: read from run.json)"
     )
+    parser.add_argument(
+        "--include-corpus", action="append", default=None, dest="include_corpus",
+        metavar="CORPUS",
+        help="Also score an opt-in corpus, repeatable. Ignored where run.json lists corpora",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -287,6 +304,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         data_dir=Path(args.data),
         out_path=Path(args.out) if args.out else None,
         split_override=args.split,
+        include=args.include_corpus,
     )
 
 

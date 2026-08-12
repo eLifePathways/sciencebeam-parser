@@ -1,8 +1,23 @@
 dataset:
+  # Pinned rather than `main`: these corpora are rebuilt in place, most recently
+  # to drop rows whose ground truth an audit found unusable, and following the
+  # branch means every recorded aggregate moves with the next rebuild without
+  # anything erroring. The tag is b3ce8af8487495462a2589e80f9fdfe31c736ef4.
   repo_id: elifepathways/sciencebeam-v2-benchmarking
-  revision: main
+  revision: benchmark-v001
   splits:
     train:
+      # The split to read closely when working out why an extraction failed, which
+      # is why it is the one `run.py` defaults to.
+      plos-manuscripts:
+        repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
+        revision: plos-rsrch-2064-v002
+        path: train/
+        manifest: splits/plos-rsrch-2064-v002.csv
+        stratum: journal
+        id_column: id
+        variant: v002
+        optional: true
       biorxiv:
         file: biorxiv-jats/train-00000-of-00001.parquet
         id_column: ppr_id
@@ -28,6 +43,25 @@ dataset:
         id_column: ppr_id
         variant: v1
     validation:
+      # PLOS RSRCH-2064: its own private repo, pinned to a tag because the corpus
+      # grows per version and reading `main` would change every aggregate with it.
+      # Balanced across 14 journals, so it is sampled per stratum rather than
+      # uniformly, from the ranks its published manifest records. `optional` keeps it
+      # out of a run that did not ask for it: the manuscripts are not
+      # redistributable, so reaching for them is a decision, not a default.
+      #
+      # Predictions over it are stored in sciencebeam-eval-predictions, which must
+      # therefore stay private — a prediction is close to the whole text of the
+      # manuscript it came from. See RepoPredictionsStore.
+      plos-manuscripts:
+        repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
+        revision: plos-rsrch-2064-v002
+        path: validation/
+        manifest: splits/plos-rsrch-2064-v002.csv
+        stratum: journal
+        id_column: id
+        variant: v002
+        optional: true
       biorxiv:
         file: biorxiv-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
@@ -52,14 +86,41 @@ dataset:
         file: scielo-preprints-jats/validation-00000-of-00001.parquet
         id_column: ppr_id
         variant: v1
+    # Only the corpora whose numbers are meant to be published. PLOS's test
+    # documents stay unexamined, which is what keeps those numbers honest, so this
+    # split is for deliberate runs rather than routine ones.
+    test:
+      plos-manuscripts:
+        repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
+        revision: plos-rsrch-2064-v002
+        path: test/
+        manifest: splits/plos-rsrch-2064-v002.csv
+        stratum: journal
+        id_column: id
+        variant: v002
+        optional: true
 
-# Dataset row counts at revision main:
-#   biorxiv: 158, ore: 199, pkp: 200, scielo_br: 200, scielo_mx: 112, scielo_preprints-jats: 1000
+# Rough split sizes, as a guide for choosing mode sizes rather than a limit. The
+# shared corpora are rebuilt from time to time — most recently to drop rows whose
+# ground truth an audit found unusable — so these hold until the pinned revision above
+# is bumped, and read as "about this, or a bit more" (validation / train, at
+# benchmark-v001):
+#   biorxiv 43/30, ore 59/37, pkp 204/143,
+#   scielo_br 184/128, scielo_mx 42/31, scielo_preprints-jats 127/85
+# A mode asking for more than a split holds takes all of it rather than failing, so
+# `large` and `full` coincide for the smaller corpora, and `medium` does too for
+# biorxiv, ore and scielo_mx on train.
+# plos-manuscripts is sized in multiples of its 14 journals, since a sample smaller than that
+# cannot contain one document from each, and being balanced across journals is the
+# property the corpus was built for. Its `full` is null rather than a count because
+# its splits differ in size (test 332, validation 132) and one number cannot be
+# right for both.
 sampling:
   smoke:
     biorxiv: 10
     ore: 10
     pkp: 10
+    plos-manuscripts: 14
     scielo_br: 10
     scielo_mx: 10
     scielo_preprints-jats: 10
@@ -67,6 +128,7 @@ sampling:
     biorxiv: 25
     ore: 25
     pkp: 25
+    plos-manuscripts: 28
     scielo_br: 25
     scielo_mx: 25
     scielo_preprints-jats: 25
@@ -74,6 +136,7 @@ sampling:
     biorxiv: 47
     ore: 50
     pkp: 50
+    plos-manuscripts: 56
     scielo_br: 50
     scielo_mx: 34
     scielo_preprints-jats: 50
@@ -81,16 +144,21 @@ sampling:
     biorxiv: 100
     ore: 100
     pkp: 100
+    plos-manuscripts: 140
     scielo_br: 100
     scielo_mx: 100
     scielo_preprints-jats: 100
+  # null is every record of whichever split is being run. A count here would be a
+  # count of some past rebuild, and would silently stop meaning "full" at the next
+  # one — as it had for pkp, where 200 was 4 short of its validation split.
   full:
-    biorxiv: 158
-    ore: 199
-    pkp: 200
-    scielo_br: 200
-    scielo_mx: 112
-    scielo_preprints-jats: 1000
+    biorxiv: null
+    ore: null
+    pkp: null
+    plos-manuscripts: null
+    scielo_br: null
+    scielo_mx: null
+    scielo_preprints-jats: null
 
 parser:
   # Per-document conversion timeout (seconds). Large PDFs can exceed the

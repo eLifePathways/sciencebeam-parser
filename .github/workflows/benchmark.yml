@@ -14,6 +14,11 @@ on:
         required: false
         default: ''
         type: string
+      include_plos:
+        description: 'Also run the private PLOS corpus (not redistributable)'
+        required: false
+        default: false
+        type: boolean
   push:
     branches: [main]
   pull_request:
@@ -32,7 +37,8 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'benchmark:small') ||
       contains(github.event.pull_request.labels.*.name, 'benchmark:medium') ||
       contains(github.event.pull_request.labels.*.name, 'benchmark:large') ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark:full')
+      contains(github.event.pull_request.labels.*.name, 'benchmark:full') ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark:plos')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: benchmark
@@ -59,6 +65,13 @@ jobs:
           contains(github.event.pull_request.labels.*.name, 'profile:biorxiv_elife') && 'biorxiv_elife' ||
           inputs.profile ||
           'grobid_crf'
+        }}
+      # The PLOS corpus is private and its manuscripts are not redistributable, so a
+      # run includes it only when a person asks for it by label.
+      BENCHMARK_CORPORA: >-
+        ${{
+          (contains(github.event.pull_request.labels.*.name, 'benchmark:plos') ||
+           inputs.include_plos) && '--include-corpus plos-manuscripts' || ''
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/validation
 
@@ -129,6 +142,7 @@ jobs:
             --data benchmarks/data \
             --runs benchmarks/runs/${{ github.sha }} \
             --predictions-repo sciencebeam-eval-predictions \
+            ${{ env.BENCHMARK_CORPORA }} \
             --baseline-only
 
       - name: Start sciencebeam-parser
@@ -170,6 +184,7 @@ jobs:
             --parser-url http://localhost:8080 \
             --parser-image "${{ steps.image_tag.outputs.value }}" \
             --profile "${{ env.BENCHMARK_PROFILE }}" \
+            ${{ env.BENCHMARK_CORPORA }} \
             "${PUSH_CURRENT_ARG[@]}"
 
       - name: Write job summary

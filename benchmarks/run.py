@@ -5,12 +5,12 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Iterable, List, Optional, Tuple, Union
 
 import httpx
 import yaml
 
-from benchmarks.fetch import fetch_gold
+from benchmarks.fetch import fetch_gold, included_corpora
 from benchmarks.predict import run_predict
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
@@ -76,15 +76,36 @@ def _baseline_env_vars(tool: str, profile: Optional[str]) -> dict:
     return env
 
 
-def _get_corpus_variants(config: dict, split: str) -> dict:
+def _get_corpus_variants(
+    config: dict, split: str, include: Optional[Iterable[str]] = None
+) -> dict:
+    """Each covered corpus's prediction variant.
+
+    Limited to the corpora the run covers, so predictions for a corpus that was not
+    run are neither looked for nor stored. A versioned corpus names its version here,
+    which is what keeps predictions against two versions of it apart.
+    """
     split_cfg = config["dataset"]["splits"].get(split, {})
     result = {}
-    for corpus, corpus_cfg in split_cfg.items():
+    for corpus in included_corpora(config, split, include):
+        corpus_cfg = split_cfg[corpus]
         if isinstance(corpus_cfg, dict):
             result[corpus] = corpus_cfg.get("variant", "v1")
         else:
             result[corpus] = "v1"
     return result
+
+
+def _coverage(expected_ids: set, done_ids: set) -> dict:
+    """Per corpus, how many of the expected records the store has, and how many
+    are expected."""
+    counts: dict = {}
+    for corpus, record_id in expected_ids:
+        entry = counts.setdefault(corpus, [0, 0])
+        entry[1] += 1
+        if (corpus, record_id) in done_ids:
+            entry[0] += 1
+    return {corpus: (have, want) for corpus, (have, want) in counts.items()}
 
 
 def _make_label(tool: str, version: str, profile: str, metadata: Optional[dict]) -> str:
@@ -97,9 +118,10 @@ def _make_label(tool: str, version: str, profile: str, metadata: Optional[dict])
     return f"{base} ({profile})"
 
 
-def _generate_predictions(
+def _generate_predictions(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     config: dict, mode: str, split: str, data_dir: Path, run_dir: Path,
     tool: str, version: str, profile: str, concurrency: int,
+    include: Optional[Iterable[str]] = None,
 ) -> None:
     dcfg = _tool_docker_config(tool, version)
     container = f"benchmark-baseline-{tool}"
@@ -108,7 +130,8 @@ def _generate_predictions(
     try:
         _wait_healthy(dcfg["url"], dcfg["health_path"])
         run_predict(config, mode, split, data_dir, run_dir,
-                    dcfg["url"], f"{tool}:{version}", profile, concurrency)
+                    dcfg["url"], f"{tool}:{version}", profile, concurrency,
+                    include=include)
     finally:
         _docker_stop(container)
 
@@ -127,33 +150,75 @@ def _run_baseline(  # pylint: disable=too-many-locals
     corpus_variants: dict,
     store: PredictionsStore,
     concurrency: int,
+    include: Optional[Iterable[str]] = None,
 ) -> Optional[Tuple[str, Path]]:
     run_dir = runs_dir / "baselines" / tool / version / profile / split
-    done_ids = store.get_done_ids(tool, version, profile, split)
+    done_ids = store.get_done_ids(tool, version, profile, split, corpus_variants)
+
+    if not generate:
+        # A baseline that will not generate contributes what it has, rather than
+        # dropping out over what it lacks. An opt-in corpus is absent from a stored
+        # baseline by construction — only a run that asked for that corpus could
+        # have pushed predictions for it — so requiring every corpus would remove
+        # this baseline from the comparison whenever one is included. A mode larger
+        # than the one it was stored at leaves it short the same way.
+        #
+        # Where it covers a corpus only partly it still contributes, and the report
+        # is what surfaces that: it prints each run's document count per corpus and
+        # calls out a difference, since a delta across unequal document sets
+        # reflects which documents were measured as well as how the tool behaved.
+        coverage = _coverage(expected_ids, done_ids)
+        covered = {corpus for corpus, (have, _) in coverage.items() if have}
+        if not covered:
+            LOGGER.warning(
+                "No stored predictions for %s/%s (profile=%s), skipping",
+                tool, version, profile,
+            )
+            return None
+        short = {
+            corpus: counts for corpus, counts in coverage.items()
+            if counts[0] < counts[1]
+        }
+        if short:
+            LOGGER.warning(
+                "Baseline %s/%s (profile=%s) does not generate and is short of "
+                "stored predictions for %s; comparing what it has",
+                tool, version, profile,
+                ", ".join(f"{corpus} {have}/{want}"
+                          for corpus, (have, want) in sorted(short.items())),
+            )
+        expected_ids = {entry for entry in expected_ids if entry in done_ids}
+        corpus_variants = {
+            corpus: variant
+            for corpus, variant in corpus_variants.items()
+            if corpus in covered
+        }
+        include = [corpus for corpus in (include or ()) if corpus in covered]
+
     missing = expected_ids - done_ids
     LOGGER.info(
         "=== Baseline %s/%s (profile=%s): %d/%d predictions ===",
         tool, version, profile, len(done_ids), len(expected_ids),
     )
 
+    # Take whatever the store has before generating the rest. `run_predict` skips
+    # records already in the run's manifest, which `fetch` copies, so one absent
+    # document no longer costs a re-prediction of every other — which at ~24s per
+    # document for the parser and ~20s for a PLOS manuscript is most of an hour.
+    if done_ids:
+        LOGGER.info("Fetching %d existing prediction(s) from the store", len(done_ids))
+        store.fetch(tool, version, profile, split, run_dir, corpus_variants)
+
     if missing:
-        if not generate:
-            LOGGER.warning(
-                "Missing %d predictions for %s/%s (profile=%s) but generate=false, skipping",
-                len(missing), tool, version, profile,
-            )
-            return None
         _generate_predictions(config, mode, split, data_dir, run_dir,
-                              tool, version, profile, concurrency)
+                              tool, version, profile, concurrency, include=include)
         store.push(tool, version, profile, split, run_dir, corpus_variants, {
             "tool": tool, "version": version, "profile": profile,
             "split": split, "mode": mode,
         })
-    else:
-        LOGGER.info("All predictions present, fetching from store")
-        store.fetch(tool, version, profile, split, run_dir, corpus_variants)
 
-    run_score(config, run_dir, data_dir, out_path=None, split_override=split)
+    run_score(config, run_dir, data_dir, out_path=None, split_override=split,
+              include=include)
     metadata = store.read_metadata(tool, version, profile, split)
     label = _make_label(tool, version, profile, metadata)
     summary_path = run_dir / "summary.json"
@@ -173,11 +238,13 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     baseline_only: bool = False,
     push_current: bool = False,
     concurrency: int = 0,
+    include: Optional[Iterable[str]] = None,
 ) -> None:
     # pylint: disable=too-many-locals
-    corpus_variants = _get_corpus_variants(config, split)
+    corpus_variants = _get_corpus_variants(config, split, include)
     expected_ids = {
-        (r["corpus"], r["record_id"]) for r in fetch_gold(config, mode, split, data_dir)
+        (r["corpus"], r["record_id"])
+        for r in fetch_gold(config, mode, split, data_dir, include=include)
     }
 
     labeled_paths: List[Tuple[str, Path]] = []
@@ -187,7 +254,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
             config, mode, split, data_dir, runs_dir,
             baseline["tool"], baseline["version"], profile,
             baseline.get("generate", True),
-            expected_ids, corpus_variants, store, concurrency,
+            expected_ids, corpus_variants, store, concurrency, include,
         )
         if entry:
             labeled_paths.append(entry)
@@ -202,8 +269,10 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     profile = parser_profile or "default"
     primary_run_dir = runs_dir / split
     run_predict(config, mode, split, data_dir, primary_run_dir,
-                parser_url, parser_image, parser_profile, concurrency)
-    run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split)
+                parser_url, parser_image, parser_profile, concurrency,
+                include=include)
+    run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split,
+              include=include)
 
     if push_current:
         store.push("sciencebeam-parser", "main", profile, split,
@@ -240,6 +309,15 @@ def main(argv=None) -> None:
     parser.add_argument("--parser-image", default=None)
     parser.add_argument("--profile", default=None)
     parser.add_argument("--concurrency", type=int, default=0)
+    parser.add_argument(
+        "--include-corpus", action="append", default=None, dest="include_corpus",
+        metavar="CORPUS",
+        help=(
+            "Also run an opt-in corpus, repeatable. Opt-in corpora are left out by"
+            " default because they are private, so a run reaches for one only when"
+            " asked"
+        ),
+    )
     parser.add_argument("--baseline-only", action="store_true")
     parser.add_argument(
         "--push-current", action="store_true",
@@ -270,6 +348,7 @@ def main(argv=None) -> None:
         baseline_only=args.baseline_only,
         push_current=args.push_current,
         concurrency=args.concurrency,
+        include=args.include_corpus,
     )
 
 

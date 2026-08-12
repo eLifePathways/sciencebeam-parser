@@ -7,6 +7,8 @@ from unittest.mock import patch
 from benchmarks.predictions_store import LocalPredictionsStore
 from benchmarks.run import (
     _baseline_env_vars,
+    _coverage,
+    _run_baseline,
     _get_corpus_variants,
     _make_label,
     _tool_docker_config,
@@ -70,6 +72,18 @@ class TestGetCorpusVariants:
         config = {"dataset": {"splits": {"train": {"biorxiv": {}}}}}
         assert _get_corpus_variants(config, "train") == {"biorxiv": "v1"}
 
+    def test_leaves_out_an_opt_in_corpus_nobody_asked_for(self):
+        config = {"dataset": {"splits": {"train": {
+            "biorxiv": {"variant": "v1"},
+            "plos": {"variant": "plos-v002", "optional": True},
+        }}}}
+        # Predictions for a corpus the run did not cover must be neither looked
+        # for in the store nor pushed to it.
+        assert _get_corpus_variants(config, "train") == {"biorxiv": "v1"}
+        assert _get_corpus_variants(config, "train", ["plos"]) == {
+            "biorxiv": "v1", "plos": "plos-v002",
+        }
+
 
 class TestMakeLabel:
     def test_grobid_uses_tool_and_version(self):
@@ -126,6 +140,43 @@ class TestRunBenchmark:
                       store, baseline_only=True)
 
         mock_start.assert_called_once()
+        mock_predict.assert_called_once()
+
+    @patch("benchmarks.run._docker_stop")
+    @patch("benchmarks.run._docker_start")
+    @patch("benchmarks.run._wait_healthy")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_takes_what_the_store_has_before_generating_the_rest(
+        self, mock_gold, mock_predict, mock_score, _mock_wait,
+        _mock_start, _mock_stop, tmp_path: Path,
+    ):
+        """A partly-populated store is used, not discarded.
+
+        Generating is per document and slow -- tens of seconds each -- so a run
+        missing one prediction must not re-predict the ones it already has.
+        """
+        mock_gold.return_value = self._gold_records()
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        # pylint: disable-next=protected-access
+        run_dir = store._run_dir("grobid", "0.9.0-crf", "default", "train")
+        manifest = run_dir / "predictions" / "manifest.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("".join(
+            json.dumps({"corpus": "biorxiv", "record_id": f"r{i}", "status": "ok"}) + "\n"
+            for i in range(8)  # two of the ten gold records are absent
+        ))
+
+        def fake_score(_cfg, score_run_dir, *_a, **_kw):
+            self._make_summary(score_run_dir)
+
+        mock_score.side_effect = fake_score
+        with patch.object(store, "fetch", wraps=store.fetch) as mock_fetch:
+            run_benchmark(_CONFIG, "smoke", "train", tmp_path / "data", runs_dir,
+                          store, baseline_only=True)
+            mock_fetch.assert_called_once()
         mock_predict.assert_called_once()
 
     @patch("benchmarks.run._docker_stop")
@@ -260,3 +311,80 @@ class TestRunBenchmark:
         sbp_push = [c for c in push_calls if c[0] == "sciencebeam-parser"]
         assert len(sbp_push) == 1
         assert sbp_push[0][2] == "grobid_crf"  # profile
+
+
+class TestCoverage:
+    def test_reports_stored_and_expected_per_corpus(self):
+        expected = {("a", "1"), ("a", "2"), ("b", "1")}
+        assert _coverage(expected, {("a", "1"), ("a", "2")}) == {"a": (2, 2), "b": (0, 1)}
+
+    def test_partial_coverage_is_reported_not_discarded(self):
+        assert _coverage({("a", "1"), ("a", "2")}, {("a", "1")}) == {"a": (1, 2)}
+
+    def test_nothing_stored(self):
+        assert _coverage({("a", "1")}, set()) == {"a": (0, 1)}
+
+
+class TestBaselineThatDoesNotGenerate:
+    """A stored baseline contributes the corpora it has, not all or nothing.
+
+    An opt-in corpus cannot be in a stored baseline unless a run that asked for it
+    pushed one, so requiring every corpus drops the baseline from the comparison
+    the moment such a corpus is included.
+    """
+
+    def _store_with(self, runs_dir: Path, records) -> LocalPredictionsStore:
+        store = LocalPredictionsStore(runs_dir)
+        # pylint: disable-next=protected-access
+        run_dir = store._run_dir("sciencebeam-parser", "main", "grobid_crf", "validation")
+        manifest = run_dir / "predictions" / "manifest.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("".join(
+            json.dumps({"corpus": c, "record_id": r, "status": "ok"}) + "\n"
+            for c, r in records
+        ))
+        return store
+
+    def _run(self, store, runs_dir: Path, expected_ids, variants, include=None):
+        with patch("benchmarks.run.run_score") as mock_score, \
+             patch.object(store, "fetch", wraps=store.fetch) as mock_fetch:
+            mock_score.side_effect = lambda _c, run_dir, *_a, **_kw: (
+                run_dir.mkdir(parents=True, exist_ok=True),
+                (run_dir / "summary.json").write_text("{}"),
+            )
+            result = _run_baseline(
+                _CONFIG, "smoke", "validation", runs_dir / "data", runs_dir,
+                "sciencebeam-parser", "main", "grobid_crf", False,
+                expected_ids, variants, store, 0, include,
+            )
+        return result, mock_fetch
+
+    def test_compares_the_corpora_it_has(self, tmp_path: Path):
+        runs_dir = tmp_path / "runs"
+        store = self._store_with(runs_dir, [("biorxiv", "r1"), ("biorxiv", "r2")])
+        expected = {("biorxiv", "r1"), ("biorxiv", "r2"), ("plos-manuscripts", "p1")}
+        result, mock_fetch = self._run(
+            store, runs_dir, expected,
+            {"biorxiv": "v1", "plos-manuscripts": "v002"}, ["plos-manuscripts"],
+        )
+        assert result is not None, "the baseline should still contribute biorxiv"
+        # The corpus it cannot cover is left out of what it fetches and scores.
+        assert mock_fetch.call_args.args[5] == {"biorxiv": "v1"}
+
+    def test_contributes_a_corpus_it_covers_only_partly(self, tmp_path: Path):
+        """Scored over what it has; the report is what flags the shorter column."""
+        runs_dir = tmp_path / "runs"
+        store = self._store_with(runs_dir, [("biorxiv", "r1")])
+        result, mock_fetch = self._run(
+            store, runs_dir, {("biorxiv", "r1"), ("biorxiv", "r2")}, {"biorxiv": "v1"},
+        )
+        assert result is not None
+        assert mock_fetch.call_args.args[5] == {"biorxiv": "v1"}
+
+    def test_skips_only_when_it_covers_nothing(self, tmp_path: Path):
+        runs_dir = tmp_path / "runs"
+        store = self._store_with(runs_dir, [])
+        result, _ = self._run(
+            store, runs_dir, {("biorxiv", "r1")}, {"biorxiv": "v1"},
+        )
+        assert result is None

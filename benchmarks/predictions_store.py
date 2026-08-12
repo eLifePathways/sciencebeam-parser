@@ -31,7 +31,13 @@ class LocalPredictionsStore:
     def _run_dir(self, tool: str, version: str, profile: str, split: str) -> Path:
         return self.runs_dir / "baselines" / tool / version / profile / split
 
-    def get_done_ids(self, tool: str, version: str, profile: str, split: str) -> set:
+    def get_done_ids(
+        self, tool: str, version: str, profile: str, split: str,
+        corpus_variants: Optional[dict] = None,
+    ) -> set:
+        # Variants do not appear in this layout: the manifest and the predictions
+        # it describes are the same directory, so they cannot disagree.
+        del corpus_variants
         manifest = self._run_dir(tool, version, profile, split) / "predictions" / "manifest.jsonl"
         if not manifest.exists():
             return set()
@@ -60,7 +66,15 @@ class LocalPredictionsStore:
 
 @dataclass
 class RepoPredictionsStore:
-    """Predictions stored in a checked-out sciencebeam-eval-predictions git repo."""
+    """Predictions stored in a checked-out sciencebeam-eval-predictions git repo.
+
+    That repo must stay private. It holds TEI extracted from the PLOS
+    RSRCH-2064 manuscripts, which carry no redistribution grant, and a
+    prediction is close to the whole text of the document it came from.
+    Publishing the repo, or publishing predictions from it by any other route,
+    needs that revisited first — and note it cannot simply be undone later,
+    since deleting files does not remove them from git history.
+    """
 
     repo_dir: Path
 
@@ -75,12 +89,46 @@ class RepoPredictionsStore:
 
     def get_done_ids(
         self, tool: str, version: str, profile: str, split: str,
+        corpus_variants: Optional[dict] = None,
     ) -> set:
+        """Records already predicted and still retrievable for these variants.
+
+        The manifest is per split and says nothing about variants, while the
+        predictions themselves are filed under one. Trusting the manifest alone
+        therefore reports a record as done that a variant bump has made
+        unreachable — and since a bump means "this is a different corpus now",
+        that turns re-prediction into a run with no predictions at all. Passing
+        the variants a run will use is what keeps the two answers to "have we got
+        this one?" from disagreeing.
+        """
         path = f"{self._prefix(tool, version, profile)}/{split}/manifest.jsonl"
         result = self._git("show", f"HEAD:{path}", check=False)
         if result.returncode != 0:
             return set()
-        return _read_done_ids_from_manifest(result.stdout)
+        done = _read_done_ids_from_manifest(result.stdout)
+        if corpus_variants is None:
+            return done
+        stored = self._stored_ids(
+            self._prefix(tool, version, profile), split, corpus_variants
+        )
+        return done & stored
+
+    def _stored_ids(self, prefix: str, split: str, corpus_variants: dict) -> set:
+        """(corpus, record_id) for every prediction filed under these variants."""
+        suffix = ".tei.xml"
+        stored = set()
+        for corpus, variant in corpus_variants.items():
+            listing = self._git(
+                "ls-tree", "-r", "--name-only", "HEAD",
+                f"{prefix}/{corpus}/{variant}/{split}/", check=False,
+            )
+            if listing.returncode != 0:
+                continue
+            for line in listing.stdout.splitlines():
+                name = line.strip().rsplit("/", 1)[-1]
+                if name.endswith(suffix):
+                    stored.add((corpus, name[: -len(suffix)]))
+        return stored
 
     def fetch(
         self, tool: str, version: str, profile: str, split: str,
