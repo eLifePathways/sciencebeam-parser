@@ -90,7 +90,7 @@ jobs:
           PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
           DISPATCH_PROFILE: ${{ inputs.profile }}
         run: |
-          LABEL_PROFILE=$(echo "$PR_LABELS_JSON" | jq -r '.[] | select(startswith("profile:")) | sub("^profile:"; "")' | head -n1)
+          LABEL_PROFILE=$(echo "$PR_LABELS_JSON" | jq -r '.[]? | select(startswith("profile:")) | sub("^profile:"; "")' | head -n1)
           PROFILE="${LABEL_PROFILE:-${DISPATCH_PROFILE:-grobid_crf}}"
           if [ -n "$LABEL_PROFILE" ]; then
             PROFILE_SOURCE="profile:$LABEL_PROFILE label"
