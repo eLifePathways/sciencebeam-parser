@@ -5,7 +5,12 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from sciencebeam_parser.config.config import AppConfig, _deep_merge
+from sciencebeam_parser.config.config import (
+    AppConfig,
+    _deep_merge,
+    _resolve_sequence_model_profile
+)
+from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 
 MINIMAL_PROFILE_CONFIG = {
@@ -18,10 +23,15 @@ MINIMAL_PROFILE_CONFIG = {
             'segmentation': {'path': 'path_b/segmentation', 'engine': 'wapiti'},
             'header': {'path': 'path_b/header', 'engine': 'wapiti'},
         },
+        'profile_b_extended': {
+            'extends': 'profile_b',
+            'header': {'path': 'path_b_extended/header', 'engine': 'wapiti'},
+        },
     },
     'profiles': {
         'profile_a': {'sequence_models': 'profile_a'},
         'profile_b': {'sequence_models': 'profile_b'},
+        'profile_b_extended': {'sequence_models': 'profile_b_extended'},
         'profile_with_extra': {
             'sequence_models': 'profile_a',
             'processors': {'fulltext': {'use_cv_model': True}},
@@ -67,6 +77,69 @@ class TestDeepMerge:
         assert base['a']['b'] == 1
 
 
+class TestResolveSequenceModelProfile:
+    def test_returns_profile_without_extends_unchanged(self):
+        seq_profiles = {
+            'base': {'segmentation': {'path': 'base/segmentation'}},
+        }
+        result = _resolve_sequence_model_profile(seq_profiles, 'base')
+        assert result == {'segmentation': {'path': 'base/segmentation'}}
+
+    def test_merges_extended_profile(self):
+        seq_profiles = {
+            'base': {
+                'segmentation': {'path': 'base/segmentation', 'engine': 'wapiti'},
+                'header': {'path': 'base/header', 'engine': 'wapiti'},
+            },
+            'child': {
+                'extends': 'base',
+                'header': {'path': 'child/header'},
+            },
+        }
+        result = _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert result['segmentation'] == {'path': 'base/segmentation', 'engine': 'wapiti'}
+        assert result['header'] == {'path': 'child/header', 'engine': 'wapiti'}
+        assert 'extends' not in result
+
+    def test_supports_chained_extends(self):
+        seq_profiles = {
+            'grandparent': {'segmentation': {'path': 'gp/segmentation'}},
+            'parent': {'extends': 'grandparent', 'header': {'path': 'p/header'}},
+            'child': {'extends': 'parent', 'table': {'path': 'c/table'}},
+        }
+        result = _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert result['segmentation'] == {'path': 'gp/segmentation'}
+        assert result['header'] == {'path': 'p/header'}
+        assert result['table'] == {'path': 'c/table'}
+
+    def test_raises_on_unknown_profile(self):
+        with pytest.raises(ValueError, match='Unknown sequence_model_profile'):
+            _resolve_sequence_model_profile({}, 'missing')
+
+    def test_raises_on_unknown_extends_target(self):
+        seq_profiles = {'child': {'extends': 'missing'}}
+        with pytest.raises(ValueError, match='Unknown sequence_model_profile'):
+            _resolve_sequence_model_profile(seq_profiles, 'child')
+
+    def test_raises_on_circular_extends(self):
+        seq_profiles = {
+            'a': {'extends': 'b'},
+            'b': {'extends': 'a'},
+        }
+        with pytest.raises(ValueError, match='Circular extends'):
+            _resolve_sequence_model_profile(seq_profiles, 'a')
+
+    def test_reports_the_circular_chain_in_the_order_it_was_followed(self):
+        seq_profiles = {
+            'alpha': {'extends': 'beta'},
+            'beta': {'extends': 'gamma'},
+            'gamma': {'extends': 'alpha'},
+        }
+        with pytest.raises(ValueError) as exc_info:
+            _resolve_sequence_model_profile(seq_profiles, 'alpha')
+        assert 'chain: alpha -> beta -> gamma -> alpha' in str(exc_info.value)
+
+
 class TestAppConfigResolveProfile:
     def _make_config(self, extra: Optional[dict] = None) -> AppConfig:
         props = dict(MINIMAL_PROFILE_CONFIG)
@@ -79,6 +152,11 @@ class TestAppConfigResolveProfile:
         assert config['models']['segmentation']['path'] == 'path_b/segmentation'
         assert config['models']['segmentation']['engine'] == 'wapiti'
         assert config['models']['header']['path'] == 'path_b/header'
+
+    def test_applies_extended_sequence_model_profile(self):
+        config = self._make_config().resolve_profile('profile_b_extended')
+        assert config['models']['segmentation']['path'] == 'path_b/segmentation'
+        assert config['models']['header']['path'] == 'path_b_extended/header'
 
     def test_inherits_base_model_keys_not_in_profile(self):
         config = self._make_config().resolve_profile('profile_a')
@@ -215,3 +293,12 @@ class TestAppConfig:
         config = AppConfig.load_yaml(str(config_path))
         config = config.apply_environment_variables()
         assert config.props['key1'] is False
+
+
+class TestDefaultConfigProfiles:
+    def _resolve_models(self, profile_name: str) -> dict:
+        config = AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
+        return config.resolve_profile(profile_name)['models']
+
+    def test_grobid_custom_hybrid_inherits_every_grobid_crf_model(self):
+        assert self._resolve_models('grobid_custom_hybrid') == self._resolve_models('grobid_crf')
