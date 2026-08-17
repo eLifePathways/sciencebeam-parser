@@ -183,7 +183,7 @@ sequence_model_profiles:
     extends: grobid_crf_0_9_0
     citation:
       # path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-08-04_wapiti_grobid_090_grobid_only/citation/'
-      path: 's://sciencebeam-v2-models/wapiti/citation/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/citation/'
+      path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/citation/'
       engine: 'wapiti'
     reference_segmenter:
       # TODO: switch back once the release is public
