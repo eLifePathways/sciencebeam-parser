@@ -59,13 +59,6 @@ jobs:
           github.ref == 'refs/heads/main' && 'medium' ||
           'smoke'
         }}
-      BENCHMARK_PROFILE: >-
-        ${{
-          contains(github.event.pull_request.labels.*.name, 'profile:grobid_crf') && 'grobid_crf' ||
-          contains(github.event.pull_request.labels.*.name, 'profile:biorxiv_elife') && 'biorxiv_elife' ||
-          inputs.profile ||
-          'grobid_crf'
-        }}
       # Automatic on main, where the numbers that get recorded are produced and where
       # the baseline other runs compare against is pushed: without it that baseline
       # has no PLOS predictions, so a labelled PR can compare PLOS against GROBID but
@@ -81,6 +74,27 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Resolve benchmark profile
+        env:
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          DISPATCH_PROFILE: ${{ inputs.profile }}
+        run: |
+          LABEL_PROFILE=$(echo "$PR_LABELS_JSON" | jq -r '.[]? | select(startswith("profile:")) | sub("^profile:"; "")' | head -n1)
+          PROFILE="${LABEL_PROFILE:-${DISPATCH_PROFILE:-grobid_crf}}"
+          if [ -n "$LABEL_PROFILE" ]; then
+            PROFILE_SOURCE="profile:$LABEL_PROFILE label"
+          elif [ -n "$DISPATCH_PROFILE" ]; then
+            PROFILE_SOURCE="workflow_dispatch input"
+          else
+            PROFILE_SOURCE="default"
+          fi
+          if ! [[ "$PROFILE" =~ ^[A-Za-z0-9_]+$ ]]; then
+            echo "::error::Invalid profile '$PROFILE' (from $PROFILE_SOURCE) - only letters, digits and underscores are allowed"
+            exit 1
+          fi
+          echo "::notice::Benchmark profile: $PROFILE (from $PROFILE_SOURCE)"
+          echo "BENCHMARK_PROFILE=$PROFILE" >> "$GITHUB_ENV"
 
       - name: Set image tag
         id: image_tag
