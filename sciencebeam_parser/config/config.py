@@ -2,7 +2,7 @@ import logging
 import os
 import copy
 from pathlib import Path
-from typing import Any, FrozenSet, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 import yaml
 
@@ -30,7 +30,7 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 def _resolve_sequence_model_profile(
     seq_profiles: dict,
     name: str,
-    _seen: FrozenSet[str] = frozenset()
+    _seen: Tuple[str, ...] = ()
 ) -> dict:
     if name not in seq_profiles:
         raise ValueError(
@@ -46,7 +46,7 @@ def _resolve_sequence_model_profile(
     overlay = {key: value for key, value in profile.items() if key != 'extends'}
     if not base_name:
         return overlay
-    base = _resolve_sequence_model_profile(seq_profiles, base_name, _seen | {name})
+    base = _resolve_sequence_model_profile(seq_profiles, base_name, _seen + (name,))
     return _deep_merge(base, overlay)
 
 

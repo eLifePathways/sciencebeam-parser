@@ -128,6 +128,16 @@ class TestResolveSequenceModelProfile:
         with pytest.raises(ValueError, match='Circular extends'):
             _resolve_sequence_model_profile(seq_profiles, 'a')
 
+    def test_reports_the_circular_chain_in_the_order_it_was_followed(self):
+        seq_profiles = {
+            'alpha': {'extends': 'beta'},
+            'beta': {'extends': 'gamma'},
+            'gamma': {'extends': 'alpha'},
+        }
+        with pytest.raises(ValueError) as exc_info:
+            _resolve_sequence_model_profile(seq_profiles, 'alpha')
+        assert 'chain: alpha -> beta -> gamma -> alpha' in str(exc_info.value)
+
 
 class TestAppConfigResolveProfile:
     def _make_config(self, extra: Optional[dict] = None) -> AppConfig:
