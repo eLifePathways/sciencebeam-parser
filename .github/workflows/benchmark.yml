@@ -15,7 +15,7 @@ on:
         default: ''
         type: string
       include_plos:
-        description: 'Also run the private PLOS corpus (not redistributable)'
+        description: 'Also run the private PLOS corpus (not redistributable; already on for main)'
         required: false
         default: false
         type: boolean
@@ -59,11 +59,15 @@ jobs:
           github.ref == 'refs/heads/main' && 'medium' ||
           'smoke'
         }}
-      # The PLOS corpus is private and its manuscripts are not redistributable, so a
-      # run includes it only when a person asks for it by label.
+      # Automatic on main, where the numbers that get recorded are produced and where
+      # the baseline other runs compare against is pushed: without it that baseline
+      # has no PLOS predictions, so a labelled PR can compare PLOS against GROBID but
+      # never against main. Opt-in everywhere else -- the manuscripts are private and
+      # not redistributable, so a PR or a laptop reaches for them only when asked.
       BENCHMARK_CORPORA: >-
         ${{
-          (contains(github.event.pull_request.labels.*.name, 'benchmark:plos') ||
+          (github.ref == 'refs/heads/main' ||
+           contains(github.event.pull_request.labels.*.name, 'benchmark:plos') ||
            inputs.include_plos) && '--include-corpus plos-manuscripts' || ''
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/validation
