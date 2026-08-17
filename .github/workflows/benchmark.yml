@@ -82,10 +82,18 @@ jobs:
         run: |
           LABEL_PROFILE=$(echo "$PR_LABELS_JSON" | jq -r '.[] | select(startswith("profile:")) | sub("^profile:"; "")' | head -n1)
           PROFILE="${LABEL_PROFILE:-${DISPATCH_PROFILE:-grobid_crf}}"
+          if [ -n "$LABEL_PROFILE" ]; then
+            PROFILE_SOURCE="profile:$LABEL_PROFILE label"
+          elif [ -n "$DISPATCH_PROFILE" ]; then
+            PROFILE_SOURCE="workflow_dispatch input"
+          else
+            PROFILE_SOURCE="default"
+          fi
           if ! [[ "$PROFILE" =~ ^[A-Za-z0-9_]+$ ]]; then
-            echo "::error::Invalid profile '$PROFILE' (from label or input) - only letters, digits and underscores are allowed"
+            echo "::error::Invalid profile '$PROFILE' (from $PROFILE_SOURCE) - only letters, digits and underscores are allowed"
             exit 1
           fi
+          echo "::notice::Benchmark profile: $PROFILE (from $PROFILE_SOURCE)"
           echo "BENCHMARK_PROFILE=$PROFILE" >> "$GITHUB_ENV"
 
       - name: Set image tag
