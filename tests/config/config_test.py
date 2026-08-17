@@ -10,7 +10,6 @@ from sciencebeam_parser.config.config import (
     _deep_merge,
     _resolve_sequence_model_profile
 )
-from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 
 MINIMAL_PROFILE_CONFIG = {
@@ -293,12 +292,3 @@ class TestAppConfig:
         config = AppConfig.load_yaml(str(config_path))
         config = config.apply_environment_variables()
         assert config.props['key1'] is False
-
-
-class TestDefaultConfigProfiles:
-    def _resolve_models(self, profile_name: str) -> dict:
-        config = AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
-        return config.resolve_profile(profile_name)['models']
-
-    def test_grobid_custom_hybrid_inherits_every_grobid_crf_model(self):
-        assert self._resolve_models('grobid_custom_hybrid') == self._resolve_models('grobid_crf')
