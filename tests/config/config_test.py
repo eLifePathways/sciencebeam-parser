@@ -10,6 +10,7 @@ from sciencebeam_parser.config.config import (
     _deep_merge,
     _resolve_sequence_model_profile
 )
+from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 
 MINIMAL_PROFILE_CONFIG = {
@@ -292,3 +293,19 @@ class TestAppConfig:
         config = AppConfig.load_yaml(str(config_path))
         config = config.apply_environment_variables()
         assert config.props['key1'] is False
+
+
+class TestDefaultConfigProfiles:
+    def _resolve_models(self, profile_name: str) -> dict:
+        config = AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
+        return config.resolve_profile(profile_name)['models']
+
+    def test_grobid_custom_hybrid_overrides_only_the_retrained_models(self):
+        grobid_crf_models = self._resolve_models('grobid_crf')
+        hybrid_models = self._resolve_models('grobid_custom_hybrid')
+        assert set(hybrid_models) == set(grobid_crf_models)
+        overridden = {
+            name for name, model in hybrid_models.items()
+            if model != grobid_crf_models[name]
+        }
+        assert overridden == {'citation', 'reference_segmenter'}
