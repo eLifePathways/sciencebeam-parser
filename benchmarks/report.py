@@ -27,11 +27,16 @@ def _get_f1(
     return None
 
 
-def _get_overall_f1(summary: dict, field: str, method: str) -> Optional[float]:
-    """Doc-count-weighted mean F1 across all corpora."""
+def _get_overall_f1(
+    summary: dict, field: str, method: str, corpora: Optional[List[str]] = None
+) -> Optional[float]:
+    """Doc-count-weighted mean F1, over the named corpora or all of them."""
     total_n = 0
     weighted = 0.0
+    wanted = set(corpora) if corpora is not None else None
     for corpus, corpus_data in summary.get("corpora", {}).items():
+        if wanted is not None and corpus not in wanted:
+            continue
         n = corpus_data.get("n", 0)
         f1 = _get_f1(summary, corpus, field, method)
         if f1 is not None and n > 0:
@@ -89,6 +94,37 @@ def _render_field_table(  # pylint: disable=too-many-locals
     return lines
 
 
+def _unequal_docs_note(counts_by_label: List[Tuple[str, int]]) -> List[str]:
+    """Call out a comparison whose columns do not cover the same documents.
+
+    The counts are printed either way, but they are easy to read past, and a delta
+    between columns of unequal length reflects which documents each run covered as
+    much as how it behaved. A baseline that was stored at a smaller mode, or that
+    predates a corpus, is short by construction rather than by failing.
+    """
+    if len({n for _, n in counts_by_label}) <= 1:
+        return []
+    listed = ", ".join(f"{label} {n}" for label, n in counts_by_label)
+    return [
+        f"> ⚠️ **Unequal document sets** ({listed}). Deltas below reflect which "
+        f"documents each run covered as well as how it performed.",
+        "",
+    ]
+
+
+def _common_corpora(
+    labeled_summaries: List[Tuple[str, dict]], corpora: List[str]
+) -> List[str]:
+    """Corpora every run scored at least one document of, in the given order."""
+    return [
+        corpus for corpus in corpora
+        if all(
+            s.get("corpora", {}).get(corpus, {}).get("n", 0) > 0
+            for _, s in labeled_summaries
+        )
+    ]
+
+
 def _render_corpus_section(
     corpus: str,
     labeled_summaries: List[Tuple[str, dict]],
@@ -96,11 +132,12 @@ def _render_corpus_section(
     field_measures: dict,
     field_scoring_types: dict,
 ) -> List[str]:
-    counts = " | ".join(
-        f"**{label}**: {s.get('corpora', {}).get(corpus, {}).get('n', 0)} docs"
+    counts_by_label = [
+        (label, s.get("corpora", {}).get(corpus, {}).get("n", 0))
         for label, s in labeled_summaries
-    )
-    lines = [counts, ""]
+    ]
+    counts = " | ".join(f"**{label}**: {n} docs" for label, n in counts_by_label)
+    lines = [counts, ""] + _unequal_docs_note(counts_by_label)
     lines.extend(_render_field_table(
         labeled_summaries, field_names, field_measures, field_scoring_types,
         _corpus_f1_getter(corpus),
@@ -116,22 +153,36 @@ def _render_overall_section(  # pylint: disable=too-many-locals
     corpora: List[str],
 ) -> List[str]:
     _, primary_summary = labeled_summaries[-1]
+    # Only the corpora every run scored. An aggregate over a corpus one run lacks
+    # would differ between columns for composition reasons, which is exactly what
+    # an overall row is read as ruling out. The per-corpus sections below still
+    # show everything, flagged where the columns are unequal.
+    common = _common_corpora(labeled_summaries, corpora)
+    omitted = [corpus for corpus in corpora if corpus not in common]
     n_total = sum(
-        primary_summary.get("corpora", {}).get(c, {}).get("n", 0) for c in corpora
+        primary_summary.get("corpora", {}).get(c, {}).get("n", 0) for c in common
     )
-    total_counts = " | ".join(
-        f"**{label}**: {sum(s.get('corpora', {}).get(c, {}).get('n', 0) for c in corpora)} docs"
+    counts_by_label = [
+        (label, sum(s.get("corpora", {}).get(c, {}).get("n", 0) for c in common))
         for label, s in labeled_summaries
-    )
+    ]
+    total_counts = " | ".join(f"**{label}**: {n} docs" for label, n in counts_by_label)
     lines = [
-        f"### Overall ({n_total} docs across {len(corpora)} corpora)",
+        f"### Overall ({n_total} docs across {len(common)} corpora)",
         "",
         total_counts,
         "",
     ]
+    if omitted:
+        lines += [
+            f"> Excludes {', '.join(omitted)}, which not every run scored — see the "
+            f"per-corpus sections below.",
+            "",
+        ]
+    lines += _unequal_docs_note(counts_by_label)
     lines.extend(_render_field_table(
         labeled_summaries, field_names, field_measures, field_scoring_types,
-        _get_overall_f1,
+        lambda s, f, m: _get_overall_f1(s, f, m, common),
     ))
     return lines
 

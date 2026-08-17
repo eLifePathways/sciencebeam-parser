@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 from unittest.mock import patch
 
 from benchmarks.score import (
@@ -300,3 +301,68 @@ class TestRunScoreSplitDetermination:
             )
 
         assert self._scored_corpora(mock_score) == ["train_corpus"]
+
+
+class TestRunScoreCorpusSelection:
+    """Which corpora get scored once one of them is opt-in.
+
+    The gap these cover is a run whose predictions all came from the store: no
+    run.json is written then, so nothing but the caller's opt-in set says the
+    corpus was covered, and an unscored corpus vanishes from summary.json and
+    from the comparison built out of it without a warning.
+    """
+
+    _CONFIG = {
+        "dataset": {
+            "repo_id": "org/repo",
+            "revision": "main",
+            "splits": {
+                "validation": {
+                    "ore": {"file": "ore/val.parquet"},
+                    "plos": {
+                        "repo_id": "private/plos",
+                        "revision": "corpus-v001",
+                        "path": "validation/",
+                        "manifest": "splits/corpus-v001.csv",
+                        "stratum": "journal",
+                        "optional": True,
+                    },
+                }
+            },
+        },
+        "fields": ["title"],
+        "scoring": {"default_methods": ["levenshtein"], "default_type": "string",
+                    "per_field": {}},
+    }
+
+    def _score(
+        self, tmp_path: Path, run_json: Optional[dict] = None, include=None
+    ) -> list:
+        run_dir = tmp_path / "run"
+        run_dir.mkdir(exist_ok=True)
+        if run_json is not None:
+            (run_dir / "run.json").write_text(json.dumps(run_json))
+        with patch("benchmarks.score.register_functions"), \
+             patch("benchmarks.score.parse_xml_mapping"), \
+             patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
+            run_score(
+                config=self._CONFIG,
+                run_dir=run_dir,
+                data_dir=tmp_path / "data",
+                out_path=tmp_path / "report.md",
+                split_override="validation",
+                include=include,
+            )
+        return [call.args[0] for call in mock_score.call_args_list]
+
+    def test_leaves_out_an_opt_in_corpus_nobody_asked_for(self, tmp_path: Path):
+        assert self._score(tmp_path) == ["ore"]
+
+    def test_scores_an_opt_in_corpus_the_caller_asked_for(self, tmp_path: Path):
+        assert self._score(tmp_path, include=["plos"]) == ["ore", "plos"]
+
+    def test_run_json_is_the_authority_where_it_exists(self, tmp_path: Path):
+        scored = self._score(
+            tmp_path, run_json={"split": "validation", "corpora": ["ore", "plos"]}
+        )
+        assert scored == ["ore", "plos"]

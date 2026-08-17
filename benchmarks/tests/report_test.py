@@ -5,10 +5,12 @@ from typing import Optional
 import pytest
 
 from benchmarks.report import (
+    _common_corpora,
     _get_f1,
     _get_overall_f1,
     _parse_labeled_summary,
     _render_comparison_report,
+    _unequal_docs_note,
 )
 
 
@@ -283,3 +285,71 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
         assert report.count("<details>") == 2
         assert "<summary><b>biorxiv</b>" in report
         assert "<summary><b>ore</b>" in report
+
+
+class TestUnequalDocsNote:
+    def test_silent_when_every_run_covered_the_same_documents(self):
+        assert _unequal_docs_note([("grobid", 10), ("local", 10)]) == []
+
+    def test_calls_out_a_difference_with_the_counts(self):
+        note = _unequal_docs_note([("grobid", 10), ("local", 14)])
+        assert note and "Unequal document sets" in note[0]
+        assert "grobid 10" in note[0] and "local 14" in note[0]
+
+    def test_a_corpus_absent_from_one_run_counts_as_unequal(self):
+        assert _unequal_docs_note([("grobid", 0), ("local", 14)])
+
+
+class TestCommonCorpora:
+    def _summaries(self, *per_run):
+        return [(f"run{i}", {"corpora": {c: {"n": n} for c, n in run.items()}})
+                for i, run in enumerate(per_run)]
+
+    def test_keeps_corpora_every_run_scored(self):
+        summaries = self._summaries({"a": 10, "b": 5}, {"a": 10, "b": 5})
+        assert _common_corpora(summaries, ["a", "b"]) == ["a", "b"]
+
+    def test_drops_a_corpus_one_run_did_not_score(self):
+        summaries = self._summaries({"a": 10, "b": 0}, {"a": 10, "b": 14})
+        assert _common_corpora(summaries, ["a", "b"]) == ["a"]
+
+    def test_drops_a_corpus_absent_from_one_run(self):
+        summaries = self._summaries({"a": 10}, {"a": 10, "b": 14})
+        assert _common_corpora(summaries, ["a", "b"]) == ["a"]
+
+    def test_preserves_the_given_order(self):
+        summaries = self._summaries({"b": 1, "a": 1}, {"b": 1, "a": 1})
+        assert _common_corpora(summaries, ["b", "a"]) == ["b", "a"]
+
+
+class TestOverallRestrictedToCommonCorpora:
+    def _summary(self, per_corpus):
+        return {
+            "fields": ["title"],
+            "field_measures": {"title": ["levenshtein"]},
+            "field_scoring_types": {"title": "string"},
+            "corpora": {
+                corpus: {
+                    "n": n,
+                    "aggregated": [{
+                        "scoring_type": "string", "scoring_method": "levenshtein",
+                        "summary_scores": {"by-field": {"title": {"scores": {"f1": f1}}}},
+                    }],
+                }
+                for corpus, (n, f1) in per_corpus.items()
+            },
+        }
+
+    def test_overall_ignores_a_corpus_only_one_run_scored(self):
+        # `b` would drag the primary's overall down if it were counted, since the
+        # baseline has nothing to compare against there.
+        baseline = self._summary({"a": (10, 0.8), "b": (0, 0.0)})
+        primary = self._summary({"a": (10, 0.9), "b": (10, 0.1)})
+        assert _get_overall_f1(primary, "title", "levenshtein") == pytest.approx(0.5)
+        assert _get_overall_f1(primary, "title", "levenshtein", ["a"]) == pytest.approx(0.9)
+        report = _render_comparison_report([("base", baseline), ("local", primary)])
+        assert "Overall (10 docs across 1 corpora)" in report
+        assert "Excludes b, which not every run scored" in report
+        # The unequal-columns warning belongs to b's own section, not the overall row.
+        overall = report.split("<details>")[0]
+        assert "Unequal document sets" not in overall

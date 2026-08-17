@@ -1,6 +1,7 @@
 # pylint: disable=too-many-lines
 from abc import ABC, abstractmethod
 import argparse
+from itertools import groupby
 import logging
 import os
 import multiprocessing
@@ -17,7 +18,7 @@ from sciencebeam_trainer_delft.utils.io import (
 
 from sciencebeam_parser.utils.io import glob, makedirs, write_bytes, write_text
 
-from sciencebeam_parser.document.layout_document import LayoutDocument
+from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutDocument, LayoutLine
 from sciencebeam_parser.document.semantic_document import (
     SemanticMixedContentWrapper,
     SemanticRawAffiliationAddress,
@@ -52,6 +53,7 @@ from sciencebeam_parser.training.jats.field_vocab import (
     CITATION_LABEL_BY_SUB_FIELD,
     FULLTEXT_LABEL_BY_FIELD,
     HEADER_LABEL_BY_FIELD,
+    JatsFieldNames,
     JatsSubFieldNames,
 )
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldExtractor
@@ -794,8 +796,6 @@ class NameCitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
         layout_document: LayoutDocument,
         document_context: TrainingDataDocumentContext
     ) -> Iterable[LayoutDocument]:
-        reference_segmenter_model = document_context.fulltext_models.reference_segmenter_model
-        citation_model = document_context.fulltext_models.citation_model
         segmentation_label_result = get_segmentation_label_result(
             layout_document,
             document_context=document_context
@@ -803,6 +803,42 @@ class NameCitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
         references_layout_document = segmentation_label_result.get_filtered_document_by_label(
             '<references>'
         ).remove_empty_blocks()
+        annotated = document_context.jats_annotated_document
+        if annotated is not None:
+            # Group author tokens by reference instance_id, preserving line structure.
+            # Each instance_id becomes one LayoutBlock (one per reference).
+            author_tokens_by_instance: Dict[int, List] = {}
+            for token in references_layout_document.iter_all_tokens():
+                entry = annotated.token_label_by_id.get(id(token))
+                if (
+                    entry
+                    and entry[0] == JatsFieldNames.REFERENCE
+                    and entry[1] == JatsSubFieldNames.REFERENCE_AUTHOR
+                ):
+                    inst = entry[2]
+                    if inst not in author_tokens_by_instance:
+                        author_tokens_by_instance[inst] = []
+                    author_tokens_by_instance[inst].append(token)
+            if not author_tokens_by_instance:
+                return []
+            LOGGER.info(
+                'found author tokens for %d references (JATS path)',
+                len(author_tokens_by_instance)
+            )
+            return [LayoutDocument.for_blocks([
+                LayoutBlock.for_tokens(tokens)
+                for tokens in author_tokens_by_instance.values()
+            ])]
+        # Fallback: reference segmenter + citation model
+        return self._iter_via_models(references_layout_document, document_context)
+
+    def _iter_via_models(
+        self,
+        references_layout_document: LayoutDocument,
+        document_context: TrainingDataDocumentContext,
+    ) -> Iterable[LayoutDocument]:
+        reference_segmenter_model = document_context.fulltext_models.reference_segmenter_model
+        citation_model = document_context.fulltext_models.citation_model
         reference_segmenter_labeled_layout_tokens = (
             get_labeled_layout_tokens_for_model_and_layout_document(
                 model=reference_segmenter_model,
@@ -847,7 +883,6 @@ class NameCitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
         LOGGER.info('semantic_raw_author_list count: %d', len(semantic_raw_author_list))
         if not semantic_raw_author_list:
             return []
-
         return [
             LayoutDocument.for_blocks([
                 block
@@ -979,11 +1014,133 @@ class TableModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator
         ]
 
 
+_GAP_FILL_SKIP_SEG_LABELS = frozenset({'<headnote>', '<page>', '<footnote>'})
+
+
+def _assign_line_instances(
+    refs_layout_doc: LayoutDocument,
+    annotated: JatsAnnotatedLayoutDocument,
+    seg_labels: Dict[int, str],
+) -> Dict[int, int]:
+    """Return id(line) → instance_id for lines that belong to a JATS REFERENCE instance.
+
+    Lines with no labeled tokens inherit the preceding line's instance (gap fill).
+    Lines whose seg label is in _GAP_FILL_SKIP_SEG_LABELS are excluded from both
+    assignment and gap-fill carry.
+    """
+    line_instance: Dict[int, int] = {}
+    last_instance: Optional[int] = None
+    for line in refs_layout_doc.iter_all_lines():
+        if seg_labels.get(id(line)) in _GAP_FILL_SKIP_SEG_LABELS:
+            continue
+        instance_counts: Dict[int, int] = {}
+        for token in line.tokens:
+            entry = annotated.token_label_by_id.get(id(token))
+            if entry and entry[0] == JatsFieldNames.REFERENCE:
+                inst = entry[2]
+                instance_counts[inst] = instance_counts.get(inst, 0) + 1
+        if instance_counts:
+            dominant = max(instance_counts, key=instance_counts.__getitem__)
+            line_instance[id(line)] = dominant
+            last_instance = dominant
+        elif last_instance is not None:
+            line_instance[id(line)] = last_instance
+    return line_instance
+
+
+def _split_references_by_jats_instance(
+    refs_layout_doc: LayoutDocument,
+    annotated: JatsAnnotatedLayoutDocument,
+    jats_seg_labels: Optional[Dict[int, str]] = None,
+) -> List[LayoutDocument]:
+    """Split a references sub-document into one LayoutDocument per JATS <ref> instance.
+
+    Uses line-level instance assignment (with gap fill for unlabeled continuation lines)
+    followed by groupby-based block splitting. Blocks that contain lines from two different
+    instances are split at the instance boundary. Lines with headnote/page/footnote seg
+    labels and lines before any labeled content are excluded.
+    """
+    line_instance = _assign_line_instances(
+        refs_layout_doc, annotated, jats_seg_labels or {}
+    )
+    blocks_by_instance: Dict[int, List[LayoutBlock]] = {}
+    for block in refs_layout_doc.iter_all_blocks():
+        for instance_id, line_group in groupby(
+            block.lines, key=lambda l: line_instance.get(id(l))
+        ):
+            if instance_id is None:
+                continue
+            if instance_id not in blocks_by_instance:
+                blocks_by_instance[instance_id] = []
+            blocks_by_instance[instance_id].append(LayoutBlock(lines=list(line_group)))
+    return [
+        LayoutDocument.for_blocks(blocks)
+        for blocks in blocks_by_instance.values()
+    ]
+
+
 class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'reference-segmenter'
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.reference_segmenter_model
+
+    def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        line_first_instance_cache: Dict[int, Optional[int]] = {}
+        last_instance_id: Optional[int] = None
+
+        def _get_line_first_ref_instance_id(
+            line: LayoutLine, annotated: JatsAnnotatedLayoutDocument
+        ) -> Optional[int]:
+            for token in line.tokens:
+                entry = annotated.token_label_by_id.get(id(token))
+                if entry and entry[0] == JatsFieldNames.REFERENCE:
+                    return entry[2]
+            return None
+
+        def fn(
+            annotated: JatsAnnotatedLayoutDocument,
+            _seg_labels: Dict[int, str],
+            md: LayoutModelData,
+        ) -> Optional[str]:
+            nonlocal last_instance_id
+            token = md.layout_token
+            line = md.layout_line
+            if line is None or token is None:
+                return None
+            entry = annotated.token_label_by_id.get(id(token))
+            if entry and entry[0] == JatsFieldNames.REFERENCE:
+                cur_instance_id = entry[2]
+                is_label = entry[1] == JatsSubFieldNames.REFERENCE_LABEL
+                if cur_instance_id != last_instance_id and last_instance_id is not None:
+                    # Instance transition: emit B-prefixed label so the TEI generator
+                    # creates a new <bibl>.  B-<label> also fires the reset mechanism
+                    # (backs up to <listBibl> before opening the new <bibl>), which is
+                    # how the <label> subelement lands in the correct <bibl>.
+                    last_instance_id = cur_instance_id
+                    return 'B-<label>' if is_label else 'B-<reference>'
+                last_instance_id = cur_instance_id
+                return '<label>' if is_label else '<reference>'
+            # Unlabeled token: expand to <reference> if the line has any reference tokens.
+            # If the line's first annotated reference belongs to a new instance, claim
+            # the whole line for that instance by emitting B-<reference>.
+            line_id = id(line)
+            if line_id not in line_first_instance_cache:
+                line_first_instance_cache[line_id] = _get_line_first_ref_instance_id(
+                    line, annotated
+                )
+            line_instance_id = line_first_instance_cache[line_id]
+            if line_instance_id is None:
+                # Gap-fill: a line with no annotated reference tokens (e.g. "DOI:"
+                # prefix before the URL) continues the current bibl rather than
+                # breaking out to listBibl level.
+                return '<reference>' if last_instance_id is not None else None
+            if line_instance_id != last_instance_id and last_instance_id is not None:
+                last_instance_id = line_instance_id
+                return 'B-<reference>'
+            return '<reference>'
+
+        return fn
 
     def iter_model_layout_documents(
         self,
@@ -1026,7 +1183,6 @@ class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
         layout_document: LayoutDocument,
         document_context: TrainingDataDocumentContext
     ) -> Iterable[LayoutDocument]:
-        reference_segmenter_model = document_context.fulltext_models.reference_segmenter_model
         segmentation_label_result = get_segmentation_label_result(
             layout_document,
             document_context=document_context
@@ -1034,6 +1190,15 @@ class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
         references_layout_document = segmentation_label_result.get_filtered_document_by_label(
             '<references>'
         ).remove_empty_blocks()
+        annotated = document_context.jats_annotated_document
+        if annotated is not None:
+            return _split_references_by_jats_instance(
+                references_layout_document,
+                annotated,
+                jats_seg_labels=document_context.jats_segmentation_labels,
+            )
+        # Fallback: reference segmenter model
+        reference_segmenter_model = document_context.fulltext_models.reference_segmenter_model
         reference_segmenter_labeled_layout_tokens = (
             get_labeled_layout_tokens_for_model_and_layout_document(
                 model=reference_segmenter_model,

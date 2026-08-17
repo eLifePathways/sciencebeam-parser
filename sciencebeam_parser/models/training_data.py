@@ -375,12 +375,20 @@ LINE_BREAK_TAGS = {
 }
 
 
+_NON_PATH_ATTRIBUTES = frozenset({'from', 'to'})
+
+
 def _get_tag_expression_for_element(element: etree.ElementBase) -> str:
-    if not element.attrib:
+    attrib = {
+        key: value
+        for key, value in element.attrib.items()
+        if key not in _NON_PATH_ATTRIBUTES
+    }
+    if not attrib:
         return element.tag
-    if len(element.attrib) > 1:
+    if len(attrib) > 1:
         raise ValueError('only supporting up to one attribute')
-    key, value = list(element.attrib.items())[0]
+    key, value = list(attrib.items())[0]
     return '{tag}[@{key}="{value}"]'.format(tag=element.tag, key=key, value=value)
 
 

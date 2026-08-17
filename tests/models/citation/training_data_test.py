@@ -447,6 +447,55 @@ class TestCitationTrainingTeiParser:
         ]]
 
     @pytest.mark.parametrize(
+        "external_identifier_type",
+        [
+            SemanticExternalIdentifierTypes.ARXIV,
+            SemanticExternalIdentifierTypes.PII,
+            SemanticExternalIdentifierTypes.PMCID,
+            SemanticExternalIdentifierTypes.PMID
+        ]
+    )
+    def test_should_parse_non_doi_idno_type_as_pubnum(
+        self,
+        external_identifier_type: str
+    ):
+        # get_post_processed_xml_root tags <pubnum>-derived <idno> elements with the
+        # detected identifier type (e.g. PMCID); parsing must still recover <pubnum>
+        tei_root = _get_training_tei_with_references([
+            TEI_E('bibl', *[
+                TEI_E('idno', {'type': external_identifier_type}, TOKEN_1, TEI_E('lb')),
+                '\n'
+            ])
+        ])
+        tag_result = get_training_tei_parser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<pubnum>')
+        ]]
+
+    def test_should_round_trip_pubnum_with_detected_external_identifier_type(self):
+        label_and_layout_line_list = [
+            ('<pubnum>', get_next_layout_line_for_text('PMC1234567'))
+        ]
+        labeled_model_data_list = get_labeled_model_data_list(
+            label_and_layout_line_list,
+            data_generator=get_data_generator()
+        )
+        xml_root = get_training_tei_xml_for_model_data_iterable(
+            labeled_model_data_list
+        )
+        assert get_tei_xpath_text_content_list(
+            xml_root, f'{BIBL_XPATH}/tei:idno[@type="{SemanticExternalIdentifierTypes.PMCID}"]'
+        ) == ['PMC1234567']
+        tag_result = get_training_tei_parser().parse_training_tei_to_tag_result(
+            xml_root
+        )
+        assert tag_result == [[
+            ('PMC1234567', 'B-<pubnum>')
+        ]]
+
+    @pytest.mark.parametrize(
         "tei_label,element_path",
         list(TRAINING_XML_ELEMENT_PATH_BY_LABEL.items())
     )

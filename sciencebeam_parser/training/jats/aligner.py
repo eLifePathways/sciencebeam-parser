@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import logging
 import re
 from dataclasses import dataclass
@@ -87,7 +88,25 @@ _WINDOW_NEEDLE_MULTIPLIER = 6
 # matched range.  Keeps short sub-field values (e.g. "USA", "2020") from matching
 # identical text elsewhere in the document.
 _SUB_FIELD_PARENT_BUFFER = 200
-_SUB_FIELD_PARENT_PRE_BUFFER = 0
+# Pure-number labels precede the JATS parent text; this extends the search backward.
+_SUB_FIELD_PARENT_PRE_BUFFER = 20
+# Digit-prefix labels (e.g. "1-") may also precede the parent match start because SW
+# aligns the parent by skipping the label digit, leaving p_start at the suffix char.
+# A small buffer is enough — single-digit + space = 2 chars.
+_SUB_FIELD_LABEL_DIGIT_PRE_BUFFER = 3
+# Author names appear before the title/journal anchor text that SW latches onto.
+# When the JATS given-names are initials ("RC") but the PDF has "R. C." (each initial
+# as a separate token), the run of gaps makes SW skip the author prefix entirely and
+# start the parent match at the title.  200 chars covers long multi-author lists too.
+_SUB_FIELD_REFERENCE_AUTHOR_PRE_BUFFER = 200
+# Identifier sub-fields (DOI, PMID, PMCID) are the only ones that appear in a URL tail
+# AFTER the parent match text.  Their match ends advance the backward-search floor so
+# the next reference's author search cannot reach back into the URL.
+_REFERENCE_IDENTIFIER_SUB_FIELDS = frozenset({
+    JatsSubFieldNames.REFERENCE_DOI,
+    JatsSubFieldNames.REFERENCE_PMID,
+    JatsSubFieldNames.REFERENCE_PMCID,
+})
 
 # Anchor+chain labelling strategy:
 # Smith-Waterman produces many tiny (1–4 char) matching blocks while traversing
@@ -116,6 +135,14 @@ _MAX_AUTHOR_GAP_TOKENS = 10
 # Type alias for the return value of _fuzzy_match_field_value:
 #   (abs_start, abs_end, [(block_start, block_end), ...])
 _MatchResult = Tuple[int, int, List[Tuple[int, int]]]
+
+# When a parent REFERENCE match fails at the primary threshold (0.8), retry at this
+# lower value.  JATS author initials may be concatenated ("CA") while the PDF expands
+# them ("C. A."), and institutional refs can omit boilerplate text that pads the needle
+# without appearing in the PDF reference list.  0.55 is sufficient to capture truncated
+# PDF references (e.g. a ref whose year/volume/URL are absent, giving quality ~0.60)
+# while rejecting genuinely absent ones.
+_REFERENCE_PARENT_MIN_THRESHOLD = 0.55
 
 
 @dataclass
@@ -251,6 +278,34 @@ def _match_quality(
     return matched / needle_len
 
 
+def _scan_tail_chars_at_token_starts(
+    tail: str,
+    scan_start: int,
+    token_index: '_TokenIndex',
+) -> int:
+    """Scan for each char in tail at token-start positions with gaps ≤ _MAX_HAYSTACK_GAP_TO_FILL.
+
+    Returns the absolute position just after the last successfully matched char.
+    If no chars can be matched, returns scan_start.  Used to bridge gaps such as
+    ". " between dotted initials ("L. Y.") when the needle has "ly".
+    """
+    pos = scan_start
+    end = scan_start
+    for char in tail:
+        limit = pos + _MAX_HAYSTACK_GAP_TO_FILL + 1
+        found = False
+        while pos < limit and pos < len(token_index.haystack):
+            if token_index.is_token_start(pos) and token_index.haystack[pos] == char:
+                end = pos + 1
+                pos = end
+                found = True
+                break
+            pos += 1
+        if not found:
+            break
+    return end
+
+
 def _extend_match_for_needle_tail(
     window: str,
     needle: str,
@@ -258,6 +313,7 @@ def _extend_match_for_needle_tail(
     abs_a_end: int,
     matched_blocks: List[Tuple[int, int, int]],
     abs_block_ranges: List[Tuple[int, int]],
+    token_index: Optional['_TokenIndex'] = None,
 ) -> Tuple[int, List[Tuple[int, int]]]:
     """Greedily extend the SW match to cover any unmatched needle suffix.
 
@@ -271,9 +327,12 @@ def _extend_match_for_needle_tail(
 
     Example: needle "brockmann d", match ends at "brockmann "; " , d" in the
     haystack has "d" at gap 2, which is within the fill threshold.
+
+    When token_index is provided, a second pass uses _scan_tail_chars_at_token_starts
+    to bridge larger gaps between remaining suffix chars (e.g. "l . y ." where
+    the needle suffix "ly" needs to hop over ". " to reach "y").
     """
-    last_needle_end = max(bi + size for _, bi, size in matched_blocks)
-    needle_tail = needle[last_needle_end:]
+    needle_tail = needle[max(bi + size for _, bi, size in matched_blocks):]
     if not needle_tail:
         return abs_a_end, abs_block_ranges
 
@@ -293,6 +352,15 @@ def _extend_match_for_needle_tail(
         return abs_a_end, abs_block_ranges
 
     ext_start = window_start + tail_start
+    # If chars remain unmatched and a token_index is available, try to bridge gaps
+    # to find them at token boundaries (handles ". " gaps between dotted initials).
+    if token_index is not None and match_count < len(needle_tail):
+        bridge_end = _scan_tail_chars_at_token_starts(
+            needle_tail[match_count:], ext_start + match_count, token_index
+        )
+        if bridge_end > ext_start + match_count:
+            return bridge_end, abs_block_ranges + [(ext_start, bridge_end)]
+
     return ext_start + match_count, abs_block_ranges + [(ext_start, ext_start + match_count)]
 
 
@@ -302,6 +370,7 @@ def _fuzzy_search_in_window(
     window_start: int,
     window_end: int,
     threshold: float,
+    token_index: Optional['_TokenIndex'] = None,
 ) -> Optional[_MatchResult]:
     """Try to find `needle` in haystack[window_start:window_end].
 
@@ -328,7 +397,7 @@ def _fuzzy_search_in_window(
         for ai, _bi, size in matched_blocks
     ]
     a_end, abs_block_ranges = _extend_match_for_needle_tail(
-        window, needle, window_start, a_end, matched_blocks, abs_block_ranges
+        window, needle, window_start, a_end, matched_blocks, abs_block_ranges, token_index
     )
     return a_start, a_end, abs_block_ranges
 
@@ -363,10 +432,150 @@ def _is_pure_number(text: str) -> bool:
     return bool(re.fullmatch(r'\d+', text))
 
 
+_BRACKET_LABEL_RE = re.compile(r'^(\[)(.+)(\])$|^(\()(.+)(\))$')
+_LABEL_DIGIT_PREFIX_RE = re.compile(r'^(\d+)(.+)$')
+
+# How far before the first segment start to search for the bracket label inner content.
+# Needed because the parent SW match may start at "]" (skipping the preceding "[" and
+# the inner number), so the sub-field search range starts after the label tokens.
+_BRACKET_LABEL_BACK_BUFFER = 10
+
+
+def _find_inner_token(
+    token_index: _TokenIndex,
+    inner: str,
+    segments: List[Tuple[int, int]],
+) -> Optional[_MatchResult]:
+    """Locate `inner` as a standalone token within segments; pure-number fast path."""
+    if _is_pure_number(inner):
+        return _exact_number_match(token_index, inner, segments)
+    haystack = token_index.haystack
+    inner_len = len(inner)
+    for seg_start, seg_end in segments:
+        pos = seg_start
+        while pos <= seg_end - inner_len:
+            idx = haystack.find(inner, pos, seg_end)
+            if idx == -1:
+                break
+            end = idx + inner_len
+            if (token_index.is_in_token(idx)
+                    and token_index.is_token_start(idx)
+                    and token_index.is_token_boundary_after(end - 1)):
+                return (idx, end, [(idx, end)])
+            pos = idx + 1
+    return None
+
+
+def _try_bracket_label_match(  # pylint: disable=too-many-locals
+    token_index: _TokenIndex,
+    needle: str,
+    segments: List[Tuple[int, int]],
+) -> Optional[_MatchResult]:
+    """Match bracket-style labels like [1] or (2) whose tokens are split by the PDF tokeniser.
+
+    When the PDF tokeniser produces three tokens "[", "1", "]" the haystack has
+    "[ 1 ]".  Smith-Waterman cannot match "[1]" across those spaces because the
+    scoring library's traceback terminates early at gap moves, yielding quality < threshold.
+
+    This function strips the outer brackets, matches the inner content, then extends
+    the match range to cover the bracket tokens that immediately surround the hit.
+    The search extends _BRACKET_LABEL_BACK_BUFFER chars before the first segment start
+    because the parent SW match often begins at "]", leaving "[" and the number before
+    its first matched block (and thus outside the nominal search range).
+    """
+    m = _BRACKET_LABEL_RE.fullmatch(needle)
+    if not m:
+        return None
+    if m.group(1):
+        open_b, inner, close_b = m.group(1), m.group(2), m.group(3)
+    else:
+        open_b, inner, close_b = m.group(4), m.group(5), m.group(6)
+
+    extended = (
+        [(max(0, segments[0][0] - _BRACKET_LABEL_BACK_BUFFER), segments[0][1])]
+        + list(segments[1:])
+    ) if segments else segments
+
+    inner_match = _find_inner_token(token_index, inner, extended)
+    if inner_match is None:
+        return None
+
+    m_start, m_end, blocks = inner_match
+    haystack = token_index.haystack
+
+    # Extend to include adjacent opening bracket token (up to 2 chars before m_start).
+    new_start = m_start
+    new_blocks: List[Tuple[int, int]] = list(blocks)
+    for pos in range(max(0, m_start - 2), m_start):
+        if (haystack[pos] == open_b
+                and token_index.is_in_token(pos)
+                and token_index.is_token_start(pos)):
+            new_start = pos
+            new_blocks = [(pos, pos + 1)] + new_blocks
+            break
+
+    # Extend to include adjacent closing bracket token (up to 2 chars after m_end).
+    new_end = m_end
+    for pos in range(m_end, min(m_end + 2, len(haystack))):
+        if (haystack[pos] == close_b
+                and token_index.is_in_token(pos)
+                and token_index.is_token_start(pos)):
+            new_end = pos + 1
+            new_blocks = new_blocks + [(pos, pos + 1)]
+            break
+
+    return new_start, new_end, new_blocks
+
+
+def _try_numeric_prefix_label_match(
+    token_index: _TokenIndex,
+    label_needle: str,
+    segments: List[Tuple[int, int]],
+) -> Optional[_MatchResult]:
+    """Match labels like "1-" when SW fails because the PDF has "1 -" (space between
+    digit and suffix).  Finds the digit prefix as an exact token via _exact_number_match
+    then extends the match to cover the immediately adjacent suffix characters."""
+    m = _LABEL_DIGIT_PREFIX_RE.match(label_needle)
+    if not m:
+        return None
+    numeric_part, suffix = m.group(1), m.group(2)
+    result = _exact_number_match(token_index, numeric_part, segments)
+    if result is None:
+        return None
+    num_start, num_end, num_blocks = result
+    haystack = token_index.haystack
+    pos = num_end
+    while pos < len(haystack) and haystack[pos] == ' ':
+        pos += 1
+    if haystack[pos:pos + len(suffix)] == suffix:
+        return num_start, pos + len(suffix), num_blocks + [(pos, pos + len(suffix))]
+    return result
+
+
 def _is_exact_sw_match(result: _MatchResult, needle_len: int) -> bool:
     """True when SW found the needle as one contiguous block (no gaps)."""
     _, _, blocks = result
     return len(blocks) == 1 and (blocks[0][1] - blocks[0][0]) == needle_len
+
+
+def _is_punct_suffix_token(
+    token_index: _TokenIndex,
+    haystack: str,
+    end: int,
+) -> bool:
+    """Return True when the characters after `end` (still in the same token) are all
+    punctuation.  This covers "1." or "1," where the PDF tokeniser attaches the
+    delimiter to the digit, so the exact number "1" cannot be matched with a clean
+    token boundary but is still the correct label to extract."""
+    pos = end
+    while pos < len(haystack) and token_index.is_in_token(pos):
+        if not haystack[pos].isspace() and haystack[pos] not in '.,;:)]}':
+            return False
+        if not token_index.is_token_boundary_after(pos):
+            pos += 1
+            continue
+        break
+    return True
 
 
 def _exact_number_match(
@@ -385,7 +594,8 @@ def _exact_number_match(
             end = idx + needle_len
             if (token_index.is_in_token(idx)
                     and token_index.is_token_start(idx)
-                    and token_index.is_token_boundary_after(end - 1)):
+                    and (token_index.is_token_boundary_after(end - 1)
+                         or _is_punct_suffix_token(token_index, haystack, end))):
                 return idx, end, [(idx, end)]
             pos = idx + 1
     return None
@@ -427,7 +637,9 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
         start = seg_start
         while start < seg_end:
             end = min(start + window_size, seg_end)
-            result = _fuzzy_search_in_window(haystack, needle, start, end, config.threshold)
+            result = _fuzzy_search_in_window(
+                haystack, needle, start, end, config.threshold, token_index
+            )
             if result is not None:
                 if _is_exact_sw_match(result, need_len):
                     return result
@@ -436,6 +648,16 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
             if end >= seg_end:
                 break
             start += stride
+
+    if gap_match is None:
+        bracket_match = _try_bracket_label_match(token_index, needle, segments)
+        if bracket_match is not None:
+            return bracket_match
+
+    if gap_match is None and field_value.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL:
+        prefix_match = _try_numeric_prefix_label_match(token_index, needle, segments)
+        if prefix_match is not None:
+            return prefix_match
 
     return gap_match
 
@@ -448,12 +670,38 @@ def _search_range(
     front_matter_end: int,
     keywords_floor: int,
     reference_floor: int,
-    parent_match_by_field: Dict[str, Tuple[int, int]],
+    parent_match_by_field: Dict[str, Tuple[int, int, int]],
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
     if fv.sub_field_name is not None and fv.field_name in parent_match_by_field:
-        p_start, p_end = parent_match_by_field[fv.field_name]
-        return p_start, p_end + _SUB_FIELD_PARENT_BUFFER
+        p_start, p_end, pre_parent_ref_floor = parent_match_by_field[fv.field_name]
+        if fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL and _is_pure_number(fv.text):
+            pre = _SUB_FIELD_PARENT_PRE_BUFFER
+        elif (
+            fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
+            and bool(_LABEL_DIGIT_PREFIX_RE.match(fv.text))
+        ):
+            pre = _SUB_FIELD_LABEL_DIGIT_PRE_BUFFER
+        elif fv.sub_field_name in {
+            JatsSubFieldNames.REFERENCE_AUTHOR,
+            JatsSubFieldNames.REFERENCE_SOURCE,
+        }:
+            # Source can precede the parent's SW match start when the PDF orders
+            # source before article-title but the JATS parent text has them reversed.
+            # SW then latches onto the article-title anchor and sets p_start after
+            # the source, so we need the same backward buffer as for authors.
+            pre = _SUB_FIELD_REFERENCE_AUTHOR_PRE_BUFFER
+        else:
+            pre = 0
+        # For authors and source: never extend before the end of the previous
+        # reference (prevents sub-field matches from bleeding into earlier bibls).
+        sub_start = max(p_start - pre, pre_parent_ref_floor) \
+            if fv.sub_field_name in {
+                JatsSubFieldNames.REFERENCE_AUTHOR,
+                JatsSubFieldNames.REFERENCE_SOURCE,
+            } \
+            else p_start - pre
+        return max(0, sub_start), p_end + _SUB_FIELD_PARENT_BUFFER
     if fv.field_name in _BODY_CONTENT_FIELDS:
         return max(0, max(body_floor, body_content_end) - 200), None
     if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
@@ -461,8 +709,7 @@ def _search_range(
         # This prevents appendix or late body content from advancing body_content_end
         # past the reference section, which would make the reference search start
         # skip over all reference positions.
-        ref_start = max(0, reference_floor - 200) if reference_floor > 0 else max(0, body_floor)
-        return ref_start, None
+        return (max(0, reference_floor - 200) if reference_floor > 0 else max(0, body_floor)), None
     if fv.field_name in _ANCHOR_FIELDS or fv.field_name in _POST_BODY_FIELDS:
         # Anchor fields (abstract, title) and post-body fields (sub-articles) both
         # search from last_match_end so they follow reading order and cannot fall
@@ -550,16 +797,9 @@ def _extend_match_with_given_names_tail(
     abs_tail_start = fb_end + idx
     if not token_index.is_token_start(abs_tail_start):
         return match_range
-    match_count = 0
-    for i, char in enumerate(given_tail):
-        if abs_tail_start + i >= len(token_index.haystack):
-            break
-        if token_index.haystack[abs_tail_start + i] != char:
-            break
-        match_count += 1
-    if not match_count:
+    tail_end = _scan_tail_chars_at_token_starts(given_tail, abs_tail_start, token_index)
+    if tail_end == abs_tail_start:
         return match_range
-    tail_end = abs_tail_start + match_count
     return (
         match_range[0],
         max(match_range[1], tail_end),
@@ -718,8 +958,7 @@ def _attach_sub_field_trailing_periods(
             last_instance = entry[2]
         elif (
             last_was_sub
-            and entry is not None
-            and entry[0] == field_name
+            and (entry is None or entry[0] == field_name)
             and normalize_for_alignment(token.text or '') == '.'
         ):
             annotated.set_token_label(token, field_name, sub_field_name, last_instance)
@@ -790,13 +1029,16 @@ class LayoutDocumentJatsAligner:
         front_matter_end = 0
         keywords_floor = 0
         reference_floor = 0
-        parent_match_by_field: Dict[str, Tuple[int, int]] = {}
+        parent_match_by_field: Dict[str, Tuple[int, int, int]] = {}
         missed_by_field: Dict[str, int] = {}
         matched_count = 0
         instance_by_field: Dict[str, int] = {}
         # Per-parent masked ranges: reset each time a new main-field match is
         # established so that sub-fields of one parent don't bleed into the next.
         sub_field_masked_ranges: Dict[str, List[Tuple[int, int]]] = {}
+        # Furthest end of any DOI/PMID/PMCID match for the current reference instance.
+        # Used to advance the backward-search floor past identifier URLs in the tail.
+        ref_id_subfield_end: Dict[str, int] = {}
 
         for fv in field_values:
             search_start, search_end = _search_range(
@@ -867,6 +1109,27 @@ class LayoutDocumentJatsAligner:
                     token_index, fv, self.config,
                     search_start=body_floor, search_end=None,
                 )
+            # Parent REFERENCE fallback: retry with a relaxed threshold when the
+            # full-text parent match just misses 0.8.  JATS may concatenate initials
+            # ("CA") or order publisher/place differently from the PDF reference list,
+            # reducing quality without indicating a wrong match.  Only applied to
+            # parent matches (sub_field_name is None) of the REFERENCE field so that
+            # sub-field containment and other fields keep the stricter threshold.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                and fv.field_name in _REFERENCE_FIELDS
+                and _REFERENCE_PARENT_MIN_THRESHOLD < self.config.threshold
+            ):
+                _relaxed_config = AlignmentConfig(
+                    threshold=_REFERENCE_PARENT_MIN_THRESHOLD,
+                    max_window=self.config.max_window,
+                )
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, _relaxed_config,
+                    search_start=search_start, search_end=search_end,
+                    masked_ranges=masked,
+                )
             # Sub-field fallback: retry with fallback_text (e.g. surname only)
             # when the primary JATS name text does not match the PDF text.
             if match_range is None and fv.sub_field_name is not None and fv.fallback_text:
@@ -909,7 +1172,18 @@ class LayoutDocumentJatsAligner:
             if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
                 reference_floor = max(reference_floor, a_end)
             if fv.sub_field_name is None:
-                parent_match_by_field[fv.field_name] = (a_start, a_end)
+                prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
+                prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)
+                # Advance the floor past identifier URLs (DOI/PMID/PMCID) that appear
+                # in the tail of the previous reference, beyond its parent match.
+                # Two-column guard: ignore either value if it falls at or after the
+                # current reference's parent start (handles overlapping SW matches and
+                # two-column layouts where the previous URL wraps past the current ref).
+                effective_prev_end = max(
+                    prev_parent_end if prev_parent_end <= a_start else 0,
+                    prev_id_end if prev_id_end <= a_start else 0,
+                )
+                parent_match_by_field[fv.field_name] = (a_start, a_end, effective_prev_end)
                 sub_field_masked_ranges[fv.field_name] = []
                 instance_by_field[fv.field_name] = (
                     instance_by_field.get(fv.field_name, 0) + 1
@@ -918,6 +1192,10 @@ class LayoutDocumentJatsAligner:
                 sub_field_masked_ranges.setdefault(fv.field_name, []).append(
                     (a_start, a_end)
                 )
+                if fv.sub_field_name in _REFERENCE_IDENTIFIER_SUB_FIELDS:
+                    ref_id_subfield_end[fv.field_name] = max(
+                        ref_id_subfield_end.get(fv.field_name, 0), a_end
+                    )
             instance_id = instance_by_field.get(fv.field_name, 0)
             _label_tokens_for_blocks(
                 annotated, token_index, block_ranges,
