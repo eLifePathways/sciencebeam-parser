@@ -135,19 +135,19 @@ COPY --from=python-dist-builder /opt/sciencebeam_parser/dist /dist
 # lint-flake8
 FROM dev AS lint-flake8
 
-RUN python -m flake8 sciencebeam_parser tests
+RUN python -m flake8 sciencebeam_parser tests benchmarks
 
 
 # lint-pylint
 FROM dev AS lint-pylint
 
-RUN python -m pylint sciencebeam_parser tests
+RUN python -m pylint sciencebeam_parser tests benchmarks
 
 
 # lint-mypy
 FROM dev AS lint-mypy
 
-RUN python -m mypy --ignore-missing-imports sciencebeam_parser tests
+RUN python -m mypy --ignore-missing-imports sciencebeam_parser tests benchmarks
 
 
 # pytest
