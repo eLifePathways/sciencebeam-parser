@@ -3399,7 +3399,7 @@ requires-dist = [
     { name = "pdf2image", specifier = "==1.16.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sciencebeam-judge", specifier = ">=0.0.26" },
-    { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=1.0.0" },
+    { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=1.0.1" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "extra == 'cpu'", specifier = ">=0.26.0", index = "https://download.pytorch.org/whl/cpu" },
 ]
@@ -3426,7 +3426,7 @@ ocr = [{ name = "tesserocr", specifier = "==2.5.2" }]
 
 [[package]]
 name = "sciencebeam-trainer-delft"
-version = "1.0.0"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
@@ -3438,9 +3438,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/07/93/535b62470736679c49ea1ef1bcd850f5c3d9b444b0e8ad383c57fd56ca66/sciencebeam_trainer_delft-1.0.0.tar.gz", hash = "sha256:4c8a133cc69de9b87712a0302de00fa2e7447868a53cffd451b589a664c2f139", size = 121110, upload-time = "2026-08-17T11:08:51.11Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/11/bd5750fe4505759bd742c544431e491fa0c2f0ba7f77c753c211922c9e06/sciencebeam_trainer_delft-1.0.1.tar.gz", hash = "sha256:57e7271fd99af1dd31cabda461af7a1a566c446751d590da98cdc27914ce3cfa", size = 123683, upload-time = "2026-08-18T07:39:27.248Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/0b/2d3ce13b822aba02be669448bcf5e54e457254db446ee5349da104558834/sciencebeam_trainer_delft-1.0.0-py3-none-any.whl", hash = "sha256:90dc3672e1610e15364def8d75cfcd026ed51f56dde78beb9d1c35bd63a2deb8", size = 126236, upload-time = "2026-08-17T11:08:50.068Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/11/3860f33a85e9143d082eb51514b76474310ea8501f7d2e67b2036b4b5518/sciencebeam_trainer_delft-1.0.1-py3-none-any.whl", hash = "sha256:e76b1ec098f71e641e429661d2ed9dfc091f54008fc4374beaaf3f02e83745db", size = 127578, upload-time = "2026-08-18T07:39:26.098Z" },
 ]
 
 [package.optional-dependencies]
