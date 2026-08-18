@@ -289,6 +289,8 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
 
 class TestUnequalDocsNote:
     def test_silent_when_every_run_covered_the_same_documents(self):
+        # pylint: disable=use-implicit-booleaness-not-comparison
+        # the empty list is the contract; `not ...` would also accept None
         assert _unequal_docs_note([("grobid", 10), ("local", 10)]) == []
 
     def test_calls_out_a_difference_with_the_counts(self):
@@ -351,5 +353,5 @@ class TestOverallRestrictedToCommonCorpora:
         assert "Overall (10 docs across 1 corpora)" in report
         assert "Excludes b, which not every run scored" in report
         # The unequal-columns warning belongs to b's own section, not the overall row.
-        overall = report.split("<details>")[0]
+        overall = report.split("<details>", maxsplit=1)[0]
         assert "Unequal document sets" not in overall
