@@ -65,6 +65,7 @@ include = ["sciencebeam_parser*"]
 [tool.setuptools.package-data]
 "sciencebeam_parser" = [
   "py.typed",
+  "resources/*.yml",
   "resources/default_config/*.yml",
   "resources/xslt/*.xsl"
 ]

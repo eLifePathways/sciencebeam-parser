@@ -2,7 +2,7 @@
 import logging
 import gzip
 from pathlib import Path
-from typing import Iterator, Optional, Sequence
+from typing import Iterator, List, Optional, Sequence
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -30,6 +30,9 @@ from sciencebeam_parser.training.cli.generate_delft_data import (
     main,
     translate_tag_result_tags_IOB_to_grobid,
     translate_tags_IOB_to_grobid
+)
+from sciencebeam_parser.training.grobid_column_layout import (
+    get_grobid_column_layout_for_model_name
 )
 from sciencebeam_parser.utils.xml_writer import XmlTreeWriter
 from tests.processors.fulltext.model_mocks import MockFullTextModels
@@ -70,13 +73,40 @@ def _document_features_context(
     )
 
 
-def _test_generate_delft_with_multiple_tokens_tei_and_raw(
+def _get_raw_feature_rows(model_name: str, token_count: int) -> List[List[str]]:
+    """Distinguishable placeholder values, one row per token, at the width the
+    data generator would have produced."""
+    layout = get_grobid_column_layout_for_model_name(model_name)
+    column_count = len(layout.get_data_generator_column_names()) - 1
+    return [
+        [f'{token_index}.{column_index}' for column_index in range(column_count)]
+        for token_index in range(token_count)
+    ]
+
+
+def _get_expected_training_feature_rows(
+    model_name: str,
+    raw_feature_rows: Sequence[Sequence[str]],
+    include_extra_columns: bool = False
+) -> List[List[str]]:
+    layout = get_grobid_column_layout_for_model_name(model_name)
+    column_count = len(
+        layout.get_training_data_column_names(include_extra_columns)
+    ) - 1
+    assert layout.get_training_data_feature_indices(include_extra_columns) == list(
+        range(column_count)
+    ), 'expected the emitted columns to be a prefix of the generated ones'
+    return [list(row[:column_count]) for row in raw_feature_rows]
+
+
+def _test_generate_delft_with_multiple_tokens_tei_and_raw(  # pylint: disable=too-many-locals
     tmp_path: Path,
     model_name: str,
     file_suffix: str,
     tei_root: etree.ElementBase,
     tokens: Sequence[str],
-    expected_labels: Sequence[str]
+    expected_labels: Sequence[str],
+    include_extra_columns: bool = False
 ):
     assert len(tokens) == len(expected_labels)
     tei_source_path = tmp_path / 'tei'
@@ -87,21 +117,26 @@ def _test_generate_delft_with_multiple_tokens_tei_and_raw(
         etree.tostring(tei_root)
     )
     raw_source_path.mkdir(parents=True, exist_ok=True)
-    expected_features = [[
-        [f'{i}.1', f'{i}.2', f'{i}.3']
-        for i in range(len(tokens))
-    ]]
+    raw_feature_rows = _get_raw_feature_rows(model_name, len(tokens))
     (raw_source_path / f'sample{file_suffix}').write_text('\n'.join([
-        f'{token} {" ".join(expected_token_features)}'
-        for token, expected_token_features in zip(tokens, expected_features[0])
+        f'{token} {" ".join(raw_token_features)}'
+        for token, raw_token_features in zip(tokens, raw_feature_rows)
     ]))
     main([
         f'--model-name={model_name}',
         f'--tei-source-path={tei_source_path}/*.tei.xml',
         f'--raw-source-path={raw_source_path}',
         f'--delft-output-path={output_path}'
-    ])
+    ] + (['--include-extra-columns'] if include_extra_columns else []))
     assert output_path.exists()
+    expected_features = [_get_expected_training_feature_rows(
+        model_name, raw_feature_rows, include_extra_columns
+    )]
+    assert [
+        len(line.split())
+        for line in output_path.read_text().splitlines()
+        if line.strip()
+    ] == [1 + len(expected_features[0][0]) + 1] * len(tokens)
     texts, _labels, _features = load_data_and_labels_crf_file(
         str(output_path)
     )
@@ -117,7 +152,8 @@ def _test_generate_delft_with_two_tokens_tei_and_raw(
     model_name: str,
     file_suffix: str,
     tei_root: etree.ElementBase,
-    expected_labels: Sequence[str]
+    expected_labels: Sequence[str],
+    include_extra_columns: bool = False
 ):
     _test_generate_delft_with_multiple_tokens_tei_and_raw(
         tmp_path=tmp_path,
@@ -125,7 +161,8 @@ def _test_generate_delft_with_two_tokens_tei_and_raw(
         file_suffix=file_suffix,
         tei_root=tei_root,
         expected_labels=expected_labels,
-        tokens=[TOKEN_1, TOKEN_2]
+        tokens=[TOKEN_1, TOKEN_2],
+        include_extra_columns=include_extra_columns
     )
 
 
@@ -158,7 +195,10 @@ def _test_generate_delft_with_multiple_tokens_tei_only(  # pylint: disable=too-m
     expected_data_lines = list(data_generator.iter_data_lines_for_layout_document(
         layout_document
     ))
-    _expected_texts, expected_features = load_data_crf_lines(expected_data_lines)
+    _expected_texts, generated_features = load_data_crf_lines(expected_data_lines)
+    expected_features = [_get_expected_training_feature_rows(
+        model_name, generated_features.tolist()[0]
+    )]
     LOGGER.debug('expected_features: %r', expected_features)
     texts, labels, features = load_data_and_labels_crf_file(
         str(output_path)
@@ -170,7 +210,7 @@ def _test_generate_delft_with_multiple_tokens_tei_only(  # pylint: disable=too-m
     assert len(texts) == 1
     assert list(texts[0]) == tokens
     assert list(labels[0]) == expected_labels
-    assert features.tolist() == expected_features.tolist()
+    assert features.tolist() == expected_features
 
 
 def _test_generate_delft_with_two_tokens_tei_only(
@@ -248,6 +288,52 @@ class TestMain:
             ])),
             expected_labels=['B-<header>', 'B-<body>']
         )
+
+    def test_should_include_the_segmentation_extra_column_when_asked_for(
+        self,
+        tmp_path: Path
+    ):
+        _test_generate_delft_with_two_tokens_tei_and_raw(
+            tmp_path=tmp_path,
+            model_name='segmentation',
+            file_suffix='.segmentation',
+            tei_root=E('tei', E('text', *[
+                E('front', TOKEN_1, E('lb')),
+                '\n',
+                E('body', TOKEN_2, E('lb')),
+                '\n'
+            ])),
+            expected_labels=['B-<header>', 'B-<body>'],
+            include_extra_columns=True
+        )
+
+    def test_should_reject_a_raw_file_of_another_width(
+        self,
+        tmp_path: Path
+    ):
+        tei_source_path = tmp_path / 'tei'
+        raw_source_path = tmp_path / 'raw'
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (tei_source_path / 'sample.segmentation.tei.xml').write_bytes(etree.tostring(
+            E('tei', E('text', *[
+                E('front', TOKEN_1, E('lb')),
+                '\n',
+                E('body', TOKEN_2, E('lb')),
+                '\n'
+            ]))
+        ))
+        raw_source_path.mkdir(parents=True, exist_ok=True)
+        (raw_source_path / 'sample.segmentation').write_text('\n'.join([
+            f'{TOKEN_1} feature1 feature2',
+            f'{TOKEN_2} feature1 feature2'
+        ]))
+        with pytest.raises(ValueError):
+            main([
+                '--model-name=segmentation',
+                f'--tei-source-path={tei_source_path}/*.tei.xml',
+                f'--raw-source-path={raw_source_path}',
+                f'--delft-output-path={tmp_path}/output.data'
+            ])
 
     def test_should_be_able_to_generate_header_training_data(
         self,
@@ -508,13 +594,10 @@ class TestMain:
             gzip.compress(etree.tostring(tei_root))
         )
         raw_source_path.mkdir(parents=True, exist_ok=True)
-        expected_features = [[
-            [f'{i}.1', f'{i}.2', f'{i}.3']
-            for i in range(len(tokens))
-        ]]
+        raw_feature_rows = _get_raw_feature_rows(model_name, len(tokens))
         (raw_source_path / f'sample{file_suffix}.gz').write_text('\n'.join([
-            f'{token} {" ".join(expected_token_features)}'
-            for token, expected_token_features in zip(tokens, expected_features[0])
+            f'{token} {" ".join(raw_token_features)}'
+            for token, raw_token_features in zip(tokens, raw_feature_rows)
         ]))
         main([
             f'--model-name={model_name}',

@@ -1,0 +1,283 @@
+# The column layout of GROBID's own training data, per model.
+#
+# GROBID's FeaturesVector*.printVector() ends with a label slot:
+#
+#     if (label != null)
+#         res.append(" " + label + "\n");
+#     else
+#         res.append(" 0\n");
+#
+# label_slot records what GROBID's corpus writer does with it, which decides
+# what a training data line looks like:
+#
+#   filled    the writer sets features.label = tag, so the label occupies the
+#             slot: token, columns, label
+#   unfilled  the writer leaves it null and appends the tag, so the slot stays
+#             `0`: token, columns, 0, label
+#   absent    printVector has the block commented out: token, columns, label
+#
+# columns are the feature columns excluding the slot, starting with the token
+# itself, and match the data generator's feature_names position by position.
+# extra_columns are columns we add that GROBID has no counterpart for; they are
+# emitted only with --include-extra-columns.
+#
+# reference_corpus is what the recorded layout was measured against, and what
+# `python -m sciencebeam_parser.training.cli.check_grobid_column_layout` reads.
+# Not every model has a release for the same GROBID version. Models sharing a
+# data generator share an entry, via a YAML anchor.
+
+models:
+
+  # whole_line_text is ours: GROBID has no counterpart for it, and it sits at
+  # the index GROBID uses for the label. delft models read it as a text
+  # feature; wapiti templates stop before it. The layout was measured against
+  # the 0.5.6 release below; a newer one can replace it once checked.
+  segmentation:
+    generator: SegmentationDataGenerator
+    label_slot: absent
+    reference_corpus:
+      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/v0.0.1/delft-grobid-0.5.6-segmentation.train.gz
+    columns:
+      - token_text
+      - second_token_text
+      - lower_token_text
+      - prefix_1
+      - prefix_2
+      - prefix_3
+      - prefix_4
+      - block_status
+      - page_status
+      - token_font_status
+      - token_font_size
+      - is_bold
+      - is_italic
+      - capitalisation
+      - digit_status
+      - is_single_char
+      - is_proper_name
+      - is_common_name
+      - is_first_name
+      - is_year
+      - is_month
+      - is_email
+      - is_http
+      - relative_document_position
+      - relative_page_position
+      - punctuation_profile
+      - punctuation_profile_length
+      - block_relative_line_length
+      - is_bitmap_around
+      - is_vector_around
+      - is_repetitive_pattern
+      - is_first_repetitive_pattern
+      - is_main_area
+    extra_columns:
+      - whole_line_text
+
+  header:
+    generator: HeaderDataGenerator
+    label_slot: unfilled
+    reference_corpus:
+      - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-header.train.gz
+    columns:
+      - token_text
+      - lower_token_text
+      - prefix_1
+      - prefix_2
+      - prefix_3
+      - prefix_4
+      - suffix_1
+      - suffix_2
+      - suffix_3
+      - suffix_4
+      - block_status
+      - line_status
+      - alignment
+      - token_font_status
+      - token_font_size
+      - is_bold
+      - is_italic
+      - capitalisation
+      - digit_status
+      - is_single_char
+      - is_proper_name
+      - is_common_name
+      - is_year
+      - is_month
+      - is_location_name
+      - is_email
+      - is_http
+      - punctuation_type
+      - is_largest_font
+      - is_smallest_font
+      - is_larger_than_average_font
+
+  # figure and table share this layout: GROBID generates their training data
+  # with the fulltext feature vector (FeaturesVectorFigure is unreferenced).
+  # The published 0.8.2 figure corpus and 11569 lines of the table corpus
+  # predate is_superscript, so they are 26 columns rather than 27.
+  fulltext: &fulltext
+    generator: FullTextDataGenerator
+    label_slot: absent
+    reference_corpus:
+      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/grobid-0.8.2/delft-grobid-0.8.2-fulltext.train.gz
+    columns:
+      - token_text
+      - lower_token_text
+      - prefix_1
+      - prefix_2
+      - prefix_3
+      - prefix_4
+      - suffix_1
+      - suffix_2
+      - suffix_3
+      - suffix_4
+      - block_status
+      - line_status
+      - alignment
+      - token_font_status
+      - token_font_size
+      - is_bold
+      - is_italic
+      - capitalisation
+      - digit_status
+      - is_single_char
+      - punctuation_type
+      - relative_document_position
+      - relative_page_position
+      - is_bitmap_around
+      - callout_type
+      - is_callout_known
+      - is_superscript
+
+  figure: *fulltext
+
+  table: *fulltext
+
+  reference_segmenter:
+    generator: ReferenceSegmenterDataGenerator
+    label_slot: unfilled
+    reference_corpus:
+      - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-reference-segmenter.train.gz
+    columns:
+      - token_text
+      - lower_token_text
+      - prefix_1
+      - prefix_2
+      - prefix_3
+      - prefix_4
+      - suffix_1
+      - suffix_2
+      - suffix_3
+      - suffix_4
+      - line_status
+      - alignment
+      - capitalisation
+      - digit_status
+      - is_single_char
+      - is_proper_name
+      - is_common_name
+      - is_first_name
+      - is_location_name
+      - is_year
+      - is_month
+      - is_http
+      - punctuation_profile
+      - line_token_relative_position
+      - line_relative_length
+      - block_status
+      - truncated_punctuation_profile_length
+
+  citation:
+    generator: CitationDataGenerator
+    label_slot: filled
+    reference_corpus:
+      - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-citation.train.gz
+    columns:
+      - token_text
+      - lower_token_text
+      - prefix_1
+      - prefix_2
+      - prefix_3
+      - prefix_4
+      - suffix_1
+      - suffix_2
+      - suffix_3
+      - suffix_4
+      - line_status
+      - capitalisation
+      - digit_status
+      - is_single_char
+      - is_proper_name
+      - is_common_name
+      - is_first_name
+      - is_last_name
+      - is_location_name
+      - is_year
+      - is_month
+      - is_http
+      - is_known_collaboration
+      - is_known_journal_title
+      - is_known_conference_title
+      - is_known_publisher
+      - is_known_identifier
+      - punctuation_type
+      - sentence_token_relative_position
+
+  affiliation_address:
+    generator: AffiliationAddressDataGenerator
+    label_slot: filled
+    reference_corpus:
+      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/grobid-0.8.2/delft-grobid-0.8.2-affiliation-address.train.gz
+    columns:
+      - token_text
+      - lower_token_text
+      - prefix_1
+      - prefix_2
+      - prefix_3
+      - prefix_4
+      - suffix_1
+      - suffix_2
+      - suffix_3
+      - suffix_4
+      - line_status
+      - capitalisation
+      - digit_status
+      - is_single_char
+      - is_proper_name
+      - is_common_name
+      - is_first_name
+      - is_location_name
+      - is_country
+      - punctuation_type
+      - word_shape
+
+  name_header: &name
+    generator: NameDataGenerator
+    label_slot: filled
+    reference_corpus:
+      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/grobid-0.8.2/delft-grobid-0.8.2-name-header.train.gz
+      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/grobid-0.8.2/delft-grobid-0.8.2-name-citation.train.gz
+    columns:
+      - token_text
+      - lower_token_text
+      - prefix_1
+      - prefix_2
+      - prefix_3
+      - prefix_4
+      - suffix_1
+      - suffix_2
+      - suffix_3
+      - suffix_4
+      - line_status
+      - capitalisation
+      - digit_status
+      - is_single_char
+      - is_common_name
+      - is_first_name
+      - is_last_name
+      - is_known_title
+      - is_known_suffix
+      - punctuation_type
+
+  name_citation: *name
