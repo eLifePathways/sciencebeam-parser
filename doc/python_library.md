@@ -8,6 +8,44 @@ ScienceBeam Parser allows you to parse scientific documents. It provides a REST 
 pip install sciencebeam-parser[delft,cpu]
 ```
 
+The `delft` extra provides the PyTorch-based sequence labelling engine. There is no TensorFlow
+extra: the delft engine runs on PyTorch, and TF-era model artifacts are converted to a torch
+state dict in memory when they are loaded, so the model URLs in the
+[default config.yml](../sciencebeam_parser/resources/default_config/config.yml) need no change
+and the artifacts themselves are never modified.
+
+### Installing CPU-only PyTorch
+
+On Linux the default PyTorch wheel on PyPI is the CUDA build, which adds several `nvidia-*`
+packages and `triton` that a CPU-only deployment never uses. Index configuration is not part of
+published package metadata, so this project's own cannot reach you — install torch from the CPU
+index yourself, before the rest:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install sciencebeam-parser[delft,cpu]
+```
+
+With `uv`, declare `torch` as a direct dependency of your own project and point it at the CPU
+index. Declaring it directly is what makes the source apply — receiving torch only through
+`sciencebeam-parser` leaves it resolving from PyPI:
+
+```toml
+[project]
+dependencies = [
+    "sciencebeam-parser[delft,cpu]",
+    "torch",
+]
+
+[tool.uv.sources]
+torch = [{ index = "torch-cpu" }]
+
+[[tool.uv.index]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+```
+
 ## CLI
 
 ### CLI: Start Server

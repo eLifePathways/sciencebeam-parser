@@ -117,8 +117,8 @@ dev-venv: venv-create dev-install
 
 # Lightweight host venv for running the benchmark scripts (incl. benchmarks.run)
 # directly on the host. Installs only the benchmark group + light core deps, NOT the
-# cpu/delft/cv extras (torch/TensorFlow), so it works where dev-install can't (e.g. Mac
-# Intel). benchmarks.run orchestrates the GROBID/parser containers via the host docker CLI.
+# cpu/delft/cv extras (torch), so it works where dev-install can't (e.g. Mac Intel).
+# benchmarks.run orchestrates the GROBID/parser containers via the host docker CLI.
 benchmark-install:
 	$(UV) sync --active --frozen --no-dev --group benchmark
 
