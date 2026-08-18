@@ -3,25 +3,19 @@ import re
 
 from lxml import etree
 
-from sciencebeam_parser.document.semantic_document import SemanticExternalIdentifierTypes
 from sciencebeam_parser.document.tei.common import TEI_NS_PREFIX, tei_xpath
 from sciencebeam_parser.models.training_data import (
     AbstractTeiTrainingDataGenerator,
-    AbstractTrainingTeiParser
+    AbstractTrainingTeiParser,
+    TeiTrainingElementPath
 )
 from sciencebeam_parser.models.citation.extract import (
     get_detected_external_identifier_type_for_text
 )
+from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
 from sciencebeam_parser.utils.xml import get_text_content
 
-# get_post_processed_xml_root tags <idno> elements with any detected identifier type
-# (not just DOI); all but DOI should still resolve back to the <pubnum> label
-_PUBNUM_EXTERNAL_IDENTIFIER_TYPES = (
-    SemanticExternalIdentifierTypes.ARXIV,
-    SemanticExternalIdentifierTypes.PII,
-    SemanticExternalIdentifierTypes.PMCID,
-    SemanticExternalIdentifierTypes.PMID,
-)
+_IDNO_TAG = TEI_NS_PREFIX + 'idno'
 
 # Matches "388 - 412", "281-282", "1199 -1207" etc.
 _PAGE_RANGE_RE = re.compile(r'^(\S+)\s*[-–]\s*(\S+)$')
@@ -52,10 +46,13 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
     '<location>': ROOT_TRAINING_XML_ELEMENT_PATH + ['pubPlace'],
     '<tech>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="report"]'],
     '<web>': ROOT_TRAINING_XML_ELEMENT_PATH + ['ptr[@type="web"]'],
-    '<idno>': ROOT_TRAINING_XML_ELEMENT_PATH + ['idno[@type="DOI"]'],
-    '<pubnum>': ROOT_TRAINING_XML_ELEMENT_PATH + ['idno'],
+    IDENTIFIER_LABEL: ROOT_TRAINING_XML_ELEMENT_PATH + ['idno'],
     '<note>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note']
 }
+
+
+def _is_idno_path_step(path_step: str) -> bool:
+    return path_step == _IDNO_TAG or path_step.startswith(_IDNO_TAG + '[')
 
 
 class CitationTeiTrainingDataGenerator(AbstractTeiTrainingDataGenerator):
@@ -101,7 +98,13 @@ class CitationTrainingTeiParser(AbstractTrainingTeiParser):
             ),
             use_tei_namespace=True
         )
-        for external_identifier_type in _PUBNUM_EXTERNAL_IDENTIFIER_TYPES:
-            self.label_by_relative_element_path_map[
-                ('{}idno[@type="{}"]'.format(TEI_NS_PREFIX, external_identifier_type),)
-            ] = '<pubnum>'
+
+    def get_label_for_element_path(
+        self,
+        tei_training_element_path: TeiTrainingElementPath,
+        text: str
+    ) -> str:
+        element_path = tei_training_element_path.get_path()
+        if element_path and _is_idno_path_step(element_path[-1]):
+            return IDENTIFIER_LABEL
+        return super().get_label_for_element_path(tei_training_element_path, text=text)

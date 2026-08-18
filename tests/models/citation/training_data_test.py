@@ -1,5 +1,5 @@
 import logging
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional, Sequence, Tuple
 
 import pytest
 from lxml import etree
@@ -9,7 +9,11 @@ from sciencebeam_parser.document.layout_document import (
     LayoutDocument,
     LayoutLine
 )
-from sciencebeam_parser.document.semantic_document import SemanticExternalIdentifierTypes
+from sciencebeam_parser.document.semantic_document import (
+    SemanticExternalIdentifier,
+    SemanticExternalIdentifierTypes,
+    SemanticReference
+)
 from sciencebeam_parser.document.tei.common import (
     TEI_E,
     get_tei_xpath_text_content_list,
@@ -20,7 +24,12 @@ from sciencebeam_parser.models.data import (
     DEFAULT_DOCUMENT_FEATURES_CONTEXT,
     LayoutModelData
 )
+from sciencebeam_parser.models.model import (
+    iter_entity_layout_blocks_for_labeled_layout_tokens
+)
 from sciencebeam_parser.models.citation.data import CitationDataGenerator
+from sciencebeam_parser.models.citation.extract import CitationSemanticExtractor
+from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
 from sciencebeam_parser.models.citation.training_data import (
     ROOT_TRAINING_XML_ELEMENT_PATH,
     TRAINING_XML_ELEMENT_PATH_BY_LABEL,
@@ -76,6 +85,32 @@ def get_training_tei_xml_for_model_data_iterable(
     )
     LOGGER.debug('xml: %r', etree.tostring(xml_root))
     return xml_root
+
+
+def get_semantic_references_for_training_tei_xml(
+    xml_root: etree.ElementBase
+) -> Sequence[SemanticReference]:
+    extractor = CitationSemanticExtractor()
+    labeled_layout_tokens_list = (
+        get_training_tei_parser().parse_training_tei_to_labeled_layout_tokens_list(xml_root)
+    )
+    return [
+        semantic_content
+        for labeled_layout_tokens in labeled_layout_tokens_list
+        for semantic_content in extractor.iter_semantic_content_for_entity_blocks(
+            iter_entity_layout_blocks_for_labeled_layout_tokens(labeled_layout_tokens)
+        )
+        if isinstance(semantic_content, SemanticReference)
+    ]
+
+
+def get_external_identifier_types_and_values(
+    semantic_reference: SemanticReference
+) -> Sequence[Tuple[Optional[str], Optional[str]]]:
+    return [
+        (external_identifier.external_identifier_type, external_identifier.value)
+        for external_identifier in semantic_reference.iter_by_type(SemanticExternalIdentifier)
+    ]
 
 
 def get_training_tei_xml_for_layout_document(
@@ -450,17 +485,17 @@ class TestCitationTrainingTeiParser:
         "external_identifier_type",
         [
             SemanticExternalIdentifierTypes.ARXIV,
+            SemanticExternalIdentifierTypes.DOI,
             SemanticExternalIdentifierTypes.PII,
             SemanticExternalIdentifierTypes.PMCID,
-            SemanticExternalIdentifierTypes.PMID
+            SemanticExternalIdentifierTypes.PMID,
+            'other'
         ]
     )
-    def test_should_parse_non_doi_idno_type_as_pubnum(
+    def test_should_parse_any_idno_type_as_identifier_label(
         self,
         external_identifier_type: str
     ):
-        # get_post_processed_xml_root tags <pubnum>-derived <idno> elements with the
-        # detected identifier type (e.g. PMCID); parsing must still recover <pubnum>
         tei_root = _get_training_tei_with_references([
             TEI_E('bibl', *[
                 TEI_E('idno', {'type': external_identifier_type}, TOKEN_1, TEI_E('lb')),
@@ -471,12 +506,26 @@ class TestCitationTrainingTeiParser:
             tei_root
         )
         assert tag_result == [[
-            (TOKEN_1, 'B-<pubnum>')
+            (TOKEN_1, f'B-{IDENTIFIER_LABEL}')
         ]]
 
-    def test_should_round_trip_pubnum_with_detected_external_identifier_type(self):
+    @pytest.mark.parametrize(
+        "text,expected_type,expected_value",
+        [
+            ('10.1234/test', SemanticExternalIdentifierTypes.DOI, '10.1234/test'),
+            ('arXiv: 0706.0001', SemanticExternalIdentifierTypes.ARXIV, '0706.0001'),
+            ('PMID: 1234567', SemanticExternalIdentifierTypes.PMID, '1234567'),
+            ('PMC1234567', SemanticExternalIdentifierTypes.PMCID, 'PMC1234567')
+        ]
+    )
+    def test_should_round_trip_identifier_to_typed_semantic_external_identifier(
+        self,
+        text: str,
+        expected_type: str,
+        expected_value: str
+    ):
         label_and_layout_line_list = [
-            ('<pubnum>', get_next_layout_line_for_text('PMC1234567'))
+            (IDENTIFIER_LABEL, get_next_layout_line_for_text(text))
         ]
         labeled_model_data_list = get_labeled_model_data_list(
             label_and_layout_line_list,
@@ -486,14 +535,58 @@ class TestCitationTrainingTeiParser:
             labeled_model_data_list
         )
         assert get_tei_xpath_text_content_list(
-            xml_root, f'{BIBL_XPATH}/tei:idno[@type="{SemanticExternalIdentifierTypes.PMCID}"]'
-        ) == ['PMC1234567']
-        tag_result = get_training_tei_parser().parse_training_tei_to_tag_result(
-            xml_root
+            xml_root, f'{BIBL_XPATH}/tei:idno[@type="{expected_type}"]'
+        ) == [text]
+        references = get_semantic_references_for_training_tei_xml(xml_root)
+        assert len(references) == 1
+        assert get_external_identifier_types_and_values(references[0]) == [
+            (expected_type, expected_value)
+        ]
+
+    def test_should_round_trip_multiple_identifiers_of_one_reference(self):
+        label_and_layout_line_list = [
+            ('<title>', get_next_layout_line_for_text('Title 1')),
+            (IDENTIFIER_LABEL, get_next_layout_line_for_text('10.1234/test')),
+            ('O', get_next_layout_line_for_text('and')),
+            (IDENTIFIER_LABEL, get_next_layout_line_for_text('arXiv: 0706.0001')),
+            ('O', get_next_layout_line_for_text('and')),
+            (IDENTIFIER_LABEL, get_next_layout_line_for_text('PMID: 1234567'))
+        ]
+        labeled_model_data_list = get_labeled_model_data_list(
+            label_and_layout_line_list,
+            data_generator=get_data_generator()
         )
-        assert tag_result == [[
-            ('PMC1234567', 'B-<pubnum>')
-        ]]
+        xml_root = get_training_tei_xml_for_model_data_iterable(
+            labeled_model_data_list
+        )
+        references = get_semantic_references_for_training_tei_xml(xml_root)
+        assert len(references) == 1
+        assert get_external_identifier_types_and_values(references[0]) == [
+            (SemanticExternalIdentifierTypes.DOI, '10.1234/test'),
+            (SemanticExternalIdentifierTypes.ARXIV, '0706.0001'),
+            (SemanticExternalIdentifierTypes.PMID, '1234567')
+        ]
+
+    def test_should_merge_directly_adjacent_identifiers_of_one_reference(self):
+        # the parser reconstructs B-/I- from label changes rather than element boundaries,
+        # so two idno elements with only whitespace between them come back as one identifier
+        label_and_layout_line_list = [
+            (IDENTIFIER_LABEL, get_next_layout_line_for_text('10.1234/test')),
+            (IDENTIFIER_LABEL, get_next_layout_line_for_text('PMID: 1234567'))
+        ]
+        labeled_model_data_list = get_labeled_model_data_list(
+            label_and_layout_line_list,
+            data_generator=get_data_generator()
+        )
+        xml_root = get_training_tei_xml_for_model_data_iterable(
+            labeled_model_data_list
+        )
+        assert len(tei_xpath(xml_root, f'{BIBL_XPATH}/tei:idno')) == 2
+        references = get_semantic_references_for_training_tei_xml(xml_root)
+        assert len(references) == 1
+        assert get_external_identifier_types_and_values(references[0]) == [
+            (SemanticExternalIdentifierTypes.DOI, '10.1234/testPMID:1234567')
+        ]
 
     @pytest.mark.parametrize(
         "tei_label,element_path",

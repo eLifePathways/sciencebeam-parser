@@ -25,6 +25,7 @@ from sciencebeam_parser.document.semantic_document import (
     T_SemanticContentFactory
 )
 from sciencebeam_parser.document.layout_document import LayoutBlock
+from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL, NOTE_CITATION_LABELS
 from sciencebeam_parser.models.extract import SimpleModelSemanticExtractor
 
 
@@ -181,7 +182,10 @@ def get_invalid_reference(ref: SemanticReference) -> SemanticInvalidReference:
 
 class CitationSemanticExtractor(SimpleModelSemanticExtractor):
     def __init__(self):
-        super().__init__(semantic_content_class_by_tag=SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG)
+        super().__init__(
+            semantic_content_class_by_tag=SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG,
+            expected_note_tags=NOTE_CITATION_LABELS
+        )
 
     def get_semantic_content_for_entity_name(  # pylint: disable=too-many-return-statements
         self,
@@ -192,7 +196,7 @@ class CitationSemanticExtractor(SimpleModelSemanticExtractor):
             return parse_page_range(layout_block)
         if name == '<web>':
             return parse_web(layout_block)
-        if name == '<pubnum>':
+        if name == IDENTIFIER_LABEL:
             return parse_pubnum(layout_block)
         if name == '<date>':
             return parse_date(layout_block)
