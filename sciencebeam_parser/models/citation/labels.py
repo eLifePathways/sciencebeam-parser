@@ -2,10 +2,15 @@ from typing import AbstractSet, FrozenSet
 
 
 # The label set the citation model is trained and served against, matching GROBID's
-# citation corpus (grobid-trainer/resources/dataset/citation).
+# citation corpus.
 #
 # Every identifier carries IDENTIFIER_LABEL, whatever kind it is; the kind is detected
-# from the text at extraction, so no label depends on a regex having matched.
+# from the text at extraction, so no label depends on a regex having matched. This is
+# what GROBID does: TEICitationSaxParser maps both idno and pubnum to <pubnum>, and
+# CitationParser types the prediction afterwards via BiblioItem.checkIdentifier(). Its
+# training TEI carries the kind as an idno attribute, spelled type="arXiv" and
+# type="PMC" and also covering ISSN and ISBN, which is why the parser accepts any
+# idno type rather than the ones detection can produce here.
 IDENTIFIER_LABEL = '<pubnum>'
 
 OTHER_LABEL = '<other>'
