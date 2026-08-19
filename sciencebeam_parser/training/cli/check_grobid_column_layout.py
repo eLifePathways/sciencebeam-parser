@@ -10,7 +10,7 @@ import argparse
 import logging
 from collections import Counter
 from itertools import islice
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from sciencebeam_trainer_delft.utils.io import auto_download_input_file
 
@@ -107,6 +107,7 @@ def run(args: argparse.Namespace) -> int:
     if args.corpus and len(model_names) != 1:
         raise ValueError('--corpus applies to a single --model-name')
     problem_count = 0
+    checked: Dict[Tuple[str, str, int], str] = {}
     for model_name in model_names:
         layout = layout_by_name[model_name]
         corpus_list = args.corpus or list(layout.reference_corpus)
@@ -114,6 +115,13 @@ def run(args: argparse.Namespace) -> int:
             LOGGER.warning('%s: no reference corpus recorded', model_name)
             continue
         for filename in corpus_list:
+            # models sharing a layout share a corpus; downloading it once is enough
+            key = (filename, layout.label_slot, len(layout.get_training_data_column_names()))
+            already_checked_for = checked.get(key)
+            if already_checked_for:
+                LOGGER.info('%s: same check as %s', model_name, already_checked_for)
+                continue
+            checked[key] = model_name
             for problem in check_corpus(layout, filename, max_lines=args.max_lines):
                 problem_count += 1
                 LOGGER.error('%s: %s: %s', model_name, filename, problem)

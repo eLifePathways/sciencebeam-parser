@@ -30,13 +30,12 @@ models:
 
   # whole_line_text is ours: GROBID has no counterpart for it, and it sits at
   # the index GROBID uses for the label. delft models read it as a text
-  # feature; wapiti templates stop before it. The layout was measured against
-  # the 0.5.6 release below; a newer one can replace it once checked.
+  # feature; wapiti templates stop before it.
   segmentation:
     generator: SegmentationDataGenerator
     label_slot: absent
     reference_corpus:
-      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/v0.0.1/delft-grobid-0.5.6-segmentation.train.gz
+      - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-segmentation.train.gz
     columns:
       - token_text
       - second_token_text
@@ -113,14 +112,16 @@ models:
       - is_larger_than_average_font
 
   # figure and table share this layout: GROBID generates their training data
-  # with the fulltext feature vector (FeaturesVectorFigure is unreferenced).
-  # The published 0.8.2 figure corpus and 11569 lines of the table corpus
-  # predate is_superscript, so they are 26 columns rather than 27.
+  # with the fulltext feature vector (FeaturesVectorFigure is unreferenced), so
+  # the fulltext corpus is the reference for all three. Their own published
+  # corpora are not: at 0.9.0 the figure one is 26 feature columns throughout
+  # and the table one mixes 26 across 11569 lines with 27 across 5837, the
+  # 27-column lines being those that carry is_superscript.
   fulltext: &fulltext
     generator: FullTextDataGenerator
     label_slot: absent
     reference_corpus:
-      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/grobid-0.8.2/delft-grobid-0.8.2-fulltext.train.gz
+      - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-fulltext.train.gz
     columns:
       - token_text
       - lower_token_text
@@ -228,7 +229,7 @@ models:
     generator: AffiliationAddressDataGenerator
     label_slot: filled
     reference_corpus:
-      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/grobid-0.8.2/delft-grobid-0.8.2-affiliation-address.train.gz
+      - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-affiliation-address.train.gz
     columns:
       - token_text
       - lower_token_text
@@ -256,8 +257,8 @@ models:
     generator: NameDataGenerator
     label_slot: filled
     reference_corpus:
-      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/grobid-0.8.2/delft-grobid-0.8.2-name-header.train.gz
-      - https://github.com/elifesciences/sciencebeam-datasets/releases/download/grobid-0.8.2/delft-grobid-0.8.2-name-citation.train.gz
+      - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-name-header.train.gz
+      - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-name-citation.train.gz
     columns:
       - token_text
       - lower_token_text
