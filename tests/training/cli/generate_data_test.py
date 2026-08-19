@@ -47,6 +47,7 @@ from sciencebeam_parser.models.table.training_data import (
 from sciencebeam_parser.models.citation.training_data import (
     CitationTeiTrainingDataGenerator
 )
+from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
 import sciencebeam_parser.training.cli.generate_data as generate_data_module
@@ -863,6 +864,97 @@ def _make_md(line: LayoutLine, token_idx: int = 0) -> LayoutModelData:
         layout_line=line,
         layout_token=line.tokens[token_idx],
     )
+
+
+def _get_citation_label_list_for_sub_fields(
+    text: str,
+    sub_field_by_token_index: Dict[int, str]
+) -> List[Optional[str]]:
+    line = LayoutLine.for_text(text)
+    citation_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+    annotated = JatsAnnotatedLayoutDocument(layout_document=citation_doc)
+    for token_index, sub_field in sub_field_by_token_index.items():
+        annotated.set_token_label(
+            line.tokens[token_index], JatsFieldNames.REFERENCE,
+            sub_field_name=sub_field, instance_id=1,
+        )
+    label_fn = CitationModelTrainingDataGenerator().get_jats_label_fn()
+    assert label_fn is not None
+    return [
+        label_fn(annotated, {}, _make_md(line, token_index))
+        for token_index in range(len(line.tokens))
+    ]
+
+
+@log_on_exception
+class TestCitationJatsLabelFn:
+    def test_should_label_identifier_sub_fields_with_the_identifier_label(self):
+        assert _get_citation_label_list_for_sub_fields(
+            'doi 10 unrelated',
+            {1: JatsSubFieldNames.REFERENCE_DOI}
+        ) == [None, IDENTIFIER_LABEL, None]
+
+    def test_should_start_a_new_identifier_when_the_kind_changes(self):
+        # 'doi' and 'pmid' tokens stand for the identifier values; without a B- prefix on the
+        # second one the generator would write both into a single <idno>
+        assert _get_citation_label_list_for_sub_fields(
+            'doi pmid',
+            {
+                0: JatsSubFieldNames.REFERENCE_DOI,
+                1: JatsSubFieldNames.REFERENCE_PMID
+            }
+        ) == [IDENTIFIER_LABEL, 'B-' + IDENTIFIER_LABEL]
+
+    def test_should_not_start_a_new_identifier_within_one_kind(self):
+        assert _get_citation_label_list_for_sub_fields(
+            'doi doi doi',
+            {
+                0: JatsSubFieldNames.REFERENCE_DOI,
+                1: JatsSubFieldNames.REFERENCE_DOI,
+                2: JatsSubFieldNames.REFERENCE_DOI
+            }
+        ) == [IDENTIFIER_LABEL, IDENTIFIER_LABEL, IDENTIFIER_LABEL]
+
+    def test_should_not_start_a_new_identifier_after_unlabelled_text(self):
+        # the unlabelled token already closes the <idno> element
+        assert _get_citation_label_list_for_sub_fields(
+            'doi and pmid',
+            {
+                0: JatsSubFieldNames.REFERENCE_DOI,
+                2: JatsSubFieldNames.REFERENCE_PMID
+            }
+        ) == [IDENTIFIER_LABEL, None, IDENTIFIER_LABEL]
+
+    def test_should_not_start_a_new_identifier_across_references(self):
+        # each reference is its own training document, so the first identifier of the next
+        # one needs no prefix even though its kind differs from the previous reference's
+        line = LayoutLine.for_text('pmid doi')
+        citation_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=citation_doc)
+        annotated.set_token_label(
+            line.tokens[0], JatsFieldNames.REFERENCE,
+            sub_field_name=JatsSubFieldNames.REFERENCE_PMID, instance_id=1,
+        )
+        annotated.set_token_label(
+            line.tokens[1], JatsFieldNames.REFERENCE,
+            sub_field_name=JatsSubFieldNames.REFERENCE_DOI, instance_id=2,
+        )
+        label_fn = CitationModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, 0)),
+            label_fn(annotated, {}, _make_md(line, 1))
+        ] == [IDENTIFIER_LABEL, IDENTIFIER_LABEL]
+
+    def test_should_not_start_a_new_identifier_after_another_label(self):
+        assert _get_citation_label_list_for_sub_fields(
+            'doi 2020 pmid',
+            {
+                0: JatsSubFieldNames.REFERENCE_DOI,
+                1: JatsSubFieldNames.REFERENCE_YEAR,
+                2: JatsSubFieldNames.REFERENCE_PMID
+            }
+        ) == [IDENTIFIER_LABEL, '<date>', IDENTIFIER_LABEL]
 
 
 @log_on_exception
