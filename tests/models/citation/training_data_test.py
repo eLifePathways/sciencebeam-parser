@@ -390,6 +390,23 @@ class TestCitationTrainingTeiParser:
             (TOKEN_2, 'B-<title>')
         ]]
 
+    def test_should_start_a_new_entity_for_sibling_identifiers_separated_by_whitespace(self):
+        tei_root = _get_training_tei_with_references([
+            TEI_E('bibl', *[
+                TEI_E('idno', TOKEN_1),
+                ' ',
+                TEI_E('idno', TOKEN_2, TEI_E('lb')),
+                '\n'
+            ])
+        ])
+        tag_result = get_training_tei_parser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<pubnum>'),
+            (TOKEN_2, 'B-<pubnum>')
+        ]]
+
     def test_should_parse_single_label_with_multiple_lines(self):
         tei_root = _get_training_tei_with_references([
             TEI_E('bibl', *[
@@ -567,9 +584,7 @@ class TestCitationTrainingTeiParser:
             (SemanticExternalIdentifierTypes.PMID, '1234567')
         ]
 
-    def test_should_merge_directly_adjacent_identifiers_of_one_reference(self):
-        # the parser reconstructs B-/I- from label changes rather than element boundaries,
-        # so two idno elements with only whitespace between them come back as one identifier
+    def test_should_round_trip_directly_adjacent_identifiers_of_one_reference(self):
         label_and_layout_line_list = [
             (IDENTIFIER_LABEL, get_next_layout_line_for_text('10.1234/test')),
             (IDENTIFIER_LABEL, get_next_layout_line_for_text('PMID: 1234567'))
@@ -585,7 +600,8 @@ class TestCitationTrainingTeiParser:
         references = get_semantic_references_for_training_tei_xml(xml_root)
         assert len(references) == 1
         assert get_external_identifier_types_and_values(references[0]) == [
-            (SemanticExternalIdentifierTypes.DOI, '10.1234/testPMID:1234567')
+            (SemanticExternalIdentifierTypes.DOI, '10.1234/test'),
+            (SemanticExternalIdentifierTypes.PMID, '1234567')
         ]
 
     @pytest.mark.parametrize(
