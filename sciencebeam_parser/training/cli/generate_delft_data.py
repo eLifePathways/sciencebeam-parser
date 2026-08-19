@@ -32,6 +32,12 @@ from sciencebeam_parser.models.data import (
     ModelDataGenerator
 )
 from sciencebeam_parser.models.training_data import TrainingTeiParser
+from sciencebeam_parser.training.grobid_column_layout import (
+    GrobidColumnLayout,
+    get_grobid_column_layout_for_model_name,
+    get_validated_training_data_feature_indices,
+    select_feature_columns
+)
 
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 from sciencebeam_parser.config.config import AppConfig
@@ -64,6 +70,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         '--delft-output-path',
         type=str,
         required=True
+    )
+    parser.add_argument(
+        '--include-extra-columns',
+        action='store_true',
+        help=(
+            'Emit the columns this project adds on top of GROBID\'s layout'
+            ' (segmentation\'s whole_line_text, read by delft models as a text feature).'
+            ' Without it the output matches GROBID\'s column layout and can be mixed'
+            ' with GROBID\'s own corpus.'
+        )
     )
     parser.add_argument(
         '--debug',
@@ -192,7 +208,9 @@ def iter_generate_delft_training_data_lines_for_document(  # pylint: disable=too
     tei_file: str,
     raw_file: Optional[str],
     training_tei_parser: TrainingTeiParser,
-    data_generator: ModelDataGenerator
+    data_generator: ModelDataGenerator,
+    column_layout: GrobidColumnLayout,
+    include_extra_columns: bool = False
 ) -> Iterable[str]:
     with auto_download_input_file(
         tei_file,
@@ -239,20 +257,30 @@ def iter_generate_delft_training_data_lines_for_document(  # pylint: disable=too
         ))
         _texts, features = load_data_crf_lines(data_line_iterable)
     LOGGER.debug('features: %r', features)
+    if not len(features):  # pylint: disable=len-as-condition
+        return
+    feature_indices = get_validated_training_data_feature_indices(
+        column_layout,
+        feature_column_count=len(features[0][0]),
+        data_generator_name=type(data_generator).__name__,
+        data_generator_column_names=data_generator.feature_names,
+        include_extra_columns=include_extra_columns
+    )
     yield from iter_format_tag_result(
         tag_result=translated_tag_result,
         output_format=TagOutputFormats.DATA,
         texts=None,
-        features=features
+        features=select_feature_columns(features, feature_indices)
     )
 
 
-def generate_delft_training_data(
+def generate_delft_training_data(  # pylint: disable=too-many-locals
     model_name: str,
     tei_source_path: str,
     raw_source_path: str,
     delft_output_path: str,
-    sciencebeam_parser: ScienceBeamParser
+    sciencebeam_parser: ScienceBeamParser,
+    include_extra_columns: bool = False
 ):
     training_tei_parser = get_training_tei_parser_for_model_name(
         model_name,
@@ -261,6 +289,12 @@ def generate_delft_training_data(
     data_generator = get_data_generator_for_model_name(
         model_name,
         sciencebeam_parser=sciencebeam_parser
+    )
+    column_layout = get_grobid_column_layout_for_model_name(model_name)
+    LOGGER.info(
+        'column layout for %r: %d columns, label_slot=%r, extra_columns=%r (included: %r)',
+        model_name, len(column_layout.columns), column_layout.label_slot,
+        list(column_layout.extra_columns), include_extra_columns
     )
     LOGGER.debug('tei_source_path: %r', tei_source_path)
     tei_file_list = glob(tei_source_path)
@@ -288,7 +322,9 @@ def generate_delft_training_data(
                 tei_file=tei_file,
                 raw_file=raw_file,
                 training_tei_parser=training_tei_parser,
-                data_generator=data_generator
+                data_generator=data_generator,
+                column_layout=column_layout,
+                include_extra_columns=include_extra_columns
             ))
 
 
@@ -303,7 +339,8 @@ def run(args: argparse.Namespace):
         tei_source_path=args.tei_source_path,
         raw_source_path=args.raw_source_path,
         delft_output_path=args.delft_output_path,
-        sciencebeam_parser=sciencebeam_parser
+        sciencebeam_parser=sciencebeam_parser,
+        include_extra_columns=args.include_extra_columns
     )
 
 

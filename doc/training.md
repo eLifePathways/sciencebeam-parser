@@ -80,6 +80,20 @@ It will do one of the following:
 - For models with only `tei` XML files (no layout feature), it will parse the `tei` and generate data using the data generator.
 - For models with additional layout data files, it will align the parsed `tei` with the layout data file and add the label to it.
 
+The output matches GROBID's column layout for the model, so it can be mixed with
+GROBID's own corpus. The expected layout per model is recorded in
+[`grobid_column_layout.yml`](../sciencebeam_parser/resources/grobid_column_layout.yml),
+and generating data for a model with no entry there fails rather than guessing.
+`python -m sciencebeam_parser.training.cli.check_grobid_column_layout` re-checks
+that file against GROBID's published corpora; it downloads them, so it is run by
+hand rather than in CI.
+
+Pass `--include-extra-columns` to also emit the columns this project adds on top
+of GROBID's layout. Today that is the `segmentation` model's `whole_line_text`,
+which `delft` models read as a text feature and `wapiti` templates do not
+reference. Training data generated with the flag cannot be mixed with GROBID's
+`segmentation` corpus, since it is one column wider.
+
 #### Example command for `segmentation` model
 
 ```bash
