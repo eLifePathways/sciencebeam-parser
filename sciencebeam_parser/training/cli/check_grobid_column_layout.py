@@ -41,7 +41,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         '--corpus',
         type=str,
         action='append',
-        help='Corpus to check against instead of the recorded reference_corpus (repeatable)'
+        help=(
+            'Corpus to check against instead of the recorded'
+            ' reference_training_corpus (repeatable)'
+        )
     )
     parser.add_argument(
         '--max-lines',
@@ -110,7 +113,7 @@ def run(args: argparse.Namespace) -> int:
     checked: Dict[Tuple[str, str, int], str] = {}
     for model_name in model_names:
         layout = layout_by_name[model_name]
-        corpus_list = args.corpus or list(layout.reference_corpus)
+        corpus_list = args.corpus or list(layout.reference_training_corpus)
         if not corpus_list:
             LOGGER.warning('%s: no reference corpus recorded', model_name)
             continue

@@ -105,8 +105,8 @@ class TestGrobidColumnLayoutFile:
         assert PLACEHOLDER_COLUMN_NAME not in layout.extra_columns
 
     @pytest.mark.parametrize('model_name', MODEL_NAMES)
-    def test_should_record_a_reference_corpus(self, model_name: str):
-        assert LAYOUT_BY_MODEL_NAME[model_name].reference_corpus
+    def test_should_record_a_reference_training_corpus(self, model_name: str):
+        assert LAYOUT_BY_MODEL_NAME[model_name].reference_training_corpus
 
     @pytest.mark.parametrize('model_name', MODEL_NAMES)
     def test_should_emit_the_expected_training_data_column_count(self, model_name: str):

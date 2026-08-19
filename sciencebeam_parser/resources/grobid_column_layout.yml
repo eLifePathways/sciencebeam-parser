@@ -21,10 +21,13 @@
 # extra_columns are columns we add that GROBID has no counterpart for; they are
 # emitted only with --include-extra-columns.
 #
-# reference_corpus is what the recorded layout was measured against, and what
+# reference_training_corpus is the labelled corpus the recorded layout was
+# measured against, and what
 # `python -m sciencebeam_parser.training.cli.check_grobid_column_layout` reads.
-# Not every model has a release for the same GROBID version. Models sharing a
-# data generator share an entry, via a YAML anchor.
+# It is training-specific: the inference vector is columns plus extra_columns
+# plus the slot, and has no published counterpart here.
+#
+# Models sharing a data generator share an entry, via a YAML anchor.
 
 models:
 
@@ -34,7 +37,7 @@ models:
   segmentation:
     generator: SegmentationDataGenerator
     label_slot: absent
-    reference_corpus:
+    reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-segmentation.train.gz
     columns:
       - token_text
@@ -76,7 +79,7 @@ models:
   header:
     generator: HeaderDataGenerator
     label_slot: unfilled
-    reference_corpus:
+    reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-header.train.gz
     columns:
       - token_text
@@ -120,7 +123,7 @@ models:
   fulltext: &fulltext
     generator: FullTextDataGenerator
     label_slot: absent
-    reference_corpus:
+    reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-fulltext.train.gz
     columns:
       - token_text
@@ -158,7 +161,7 @@ models:
   reference_segmenter:
     generator: ReferenceSegmenterDataGenerator
     label_slot: unfilled
-    reference_corpus:
+    reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-reference-segmenter.train.gz
     columns:
       - token_text
@@ -192,7 +195,7 @@ models:
   citation:
     generator: CitationDataGenerator
     label_slot: filled
-    reference_corpus:
+    reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-citation.train.gz
     columns:
       - token_text
@@ -228,7 +231,7 @@ models:
   affiliation_address:
     generator: AffiliationAddressDataGenerator
     label_slot: filled
-    reference_corpus:
+    reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-affiliation-address.train.gz
     columns:
       - token_text
@@ -256,7 +259,7 @@ models:
   name_header: &name
     generator: NameDataGenerator
     label_slot: filled
-    reference_corpus:
+    reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-name-header.train.gz
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-name-citation.train.gz
     columns:

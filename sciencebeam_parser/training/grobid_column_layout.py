@@ -34,7 +34,7 @@ class GrobidColumnLayout:
     label_slot: str
     columns: Sequence[str]
     extra_columns: Sequence[str] = field(default_factory=tuple)
-    reference_corpus: Sequence[str] = field(default_factory=tuple)
+    reference_training_corpus: Sequence[str] = field(default_factory=tuple)
 
     def __post_init__(self):
         if self.label_slot not in VALID_LABEL_SLOTS:
@@ -86,7 +86,7 @@ def _get_grobid_column_layout(name: str, layout_config: Mapping) -> GrobidColumn
         label_slot=layout_config['label_slot'],
         columns=tuple(layout_config['columns']),
         extra_columns=tuple(layout_config.get('extra_columns') or ()),
-        reference_corpus=tuple(layout_config.get('reference_corpus') or ())
+        reference_training_corpus=tuple(layout_config.get('reference_training_corpus') or ())
     )
 
 
