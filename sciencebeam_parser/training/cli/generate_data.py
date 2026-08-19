@@ -41,6 +41,7 @@ from sciencebeam_parser.models.model import (
     iter_data_lines_for_model_data_iterables,
     iter_labeled_layout_token_for_layout_model_label
 )
+from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
 from sciencebeam_parser.models.training_data import TeiTrainingDataGenerator
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
@@ -1166,16 +1167,33 @@ class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
         return document_context.fulltext_models.citation_model
 
     def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
+        previous_identifier: Optional[Tuple[int, Optional[str]]] = None
+
         def fn(
             annotated: JatsAnnotatedLayoutDocument,
             _seg_labels: Dict[int, str],
             md: LayoutModelData,
         ) -> Optional[str]:
+            nonlocal previous_identifier
             token = md.layout_token
             if not token:
                 return None
             sub_field = annotated.get_token_sub_field(token)
-            return CITATION_LABEL_BY_SUB_FIELD.get(sub_field or '') if sub_field else None
+            label = CITATION_LABEL_BY_SUB_FIELD.get(sub_field or '') if sub_field else None
+            if label != IDENTIFIER_LABEL:
+                previous_identifier = None
+                return label
+            # Identifiers of different kinds share one label, so without a B- prefix a DOI
+            # directly followed by a PMID would be written as a single <idno>, and typed as
+            # one identifier whose value carries both.
+            identifier = (annotated.get_token_instance(token), sub_field)
+            is_new_identifier = (
+                previous_identifier is not None
+                and previous_identifier[0] == identifier[0]
+                and previous_identifier[1] != identifier[1]
+            )
+            previous_identifier = identifier
+            return 'B-' + label if is_new_identifier else label
         return fn
 
     def iter_model_layout_documents(

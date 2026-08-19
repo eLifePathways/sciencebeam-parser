@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import logging
 import re
-from typing import Iterable, Mapping, Optional, Tuple
+from typing import AbstractSet, Iterable, Mapping, Optional, Set, Tuple
 
 from sciencebeam_parser.document.semantic_document import (
     SemanticContentWrapper,
@@ -9,6 +9,7 @@ from sciencebeam_parser.document.semantic_document import (
     T_SemanticContentFactory
 )
 from sciencebeam_parser.document.layout_document import EMPTY_BLOCK, LayoutBlock, LayoutTokensText
+from sciencebeam_parser.utils.labels import OTHER_LABELS
 
 
 LOGGER = logging.getLogger(__name__)
@@ -57,10 +58,28 @@ class SimpleModelSemanticExtractor(ModelSemanticExtractor):
         self,
         semantic_content_class_by_tag: Optional[
             Mapping[str, T_SemanticContentFactory]
-        ] = None
+        ] = None,
+        *,
+        expected_note_tags: Optional[AbstractSet[str]] = None
     ):
         super().__init__()
         self.semantic_content_class_by_tag = semantic_content_class_by_tag or {}
+        self.expected_note_tags = expected_note_tags
+        self._reported_unexpected_note_tags: Set[str] = set()
+
+    def _report_unexpected_note_tag(self, name: str) -> None:
+        if self.expected_note_tags is None:
+            return
+        if name in self.expected_note_tags or name in OTHER_LABELS:
+            return
+        if name in self._reported_unexpected_note_tags:
+            return
+        self._reported_unexpected_note_tags.add(name)
+        LOGGER.warning(
+            'no semantic content for label %r, keeping it as a note'
+            ' (it will not appear in any extracted field)',
+            name
+        )
 
     def get_semantic_content_for_entity_name(
         self,
@@ -70,6 +89,7 @@ class SimpleModelSemanticExtractor(ModelSemanticExtractor):
         semantic_content_class = self.semantic_content_class_by_tag.get(name)
         if semantic_content_class:
             return semantic_content_class(layout_block=layout_block)
+        self._report_unexpected_note_tag(name)
         return SemanticNote(
             layout_block=layout_block,
             note_type=name
