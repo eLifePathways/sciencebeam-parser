@@ -28,6 +28,7 @@ class LlmEngineConfig:
     record_trace_content: bool = True
     warn_input_lines: int = 300
     max_input_lines: int = 0
+    max_references_per_request: int = 10
     extra_body: Dict[str, Any] = field(default_factory=dict)
 
     @staticmethod

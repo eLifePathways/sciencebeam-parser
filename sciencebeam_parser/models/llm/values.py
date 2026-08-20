@@ -92,12 +92,45 @@ def parse_values(content: str, labels: Sequence[str]) -> List[Dict[str, str]]:
     return parsed
 
 
-def decode_values_response(
-    content: str,
-    tokens: Sequence[str],
-    labels: Sequence[str]
-) -> List[Tuple[str, str]]:
-    fields = parse_values(content, labels)
+def get_batched_values_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
+    """One entry per input reference, so a batch does not grow the index space.
+
+    Requiring exactly one entry per reference also makes a merged or omitted
+    reference fail validation rather than score.
+    """
+    single = get_values_response_schema(labels)
+    return {
+        'type': 'object',
+        'additionalProperties': False,
+        'required': ['references'],
+        'properties': {
+            'references': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'additionalProperties': False,
+                    'required': ['index', 'fields'],
+                    'properties': {
+                        'index': {'type': 'integer'},
+                        'fields': single['properties']['fields'],
+                    },
+                },
+            },
+        },
+    }
+
+
+def render_numbered_references(token_lists: Sequence[Sequence[str]]) -> str:
+    return '\n'.join(
+        f'[{index}] ' + ' '.join(tokens)
+        for index, tokens in enumerate(token_lists)
+    )
+
+
+def get_labels_for_fields(
+    fields: Sequence[Mapping[str, str]],
+    tokens: Sequence[str]
+) -> List[str]:
     word_positions = get_word_positions(tokens)
     claimed = [False] * len(tokens)
     token_labels = ['O'] * len(tokens)
@@ -112,4 +145,64 @@ def decode_values_response(
                 f'B-<{entry["label"]}>' if token_index == first_token
                 else f'I-<{entry["label"]}>'
             )
-    return list(zip(tokens, token_labels))
+    return token_labels
+
+
+def decode_values_response(
+    content: str,
+    tokens: Sequence[str],
+    labels: Sequence[str]
+) -> List[Tuple[str, str]]:
+    fields = parse_values(content, labels)
+    return list(zip(tokens, get_labels_for_fields(fields, tokens)))
+
+
+def parse_batched_values(
+    content: str,
+    reference_count: int,
+    labels: Sequence[str]
+) -> List[List[Dict[str, str]]]:
+    try:
+        payload = json.loads(content)
+    except ValueError as exc:
+        raise LlmResponseError(f'response is not json: {exc}') from exc
+    if not isinstance(payload, dict) or 'references' not in payload:
+        raise LlmResponseError('response has no "references"')
+    entries = payload['references']
+    if not isinstance(entries, list):
+        raise LlmResponseError('"references" is not a list')
+    by_index: Dict[int, List[Dict[str, str]]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or 'index' not in entry:
+            raise LlmResponseError(f'reference entry is malformed: {entry!r}')
+        index = entry['index']
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise LlmResponseError(f'reference index is not an integer: {index!r}')
+        if not 0 <= index < reference_count:
+            raise LlmResponseError(
+                f'reference index {index} out of range for {reference_count}'
+                ' references sent'
+            )
+        if index in by_index:
+            raise LlmResponseError(f'reference index {index} appears twice')
+        by_index[index] = parse_values(
+            json.dumps({'fields': entry.get('fields') or []}), labels
+        )
+    missing = sorted(set(range(reference_count)) - set(by_index))
+    if missing:
+        raise LlmResponseError(
+            f'no answer for reference(s) {missing} of {reference_count} sent'
+        )
+    return [by_index[index] for index in range(reference_count)]
+
+
+def decode_batched_values_response(
+    content: str,
+    token_lists: Sequence[Sequence[str]],
+    labels: Sequence[str]
+) -> List[List[Tuple[str, str]]]:
+    fields_per_reference = parse_batched_values(content, len(token_lists), labels)
+    return [
+        list(zip(tokens, get_labels_for_fields(fields, tokens)))
+        for fields, tokens in zip(fields_per_reference, token_lists)
+    ]

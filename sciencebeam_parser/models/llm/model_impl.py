@@ -20,8 +20,9 @@ from sciencebeam_parser.models.llm.prompt import get_prompt
 from sciencebeam_parser.models.llm.tasks import get_citation_labels
 from sciencebeam_parser.models.llm.telemetry import llm_span, set_response_attributes
 from sciencebeam_parser.models.llm.values import (
-    decode_values_response,
-    get_values_response_schema
+    decode_batched_values_response,
+    get_batched_values_response_schema,
+    render_numbered_references
 )
 from sciencebeam_parser.models.model_impl import ModelImpl
 
@@ -84,10 +85,22 @@ class LlmModelImpl(ModelImpl):
             raise NotImplementedError(
                 f'{type(self).__name__} does not support output_format={output_format!r}'
             )
+        if self.config.response_shape == VALUES_SHAPE:
+            return self._predict_labels_in_batches(texts)
         return [
             self._predict_labels_for_sequence(sequence_texts, sequence_features)
             for sequence_texts, sequence_features in zip(texts, features)
         ]
+
+    def _predict_labels_in_batches(
+        self, texts: List[List[str]]
+    ) -> List[List[Tuple[str, str]]]:
+        batch_size = max(1, self.config.max_references_per_request)
+        results: List[List[Tuple[str, str]]] = []
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start:start + batch_size]
+            results.extend(self._predict_labels_from_values(batch))
+        return results
 
     def _get_content(self, response_json, token_count: int) -> str:
         try:
@@ -125,8 +138,6 @@ class LlmModelImpl(ModelImpl):
         tokens: List[str],
         feature_rows: List[List[str]]
     ) -> List[Tuple[str, str]]:
-        if self.config.response_shape == VALUES_SHAPE:
-            return self._predict_labels_from_values(tokens)
         line_status_values = [row[self.line_status_index] for row in feature_rows]
         line_numbers = get_line_numbers(line_status_values)
         self._check_input_size(max(line_numbers) + 1, len(tokens))
@@ -152,23 +163,30 @@ class LlmModelImpl(ModelImpl):
         )
         return labeled
 
-    def _predict_labels_from_values(self, tokens: List[str]) -> List[Tuple[str, str]]:
+    def _predict_labels_from_values(
+        self, token_lists: List[List[str]]
+    ) -> List[List[Tuple[str, str]]]:
+        token_count = sum(len(tokens) for tokens in token_lists)
         prompt = get_prompt(
-            self.config.task, self.config.prompt_version, ' '.join(tokens)
+            self.config.task,
+            self.config.prompt_version,
+            render_numbered_references(token_lists)
         )
         with llm_span(self.config, prompt, self.config.record_trace_content) as span:
             response_json = self.client.get_completion(
-                prompt, get_values_response_schema(self.labels)
+                prompt, get_batched_values_response_schema(self.labels)
             )
-            span.set_attribute('sciencebeam.input_tokens', len(tokens))
+            span.set_attribute('sciencebeam.input_tokens', token_count)
+            span.set_attribute('sciencebeam.batch_size', len(token_lists))
             set_response_attributes(
                 span, response_json, _get_content_or_none(response_json),
                 self.config.record_trace_content
             )
-            content = self._get_content(response_json, len(tokens))
-            labeled = decode_values_response(content, tokens, self.labels)
+            content = self._get_content(response_json, token_count)
+            labeled = decode_batched_values_response(content, token_lists, self.labels)
         LOGGER.info(
-            'llm labelled %d tokens from values (model=%r provider=%r)',
-            len(tokens), self.config.model, response_json.get('provider')
+            'llm labelled %d references, %d tokens (model=%r provider=%r)',
+            len(token_lists), token_count, self.config.model,
+            response_json.get('provider')
         )
         return labeled

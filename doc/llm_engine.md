@@ -54,7 +54,22 @@ model and by task and moves with each new checkpoint. Comparing shapes is theref
 second profile and running the benchmark, not building a second evaluation route.
 
 Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM works),
-`temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`.
+`temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
+`max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`.
+
+### Batching (citation)
+
+`processor.py` hands the engine every reference of a document at once, so the citation model batches
+them: `max_references_per_request` (default 10) references per call, each numbered in the prompt,
+with one entry per reference required in the response. Requiring an answer for every reference sent
+makes a merged or omitted reference fail validation rather than score, and values are located within
+their own reference's tokens only.
+
+Measured on 10 references of one document: one batched call took 22s against 48s for ten single
+calls, with token accuracy 0.906 against 0.904 — roughly twice as fast at no cost in accuracy. The
+tail is worth knowing though: a long generation occasionally draws a provider timeout returned as
+HTTP 200 with an error body, and the retry that follows costs more than the batching saved. Lowering
+the bound is the lever if a provider proves flaky.
 
 ## What it guarantees
 

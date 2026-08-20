@@ -5,6 +5,7 @@ import pytest
 from sciencebeam_parser.models.llm.client import (
     LlmRequestError,
     LlmTruncatedResponseError,
+    get_error_status_code,
     get_response_content
 )
 
@@ -42,3 +43,16 @@ class TestGetResponseContent:
     def test_should_raise_for_empty_content(self):
         with pytest.raises(LlmRequestError, match='empty'):
             get_response_content(get_response(content=''))
+
+
+class TestGetErrorStatusCode:
+    def test_should_be_none_for_a_normal_response(self):
+        assert get_error_status_code(get_response()) is None
+
+    def test_should_return_the_code_from_an_error_body(self):
+        assert get_error_status_code(
+            {'error': {'message': 'error code: 524', 'code': 504}}
+        ) == 504
+
+    def test_should_return_zero_for_an_error_body_without_a_code(self):
+        assert get_error_status_code({'error': {'message': 'nope'}}) == 0

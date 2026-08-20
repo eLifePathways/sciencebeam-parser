@@ -202,7 +202,7 @@ sequence_model_profiles:
       response_shape: 'values'
       model: 'qwen/qwen3.5-9b'
       provider: 'siliconflow'
-      prompt_version: 'values-v1'
+      prompt_version: 'values-v2'
       reasoning: 'off'
   llm_references:
     extends: llm_reference_segmenter
@@ -212,7 +212,7 @@ sequence_model_profiles:
       response_shape: 'values'
       model: 'qwen/qwen3.5-9b'
       provider: 'siliconflow'
-      prompt_version: 'values-v1'
+      prompt_version: 'values-v2'
       reasoning: 'off'
 
 profiles:

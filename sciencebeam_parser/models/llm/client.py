@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Dict, Mapping, Protocol
+from typing import Any, Dict, Mapping, Optional, Protocol
 
 import httpx
 
@@ -10,6 +10,16 @@ from sciencebeam_parser.models.llm.config import LlmEngineConfig, get_api_key
 LOGGER = logging.getLogger(__name__)
 
 RETRY_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def get_error_status_code(response_json: Mapping[str, Any]) -> Optional[int]:
+    """OpenRouter returns some upstream failures as http 200 with an error body,
+    so the status code alone does not say whether a call is worth retrying."""
+    error = response_json.get('error')
+    if not isinstance(error, dict):
+        return None
+    code = error.get('code')
+    return code if isinstance(code, int) else 0
 
 
 class LlmRequestError(RuntimeError):
@@ -105,7 +115,14 @@ class LlmClient:
                 raise LlmRequestError(
                     f'http {response.status_code}: {response.text[:200]}'
                 )
-            return response.json()
+            response_json = response.json()
+            error_code = get_error_status_code(response_json)
+            if error_code is None:
+                return response_json
+            last_error = f'error body {error_code}: {str(response_json)[:200]}'
+            if error_code in RETRY_STATUS_CODES:
+                continue
+            raise LlmRequestError(last_error)
         raise LlmRequestError(
             f'giving up after {self.config.max_attempts} attempts: {last_error}'
         )

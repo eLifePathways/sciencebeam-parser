@@ -108,53 +108,119 @@ CITATION_CONFIG = {
     'task': 'citation',
     'response_shape': 'values',
     'model': 'qwen/qwen3.5-9b',
-    'prompt_version': 'values-v1',
+    'prompt_version': 'values-v2',
 }
 
 CITATION_TOKENS = ['Fleming', 'PS', ',', 'Koletsi', 'D', ':', 'High', 'quality']
+SECOND_REFERENCE = ['Rada', 'G', ':', 'What', 'is', 'best']
 
 
-def get_citation_model_impl(content: str):
+def batched(*per_reference) -> str:
+    return json.dumps({'references': [
+        {'index': index, 'fields': [
+            {'label': label, 'text': text} for label, text in fields
+        ]}
+        for index, fields in enumerate(per_reference)
+    ]})
+
+
+def get_citation_model_impl(content: str, **overrides):
     return LlmModelImpl(
-        LlmEngineConfig.from_model_config(CITATION_CONFIG),
+        LlmEngineConfig.from_model_config({**CITATION_CONFIG, **overrides}),
         client=FakeClient(content=content)
     )
 
 
+def no_features(token_lists):
+    return [[[]] * len(tokens) for tokens in token_lists]
+
+
 class TestLlmModelImplValuesShape:
     def test_should_not_need_a_line_status_column(self):
-        model_impl = get_citation_model_impl(json.dumps({'fields': []}))
-        assert model_impl.line_status_index == -1
+        assert get_citation_model_impl(batched([])).line_status_index == -1
 
     def test_should_label_from_located_values(self):
-        model_impl = get_citation_model_impl(json.dumps({'fields': [
-            {'label': 'author', 'text': 'Fleming PS , Koletsi D'}
-        ]}))
-        result = model_impl.predict_labels([CITATION_TOKENS], [[[]] * len(CITATION_TOKENS)])
+        model_impl = get_citation_model_impl(
+            batched([('author', 'Fleming PS , Koletsi D')])
+        )
+        result = model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
         assert [label for _, label in result[0]][:5] == [
             'B-<author>', 'I-<author>', 'I-<author>', 'I-<author>', 'I-<author>'
         ]
 
     def test_should_return_the_input_tokens_unchanged(self):
-        model_impl = get_citation_model_impl(json.dumps({'fields': [
-            {'label': 'title', 'text': 'High quality'}
-        ]}))
-        result = model_impl.predict_labels([CITATION_TOKENS], [[[]] * len(CITATION_TOKENS)])
+        model_impl = get_citation_model_impl(batched([('title', 'High quality')]))
+        result = model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
         assert [token for token, _ in result[0]] == CITATION_TOKENS
 
     def test_should_raise_rather_than_fall_back_when_a_value_is_not_in_the_source(self):
-        model_impl = get_citation_model_impl(json.dumps({'fields': [
-            {'label': 'title', 'text': 'a paraphrased title'}
-        ]}))
+        model_impl = get_citation_model_impl(batched([('title', 'a paraphrased title')]))
         with pytest.raises(LlmResponseError, match='not found in source'):
-            model_impl.predict_labels([CITATION_TOKENS], [[[]] * len(CITATION_TOKENS)])
+            model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
 
-    def test_should_send_the_reference_text_and_the_conventions(self):
-        model_impl = get_citation_model_impl(json.dumps({'fields': []}))
-        model_impl.predict_labels([CITATION_TOKENS], [[[]] * len(CITATION_TOKENS)])
+    def test_should_send_the_conventions_and_the_numbered_references(self):
+        model_impl = get_citation_model_impl(batched([]))
+        model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
         prompt = model_impl.client.prompts[0]
-        assert 'Fleming PS , Koletsi D : High quality' in prompt
+        assert '[0] Fleming PS , Koletsi D : High quality' in prompt
         assert 'page range is TWO' in prompt
+
+
+class TestCitationBatching:
+    def test_should_send_several_references_in_one_call(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(
+            batched([('author', 'Fleming PS')], [('author', 'Rada G')])
+        )
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 1
+        assert len(result) == 2
+        assert result[1][0] == ('Rada', 'B-<author>')
+
+    def test_should_number_each_reference_in_the_prompt(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(batched([], []))
+        model_impl.predict_labels(token_lists, no_features(token_lists))
+        prompt = model_impl.client.prompts[0]
+        assert '[0] Fleming PS' in prompt
+        assert '[1] Rada G' in prompt
+
+    def test_should_split_into_calls_at_the_configured_bound(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE, CITATION_TOKENS]
+        # no fields, so the same stubbed response is valid for every reference
+        model_impl = get_citation_model_impl(batched([]), max_references_per_request=1)
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 3
+        assert len(result) == 3
+
+    def test_should_locate_values_within_their_own_reference_only(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(
+            batched([('author', 'Rada G')], [('author', 'Rada G')])
+        )
+        with pytest.raises(LlmResponseError, match='not found in source'):
+            model_impl.predict_labels(token_lists, no_features(token_lists))
+
+    def test_should_raise_when_a_reference_has_no_answer(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(batched([('author', 'Fleming PS')]))
+        with pytest.raises(LlmResponseError, match=r'no answer for reference\(s\) \[1\]'):
+            model_impl.predict_labels(token_lists, no_features(token_lists))
+
+    def test_should_raise_when_a_reference_index_appears_twice(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        content = json.dumps({'references': [
+            {'index': 0, 'fields': []}, {'index': 0, 'fields': []}
+        ]})
+        model_impl = get_citation_model_impl(content)
+        with pytest.raises(LlmResponseError, match='appears twice'):
+            model_impl.predict_labels(token_lists, no_features(token_lists))
+
+    def test_should_raise_when_a_reference_index_is_out_of_range(self):
+        content = json.dumps({'references': [{'index': 5, 'fields': []}]})
+        model_impl = get_citation_model_impl(content)
+        with pytest.raises(LlmResponseError, match='out of range'):
+            model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
 
 
 BIG_LINE_STATUS = ['LINESTART', 'LINEEND'] * 400
