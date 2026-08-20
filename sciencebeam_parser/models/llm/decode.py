@@ -95,8 +95,8 @@ def parse_line_starts(content: str, line_count: int) -> List[int]:
     if not isinstance(payload, dict) or 'starts' not in payload:
         raise LlmResponseError('response has no "starts"')
     starts = payload['starts']
-    if not isinstance(starts, list) or not starts:
-        raise LlmResponseError('"starts" is empty or not a list')
+    if not isinstance(starts, list):
+        raise LlmResponseError('"starts" is not a list')
     resolved: List[int] = []
     for value in starts:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -147,8 +147,8 @@ def parse_evidence_line_starts(
     if not isinstance(payload, dict) or 'references' not in payload:
         raise LlmResponseError('response has no "references"')
     entries = payload['references']
-    if not isinstance(entries, list) or not entries:
-        raise LlmResponseError('"references" is empty or not a list')
+    if not isinstance(entries, list):
+        raise LlmResponseError('"references" is not a list')
     starts: List[int] = []
     claims: List[str] = []
     for entry in entries:

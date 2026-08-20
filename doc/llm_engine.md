@@ -57,6 +57,18 @@ Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM
 `temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
 `max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`.
 
+### What the segmenter is told to skip
+
+The region it receives is whatever segmentation labelled `<references>`, which is sometimes a table
+or body text (see
+`.project-notes/references-region-includes-non-reference-content.md`). The prompt therefore says to
+report only actual bibliographic references and to return an empty list if none of the lines are
+references — deciding what is a reference is the segmenter's job, so this is not the same as papering
+over the upstream defect in the citation prompt.
+
+An empty answer is accepted rather than rejected, since "no references in this region" is a valid
+thing for the model to conclude.
+
 ### Response shapes for the reference segmenter
 
 `lines` returns a line number per reference. `evidence` returns the line number **and** the first
@@ -81,7 +93,9 @@ references while the 9B mismatched on 1 of 118.
 them: `max_references_per_request` (default 10) references per call, each numbered in the prompt,
 with one entry per reference required in the response. Requiring an answer for every reference sent
 makes a merged or omitted reference fail validation rather than score, and values are located within
-their own reference's tokens only.
+their own reference's tokens only — which also catches the model attributing one reference's author
+to another, a mistake a flat field list would have matched against the whole document and labelled
+silently. Lowering the bound is the lever if it happens often.
 
 Measured on 10 references of one document: one batched call took 22s against 48s for ten single
 calls, with token accuracy 0.906 against 0.904 — roughly twice as fast at no cost in accuracy. The

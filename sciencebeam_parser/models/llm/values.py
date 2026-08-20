@@ -26,40 +26,55 @@ def get_values_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
     }
 
 
-def get_word_positions(tokens: Sequence[str]) -> List[Tuple[int, str]]:
-    return [
-        (token_index, word)
-        for token_index, token in enumerate(tokens)
-        for word in iter_words(token)
-    ]
+def get_character_positions(tokens: Sequence[str]) -> Tuple[str, List[int], List[int]]:
+    """Alphanumeric characters of every token, and where each came from.
+
+    Compared as characters rather than as words because models join and split
+    words differently from the tokeniser: `Moreno-San Segundo` comes back as
+    `Moreno SanSegundo`, which no word-sequence comparison can match.
+    """
+    characters: List[str] = []
+    token_of_character: List[int] = []
+    first_character_of_token: List[int] = []
+    for token_index, token in enumerate(tokens):
+        first_character_of_token.append(len(characters))
+        for character in token:
+            if character.isalnum():
+                characters.append(character.lower())
+                token_of_character.append(token_index)
+    return ''.join(characters), token_of_character, first_character_of_token
 
 
 def find_unclaimed_span(
-    wanted: Sequence[str],
-    word_positions: Sequence[Tuple[int, str]],
-    claimed: Sequence[bool]
+    wanted: str,
+    positions: Tuple[str, List[int], List[int]],
+    claimed: Sequence[bool],
+    context: str = ''
 ) -> Tuple[int, int]:
     """The earliest occurrence whose tokens are all unclaimed.
 
     Document order is not assumed: models emit `date` out of position often
-    enough that requiring it rejects values the source does contain.
+    enough that requiring it rejects values the source does contain. A match must
+    begin at a token boundary, so a value cannot be located mid-word.
     """
+    characters, token_of_character, first_character_of_token = positions
+    token_starts = set(first_character_of_token)
     seen_but_claimed = False
-    for start in range(len(word_positions) - len(wanted) + 1):
-        window = word_positions[start:start + len(wanted)]
-        if [word for _, word in window] != list(wanted):
-            continue
-        first_token, last_token = window[0][0], window[-1][0]
-        if any(claimed[first_token:last_token + 1]):
+    start = characters.find(wanted)
+    while start >= 0:
+        if start in token_starts:
+            first_token = token_of_character[start]
+            last_token = token_of_character[start + len(wanted) - 1]
+            if not any(claimed[first_token:last_token + 1]):
+                return first_token, last_token
             seen_but_claimed = True
-            continue
-        return first_token, last_token
-    snippet = ' '.join(wanted)[:60]
+        start = characters.find(wanted, start + 1)
+    suffix = f' [{context}]' if context else ''
     if seen_but_claimed:
         raise LlmResponseError(
-            f'value claimed by an earlier field: {snippet}'
+            f'value claimed by an earlier field: {wanted[:60]!r}{suffix}'
         )
-    raise LlmResponseError(f'value not found in source: {snippet}')
+    raise LlmResponseError(f'value not found in source: {wanted[:60]!r}{suffix}')
 
 
 def parse_values(content: str, labels: Sequence[str]) -> List[Dict[str, str]]:
@@ -113,24 +128,35 @@ def get_batched_values_response_schema(labels: Sequence[str]) -> Mapping[str, An
 
 
 def render_numbered_references(token_lists: Sequence[Sequence[str]]) -> str:
+    """`REFERENCE n` on its own line, not `[n]`.
+
+    A bracketed number is what a numbered reference list looks like, so the
+    marker was being returned as a `note` — including for unnumbered lists, where
+    the value then appears nowhere in the reference.
+    """
     return '\n'.join(
-        f'[{index}] ' + ' '.join(tokens)
+        f'REFERENCE {index}\n' + ' '.join(tokens)
         for index, tokens in enumerate(token_lists)
     )
 
 
 def get_labels_for_fields(
     fields: Sequence[Mapping[str, str]],
-    tokens: Sequence[str]
+    tokens: Sequence[str],
+    context: str = ''
 ) -> List[str]:
-    word_positions = get_word_positions(tokens)
+    positions = get_character_positions(tokens)
     claimed = [False] * len(tokens)
     token_labels = ['O'] * len(tokens)
     for entry in fields:
-        wanted = iter_words(entry['text'])
+        wanted = ''.join(iter_words(entry['text'])).lower()
         if not wanted:
             continue
-        first_token, last_token = find_unclaimed_span(wanted, word_positions, claimed)
+        first_token, last_token = find_unclaimed_span(
+            wanted, positions, claimed,
+            context=f'{context}label={entry["label"]}'
+            f' reference={" ".join(tokens)[:60]!r}'
+        )
         for token_index in range(first_token, last_token + 1):
             claimed[token_index] = True
             token_labels[token_index] = (
@@ -195,6 +221,10 @@ def decode_batched_values_response(
 ) -> List[List[Tuple[str, str]]]:
     fields_per_reference = parse_batched_values(content, len(token_lists), labels)
     return [
-        list(zip(tokens, get_labels_for_fields(fields, tokens)))
-        for fields, tokens in zip(fields_per_reference, token_lists)
+        list(zip(tokens, get_labels_for_fields(
+            fields, tokens, context=f'reference index {index}, '
+        )))
+        for index, (fields, tokens) in enumerate(
+            zip(fields_per_reference, token_lists)
+        )
     ]

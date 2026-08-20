@@ -192,7 +192,7 @@ sequence_model_profiles:
       response_shape: 'lines'
       model: 'qwen/qwen3.5-9b'
       provider: 'siliconflow'
-      prompt_version: 'lines-v1'
+      prompt_version: 'lines-v2'
       reasoning: 'off'
   llm_citation:
     extends: grobid_crf_0_9_0
@@ -202,7 +202,7 @@ sequence_model_profiles:
       response_shape: 'values'
       model: 'qwen/qwen3.5-9b'
       provider: 'siliconflow'
-      prompt_version: 'values-v2'
+      prompt_version: 'values-v3'
       reasoning: 'off'
   llm_references:
     extends: llm_reference_segmenter
@@ -212,7 +212,7 @@ sequence_model_profiles:
       response_shape: 'values'
       model: 'qwen/qwen3.5-9b'
       provider: 'siliconflow'
-      prompt_version: 'values-v2'
+      prompt_version: 'values-v3'
       reasoning: 'off'
 
 profiles:

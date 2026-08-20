@@ -44,6 +44,28 @@ class TestShippedDefaults:
         assert 'llm' not in engines
 
 
+class TestShippedPrompts:
+    @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
+    def test_should_tell_the_segmenter_to_skip_non_reference_content(
+        self, profile_name: str
+    ):
+        models = get_resolved_models(profile_name)
+        if 'reference_segmenter' not in LLM_MODELS_BY_PROFILE[profile_name]:
+            return
+        config = LlmEngineConfig.from_model_config(models['reference_segmenter'])
+        prompt = get_prompt_template(config.task, config.prompt_version)
+        assert 'not references' in prompt
+
+    @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
+    def test_should_tell_citation_the_marker_is_not_content(self, profile_name: str):
+        models = get_resolved_models(profile_name)
+        if 'citation' not in LLM_MODELS_BY_PROFILE[profile_name]:
+            return
+        config = LlmEngineConfig.from_model_config(models['citation'])
+        prompt = get_prompt_template(config.task, config.prompt_version)
+        assert 'not part of the reference' in prompt
+
+
 class TestShippedLlmProfiles:
     @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
     def test_should_define_the_profile(self, profile_name: str):

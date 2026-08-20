@@ -108,7 +108,7 @@ CITATION_CONFIG = {
     'task': 'citation',
     'response_shape': 'values',
     'model': 'qwen/qwen3.5-9b',
-    'prompt_version': 'values-v2',
+    'prompt_version': 'values-v3',
 }
 
 CITATION_TOKENS = ['Fleming', 'PS', ',', 'Koletsi', 'D', ':', 'High', 'quality']
@@ -162,7 +162,7 @@ class TestLlmModelImplValuesShape:
         model_impl = get_citation_model_impl(batched([]))
         model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
         prompt = model_impl.client.prompts[0]
-        assert '[0] Fleming PS , Koletsi D : High quality' in prompt
+        assert 'REFERENCE 0\nFleming PS , Koletsi D : High quality' in prompt
         assert 'page range is TWO' in prompt
 
 
@@ -182,8 +182,8 @@ class TestCitationBatching:
         model_impl = get_citation_model_impl(batched([], []))
         model_impl.predict_labels(token_lists, no_features(token_lists))
         prompt = model_impl.client.prompts[0]
-        assert '[0] Fleming PS' in prompt
-        assert '[1] Rada G' in prompt
+        assert 'REFERENCE 0\nFleming PS' in prompt
+        assert 'REFERENCE 1\nRada G' in prompt
 
     def test_should_split_into_calls_at_the_configured_bound(self):
         token_lists = [CITATION_TOKENS, SECOND_REFERENCE, CITATION_TOKENS]
@@ -261,3 +261,25 @@ class TestInputSize:
         model_impl = get_model_impl(json.dumps({'starts': [0]}))
         tokens, features = get_big_input()
         assert model_impl.predict_labels([tokens], [features])
+
+
+class TestCitationReferenceMarker:
+    def test_should_not_use_a_bracketed_number_as_the_marker(self):
+        model_impl = get_citation_model_impl(batched([]))
+        model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
+        prompt = model_impl.client.prompts[0]
+        assert '[0]' not in prompt
+
+    def test_should_tell_the_model_the_marker_is_not_content(self):
+        model_impl = get_citation_model_impl(batched([]))
+        model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
+        assert 'not part of the reference' in model_impl.client.prompts[0]
+
+    def test_should_name_the_reference_and_field_when_a_value_is_not_found(self):
+        model_impl = get_citation_model_impl(batched([('note', '1')]))
+        with pytest.raises(LlmResponseError) as excinfo:
+            model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
+        message = str(excinfo.value)
+        assert 'reference index 0' in message
+        assert 'label=note' in message
+        assert 'Fleming' in message

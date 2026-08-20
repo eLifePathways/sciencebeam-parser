@@ -85,9 +85,10 @@ class TestDecodeLineStartsResponse:
         with pytest.raises(LlmResponseError, match='no "starts"'):
             decode_line_starts_response('{}', TOKENS, LINE_STATUS)
 
-    def test_should_raise_for_empty_starts(self):
-        with pytest.raises(LlmResponseError, match='empty'):
-            decode_line_starts_response(response([]), TOKENS, LINE_STATUS)
+    def test_should_accept_an_empty_answer_as_no_references_in_the_region(self):
+        labeled = decode_line_starts_response(response([]), TOKENS, LINE_STATUS)
+        assert [label for _, label in labeled] == ['O'] * len(TOKENS)
+        assert [token for token, _ in labeled] == TOKENS
 
     def test_should_raise_for_non_integer_line_number(self):
         with pytest.raises(LlmResponseError, match='not an integer'):

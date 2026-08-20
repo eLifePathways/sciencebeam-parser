@@ -115,3 +115,38 @@ class TestDecodeValuesResponse:
         labels = get_labels(response([('issue', ''), ('date', '2016')]))
         assert labels[18] == 'B-<date>'
         assert 'B-<issue>' not in labels
+
+
+class TestCharacterLevelMatching:
+    def test_should_match_a_value_the_model_joined_differently(self):
+        tokens = ['Moreno', '-', 'San', 'Segundo', 'J', ',', 'Casado', 'C']
+        labeled = decode_values_response(
+            json.dumps({'fields': [
+                {'label': 'author', 'text': 'Moreno SanSegundo J , Casado C'}
+            ]}), tokens, LABELS
+        )
+        assert [label for _, label in labeled][0] == 'B-<author>'
+        assert [label for _, label in labeled][-1] == 'I-<author>'
+
+    def test_should_match_a_value_the_model_split_differently(self):
+        tokens = ['SanSegundo', 'J']
+        labeled = decode_values_response(
+            json.dumps({'fields': [{'label': 'author', 'text': 'San Segundo J'}]}),
+            tokens, LABELS
+        )
+        assert [label for _, label in labeled] == ['B-<author>', 'I-<author>']
+
+    def test_should_ignore_case_differences(self):
+        labeled = decode_values_response(
+            json.dumps({'fields': [{'label': 'author', 'text': 'FLEMING PS'}]}),
+            TOKENS, LABELS
+        )
+        assert [label for _, label in labeled][2] == 'B-<author>'
+
+    def test_should_not_locate_a_value_starting_mid_token(self):
+        tokens = ['Fleming', 'PS']
+        with pytest.raises(LlmResponseError, match='not found in source'):
+            decode_values_response(
+                json.dumps({'fields': [{'label': 'author', 'text': 'leming'}]}),
+                tokens, LABELS
+            )
