@@ -118,6 +118,18 @@ class LlmModelImpl(ModelImpl):
                 f' prompt={self.config.prompt_version!r} tokens={token_count}]'
             ) from exc
 
+    def _check_dropped_fields(self, dropped: int, reference_count: int) -> None:
+        if not dropped:
+            return
+        message = (
+            f'{dropped} field(s) across {reference_count} reference(s) could not be'
+            ' located and were dropped; a region that is not a reference list is'
+            ' the usual cause'
+        )
+        if self.config.dropped_field_raises:
+            raise LlmResponseError(message)
+        LOGGER.warning('llm %s: %s', self.config.task, message)
+
     def _check_evidence(self, mismatches: int) -> None:
         if not mismatches:
             return
@@ -211,7 +223,11 @@ class LlmModelImpl(ModelImpl):
                 self.config.record_trace_content
             )
             content = self._get_content(response_json, token_count)
-            labeled = decode_batched_values_response(content, token_lists, self.labels)
+            labeled, dropped = decode_batched_values_response(
+                content, token_lists, self.labels
+            )
+            span.set_attribute('sciencebeam.dropped_fields', dropped)
+            self._check_dropped_fields(dropped, len(token_lists))
         LOGGER.info(
             'llm labelled %d references, %d tokens (model=%r provider=%r)',
             len(token_lists), token_count, self.config.model,

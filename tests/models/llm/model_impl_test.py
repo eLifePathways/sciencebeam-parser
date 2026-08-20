@@ -153,9 +153,20 @@ class TestLlmModelImplValuesShape:
         result = model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
         assert [token for token, _ in result[0]] == CITATION_TOKENS
 
-    def test_should_raise_rather_than_fall_back_when_a_value_is_not_in_the_source(self):
+    def test_should_drop_a_value_that_is_not_in_the_source(self, caplog):
         model_impl = get_citation_model_impl(batched([('title', 'a paraphrased title')]))
-        with pytest.raises(LlmResponseError, match='not found in source'):
+        with caplog.at_level('WARNING'):
+            result = model_impl.predict_labels(
+                [CITATION_TOKENS], no_features([CITATION_TOKENS])
+            )
+        assert [label for _, label in result[0]] == ['O'] * len(CITATION_TOKENS)
+        assert 'could not be located' in caplog.text
+
+    def test_should_raise_for_a_dropped_field_when_configured_to(self):
+        model_impl = get_citation_model_impl(
+            batched([('title', 'a paraphrased title')]), dropped_field_raises=True
+        )
+        with pytest.raises(LlmResponseError, match='could not be located'):
             model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
 
     def test_should_send_the_conventions_and_the_numbered_references(self):
@@ -198,8 +209,11 @@ class TestCitationBatching:
         model_impl = get_citation_model_impl(
             batched([('author', 'Rada G')], [('author', 'Rada G')])
         )
-        with pytest.raises(LlmResponseError, match='not found in source'):
-            model_impl.predict_labels(token_lists, no_features(token_lists))
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        # reference 0 does not contain "Rada G", so that claim is dropped rather
+        # than matched against the other reference
+        assert [label for _, label in result[0]] == ['O'] * len(CITATION_TOKENS)
+        assert result[1][0] == ('Rada', 'B-<author>')
 
     def test_should_raise_when_a_reference_has_no_answer(self):
         token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
@@ -275,11 +289,10 @@ class TestCitationReferenceMarker:
         model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
         assert 'not part of the reference' in model_impl.client.prompts[0]
 
-    def test_should_name_the_reference_and_field_when_a_value_is_not_found(self):
+    def test_should_name_the_reference_and_field_when_a_value_is_dropped(self, caplog):
         model_impl = get_citation_model_impl(batched([('note', '1')]))
-        with pytest.raises(LlmResponseError) as excinfo:
+        with caplog.at_level('WARNING'):
             model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
-        message = str(excinfo.value)
-        assert 'reference index 0' in message
-        assert 'label=note' in message
-        assert 'Fleming' in message
+        assert 'reference index 0' in caplog.text
+        assert 'label=note' in caplog.text
+        assert 'Fleming' in caplog.text

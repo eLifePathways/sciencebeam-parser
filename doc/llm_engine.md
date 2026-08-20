@@ -121,11 +121,16 @@ model id is refused at load, because that tier requires allowing training on pro
 A response that cannot be decoded raises. There is no fallback to a CRF engine and no partial
 labelling: a score is only meaningful if every label came from the model under test.
 
-The line between raising and continuing follows the guarantee. A value absent from the source
-**raises** — that is the guarantee itself. Two fields claiming the same span does **not**: the text is
-in the source either way, so the later claim is dropped with a warning. Raising there would cost
-every reference in the document over one confused field, and a well-formed but implausible labelling
-is meant to be scored rather than rejected.
+**A response the engine cannot parse raises; a claim the engine cannot honour is dropped and
+counted.** Bad JSON, a missing reference entry, an index out of range are the first. An invented
+value, or two fields over one span, are the second — dropped with a warning naming the reference,
+label and text, counted on `sciencebeam.dropped_fields`.
+
+Dropping satisfies the guarantee rather than weakening it: a discarded value never becomes a label,
+so no text reaches the document that was not in the source. Raising would be stronger than the
+guarantee needs, and it destroys every reference in a document over one invented field — which is
+common, because the region handed over is often not a reference list. Set `dropped_field_raises` for
+a run that wants strictness.
 
 A response cut off at the output limit raises `LlmTruncatedResponseError` naming
 `finish_reason`, the completion token count and the task, rather than surfacing as a JSON parse

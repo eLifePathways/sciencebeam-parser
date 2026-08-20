@@ -82,17 +82,12 @@ def find_unclaimed_span(
             seen_but_claimed = True
         start = characters.find(wanted, start + 1)
     suffix = f' [{context}]' if context else ''
-    if seen_but_claimed:
-        # Two fields over the same span is the model being wrong, not the response
-        # being malformed, and the guarantee is untouched: the text is in the
-        # source either way. Dropping the later claim costs one field; raising
-        # would cost every reference in the document.
-        LOGGER.warning(
-            'llm dropping a field whose text an earlier field already claimed:'
-            ' %r%s', wanted[:60], suffix
-        )
-        return None
-    raise LlmResponseError(f'value not found in source: {wanted[:60]!r}{suffix}')
+    reason = (
+        'an earlier field already claimed it' if seen_but_claimed
+        else 'it is not in the reference'
+    )
+    LOGGER.warning('llm dropping a field: %s: %r%s', reason, wanted[:60], suffix)
+    return None
 
 
 def parse_values(content: str, labels: Sequence[str]) -> List[Dict[str, str]]:
@@ -162,10 +157,21 @@ def get_labels_for_fields(
     fields: Sequence[Mapping[str, str]],
     tokens: Sequence[str],
     context: str = ''
-) -> List[str]:
+) -> Tuple[List[str], int]:
+    """Labels, and how many fields were dropped for not being locatable.
+
+    A field the engine cannot place is discarded rather than fatal. Decision 4's
+    guarantee is that no text reaches a document that was not in the source, and
+    discarding satisfies that: the value never becomes a label. Raising is
+    stronger than the guarantee needs, and it costs every reference in the
+    document over one invented field — which happens whenever the region handed
+    over is not a reference list. The count is surfaced instead, so poor input
+    shows up as a number rather than as an exception.
+    """
     positions = get_character_positions(tokens)
     claimed = [False] * len(tokens)
     token_labels = ['O'] * len(tokens)
+    dropped = 0
     for entry in fields:
         wanted = ''.join(iter_words(entry['text'])).lower()
         if not wanted:
@@ -176,6 +182,7 @@ def get_labels_for_fields(
             f' reference={" ".join(tokens)[:60]!r}'
         )
         if span is None:
+            dropped += 1
             continue
         first_token, last_token = span
         for token_index in range(first_token, last_token + 1):
@@ -184,16 +191,17 @@ def get_labels_for_fields(
                 f'B-<{entry["label"]}>' if token_index == first_token
                 else f'I-<{entry["label"]}>'
             )
-    return token_labels
+    return token_labels, dropped
 
 
 def decode_values_response(
     content: str,
     tokens: Sequence[str],
     labels: Sequence[str]
-) -> List[Tuple[str, str]]:
+) -> Tuple[List[Tuple[str, str]], int]:
     fields = parse_values(content, labels)
-    return list(zip(tokens, get_labels_for_fields(fields, tokens)))
+    token_labels, dropped = get_labels_for_fields(fields, tokens)
+    return list(zip(tokens, token_labels)), dropped
 
 
 def parse_batched_values(
@@ -239,13 +247,14 @@ def decode_batched_values_response(
     content: str,
     token_lists: Sequence[Sequence[str]],
     labels: Sequence[str]
-) -> List[List[Tuple[str, str]]]:
+) -> Tuple[List[List[Tuple[str, str]]], int]:
     fields_per_reference = parse_batched_values(content, len(token_lists), labels)
-    return [
-        list(zip(tokens, get_labels_for_fields(
+    results: List[List[Tuple[str, str]]] = []
+    dropped_total = 0
+    for index, (fields, tokens) in enumerate(zip(fields_per_reference, token_lists)):
+        token_labels, dropped = get_labels_for_fields(
             fields, tokens, context=f'reference index {index}, '
-        )))
-        for index, (fields, tokens) in enumerate(
-            zip(fields_per_reference, token_lists)
         )
-    ]
+        dropped_total += dropped
+        results.append(list(zip(tokens, token_labels)))
+    return results, dropped_total

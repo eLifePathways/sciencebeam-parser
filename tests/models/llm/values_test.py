@@ -26,8 +26,14 @@ def response(fields) -> str:
     ]})
 
 
-def get_labels(content: str):
-    return [label for _, label in decode_values_response(content, TOKENS, LABELS)]
+def get_labels(content: str, tokens=None):
+    labeled, _ = decode_values_response(content, tokens or TOKENS, LABELS)
+    return [label for _, label in labeled]
+
+
+def get_dropped(content: str, tokens=None) -> int:
+    _, dropped = decode_values_response(content, tokens or TOKENS, LABELS)
+    return dropped
 
 
 class TestIterWords:
@@ -59,7 +65,7 @@ class TestDecodeValuesResponse:
         assert labels[-1] == 'O'
 
     def test_should_return_the_input_tokens_unchanged(self):
-        labeled = decode_values_response(
+        labeled, _ = decode_values_response(
             response([('author', 'Fleming PS')]), TOKENS, LABELS
         )
         assert [token for token, _ in labeled] == TOKENS
@@ -92,21 +98,34 @@ class TestDecodeValuesResponse:
         ]))
         assert labels[18] == 'B-<date>'
 
-    def test_should_still_raise_when_a_value_is_absent_from_the_source(self):
-        with pytest.raises(LlmResponseError, match='not found in source'):
-            get_labels(response([('title', 'text that is not in the input at all')]))
+    def test_should_count_both_a_dropped_and_an_overlapping_field(self):
+        assert get_dropped(response([
+            ('pages', '34'), ('volume', '34'), ('title', 'never in the input')
+        ])) == 2
 
     def test_should_match_a_repeated_value_at_its_next_occurrence(self):
         labels = get_labels(response([('pages', '.'), ('title', 'High quality')]))
         assert labels[8] == 'B-<title>'
 
-    def test_should_raise_when_a_value_is_absent_from_the_source(self):
-        with pytest.raises(LlmResponseError, match='not found in source'):
-            get_labels(response([('title', 'A title that was never in the input')]))
+    def test_should_drop_a_value_absent_from_the_source(self, caplog):
+        with caplog.at_level('WARNING'):
+            labels = get_labels(response([('title', 'never in the input')]))
+        assert 'B-<title>' not in labels
+        assert 'not in the reference' in caplog.text
 
-    def test_should_raise_when_a_value_is_paraphrased(self):
-        with pytest.raises(LlmResponseError, match='not found in source'):
-            get_labels(response([('journal', 'Journal of Clinical Epidemiology')]))
+    def test_should_count_a_dropped_value(self):
+        assert get_dropped(response([('title', 'never in the input')])) == 1
+
+    def test_should_drop_a_paraphrased_value(self):
+        assert 'B-<journal>' not in get_labels(
+            response([('journal', 'Journal of Clinical Epidemiology')])
+        )
+
+    def test_should_keep_the_other_fields_when_one_is_dropped(self):
+        labels = get_labels(response([
+            ('title', 'never in the input'), ('date', '2016')
+        ]))
+        assert labels[18] == 'B-<date>'
 
     def test_should_raise_for_an_unknown_label(self):
         with pytest.raises(LlmResponseError, match='unknown label'):
@@ -133,33 +152,29 @@ class TestDecodeValuesResponse:
 class TestCharacterLevelMatching:
     def test_should_match_a_value_the_model_joined_differently(self):
         tokens = ['Moreno', '-', 'San', 'Segundo', 'J', ',', 'Casado', 'C']
-        labeled = decode_values_response(
+        labels = get_labels(
             json.dumps({'fields': [
                 {'label': 'author', 'text': 'Moreno SanSegundo J , Casado C'}
-            ]}), tokens, LABELS
+            ]}), tokens
         )
-        assert [label for _, label in labeled][0] == 'B-<author>'
-        assert [label for _, label in labeled][-1] == 'I-<author>'
+        assert labels[0] == 'B-<author>'
+        assert labels[-1] == 'I-<author>'
 
     def test_should_match_a_value_the_model_split_differently(self):
-        tokens = ['SanSegundo', 'J']
-        labeled = decode_values_response(
+        labels = get_labels(
             json.dumps({'fields': [{'label': 'author', 'text': 'San Segundo J'}]}),
-            tokens, LABELS
+            ['SanSegundo', 'J']
         )
-        assert [label for _, label in labeled] == ['B-<author>', 'I-<author>']
+        assert labels == ['B-<author>', 'I-<author>']
 
     def test_should_ignore_case_differences(self):
-        labeled = decode_values_response(
-            json.dumps({'fields': [{'label': 'author', 'text': 'FLEMING PS'}]}),
-            TOKENS, LABELS
+        labels = get_labels(
+            json.dumps({'fields': [{'label': 'author', 'text': 'FLEMING PS'}]})
         )
-        assert [label for _, label in labeled][2] == 'B-<author>'
+        assert labels[2] == 'B-<author>'
 
     def test_should_not_locate_a_value_starting_mid_token(self):
-        tokens = ['Fleming', 'PS']
-        with pytest.raises(LlmResponseError, match='not found in source'):
-            decode_values_response(
-                json.dumps({'fields': [{'label': 'author', 'text': 'leming'}]}),
-                tokens, LABELS
-            )
+        assert get_dropped(
+            json.dumps({'fields': [{'label': 'author', 'text': 'leming'}]}),
+            ['Fleming', 'PS']
+        ) == 1
