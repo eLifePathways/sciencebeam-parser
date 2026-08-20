@@ -11,6 +11,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from sciencebeam_parser.training.quality.gate import QualityVerdict
 from sciencebeam_parser.utils.io import auto_uploading_output_file, glob
 
 
@@ -31,6 +32,14 @@ class GeneratedDocumentRecord:
     @property
     def entity_element_count(self) -> Optional[int]:
         return self.json_dict.get('entity_element_count')
+
+    @property
+    def written(self) -> Optional[bool]:
+        return self.json_dict.get('written')
+
+    @property
+    def jats_status(self) -> Optional[str]:
+        return self.json_dict.get('jats', {}).get('status')
 
     @property
     def has_generated_output(self) -> bool:
@@ -83,6 +92,7 @@ class AssembledDocumentRecord:
     entity_start_count: Optional[int] = None
     label_start_counts: Optional[Dict[str, int]] = None
     generated: Optional[GeneratedDocumentRecord] = None
+    verdict: Optional['QualityVerdict'] = None
 
     @property
     def entity_element_count(self) -> Optional[int]:
@@ -109,6 +119,11 @@ class AssembledDocumentRecord:
             json_dict['label_start_counts'] = self.label_start_counts
         if self.generated is not None:
             json_dict['generated'] = dict(self.generated.json_dict)
+        if self.verdict is not None:
+            json_dict['excluded'] = self.verdict.is_excluded
+            if self.verdict.is_excluded:
+                json_dict['exclusion_reasons'] = list(self.verdict.exclusion_reasons)
+                json_dict['exclusion_detail'] = dict(self.verdict.detail)
         return json_dict
 
 

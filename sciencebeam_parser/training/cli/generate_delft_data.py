@@ -47,6 +47,14 @@ from sciencebeam_parser.training.quality.assembly import (
     read_generated_document_records,
     write_assembly_records
 )
+from sciencebeam_parser.training.quality.gate import (
+    TRAINING_QUALITY_CONFIG_FILE,
+    TrainingQualityConfig,
+    check_corpus_loss_or_fail,
+    get_gate_summary_by_corpus,
+    get_quality_verdict,
+    load_training_quality_config
+)
 from sciencebeam_parser.training.quality.counting import (
     count_entity_starts,
     count_label_starts_per_sequence,
@@ -103,6 +111,30 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help=(
             'Where to write the assembly quality record'
             ' (default: the delft output path with ".quality.jsonl" appended).'
+        )
+    )
+    parser.add_argument(
+        '--quality-filter',
+        action='store_true',
+        help=(
+            'Exclude documents failing the quality thresholds, rather than only'
+            ' recording their counts. Assembly refuses when a corpus loses more than'
+            ' the configured share of its documents.'
+        )
+    )
+    parser.add_argument(
+        '--quality-config-path',
+        type=str,
+        default=TRAINING_QUALITY_CONFIG_FILE,
+        help='Thresholds the quality filter applies (default: the shipped config).'
+    )
+    parser.add_argument(
+        '--max-excluded-ratio',
+        type=float,
+        required=False,
+        help=(
+            'Override the configured share of a corpus beyond which assembly refuses.'
+            ' Raising it is a decision to record, not a way around the refusal.'
         )
     )
     parser.add_argument(
@@ -346,22 +378,68 @@ def get_assembled_document_record(
     model_name: str,
     result: DelftDocumentResult,
     generated_record_by_document_id: Mapping[str, GeneratedDocumentRecord],
+    quality_config: Optional[TrainingQualityConfig] = None,
 ) -> AssembledDocumentRecord:
     generated = generated_record_by_document_id.get(document_id)
+    entity_start_count = count_entity_starts(
+        model_name, result.labeled_layout_tokens_list
+    )
+    verdict = None
+    if quality_config is not None:
+        verdict = get_quality_verdict(
+            document_id=document_id,
+            thresholds=quality_config.get_thresholds_for_model(
+                get_canonical_model_name(model_name)
+            ),
+            jats_status=generated.jats_status if generated else None,
+            jats_reference_count=generated.jats_reference_count if generated else None,
+            written=generated.written if generated else None,
+            entity_element_count=generated.entity_element_count if generated else None,
+            entity_start_count=entity_start_count,
+            sequence_count=len(result.labeled_layout_tokens_list),
+        )
     return AssembledDocumentRecord(
         document_id=document_id,
         model_name=get_canonical_model_name(model_name),
         corpus=generated.corpus if generated else None,
         sequence_count=len(result.labeled_layout_tokens_list),
-        entity_start_count=count_entity_starts(
-            model_name, result.labeled_layout_tokens_list
-        ),
+        entity_start_count=entity_start_count,
         label_start_counts=(
             count_label_starts_per_sequence(result.labeled_layout_tokens_list)
             if is_model_counted_by_label(model_name)
             else None
         ),
         generated=generated,
+        verdict=verdict,
+    )
+
+
+def log_gate_summary(
+    model_name: str,
+    assembled_records: Sequence[AssembledDocumentRecord],
+    quality_config: TrainingQualityConfig,
+    max_excluded_ratio: Optional[float] = None,
+) -> None:
+    summary_by_corpus = get_gate_summary_by_corpus([
+        (record.verdict, record.corpus)
+        for record in assembled_records
+        if record.verdict is not None
+    ])
+    for record in assembled_records:
+        if record.verdict is not None and record.verdict.is_excluded:
+            LOGGER.warning('excluding %s', record.verdict)
+    for corpus, summary in sorted(
+        summary_by_corpus.items(), key=lambda item: item[0] or ''
+    ):
+        LOGGER.info(
+            '%s / %s: %s', corpus or 'corpus not known',
+            get_canonical_model_name(model_name), summary
+        )
+    check_corpus_loss_or_fail(
+        summary_by_corpus,
+        max_excluded_ratio
+        if max_excluded_ratio is not None
+        else quality_config.max_excluded_ratio
     )
 
 
@@ -397,7 +475,10 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     sciencebeam_parser: ScienceBeamParser,
     include_extra_columns: bool = False,
     quality_record_path: Optional[str] = None,
-    quality_output_path: Optional[str] = None
+    quality_output_path: Optional[str] = None,
+    quality_filter: bool = False,
+    quality_config_path: str = TRAINING_QUALITY_CONFIG_FILE,
+    max_excluded_ratio: Optional[float] = None
 ):
     training_tei_parser = get_training_tei_parser_for_model_name(
         model_name,
@@ -434,6 +515,14 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     tei_filename_suffix = get_tei_filename_suffix_for_model_name(
         model_name, sciencebeam_parser=sciencebeam_parser
     )
+    quality_config = (
+        load_training_quality_config(quality_config_path) if quality_filter else None
+    )
+    if quality_filter and not quality_record_path:
+        LOGGER.warning(
+            'no --quality-record-path given, so the thresholds against the JATS and'
+            ' the generated elements cannot be applied and are reported as unchecked'
+        )
     assembled_records: List[AssembledDocumentRecord] = []
     LOGGER.info('writing to : %r', delft_output_path)
     with auto_uploading_output_file(
@@ -441,9 +530,8 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
         mode='w',
         encoding='utf-8',
     ) as data_fp:
-        for document_index, (tei_file, raw_file) in enumerate(zip(tei_file_list, raw_file_list)):
-            if document_index > 0:
-                data_fp.write('\n\n')
+        written_document_count = 0
+        for tei_file, raw_file in zip(tei_file_list, raw_file_list):
             result = get_delft_training_data_for_document(
                 tei_file=tei_file,
                 raw_file=raw_file,
@@ -452,13 +540,22 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
                 column_layout=column_layout,
                 include_extra_columns=include_extra_columns
             )
-            data_fp.writelines(result.data_lines)
-            assembled_records.append(get_assembled_document_record(
+            record = get_assembled_document_record(
                 document_id=get_document_id_for_tei_file(tei_file, tei_filename_suffix),
                 model_name=model_name,
                 result=result,
                 generated_record_by_document_id=generated_record_by_document_id,
-            ))
+                quality_config=quality_config,
+            )
+            assembled_records.append(record)
+            if record.verdict is not None and record.verdict.is_excluded:
+                continue
+            # The blank line separates documents, so it follows what was written
+            # rather than the position in the source list.
+            if written_document_count:
+                data_fp.write('\n\n')
+            data_fp.writelines(result.data_lines)
+            written_document_count += 1
     write_assembly_records(
         quality_output_path or delft_output_path + '.quality.jsonl',
         assembled_records
@@ -466,6 +563,11 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     log_assembly_summary(
         model_name, assembled_records, generated_record_by_document_id
     )
+    if quality_config is not None:
+        log_gate_summary(
+            model_name, assembled_records, quality_config,
+            max_excluded_ratio=max_excluded_ratio
+        )
 
 
 def run(args: argparse.Namespace):
@@ -482,7 +584,10 @@ def run(args: argparse.Namespace):
         sciencebeam_parser=sciencebeam_parser,
         include_extra_columns=args.include_extra_columns,
         quality_record_path=args.quality_record_path,
-        quality_output_path=args.quality_output_path
+        quality_output_path=args.quality_output_path,
+        quality_filter=args.quality_filter,
+        quality_config_path=args.quality_config_path,
+        max_excluded_ratio=args.max_excluded_ratio
     )
 
 

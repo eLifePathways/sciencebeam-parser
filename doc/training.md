@@ -185,6 +185,48 @@ python -m sciencebeam_parser.training.cli.generate_delft_data \
 Without `--quality-record-path` the counts are still recorded, with nothing to
 compare them against — which is enough to re-check a committed corpus offline.
 
+#### Filtering on quality
+
+`--quality-filter` leaves out the documents that fail the thresholds in
+[`training_quality.yml`](../sciencebeam_parser/resources/training_quality.yml),
+rather than only recording their counts. Each exclusion is reported with the stage
+that failed and the numbers behind it, and the summary says what was kept per
+corpus:
+
+```text
+excluding 5-264_v2: excluded (jats-not-readable) [jats_status=unparsable]
+excluding PPR459453: excluded (elements-short-of-jats)
+  [element_ratio=0.044, entity_element_count=2, jats_reference_count=45]
+ore / reference-segmenter: kept 37 of 38 documents (3% excluded);
+  jats-not-readable: ['5-264_v2']
+```
+
+The same reasons are written to each row of the record, so a corpus that shrinks
+can always be accounted for document by document.
+
+Assembly **refuses** rather than proceeds when a corpus loses more than
+`corpus.max_excluded_ratio` of its documents: dropping most of a corpus is a
+finding about the pipeline, not a routine filter outcome. `--max-excluded-ratio`
+overrides it for a run, which is a decision to record rather than a way around
+the refusal.
+
+Thresholds are per model, and a model with no entry in the config fails rather
+than being assumed sound. Models whose labels mark regions instead of repeated
+entities carry `cardinality: none` and a reason. Two things are deliberately
+recorded rather than failed:
+
+- **more elements than the JATS has references.** The reference segmenter writes a
+  block per contiguous run of a reference's lines, so a reference split across a
+  column becomes two elements — where the citation model's count of the same
+  references matches the JATS exactly. The document is otherwise sound.
+- **citation label rates.** No floor is set, because the level of a label's rate
+  says as much about the publisher as the pipeline: ORE prints no DOI at all where
+  its JATS carries one for 1205 of 1679 references, so a floor on the identifier
+  would reject nearly every ORE document. A rate that moves is the finding.
+
+Filtering is off unless asked for, since this command is also run over corpora
+that carry no record at all, such as GROBID's own.
+
 #### Example command for `segmentation` model
 
 ```bash
