@@ -303,11 +303,13 @@ def check_llm_profile_corpora(
 ) -> None:
     if not profile:
         return
-    profile_models = (
-        config.get("sequence_model_profiles", {}).get(profile)
-        if isinstance(config.get("sequence_model_profiles"), dict) else None
-    )
-    uses_llm = bool(profile_models) and any(
+    sequence_model_profiles = config.get("sequence_model_profiles")
+    if not isinstance(sequence_model_profiles, dict):
+        return
+    profile_models = sequence_model_profiles.get(profile)
+    if not isinstance(profile_models, dict):
+        return
+    uses_llm = any(
         isinstance(model_config, dict) and model_config.get("engine") == "llm"
         for model_config in profile_models.values()
     )
