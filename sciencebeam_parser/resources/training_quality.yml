@@ -1,0 +1,86 @@
+# What the quality gate requires of a generated document before its training
+# data is used, per model.
+#
+# The counts come from the quality record: the references the JATS declares, the
+# elements generation wrote, and the entities those elements parse back to.  Each
+# threshold is a floor on one stage against the one before it, so a document that
+# fails names the stage that lost its references rather than only that it is wrong.
+#
+#   min_jats_reference_count  a document whose JATS declares fewer references than
+#                             this has no reference of record; no comparison
+#                             between stages can flag it, because every stage
+#                             agrees on zero
+#   min_element_ratio         elements written, over the references the JATS
+#                             declares.  An exact match is too strict: what a
+#                             PDF's reference list contains and what the JATS
+#                             carries legitimately differ
+#   min_entity_ratio          entities the training data ends up with, over the
+#                             elements the TEI holds.  This is the stage where two
+#                             sibling elements sharing a label used to come back as
+#                             one entity, and the floor is what keeps that from
+#                             returning unnoticed
+#
+# Over-counting is recorded and not failed.  The reference segmenter writes a
+# block per contiguous run of a reference's lines, so a reference split across a
+# column or a page becomes two elements -- 7 of 50 scielo_preprints-jats documents,
+# where the citation model's count of the same references matches the JATS exactly.
+# Those documents are otherwise sound, and the split is a defect of alignment
+# rather than of the data's cardinality.
+#
+# A model with no cardinality to check carries `cardinality: none` and a reason,
+# rather than being left out: a missing entry is a decision not taken, and the
+# gate says so instead of passing silently.
+
+corpus:
+  # Beyond this share of a corpus excluded, assembly refuses rather than
+  # proceeds.  Dropping most of a corpus is a finding about the pipeline, not a
+  # routine filter outcome, and the counterpart of failing on inconsistent
+  # feature lengths on the training side.  Raise it deliberately, with the
+  # reason recorded, rather than working around the refusal.
+  max_excluded_ratio: 0.2
+
+models:
+  reference-segmenter:
+    min_jats_reference_count: 1
+    min_element_ratio: 0.9
+    min_entity_ratio: 0.8
+
+  citation:
+    min_jats_reference_count: 1
+    min_element_ratio: 0.9
+    # Every element is its own training sequence, so there is no entity ratio to
+    # take; what can change is which labels are marked, and that is recorded per
+    # label rather than gated.  No floor is set because the level of a label's
+    # rate says as much about the publisher as the pipeline: title, journal,
+    # date, volume, pages and author sit at 0.95 and above on both measured
+    # corpora, while ORE prints no DOI at all where its JATS carries one for
+    # 1205 of 1679 references, so a floor on the identifier would reject nearly
+    # every one of its documents.  A rate that moves is the finding.
+    label_floors: {}
+
+  segmentation:
+    cardinality: none
+    reason: labels mark regions of a document, which occur once rather than repeatedly
+  header:
+    cardinality: none
+    reason: labels mark fields of one header, so presence is what matters
+  affiliation-address:
+    cardinality: none
+    reason: >
+      one entity per affiliation, but the JATS count is of affiliations rather than
+      references and has no measured threshold yet
+  name-header:
+    cardinality: none
+    reason: one entity per author name, with no measured threshold yet
+  name-citation:
+    cardinality: none
+    reason: one entity per author name, with no measured threshold yet
+  fulltext:
+    cardinality: none
+    reason: labels mark body regions, which occur once each
+  figure:
+    cardinality: none
+    reason: one entity per figure, with no measured threshold yet
+  table:
+    cardinality: none
+    reason: one entity per table, with no measured threshold yet

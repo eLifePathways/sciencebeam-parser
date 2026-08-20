@@ -31,7 +31,8 @@ def log_on_exception(f: T_WrappedCallableOrType) -> T_WrappedCallableOrType:
     @wraps(f)
     def wrapper(*args, **kwargs):
         try:
-            f(*args, **kwargs)
+            # returned, since wrapping a class wraps its helpers as well as its tests
+            return f(*args, **kwargs)
         except Exception as e:  # pylint: disable=broad-except
             LOGGER.exception('failed due to %s', repr(e))
             raise

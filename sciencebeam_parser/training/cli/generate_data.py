@@ -8,7 +8,17 @@ import multiprocessing
 import time
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
+from typing import (
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple
+)
 
 from lxml import etree
 
@@ -57,7 +67,24 @@ from sciencebeam_parser.training.jats.field_vocab import (
     JatsFieldNames,
     JatsSubFieldNames,
 )
-from sciencebeam_parser.training.jats.field_extractor import JatsFieldExtractor
+from sciencebeam_parser.training.jats.field_extractor import (
+    JatsFieldExtractor,
+    iter_reference_sub_field_names
+)
+from sciencebeam_parser.training.quality.counting import (
+    ENTITY_ELEMENT_NAME_BY_MODEL,
+    count_citation_labels,
+    count_entity_elements
+)
+from sciencebeam_parser.training.quality.record import (
+    DocumentQualityRecord,
+    DocumentStatus,
+    JatsQualityRecord,
+    JatsStatus,
+    ModelQualityRecord,
+    QualityRecordWriter,
+    get_failed_document_quality_record
+)
 from sciencebeam_parser.training.jats.aligner import LayoutDocumentJatsAligner
 from sciencebeam_parser.training.jats.segmentation import SegmentationLabelDeriver
 
@@ -245,6 +272,7 @@ class TrainingDataDocumentContext(NamedTuple):
     gzip_enabled: bool
     jats_annotated_document: Optional[JatsAnnotatedLayoutDocument] = None
     jats_segmentation_labels: Optional[Dict[int, str]] = None
+    jats_reference_sub_field_names: Sequence[FrozenSet[str]] = ()
 
     @property
     def source_name(self) -> str:
@@ -467,11 +495,19 @@ class AbstractModelTrainingDataGenerator(ABC):
     ) -> Optional[str]:
         return tei_training_data_generator.get_default_tei_sub_directory()
 
+    def get_quality_label_counts(  # pylint: disable=unused-argument
+        self,
+        model_data_list_list: Sequence[Sequence[LayoutModelData]],
+        document_context: TrainingDataDocumentContext
+    ) -> Optional[Dict[str, Dict[str, int]]]:
+        """Per-label counts for a model whose entity cardinality cannot change."""
+        return None
+
     def generate_data_for_layout_document(
         self,
         layout_document: LayoutDocument,
         document_context: TrainingDataDocumentContext
-    ):
+    ) -> ModelQualityRecord:
         tei_training_data_generator = self.get_tei_training_data_generator(document_context)
         tei_file_path = self._get_file_path_with_suffix(
             tei_training_data_generator.get_default_tei_filename_suffix(),
@@ -490,7 +526,13 @@ class AbstractModelTrainingDataGenerator(ABC):
         ))
         if not model_data_list_list:
             LOGGER.info('no entities found, skipping (%r)', tei_file_path)
-            return
+            return ModelQualityRecord(
+                model_name=self.model_name,
+                written=False,
+                entity_element_count=(
+                    0 if self.model_name in ENTITY_ELEMENT_NAME_BY_MODEL else None
+                ),
+            )
         training_tei_root = (
             tei_training_data_generator
             .get_training_tei_xml_for_multiple_model_data_iterables(
@@ -511,6 +553,14 @@ class AbstractModelTrainingDataGenerator(ABC):
                 ),
                 encoding='utf-8'
             )
+        return ModelQualityRecord(
+            model_name=self.model_name,
+            written=True,
+            entity_element_count=count_entity_elements(self.model_name, training_tei_root),
+            label_counts=self.get_quality_label_counts(
+                model_data_list_list, document_context
+            ),
+        )
 
 
 class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenerator):
@@ -1166,6 +1216,20 @@ class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenera
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.citation_model
 
+    def get_quality_label_counts(
+        self,
+        model_data_list_list: Sequence[Sequence[LayoutModelData]],
+        document_context: TrainingDataDocumentContext
+    ) -> Optional[Dict[str, Dict[str, int]]]:
+        # Every <bibl> is its own training sequence, so this model's entity count
+        # cannot change again after the TEI; which labels are marked can.
+        if not document_context.jats_reference_sub_field_names:
+            return None
+        return count_citation_labels(
+            document_context.jats_reference_sub_field_names,
+            model_data_list_list
+        )
+
     def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
         previous_identifier: Optional[Tuple[int, Optional[str]]] = None
 
@@ -1266,19 +1330,67 @@ def _select_generators(
     return selected
 
 
+def get_enabled_model_names(enabled_models: Optional[frozenset]) -> List[str]:
+    return [
+        training_data_generator.model_name
+        for training_data_generator in _select_generators(enabled_models)
+    ]
+
+
+class JatsAnnotationResult(NamedTuple):
+    status: str
+    annotated_document: Optional[JatsAnnotatedLayoutDocument] = None
+    reference_sub_field_names: Sequence[FrozenSet[str]] = ()
+
+    @property
+    def reference_count(self) -> Optional[int]:
+        if self.status != JatsStatus.OK:
+            return None
+        return len(self.reference_sub_field_names)
+
+
 def _build_jats_annotations(
     layout_document: LayoutDocument,
     jats_xml_filename: str,
-) -> Optional[JatsAnnotatedLayoutDocument]:
+) -> JatsAnnotationResult:
     try:
         with auto_download_input_file(jats_xml_filename, auto_decompress=True) as local_xml:
             root = etree.parse(local_xml).getroot()
+    except etree.XMLSyntaxError:
+        LOGGER.warning('JATS XML could not be parsed: %r', jats_xml_filename, exc_info=True)
+        return JatsAnnotationResult(status=JatsStatus.UNPARSABLE)
     except Exception:  # pylint: disable=broad-except
         LOGGER.warning('Failed to load JATS XML: %r', jats_xml_filename, exc_info=True)
-        return None
+        return JatsAnnotationResult(status=JatsStatus.UNREADABLE)
     field_values = list(JatsFieldExtractor().iter_field_values(root))
     LOGGER.debug('JATS field values count: %d', len(field_values))
-    return LayoutDocumentJatsAligner().align(layout_document, field_values)
+    return JatsAnnotationResult(
+        status=JatsStatus.OK,
+        annotated_document=LayoutDocumentJatsAligner().align(layout_document, field_values),
+        reference_sub_field_names=list(iter_reference_sub_field_names(root)),
+    )
+
+
+def _get_document_quality_record(
+    document_context: TrainingDataDocumentContext,
+    jats_result: JatsAnnotationResult,
+    model_records: Sequence[ModelQualityRecord],
+) -> DocumentQualityRecord:
+    annotated_document = jats_result.annotated_document
+    return DocumentQualityRecord(
+        document_id=document_context.source_name,
+        source_filename=document_context.source_filename,
+        jats=JatsQualityRecord(
+            status=jats_result.status,
+            reference_count=jats_result.reference_count,
+            aligned_reference_count=(
+                annotated_document.get_aligned_instance_count(JatsFieldNames.REFERENCE)
+                if annotated_document is not None
+                else None
+            ),
+        ),
+        models=model_records,
+    )
 
 
 def generate_training_data_for_layout_document(
@@ -1293,18 +1405,18 @@ def generate_training_data_for_layout_document(
     gzip_enabled: bool = False,
     jats_xml_filename: Optional[str] = None,
     enabled_models: Optional[frozenset] = None,
-):
-    model_result_cache = ModelResultCache()
-    jats_annotated: Optional[JatsAnnotatedLayoutDocument] = None
+) -> DocumentQualityRecord:
+    jats_result = JatsAnnotationResult(status=JatsStatus.MISSING)
     jats_seg_labels: Optional[Dict[int, str]] = None
     if jats_xml_filename:
-        jats_annotated = _build_jats_annotations(layout_document, jats_xml_filename)
-        if jats_annotated:
+        jats_result = _build_jats_annotations(layout_document, jats_xml_filename)
+        if jats_result.annotated_document:
             jats_seg_labels = SegmentationLabelDeriver().derive_labels(
-                layout_document, jats_annotated
+                layout_document, jats_result.annotated_document
             )
             LOGGER.debug(
-                'JATS coverage ratio: %.2f', jats_annotated.coverage_ratio()
+                'JATS coverage ratio: %.2f',
+                jats_result.annotated_document.coverage_ratio()
             )
     document_context = TrainingDataDocumentContext(
         output_path=output_path,
@@ -1313,16 +1425,23 @@ def generate_training_data_for_layout_document(
         fulltext_models=fulltext_models,
         use_model=use_model,
         use_directory_structure=use_directory_structure,
-        model_result_cache=model_result_cache,
+        model_result_cache=ModelResultCache(),
         gzip_enabled=gzip_enabled,
-        jats_annotated_document=jats_annotated,
+        jats_annotated_document=jats_result.annotated_document,
         jats_segmentation_labels=jats_seg_labels,
+        jats_reference_sub_field_names=jats_result.reference_sub_field_names,
     )
-    for training_data_generator in _select_generators(enabled_models):
-        training_data_generator.generate_data_for_layout_document(
-            layout_document=layout_document,
-            document_context=document_context
-        )
+    return _get_document_quality_record(
+        document_context=document_context,
+        jats_result=jats_result,
+        model_records=[
+            training_data_generator.generate_data_for_layout_document(
+                layout_document=layout_document,
+                document_context=document_context
+            )
+            for training_data_generator in _select_generators(enabled_models)
+        ],
+    )
 
 
 def get_layout_document_for_source_filename(
@@ -1366,7 +1485,7 @@ def generate_training_data_for_source_filename(
     gzip_enabled: bool,
     xml_file_list: Optional[Sequence[str]] = None,
     enabled_models: Optional[frozenset] = None,
-):
+) -> DocumentQualityRecord:
     LOGGER.debug('use_model: %r', use_model)
     layout_document = get_layout_document_for_source_filename(
         source_filename,
@@ -1379,7 +1498,7 @@ def generate_training_data_for_source_filename(
             LOGGER.info('Using JATS XML: %r', jats_xml_filename)
         else:
             LOGGER.warning('No matching JATS XML found for: %r', source_filename)
-    generate_training_data_for_layout_document(
+    return generate_training_data_for_layout_document(
         layout_document=layout_document,
         output_path=output_path,
         source_filename=source_filename,
@@ -1451,10 +1570,11 @@ def _worker_init() -> None:
     _worker_sciencebeam_parser = ScienceBeamParser.from_config(config)
 
 
-def _worker_process(kwargs: dict) -> bool:
+def _worker_process(kwargs: dict) -> Optional[DocumentQualityRecord]:
+    """Return the document's quality record, or None if it failed."""
     assert _worker_sciencebeam_parser is not None
     try:
-        generate_training_data_for_source_filename(
+        return generate_training_data_for_source_filename(
             kwargs['source_filename'],
             output_path=kwargs['output_path'],
             sciencebeam_parser=_worker_sciencebeam_parser,
@@ -1464,10 +1584,66 @@ def _worker_process(kwargs: dict) -> bool:
             xml_file_list=kwargs['xml_file_list'],
             enabled_models=kwargs['enabled_models'],
         )
-        return True
     except Exception:  # pylint: disable=broad-except
         LOGGER.exception('Failed to process %r', kwargs['source_filename'])
-        return False
+        return None
+
+
+class _WorkerResult(NamedTuple):
+    record: Optional[DocumentQualityRecord]
+    status: str
+
+    @staticmethod
+    def for_worker_return(
+        record: Optional[DocumentQualityRecord]
+    ) -> '_WorkerResult':
+        """A worker that returned nothing failed; anything else returned its record."""
+        return _WorkerResult(
+            record,
+            DocumentStatus.OK if record is not None else DocumentStatus.ERROR
+        )
+
+    @property
+    def ok(self) -> bool:
+        return self.record is not None
+
+
+def _get_worker_result(
+    async_result,
+    source_filename: str,
+    document_timeout: int,
+) -> _WorkerResult:
+    try:
+        return _WorkerResult.for_worker_return(
+            async_result.get(timeout=document_timeout or None)
+        )
+    except multiprocessing.TimeoutError:
+        LOGGER.warning(
+            'Document exceeded %ds timeout, skipping: %r',
+            document_timeout, source_filename,
+        )
+        return _WorkerResult(None, DocumentStatus.TIMEOUT)
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.exception('Failed to process %r', source_filename)
+        return _WorkerResult(None, DocumentStatus.ERROR)
+
+
+def _write_quality_record(
+    quality_writer: Optional[QualityRecordWriter],
+    source_filename: str,
+    worker_result: _WorkerResult,
+) -> None:
+    """Record the document, standing in a failed record when the worker returned none."""
+    if quality_writer is None:
+        return
+    record = worker_result.record
+    if record is None:
+        record = get_failed_document_quality_record(
+            source_filename=source_filename,
+            document_id=os.path.splitext(os.path.basename(source_filename))[0],
+            status=worker_result.status,
+        )
+    quality_writer.write(record)
 
 
 def _run_serial(
@@ -1477,6 +1653,7 @@ def _run_serial(
     xml_file_list: Optional[Sequence[str]],
     progress: '_Progress',
     document_timeout: int = 0,
+    quality_writer: Optional[QualityRecordWriter] = None,
 ) -> None:
     """Run documents sequentially.
 
@@ -1504,8 +1681,11 @@ def _run_serial(
         for source_filename in source_file_list:
             kwargs = {'source_filename': source_filename, **common_kwargs}
             t0 = time.monotonic()
-            ok = _worker_process(kwargs)
-            progress.record(source_filename, ok=ok, elapsed_s=time.monotonic() - t0)
+            worker_result = _WorkerResult.for_worker_return(_worker_process(kwargs))
+            _write_quality_record(quality_writer, source_filename, worker_result)
+            progress.record(
+                source_filename, ok=worker_result.ok, elapsed_s=time.monotonic() - t0
+            )
         return
 
     pool = multiprocessing.Pool(1, initializer=_worker_init)  # pylint: disable=consider-using-with
@@ -1514,22 +1694,19 @@ def _run_serial(
             kwargs = {'source_filename': source_filename, **common_kwargs}
             t0 = time.monotonic()
             async_result = pool.apply_async(_worker_process, (kwargs,))
-            try:
-                ok = async_result.get(timeout=document_timeout)
-            except multiprocessing.TimeoutError:
-                LOGGER.warning(
-                    'Document exceeded %ds timeout, skipping: %r',
-                    document_timeout, source_filename,
-                )
+            worker_result = _get_worker_result(
+                async_result, source_filename, document_timeout
+            )
+            if worker_result.status == DocumentStatus.TIMEOUT:
+                # The worker may still be stuck inside a C extension.
                 pool.terminate()
                 pool.join()
                 # pylint: disable-next=consider-using-with
                 pool = multiprocessing.Pool(1, initializer=_worker_init)
-                ok = False
-            except Exception:  # pylint: disable=broad-except
-                LOGGER.exception('Failed to process %r', source_filename)
-                ok = False
-            progress.record(source_filename, ok=ok, elapsed_s=time.monotonic() - t0)
+            _write_quality_record(quality_writer, source_filename, worker_result)
+            progress.record(
+                source_filename, ok=worker_result.ok, elapsed_s=time.monotonic() - t0
+            )
     finally:
         pool.close()
         pool.join()
@@ -1543,6 +1720,7 @@ def _run_parallel_workers(
     progress: '_Progress',
     num_workers: int,
     document_timeout: int = 0,
+    quality_writer: Optional[QualityRecordWriter] = None,
 ) -> None:
     """Process documents in parallel using a multiprocessing.Pool.
 
@@ -1560,7 +1738,6 @@ def _run_parallel_workers(
     }
     # pylint: disable-next=consider-using-with
     pool = multiprocessing.Pool(num_workers, initializer=_worker_init)
-    timeout_arg = document_timeout if document_timeout > 0 else None
     work = [
         (sf, pool.apply_async(_worker_process, ({'source_filename': sf, **common_kwargs},)))
         for sf in source_file_list
@@ -1568,18 +1745,13 @@ def _run_parallel_workers(
     try:
         for source_filename, async_result in work:
             t0 = time.monotonic()
-            try:
-                ok = async_result.get(timeout=timeout_arg)
-            except multiprocessing.TimeoutError:
-                LOGGER.warning(
-                    'Document exceeded %ds timeout, skipping: %r',
-                    document_timeout, source_filename,
-                )
-                ok = False
-            except Exception:  # pylint: disable=broad-except
-                LOGGER.exception('Failed to process %r', source_filename)
-                ok = False
-            progress.record(source_filename, ok=ok, elapsed_s=time.monotonic() - t0)
+            worker_result = _get_worker_result(
+                async_result, source_filename, document_timeout
+            )
+            _write_quality_record(quality_writer, source_filename, worker_result)
+            progress.record(
+                source_filename, ok=worker_result.ok, elapsed_s=time.monotonic() - t0
+            )
     finally:
         pool.terminate()
         pool.join()
@@ -1605,16 +1777,24 @@ def run(args: argparse.Namespace):
     num_workers = getattr(args, 'num_workers', 1)
     document_timeout: int = getattr(args, 'document_timeout', 0)
 
-    if num_workers > 1:
-        _run_parallel_workers(
-            source_file_list, output_path, args, xml_file_list, progress, num_workers,
-            document_timeout=document_timeout,
-        )
-    else:
-        _run_serial(
-            source_file_list, output_path, args, xml_file_list, progress,
-            document_timeout=document_timeout,
-        )
+    with QualityRecordWriter(
+        output_path,
+        model_names=get_enabled_model_names(args.enabled_models),
+        use_directory_structure=args.use_directory_structure,
+    ) as quality_writer:
+        if num_workers > 1:
+            _run_parallel_workers(
+                source_file_list, output_path, args, xml_file_list, progress, num_workers,
+                document_timeout=document_timeout,
+                quality_writer=quality_writer,
+            )
+        else:
+            _run_serial(
+                source_file_list, output_path, args, xml_file_list, progress,
+                document_timeout=document_timeout,
+                quality_writer=quality_writer,
+            )
+        LOGGER.info('quality records written: %d', quality_writer.written_count)
 
     if progress.n_err:
         LOGGER.warning('%d/%d documents failed', progress.n_err, total)

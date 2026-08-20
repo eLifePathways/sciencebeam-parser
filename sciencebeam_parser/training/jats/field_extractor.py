@@ -1,4 +1,5 @@
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from itertools import chain
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 
 from lxml import etree
@@ -130,6 +131,30 @@ def _iter_reference_author_values(
                 field_name=field_name,
                 sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
             )
+
+
+def iter_reference_sub_field_names(
+    root: etree._Element,
+) -> Iterator[FrozenSet[str]]:
+    """Yield the sub-field names the JATS carries for each reference, in JATS order.
+
+    The reference set is the one iter_field_values emits a REFERENCE value for,
+    so a `<ref-list>` inside a `<sub-article>` is not in it: those entries are
+    never offered to the aligner and cannot be a shortfall.
+    """
+    for ref_el in root.xpath('back/ref-list/ref'):
+        if not _reference_parent_text(ref_el):
+            continue
+        yield frozenset(
+            field_value.sub_field_name
+            for field_value in chain(
+                _iter_reference_author_values(ref_el, JatsFieldNames.REFERENCE),
+                _iter_sub_field_values(
+                    ref_el, JatsFieldNames.REFERENCE, _REFERENCE_SUB_FIELDS
+                ),
+            )
+            if field_value.sub_field_name
+        )
 
 
 def _local_tag(el: etree._Element) -> str:

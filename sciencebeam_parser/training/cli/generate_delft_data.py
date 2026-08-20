@@ -1,7 +1,7 @@
 import argparse
 import logging
 import os
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from lxml import etree
 
@@ -39,6 +39,29 @@ from sciencebeam_parser.training.grobid_column_layout import (
     select_feature_columns
 )
 
+from sciencebeam_parser.training.quality.assembly import (
+    AssembledDocumentRecord,
+    GeneratedDocumentRecord,
+    get_assembly_summary_by_corpus,
+    get_document_ids_without_generated_output,
+    read_generated_document_records,
+    write_assembly_records
+)
+from sciencebeam_parser.training.quality.gate import (
+    TRAINING_QUALITY_CONFIG_FILE,
+    CorpusMostlyExcludedError,
+    TrainingQualityConfig,
+    check_corpus_loss_or_fail,
+    get_gate_summary_by_corpus,
+    get_quality_verdict,
+    load_training_quality_config
+)
+from sciencebeam_parser.training.quality.counting import (
+    count_entity_starts,
+    count_label_starts_per_sequence,
+    get_canonical_model_name,
+    is_model_counted_by_label
+)
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.app.parser import ScienceBeamParser
@@ -70,6 +93,50 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         '--delft-output-path',
         type=str,
         required=True
+    )
+    parser.add_argument(
+        '--quality-record-path',
+        type=str,
+        required=False,
+        help=(
+            'File pattern of the quality.jsonl written at generation, e.g.'
+            ' "<data>/train/*/reference-segmenter/quality.jsonl". Its counts are joined'
+            ' with the entity count only this step can take. Without it the entity count'
+            ' is still recorded, with nothing to compare it against.'
+        )
+    )
+    parser.add_argument(
+        '--quality-output-path',
+        type=str,
+        required=False,
+        help=(
+            'Where to write the assembly quality record'
+            ' (default: the delft output path with ".quality.jsonl" appended).'
+        )
+    )
+    parser.add_argument(
+        '--quality-filter',
+        action='store_true',
+        help=(
+            'Exclude documents failing the quality thresholds, rather than only'
+            ' recording their counts. Assembly refuses when a corpus loses more than'
+            ' the configured share of its documents.'
+        )
+    )
+    parser.add_argument(
+        '--quality-config-path',
+        type=str,
+        default=TRAINING_QUALITY_CONFIG_FILE,
+        help='Thresholds the quality filter applies (default: the shipped config).'
+    )
+    parser.add_argument(
+        '--max-excluded-ratio',
+        type=float,
+        required=False,
+        help=(
+            'Override the configured share of a corpus beyond which assembly refuses.'
+            ' Raising it is a decision to record, not a way around the refusal.'
+        )
     )
     parser.add_argument(
         '--include-extra-columns',
@@ -204,14 +271,19 @@ def get_data_generator_for_model_name(
     )
 
 
-def iter_generate_delft_training_data_lines_for_document(  # pylint: disable=too-many-locals
+class DelftDocumentResult(NamedTuple):
+    data_lines: Sequence[str]
+    labeled_layout_tokens_list: Sequence[Sequence[LabeledLayoutToken]]
+
+
+def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
     tei_file: str,
     raw_file: Optional[str],
     training_tei_parser: TrainingTeiParser,
     data_generator: ModelDataGenerator,
     column_layout: GrobidColumnLayout,
     include_extra_columns: bool = False
-) -> Iterable[str]:
+) -> DelftDocumentResult:
     with auto_download_input_file(
         tei_file,
         auto_decompress=True
@@ -258,7 +330,7 @@ def iter_generate_delft_training_data_lines_for_document(  # pylint: disable=too
         _texts, features = load_data_crf_lines(data_line_iterable)
     LOGGER.debug('features: %r', features)
     if not len(features):  # pylint: disable=len-as-condition
-        return
+        return DelftDocumentResult([], labeled_layout_tokens_list)
     feature_indices = get_validated_training_data_feature_indices(
         column_layout,
         feature_column_count=len(features[0][0]),
@@ -266,12 +338,158 @@ def iter_generate_delft_training_data_lines_for_document(  # pylint: disable=too
         data_generator_column_names=data_generator.feature_names,
         include_extra_columns=include_extra_columns
     )
-    yield from iter_format_tag_result(
-        tag_result=translated_tag_result,
-        output_format=TagOutputFormats.DATA,
-        texts=None,
-        features=select_feature_columns(features, feature_indices)
+    return DelftDocumentResult(
+        list(iter_format_tag_result(
+            tag_result=translated_tag_result,
+            output_format=TagOutputFormats.DATA,
+            texts=None,
+            features=select_feature_columns(features, feature_indices)
+        )),
+        labeled_layout_tokens_list
     )
+
+
+def get_document_id_for_tei_file(
+    tei_file: str,
+    tei_filename_suffix: Optional[str]
+) -> str:
+    """The document id generation recorded, which is the source name.
+
+    A model with no declared suffix, or a file that does not carry it, falls back
+    to everything before the first dot.
+    """
+    basename = os.path.basename(tei_file)
+    if basename.endswith('.gz'):
+        basename = basename[:-len('.gz')]
+    if tei_filename_suffix and basename.endswith(tei_filename_suffix):
+        return basename[:-len(tei_filename_suffix)]
+    return basename.split('.', maxsplit=1)[0]
+
+
+def get_tei_filename_suffix_for_model_name(
+    model_name: str,
+    sciencebeam_parser: ScienceBeamParser
+) -> Optional[str]:
+    model = sciencebeam_parser.fulltext_models.get_sequence_model_by_name(model_name)
+    return model.get_tei_training_data_generator().get_default_tei_filename_suffix()
+
+
+def get_assembled_document_record(
+    document_id: str,
+    model_name: str,
+    result: DelftDocumentResult,
+    generated_record_by_document_id: Mapping[str, GeneratedDocumentRecord],
+    quality_config: Optional[TrainingQualityConfig] = None,
+) -> AssembledDocumentRecord:
+    generated = generated_record_by_document_id.get(document_id)
+    entity_start_count = count_entity_starts(
+        model_name, result.labeled_layout_tokens_list
+    )
+    verdict = None
+    if quality_config is not None:
+        verdict = get_quality_verdict(
+            document_id=document_id,
+            thresholds=quality_config.get_thresholds_for_model(
+                get_canonical_model_name(model_name)
+            ),
+            jats_status=generated.jats_status if generated else None,
+            jats_reference_count=generated.jats_reference_count if generated else None,
+            written=generated.written if generated else None,
+            entity_element_count=generated.entity_element_count if generated else None,
+            entity_start_count=entity_start_count,
+            sequence_count=len(result.labeled_layout_tokens_list),
+        )
+    return AssembledDocumentRecord(
+        document_id=document_id,
+        model_name=get_canonical_model_name(model_name),
+        corpus=generated.corpus if generated else None,
+        sequence_count=len(result.labeled_layout_tokens_list),
+        entity_start_count=entity_start_count,
+        label_start_counts=(
+            count_label_starts_per_sequence(result.labeled_layout_tokens_list)
+            if is_model_counted_by_label(model_name)
+            else None
+        ),
+        generated=generated,
+        verdict=verdict,
+    )
+
+
+def discard_refused_output(delft_output_path: str) -> None:
+    """Leave nothing usable behind when assembly refuses.
+
+    The data is written as documents are assembled, so by the time a corpus is
+    known to be mostly excluded the file exists and would look like a corpus to
+    whatever reads it next. A remote path cannot be removed here, and says so.
+    """
+    if not os.path.exists(delft_output_path):
+        LOGGER.warning(
+            'assembly refused; the output at %r could not be removed and'
+            ' holds only the documents that passed',
+            delft_output_path
+        )
+        return
+    os.remove(delft_output_path)
+    LOGGER.warning('assembly refused; removed the partial output at %r', delft_output_path)
+
+
+def log_gate_summary(
+    model_name: str,
+    assembled_records: Sequence[AssembledDocumentRecord],
+    quality_config: TrainingQualityConfig,
+    max_excluded_ratio: Optional[float] = None,
+    delft_output_path: Optional[str] = None,
+) -> None:
+    summary_by_corpus = get_gate_summary_by_corpus([
+        (record.verdict, record.corpus)
+        for record in assembled_records
+        if record.verdict is not None
+    ])
+    for record in assembled_records:
+        if record.verdict is not None and record.verdict.is_excluded:
+            LOGGER.warning('excluding %s', record.verdict)
+    for corpus, summary in sorted(
+        summary_by_corpus.items(), key=lambda item: item[0] or ''
+    ):
+        LOGGER.info(
+            '%s / %s: %s', corpus or 'corpus not known',
+            get_canonical_model_name(model_name), summary
+        )
+    try:
+        check_corpus_loss_or_fail(
+            summary_by_corpus,
+            max_excluded_ratio
+            if max_excluded_ratio is not None
+            else quality_config.max_excluded_ratio
+        )
+    except CorpusMostlyExcludedError:
+        if delft_output_path:
+            discard_refused_output(delft_output_path)
+        raise
+
+
+def log_assembly_summary(
+    model_name: str,
+    assembled_records: Sequence[AssembledDocumentRecord],
+    generated_record_by_document_id: Mapping[str, GeneratedDocumentRecord],
+) -> None:
+    canonical_model_name = get_canonical_model_name(model_name)
+    for corpus, summary in sorted(
+        get_assembly_summary_by_corpus(assembled_records).items(),
+        key=lambda item: item[0] or ''
+    ):
+        LOGGER.info(
+            '%s / %s: %s', corpus or 'corpus not known', canonical_model_name, summary
+        )
+    document_ids_without_output = get_document_ids_without_generated_output(
+        generated_record_by_document_id
+    )
+    if document_ids_without_output:
+        LOGGER.warning(
+            '%d documents generation wrote no %s file for: %r',
+            len(document_ids_without_output), canonical_model_name,
+            document_ids_without_output
+        )
 
 
 def generate_delft_training_data(  # pylint: disable=too-many-locals
@@ -280,7 +498,12 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     raw_source_path: str,
     delft_output_path: str,
     sciencebeam_parser: ScienceBeamParser,
-    include_extra_columns: bool = False
+    include_extra_columns: bool = False,
+    quality_record_path: Optional[str] = None,
+    quality_output_path: Optional[str] = None,
+    quality_filter: bool = False,
+    quality_config_path: str = TRAINING_QUALITY_CONFIG_FILE,
+    max_excluded_ratio: Optional[float] = None
 ):
     training_tei_parser = get_training_tei_parser_for_model_name(
         model_name,
@@ -309,23 +532,68 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     else:
         raw_file_list = [None] * len(tei_file_list)
     LOGGER.info('raw_file_list: %r', raw_file_list)
+    generated_record_by_document_id = (
+        read_generated_document_records(quality_record_path)
+        if quality_record_path
+        else {}
+    )
+    tei_filename_suffix = get_tei_filename_suffix_for_model_name(
+        model_name, sciencebeam_parser=sciencebeam_parser
+    )
+    quality_config = (
+        load_training_quality_config(quality_config_path) if quality_filter else None
+    )
+    if quality_filter and not quality_record_path:
+        LOGGER.warning(
+            'no --quality-record-path given, so the thresholds against the JATS and'
+            ' the generated elements cannot be applied and are reported as unchecked'
+        )
+    assembled_records: List[AssembledDocumentRecord] = []
     LOGGER.info('writing to : %r', delft_output_path)
     with auto_uploading_output_file(
         delft_output_path,
         mode='w',
         encoding='utf-8',
     ) as data_fp:
-        for document_index, (tei_file, raw_file) in enumerate(zip(tei_file_list, raw_file_list)):
-            if document_index > 0:
-                data_fp.write('\n\n')
-            data_fp.writelines(iter_generate_delft_training_data_lines_for_document(
+        written_document_count = 0
+        for tei_file, raw_file in zip(tei_file_list, raw_file_list):
+            result = get_delft_training_data_for_document(
                 tei_file=tei_file,
                 raw_file=raw_file,
                 training_tei_parser=training_tei_parser,
                 data_generator=data_generator,
                 column_layout=column_layout,
                 include_extra_columns=include_extra_columns
-            ))
+            )
+            record = get_assembled_document_record(
+                document_id=get_document_id_for_tei_file(tei_file, tei_filename_suffix),
+                model_name=model_name,
+                result=result,
+                generated_record_by_document_id=generated_record_by_document_id,
+                quality_config=quality_config,
+            )
+            assembled_records.append(record)
+            if record.verdict is not None and record.verdict.is_excluded:
+                continue
+            # The blank line separates documents, so it follows what was written
+            # rather than the position in the source list.
+            if written_document_count:
+                data_fp.write('\n\n')
+            data_fp.writelines(result.data_lines)
+            written_document_count += 1
+    write_assembly_records(
+        quality_output_path or delft_output_path + '.quality.jsonl',
+        assembled_records
+    )
+    log_assembly_summary(
+        model_name, assembled_records, generated_record_by_document_id
+    )
+    if quality_config is not None:
+        log_gate_summary(
+            model_name, assembled_records, quality_config,
+            max_excluded_ratio=max_excluded_ratio,
+            delft_output_path=delft_output_path
+        )
 
 
 def run(args: argparse.Namespace):
@@ -340,16 +608,24 @@ def run(args: argparse.Namespace):
         raw_source_path=args.raw_source_path,
         delft_output_path=args.delft_output_path,
         sciencebeam_parser=sciencebeam_parser,
-        include_extra_columns=args.include_extra_columns
+        include_extra_columns=args.include_extra_columns,
+        quality_record_path=args.quality_record_path,
+        quality_output_path=args.quality_output_path,
+        quality_filter=args.quality_filter,
+        quality_config_path=args.quality_config_path,
+        max_excluded_ratio=args.max_excluded_ratio
     )
 
 
 def main(argv: Optional[List[str]] = None):
     LOGGER.debug('argv: %r', argv)
     args = parse_args(argv)
+    # The import chain installs a root handler and raises the root level, so this
+    # CLI's own output -- the quality summary included -- is otherwise dropped.
+    for name in [__name__, 'sciencebeam_parser']:
+        logging.getLogger(name).setLevel('DEBUG' if args.debug else 'INFO')
     if args.debug:
-        for name in [__name__, 'sciencebeam_parser', 'sciencebeam_trainer_delft']:
-            logging.getLogger(name).setLevel('DEBUG')
+        logging.getLogger('sciencebeam_trainer_delft').setLevel('DEBUG')
     run(args)
 
 

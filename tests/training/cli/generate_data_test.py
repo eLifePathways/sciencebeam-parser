@@ -61,6 +61,7 @@ from sciencebeam_parser.training.cli.generate_data import (
     generate_training_data_for_layout_document,
     main,
 )
+from sciencebeam_parser.training.quality.record import DocumentStatus, JatsStatus
 
 from tests.processors.fulltext.model_mocks import MockFullTextModels
 from tests.test_utils import log_on_exception
@@ -425,6 +426,179 @@ class TestGenerateTrainingDataForLayoutDocument:
             tei_xml_xpath='//tei:bibl/tei:title[@level="a"]',
             tei_expected_values=[sample_layout_document.ref_title_block.text]
         )
+
+    def test_should_return_a_quality_record_with_the_count_per_model(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        record = generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=False
+        )
+
+        json_dict_by_model = record.to_json_dict_by_model(
+            ['reference-segmenter', 'citation', 'segmentation']
+        )
+        reference_segmenter_json_dict = json_dict_by_model['reference-segmenter']
+        assert reference_segmenter_json_dict['document_id'] == 'test1'
+        assert reference_segmenter_json_dict['status'] == DocumentStatus.OK
+        assert reference_segmenter_json_dict['written'] is True
+        assert reference_segmenter_json_dict['entity_element_count'] == 1
+        assert json_dict_by_model['citation']['entity_element_count'] == 1
+        assert 'entity_element_count' not in json_dict_by_model['segmentation']
+
+    def test_should_report_a_missing_jats_without_a_reference_count(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        record = generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=False
+        )
+
+        assert record.to_json_dict_by_model(
+            ['reference-segmenter']
+        )['reference-segmenter']['jats'] == {'status': JatsStatus.MISSING}
+
+    def test_should_report_a_jats_that_could_not_be_parsed(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        empty_jats_path = tmp_path / 'empty.jats.xml'
+        empty_jats_path.write_bytes(b'')
+
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        record = generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=False,
+            jats_xml_filename=str(empty_jats_path)
+        )
+
+        assert record.to_json_dict_by_model(
+            ['reference-segmenter']
+        )['reference-segmenter']['jats'] == {'status': JatsStatus.UNPARSABLE}
+
+    def test_should_report_a_jats_declaring_no_references_as_a_zero_count(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        jats_path = tmp_path / 'no-references.jats.xml'
+        jats_path.write_text(
+            '<article><back><sec><p>Appendix text.</p></sec></back></article>',
+            encoding='utf-8'
+        )
+
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        record = generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=False,
+            jats_xml_filename=str(jats_path)
+        )
+
+        assert record.to_json_dict_by_model(
+            ['reference-segmenter']
+        )['reference-segmenter']['jats'] == {
+            'status': JatsStatus.OK,
+            'reference_count': 0,
+            'aligned_reference_count': 0
+        }
+
+    def test_should_count_the_jats_references_and_the_citation_labels(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        jats_path = tmp_path / 'references.jats.xml'
+        jats_path.write_text(
+            '<article><back><ref-list>'
+            '<ref><label>1</label><element-citation>'
+            '<article-title>Reference 1</article-title>'
+            '<person-group person-group-type="author">'
+            '<name><surname>Ref Author Surname 1</surname></name>'
+            '</person-group>'
+            '<pub-id pub-id-type="doi">10.1234/not-printed</pub-id>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>',
+            encoding='utf-8'
+        )
+
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        record = generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=False,
+            jats_xml_filename=str(jats_path)
+        )
+
+        json_dict = record.to_json_dict_by_model(['citation'])['citation']
+        assert json_dict['jats']['reference_count'] == 1
+        assert json_dict['jats']['aligned_reference_count'] == 1
+        label_counts = json_dict['label_counts']
+        assert label_counts['<title>'] == {'jats': 1, 'marked': 1}
+        # The DOI is in the JATS and not on the page: counted, and not marked.
+        assert label_counts[IDENTIFIER_LABEL] == {'jats': 1, 'marked': 0}
 
     def test_not_should_generate_figure_data_if_not_present(  # noqa pylint: disable=too-many-locals, too-many-statements
         self,
