@@ -360,6 +360,23 @@ class TestTableTrainingTeiParser:
             (TOKEN_2, 'B-<paragraph>')
         ]]
 
+    def test_should_continue_the_paragraph_after_a_nested_citation_marker(self):
+        tei_root = _get_training_tei_with_text([
+            E('p', TOKEN_1, ' ', E('ref', {'type': 'biblio'}, TOKEN_2), ' ', TOKEN_3, E('lb')),
+            '\n',
+            E('p', TOKEN_4, E('lb')),
+            '\n'
+        ])
+        tag_result = get_training_tei_parser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<paragraph>'),
+            (TOKEN_2, 'B-<citation_marker>'),
+            (TOKEN_3, 'I-<paragraph>'),
+            (TOKEN_4, 'B-<paragraph>')
+        ]]
+
     def test_should_parse_single_label_with_multiple_lines(self):
         tei_root = _get_training_tei_with_text([
             E('p', TOKEN_1, E('lb'), '\n', TOKEN_2, E('lb')),

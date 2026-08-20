@@ -433,7 +433,8 @@ def _iter_flat_tei_training_text_from_element(
             path=current_path,
             is_start=is_start
         )
-        is_start = False
+        if not parent_element.text.isspace():
+            is_start = False
 
     for child_element in parent_element:
         if is_line_break_element(child_element):
@@ -451,7 +452,8 @@ def _iter_flat_tei_training_text_from_element(
                 path=current_path,
                 is_start=is_start
             )
-            is_start = False
+            if not child_element.tail.isspace():
+                is_start = False
 
 
 def _iter_tei_training_lines_from_element(
@@ -593,8 +595,6 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
                 )
             )
             LOGGER.debug('tei_training_lines: %r', tei_training_lines)
-            prefix = ''
-            prev_label = ''
             for line_index, line in enumerate(tei_training_lines):
                 line_meta = LayoutLineMeta(line_id=1 + line_index)
                 for text in line.text_list:
@@ -603,14 +603,12 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
                     token_count = 0
                     if text.path.element_list:
                         label = self.get_label_for_element_path(text.path, text=text.text)
-                        if prev_label != label:
-                            prefix = 'B-' if text.is_start else 'I-'
+                        prefix = 'B-' if text.is_start else 'I-'
                     else:
                         label = 'O'
                         prefix = ''
                     if label in OTHER_LABELS:
                         prefix = ''
-                    prev_label = label
                     for token_text in get_tokenized_tokens(text.text):
                         yield LabeledLayoutToken(
                             label=prefix + label,
