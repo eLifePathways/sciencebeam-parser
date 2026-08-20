@@ -231,3 +231,30 @@ quantisation and per-provider parameter support. Note that latency and throughpu
 
 Not every provider is reachable under the zero-retention pin — Parasail answered 429 immediately —
 so a candidate has to be tried, not just looked up.
+
+## CI
+
+The benchmark workflow passes `OPENROUTER_API_KEY` from the `benchmark` environment into the parser
+container as a bare `-e OPENROUTER_API_KEY`, so the value never appears in a command line and an
+unset secret leaves it unset rather than empty. Every non-LLM profile ignores it, so it is passed
+unconditionally.
+
+Select the engine the same way as any other configuration: a `profile:llm_references` label on the
+PR, or the `profile` input on `workflow_dispatch`.
+
+`SCIENCEBEAM_PARSER__PRELOAD_ON_STARTUP=true` is already set there, which means an LLM profile
+validates its endpoint and model id while the container starts. A missing key or an unreachable
+endpoint therefore fails at "Wait for parser" with the reason in the container logs, rather than
+part-way through a run.
+
+**PLOS cannot be combined with an LLM profile.** `benchmarks/run.py` refuses it, naming the profile
+and the corpus, because provider zero-retention does not cover OpenRouter itself and those
+manuscripts are not redistributable. This matters most on `main`, where the workflow adds
+`--include-corpus plos-manuscripts` automatically — so an LLM profile on `main` fails rather than
+quietly sending private manuscripts to a third party. Point the engine at a self-hosted endpoint if
+that corpus needs covering.
+
+Nothing is traced in CI: no collector endpoint is set, so the engine emits no spans.
+
+Unit tests reach no network. The engine's tests are fixture-driven and the client is a `Protocol`, so
+the ordinary CI job needs no secret at all.
