@@ -27,6 +27,12 @@ delft = [
 cv = [
     "layoutparser==0.3.2",
 ]
+# Tracing for the llm engine. Optional: without it, and without a collector
+# endpoint, the engine emits nothing and behaves identically.
+telemetry = [
+    "opentelemetry-sdk>=1.29",
+    "opentelemetry-exporter-otlp-proto-http>=1.29",
+]
 
 [dependency-groups]
 benchmark = [

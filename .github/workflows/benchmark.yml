@@ -164,6 +164,11 @@ jobs:
             --baseline-only
 
       - name: Start sciencebeam-parser
+        env:
+          # An llm profile reads this; every other profile ignores it. Passed as a
+          # bare `-e NAME` so the value never appears in a command line, and so an
+          # unset secret leaves it unset in the container rather than empty.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           PROFILE_ENV=()
           if [ -n "${{ env.BENCHMARK_PROFILE }}" ]; then
@@ -171,6 +176,7 @@ jobs:
           fi
           docker run -d --name sciencebeam-parser -p 8080:8070 \
             -e SCIENCEBEAM_PARSER__PRELOAD_ON_STARTUP=true \
+            -e OPENROUTER_API_KEY \
             "${PROFILE_ENV[@]}" ${{ steps.image_tag.outputs.value }}
 
       - name: Wait for parser
@@ -182,7 +188,10 @@ jobs:
             sleep 5
           done
           docker logs sciencebeam-parser >&2
-          echo "Parser never became healthy" >&2; exit 1
+          echo "Parser never became healthy" >&2
+          echo "For an llm profile, PRELOAD_ON_STARTUP validates the endpoint and" >&2
+          echo "model id at startup, so a missing OPENROUTER_API_KEY fails here." >&2
+          exit 1
 
       - name: Run benchmark
         env:
