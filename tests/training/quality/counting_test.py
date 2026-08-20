@@ -1,12 +1,20 @@
 from lxml import etree
 
 from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
-from sciencebeam_parser.models.data import LabeledLayoutModelData, LayoutModelData
+from sciencebeam_parser.document.layout_document import LayoutToken
+from sciencebeam_parser.models.data import (
+    LabeledLayoutModelData,
+    LabeledLayoutToken,
+    LayoutModelData
+)
 from sciencebeam_parser.training.jats.field_vocab import JatsSubFieldNames
 from sciencebeam_parser.training.quality.counting import (
     count_citation_labels,
     count_entity_elements,
-    get_labels_for_model_data_list
+    count_entity_starts,
+    count_label_starts_per_sequence,
+    get_labels_for_model_data_list,
+    is_model_counted_by_label
 )
 
 
@@ -120,3 +128,79 @@ class TestCountCitationLabels:
         )
         assert counts['<title>'] == {'jats': 2, 'marked': 1}
         assert counts['<date>'] == {'jats': 1, 'marked': 2}
+
+
+def _labeled_token(label: str) -> LabeledLayoutToken:
+    return LabeledLayoutToken(label=label, layout_token=LayoutToken('token'))
+
+
+class TestCountEntityStarts:
+    def test_should_count_one_entity_per_start(self):
+        assert count_entity_starts('reference-segmenter', [[
+            _labeled_token('B-<reference>'),
+            _labeled_token('I-<reference>'),
+            _labeled_token('B-<reference>'),
+        ]]) == 2
+
+    def test_should_count_across_sequences(self):
+        assert count_entity_starts('reference-segmenter', [
+            [_labeled_token('B-<reference>')],
+            [_labeled_token('B-<reference>')],
+        ]) == 2
+
+    def test_should_not_count_another_label(self):
+        assert count_entity_starts('reference-segmenter', [[
+            _labeled_token('B-<label>'),
+            _labeled_token('B-<reference>'),
+        ]]) == 1
+
+    def test_should_count_an_element_that_returned_no_entity_as_missing(self):
+        # Two elements sharing a label came back as one entity before the parse
+        # kept element boundaries; the count is what says so.
+        assert count_entity_starts('reference-segmenter', [[
+            _labeled_token('B-<reference>'),
+            _labeled_token('I-<reference>'),
+            _labeled_token('I-<reference>'),
+        ]]) == 1
+
+    def test_should_return_none_for_a_model_counted_by_label(self):
+        assert count_entity_starts('citation', [[_labeled_token('B-<title>')]]) is None
+
+
+class TestCountLabelStartsPerSequence:
+    def test_should_count_a_label_once_per_sequence(self):
+        assert count_label_starts_per_sequence([[
+            _labeled_token('B-<author>'),
+            _labeled_token('I-<author>'),
+            _labeled_token('B-<author>'),
+        ]]) == {'<author>': 1}
+
+    def test_should_count_each_sequence_that_marks_the_label(self):
+        assert count_label_starts_per_sequence([
+            [_labeled_token('B-<title>'), _labeled_token('B-<date>')],
+            [_labeled_token('B-<title>')],
+        ]) == {'<title>': 2, '<date>': 1}
+
+    def test_should_ignore_tokens_outside_any_entity(self):
+        assert count_label_starts_per_sequence([[
+            _labeled_token('O'), _labeled_token('B-<title>'), _labeled_token('O'),
+        ]]) == {'<title>': 1}
+
+
+class TestGetCanonicalModelName:
+    def test_should_accept_the_underscored_spelling_the_delft_cli_takes(self):
+        # generate_delft_data is invoked with --model-name=reference_segmenter,
+        # while generation names the same model reference-segmenter.
+        assert count_entity_starts('reference_segmenter', [[
+            _labeled_token('B-<reference>'), _labeled_token('B-<reference>'),
+        ]]) == 2
+
+    def test_should_accept_the_underscored_spelling_for_elements(self):
+        tei_root = etree.fromstring(
+            '<tei><text><listBibl><bibl>Reference 1</bibl></listBibl></text></tei>'
+        )
+        assert count_entity_elements('reference_segmenter', tei_root) == 1
+
+    def test_should_recognise_a_label_counted_model_either_way(self):
+        assert is_model_counted_by_label('citation')
+        assert not is_model_counted_by_label('reference_segmenter')

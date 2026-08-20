@@ -146,6 +146,45 @@ which `delft` models read as a text feature and `wapiti` templates do not
 reference. Training data generated with the flag cannot be mixed with GROBID's
 `segmentation` corpus, since it is one column wider.
 
+#### The assembly quality record
+
+This step is the only place the last count exists: the TEI holds elements, and
+what the training data ends up with is the entities those elements parse back to.
+It writes `<delft-output-path>.quality.jsonl` (or `--quality-output-path`), one row
+per document, and logs a summary per corpus.
+
+Pass `--quality-record-path` to join what generation recorded, so that a loss can be
+attributed to a stage rather than only observed:
+
+```bash
+python -m sciencebeam_parser.training.cli.generate_delft_data \
+    --model-name="reference_segmenter" \
+    --tei-source-path="data/generated-training-data/train/*/reference-segmenter/corpus/tei/*.tei.xml" \
+    --quality-record-path="data/generated-training-data/train/*/reference-segmenter/quality.jsonl" \
+    --delft-output-path="./data/generated-training-data/delft/reference-segmenter/corpus/reference-segmenter.data"
+```
+
+```json
+{
+  "document_id": "PPR459453", "model": "reference-segmenter", "corpus": "scielo_preprints-jats",
+  "sequence_count": 1, "entity_start_count": 2,
+  "generated": {"jats": {"reference_count": 45}, "entity_element_count": 2}
+}
+```
+
+- `entity_start_count` against the generated `entity_element_count` is the parse: fewer
+  entities than elements is a boundary lost between siblings, and the summary names
+  the documents it happened to.
+- `sequence_count` is the training sequences the document contributes. For `citation`
+  every element is its own sequence, so it has no entity count and carries
+  `label_start_counts` instead — per label, the sequences marking it, comparable with
+  what generation recorded as marked.
+- A document generation recorded that produced no training data at all is reported
+  by id: nothing that iterates the TEI can see it.
+
+Without `--quality-record-path` the counts are still recorded, with nothing to
+compare them against — which is enough to re-check a committed corpus offline.
+
 #### Example command for `segmentation` model
 
 ```bash

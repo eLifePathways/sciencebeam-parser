@@ -1,4 +1,5 @@
 # pylint: disable=not-callable
+import json
 import logging
 import gzip
 from pathlib import Path
@@ -27,6 +28,7 @@ from sciencebeam_parser.models.data import DocumentFeaturesContext, ModelDataGen
 
 import sciencebeam_parser.training.cli.generate_delft_data as generate_delft_data_module
 from sciencebeam_parser.training.cli.generate_delft_data import (
+    get_document_id_for_tei_file,
     main,
     translate_tag_result_tags_IOB_to_grobid,
     translate_tags_IOB_to_grobid
@@ -612,3 +614,122 @@ class TestMain:
         LOGGER.debug('texts: %r', texts)
         assert len(texts) == 1
         assert list(texts[0]) == tokens
+
+
+@log_on_exception
+class TestQualityRecord:
+    def _write_reference_segmenter_tei(
+        self, tei_source_path: Path, document_id: str, bibl_count: int
+    ) -> None:
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (
+            tei_source_path / f'{document_id}.references.referenceSegmenter.tei.xml'
+        ).write_bytes(etree.tostring(E('tei', E('text', E('listBibl', *[
+            child
+            for index in range(bibl_count)
+            for child in (E('bibl', f'reference{index}', E('lb')), '\n')
+        ])))))
+
+    def test_should_record_the_entity_count_the_parse_returns(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'tei'
+        self._write_reference_segmenter_tei(tei_source_path, 'document1', bibl_count=3)
+        output_path = tmp_path / 'output.data'
+        main([
+            '--model-name=reference_segmenter',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--delft-output-path={output_path}'
+        ])
+        quality_record_path = Path(str(output_path) + '.quality.jsonl')
+        rows = [
+            json.loads(line)
+            for line in quality_record_path.read_text(encoding='utf-8').splitlines()
+        ]
+        assert len(rows) == 1
+        assert rows[0]['document_id'] == 'document1'
+        assert rows[0]['model'] == 'reference-segmenter'
+        assert rows[0]['entity_start_count'] == 3
+
+    def test_should_join_the_record_generation_wrote(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
+        self._write_reference_segmenter_tei(tei_source_path, 'document1', bibl_count=3)
+        generated_record_path = (
+            tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        )
+        generated_record_path.write_text(json.dumps({
+            'document_id': 'document1',
+            'model': 'reference-segmenter',
+            'status': 'ok',
+            'jats': {'status': 'ok', 'reference_count': 4},
+            'written': True,
+            'entity_element_count': 3,
+        }) + '\n', encoding='utf-8')
+        output_path = tmp_path / 'output.data'
+        main([
+            '--model-name=reference_segmenter',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--quality-record-path={generated_record_path}',
+            f'--delft-output-path={output_path}'
+        ])
+        row = json.loads(
+            Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
+        )
+        assert row['corpus'] == 'ore'
+        assert row['entity_start_count'] == 3
+        assert row['generated']['entity_element_count'] == 3
+        assert row['generated']['jats']['reference_count'] == 4
+
+    def test_should_write_the_record_where_asked(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'tei'
+        self._write_reference_segmenter_tei(tei_source_path, 'document1', bibl_count=1)
+        quality_output_path = tmp_path / 'elsewhere' / 'quality.jsonl'
+        main([
+            '--model-name=reference_segmenter',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--delft-output-path={tmp_path}/output.data',
+            f'--quality-output-path={quality_output_path}'
+        ])
+        assert quality_output_path.exists()
+
+    def test_should_record_the_labels_a_citation_sequence_marks(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'tei'
+        tei_source_path.mkdir(parents=True)
+        (tei_source_path / 'document1.references.tei.xml').write_bytes(etree.tostring(
+            TEI_E('TEI', TEI_E('text', TEI_E('back', TEI_E('listBibl', *[
+                TEI_E('bibl', TEI_E('title', TOKEN_1, {'level': 'a'}), ' ', TOKEN_2),
+                '\n',
+            ]))))
+        ))
+        output_path = tmp_path / 'output.data'
+        main([
+            '--model-name=citation',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--delft-output-path={output_path}'
+        ])
+        row = json.loads(
+            Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
+        )
+        assert row['sequence_count'] == 1
+        assert row['label_start_counts'] == {'<title>': 1}
+        # every bibl is its own sequence, so there is no entity count to take
+        assert 'entity_start_count' not in row
+
+
+class TestGetDocumentIdForTeiFile:
+    def test_should_strip_the_model_suffix(self):
+        assert get_document_id_for_tei_file(
+            '/tei/PPR459453.references.referenceSegmenter.tei.xml',
+            '.references.referenceSegmenter.tei.xml'
+        ) == 'PPR459453'
+
+    def test_should_strip_a_gzip_suffix_first(self):
+        assert get_document_id_for_tei_file(
+            '/tei/PPR459453.references.tei.xml.gz', '.references.tei.xml'
+        ) == 'PPR459453'
+
+    def test_should_fall_back_for_a_model_with_no_declared_suffix(self):
+        assert get_document_id_for_tei_file('/tei/PPR459453.tei.xml', None) == 'PPR459453'
+
+    def test_should_fall_back_when_the_file_does_not_carry_the_suffix(self):
+        assert get_document_id_for_tei_file(
+            '/tei/PPR459453.something-else.tei.xml', '.references.tei.xml'
+        ) == 'PPR459453'
