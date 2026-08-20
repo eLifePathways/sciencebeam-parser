@@ -26,6 +26,11 @@ TRAINING_QUALITY_CONFIG_FILE = os.path.join(
 
 NO_CARDINALITY = 'none'
 
+# A JATS that was matched and could not be used is a defect; one that was never
+# matched leaves nothing to check against, which is not the same thing -- data is
+# legitimately generated with no JATS at all.
+JATS_STATUSES_THAT_FAILED = frozenset({'unparsable', 'unreadable'})
+
 
 class ExclusionReason:
     """Why a document's training data is not used, in the order the stages run."""
@@ -132,20 +137,20 @@ def get_quality_verdict(  # pylint: disable=too-many-branches
     """
     reasons: List[str] = []
     detail: Dict[str, Any] = {}
-    if sequence_count == 0:
-        reasons.append(ExclusionReason.NO_TRAINING_SEQUENCES)
     if not thresholds.has_cardinality_check:
+        if sequence_count == 0:
+            reasons.append(ExclusionReason.NO_TRAINING_SEQUENCES)
         return QualityVerdict(document_id, reasons, detail)
 
-    if jats_status is not None and jats_status != 'ok':
-        reasons.insert(0, ExclusionReason.JATS_NOT_READABLE)
+    if jats_status in JATS_STATUSES_THAT_FAILED:
+        reasons.append(ExclusionReason.JATS_NOT_READABLE)
         detail['jats_status'] = jats_status
     elif (
         thresholds.min_jats_reference_count is not None
         and jats_reference_count is not None
         and jats_reference_count < thresholds.min_jats_reference_count
     ):
-        reasons.insert(0, ExclusionReason.JATS_HAS_NO_REFERENCES)
+        reasons.append(ExclusionReason.JATS_HAS_NO_REFERENCES)
         detail['jats_reference_count'] = jats_reference_count
     if written is False:
         reasons.append(ExclusionReason.NO_GENERATED_OUTPUT)
@@ -172,6 +177,8 @@ def get_quality_verdict(  # pylint: disable=too-many-branches
         detail['entity_start_count'] = entity_start_count
         detail['entity_element_count'] = entity_element_count
 
+    if sequence_count == 0:
+        reasons.append(ExclusionReason.NO_TRAINING_SEQUENCES)
     return QualityVerdict(document_id, reasons, detail)
 
 

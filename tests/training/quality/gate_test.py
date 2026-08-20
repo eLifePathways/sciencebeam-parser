@@ -1,5 +1,6 @@
 import pytest
 
+from sciencebeam_parser.training.quality.counting import MODELS_WITHOUT_ENTITY_COUNT
 from sciencebeam_parser.training.quality.gate import (
     CorpusMostlyExcludedError,
     ExclusionReason,
@@ -221,3 +222,52 @@ class TestCheckCorpusLossOrFail:
                 ),
                 max_excluded_ratio=0.2
             )
+
+
+class TestGetQualityVerdictWithoutJats:
+    def test_should_not_exclude_a_document_generated_without_any_jats(self):
+        # Training data is legitimately generated with no --source-xml-path, which
+        # records the JATS as missing. There is nothing to check against, and
+        # excluding on it would refuse the whole corpus.
+        verdict = get_quality_verdict(
+            document_id=DOCUMENT_ID_1, thresholds=REFERENCE_SEGMENTER_THRESHOLDS,
+            jats_status='missing', written=True, entity_start_count=40, sequence_count=1,
+        )
+        assert not verdict.is_excluded
+
+    def test_should_still_exclude_a_jats_that_could_not_be_read(self):
+        for jats_status in ['unparsable', 'unreadable']:
+            verdict = get_quality_verdict(
+                document_id=DOCUMENT_ID_1, thresholds=REFERENCE_SEGMENTER_THRESHOLDS,
+                jats_status=jats_status, written=True, sequence_count=1,
+            )
+            assert verdict.primary_reason == ExclusionReason.JATS_NOT_READABLE
+
+    def test_should_name_the_earliest_stage_first_when_several_failed(self):
+        # No training sequences is the last stage, so a shortfall before it leads.
+        verdict = get_quality_verdict(
+            document_id=DOCUMENT_ID_1, thresholds=REFERENCE_SEGMENTER_THRESHOLDS,
+            jats_status='ok', jats_reference_count=45, written=True,
+            entity_element_count=2, entity_start_count=0, sequence_count=0,
+        )
+        assert verdict.primary_reason == ExclusionReason.ELEMENTS_SHORT_OF_JATS
+        assert verdict.exclusion_reasons[-1] == ExclusionReason.NO_TRAINING_SEQUENCES
+
+
+class TestConfiguredModelsAgainstCounting:
+    def test_should_declare_the_same_models_as_having_no_entity_count(self):
+        # Two lists of the same fact drift apart; the gate would then report a
+        # cardinality it never counts, or count one it does not gate.
+        config = load_training_quality_config()
+        without_cardinality = {
+            model_name
+            for model_name, thresholds in config.thresholds_by_model.items()
+            if not thresholds.has_cardinality_check
+        }
+        assert without_cardinality == set(MODELS_WITHOUT_ENTITY_COUNT)
+
+    def test_should_have_a_reason_for_every_model_without_a_check(self):
+        config = load_training_quality_config()
+        for thresholds in config.thresholds_by_model.values():
+            if not thresholds.has_cardinality_check:
+                assert thresholds.reason, thresholds.model_name

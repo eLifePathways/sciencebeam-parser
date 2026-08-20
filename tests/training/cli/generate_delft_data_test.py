@@ -825,6 +825,26 @@ class TestQualityFilter:
         )
         assert 'excluded' not in row
 
+    def test_should_leave_no_usable_data_behind_when_it_refuses(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
+        for index in range(3):
+            self._write_tei(tei_source_path, f'truncated{index}', bibl_count=2)
+        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        self._write_generated_record(record_path, [
+            {
+                'document_id': f'truncated{index}', 'written': True,
+                'jats': {'status': 'ok', 'reference_count': 45},
+                'entity_element_count': 2,
+            }
+            for index in range(3)
+        ])
+        with pytest.raises(CorpusMostlyExcludedError):
+            self._run(tmp_path, tei_source_path, record_path)
+        # a training run reading the path must not find a corpus there
+        assert not (tmp_path / 'output.data').exists()
+        # the record stays, so the refusal can be accounted for
+        assert (tmp_path / 'output.data.quality.jsonl').exists()
+
     def test_should_refuse_when_a_corpus_is_mostly_excluded(self, tmp_path: Path):
         tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
         for index in range(3):

@@ -49,6 +49,7 @@ from sciencebeam_parser.training.quality.assembly import (
 )
 from sciencebeam_parser.training.quality.gate import (
     TRAINING_QUALITY_CONFIG_FILE,
+    CorpusMostlyExcludedError,
     TrainingQualityConfig,
     check_corpus_loss_or_fail,
     get_gate_summary_by_corpus,
@@ -414,11 +415,30 @@ def get_assembled_document_record(
     )
 
 
+def discard_refused_output(delft_output_path: str) -> None:
+    """Leave nothing usable behind when assembly refuses.
+
+    The data is written as documents are assembled, so by the time a corpus is
+    known to be mostly excluded the file exists and would look like a corpus to
+    whatever reads it next. A remote path cannot be removed here, and says so.
+    """
+    if not os.path.exists(delft_output_path):
+        LOGGER.warning(
+            'assembly refused; the output at %r could not be removed and'
+            ' holds only the documents that passed',
+            delft_output_path
+        )
+        return
+    os.remove(delft_output_path)
+    LOGGER.warning('assembly refused; removed the partial output at %r', delft_output_path)
+
+
 def log_gate_summary(
     model_name: str,
     assembled_records: Sequence[AssembledDocumentRecord],
     quality_config: TrainingQualityConfig,
     max_excluded_ratio: Optional[float] = None,
+    delft_output_path: Optional[str] = None,
 ) -> None:
     summary_by_corpus = get_gate_summary_by_corpus([
         (record.verdict, record.corpus)
@@ -435,12 +455,17 @@ def log_gate_summary(
             '%s / %s: %s', corpus or 'corpus not known',
             get_canonical_model_name(model_name), summary
         )
-    check_corpus_loss_or_fail(
-        summary_by_corpus,
-        max_excluded_ratio
-        if max_excluded_ratio is not None
-        else quality_config.max_excluded_ratio
-    )
+    try:
+        check_corpus_loss_or_fail(
+            summary_by_corpus,
+            max_excluded_ratio
+            if max_excluded_ratio is not None
+            else quality_config.max_excluded_ratio
+        )
+    except CorpusMostlyExcludedError:
+        if delft_output_path:
+            discard_refused_output(delft_output_path)
+        raise
 
 
 def log_assembly_summary(
@@ -566,7 +591,8 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     if quality_config is not None:
         log_gate_summary(
             model_name, assembled_records, quality_config,
-            max_excluded_ratio=max_excluded_ratio
+            max_excluded_ratio=max_excluded_ratio,
+            delft_output_path=delft_output_path
         )
 
 
