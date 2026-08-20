@@ -97,11 +97,26 @@ their own reference's tokens only — which also catches the model attributing o
 to another, a mistake a flat field list would have matched against the whole document and labelled
 silently. Lowering the bound is the lever if it happens often.
 
-Measured on 10 references of one document: one batched call took 22s against 48s for ten single
-calls, with token accuracy 0.906 against 0.904 — roughly twice as fast at no cost in accuracy. The
-tail is worth knowing though: a long generation occasionally draws a provider timeout returned as
-HTTP 200 with an error body, and the retry that follows costs more than the batching saved. Lowering
-the bound is the lever if a provider proves flaky.
+Both settings are in `config.yml` rather than only in code, since they are the knobs worth turning:
+
+```yaml
+max_references_per_request: 10   # references per call
+max_concurrent_requests: 4       # calls in flight at once
+```
+
+Measured on 10 references: one batched call took 22s against 48s for ten single calls, at token
+accuracy 0.906 against 0.904 — twice as fast at no cost in accuracy. On 33 references in 4 batches,
+concurrency took 111s down to 58s with accuracy unchanged.
+
+**Raising the batch size is the wrong lever.** Decode cost is linear in output tokens however they
+are grouped, so a bigger batch does not generate less — it generates the same amount in one long
+stream that cannot be overlapped, and long generations are what draw provider timeouts (one cost
+about five minutes in retry). More, smaller batches running concurrently is the direction that helps.
+
+Lower `max_concurrent_requests` if the provider answers with 429s; the client retries them with
+backoff, but a rate-limited provider can make concurrency a net loss. Note also that spans from
+worker threads are siblings rather than nested, and that the service may already handle documents
+concurrently, which multiplies with this.
 
 ## What it guarantees
 

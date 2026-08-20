@@ -66,6 +66,28 @@ class TestShippedPrompts:
         assert 'not part of the reference' in prompt
 
 
+class TestShippedBatchingSettings:
+    @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
+    def test_should_expose_batching_and_concurrency_for_citation(
+        self, profile_name: str
+    ):
+        if 'citation' not in LLM_MODELS_BY_PROFILE[profile_name]:
+            return
+        model_config = get_resolved_models(profile_name)['citation']
+        assert model_config['max_references_per_request'] >= 1
+        assert model_config['max_concurrent_requests'] >= 1
+
+    @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
+    def test_should_read_them_into_the_engine_config(self, profile_name: str):
+        if 'citation' not in LLM_MODELS_BY_PROFILE[profile_name]:
+            return
+        config = LlmEngineConfig.from_model_config(
+            get_resolved_models(profile_name)['citation']
+        )
+        assert config.max_references_per_request == 10
+        assert config.max_concurrent_requests == 4
+
+
 class TestShippedLlmProfiles:
     @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
     def test_should_define_the_profile(self, profile_name: str):

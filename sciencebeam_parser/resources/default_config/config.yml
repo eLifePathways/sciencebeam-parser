@@ -204,6 +204,15 @@ sequence_model_profiles:
       provider: 'siliconflow'
       prompt_version: 'values-v3'
       reasoning: 'off'
+      # References of a document arrive in one call to the engine, which sends
+      # them in batches. Decode cost is linear in output tokens however they are
+      # grouped, so a larger batch does not generate less — it generates the same
+      # amount in one long stream that cannot be overlapped, and long generations
+      # are what draw provider timeouts. More, smaller batches run concurrently
+      # instead: 4 calls took 111s sequentially and 58s at 4 concurrent, with the
+      # same accuracy. Lower the concurrency if the provider answers with 429s.
+      max_references_per_request: 10
+      max_concurrent_requests: 4
   llm_references:
     extends: llm_reference_segmenter
     citation:
@@ -214,6 +223,15 @@ sequence_model_profiles:
       provider: 'siliconflow'
       prompt_version: 'values-v3'
       reasoning: 'off'
+      # References of a document arrive in one call to the engine, which sends
+      # them in batches. Decode cost is linear in output tokens however they are
+      # grouped, so a larger batch does not generate less — it generates the same
+      # amount in one long stream that cannot be overlapped, and long generations
+      # are what draw provider timeouts. More, smaller batches run concurrently
+      # instead: 4 calls took 111s sequentially and 58s at 4 concurrent, with the
+      # same accuracy. Lower the concurrency if the provider answers with 429s.
+      max_references_per_request: 10
+      max_concurrent_requests: 4
 
 profiles:
   biorxiv_elife:

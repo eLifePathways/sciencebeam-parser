@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Tuple
 
 from sciencebeam_parser.models.llm.client import (
@@ -102,11 +103,20 @@ class LlmModelImpl(ModelImpl):
         self, texts: List[List[str]]
     ) -> List[List[Tuple[str, str]]]:
         batch_size = max(1, self.config.max_references_per_request)
-        results: List[List[Tuple[str, str]]] = []
-        for start in range(0, len(texts), batch_size):
-            batch = texts[start:start + batch_size]
-            results.extend(self._predict_labels_from_values(batch))
-        return results
+        batches = [
+            texts[start:start + batch_size]
+            for start in range(0, len(texts), batch_size)
+        ]
+        workers = max(1, min(self.config.max_concurrent_requests, len(batches)))
+        if workers == 1 or len(batches) == 1:
+            per_batch = [self._predict_labels_from_values(batch) for batch in batches]
+        else:
+            # Batches are independent, so the wall-clock is the slowest batch
+            # rather than their sum. Order is preserved by mapping rather than
+            # completion order, and the first exception propagates.
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                per_batch = list(pool.map(self._predict_labels_from_values, batches))
+        return [labelled for batch in per_batch for labelled in batch]
 
     def _get_content(self, response_json, token_count: int) -> str:
         try:

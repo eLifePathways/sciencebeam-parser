@@ -1,4 +1,5 @@
 import json
+import threading
 from typing import Any, List, Mapping, Optional
 
 import pytest
@@ -38,6 +39,7 @@ class FakeClient:
         self.content = content
         self.error = error
         self.prompts: List[str] = []
+        self.lock = threading.Lock()
 
     def validate_configuration(self) -> None:
         if self.error:
@@ -45,7 +47,8 @@ class FakeClient:
 
     def get_completion(self, prompt: str, response_schema: Mapping[str, Any]):
         assert response_schema['type'] == 'object'
-        self.prompts.append(prompt)
+        with self.lock:
+            self.prompts.append(prompt)
         if self.error:
             raise self.error
         return {'choices': [{'message': {'content': self.content}}], 'provider': 'SiliconFlow'}
@@ -296,3 +299,60 @@ class TestCitationReferenceMarker:
         assert 'reference index 0' in caplog.text
         assert 'label=note' in caplog.text
         assert 'Fleming' in caplog.text
+
+
+class TestCitationConcurrency:
+    def test_should_preserve_order_across_parallel_batches(self):
+        token_lists = [
+            ['Alpha', 'A'], ['Bravo', 'B'], ['Charlie', 'C'], ['Delta', 'D'],
+        ]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_concurrent_requests': 4,
+            }),
+            client=FakeClient(content=batched([]))
+        )
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert [tokens[0] for tokens in token_lists] == [
+            labelled[0][0] for labelled in result
+        ]
+
+    def test_should_make_one_call_per_batch_when_parallel(self):
+        token_lists = [['Alpha'], ['Bravo'], ['Charlie']]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_concurrent_requests': 3,
+            }),
+            client=FakeClient(content=batched([]))
+        )
+        model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 3
+
+    def test_should_propagate_a_failure_from_a_worker(self):
+        token_lists = [['Alpha'], ['Bravo']]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_concurrent_requests': 2,
+            }),
+            client=FakeClient(content='{"references": [')
+        )
+        with pytest.raises(LlmResponseError, match='not json'):
+            model_impl.predict_labels(token_lists, no_features(token_lists))
+
+    def test_should_stay_sequential_when_concurrency_is_one(self):
+        token_lists = [['Alpha'], ['Bravo']]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_concurrent_requests': 1,
+            }),
+            client=FakeClient(content=batched([]))
+        )
+        assert len(model_impl.predict_labels(token_lists, no_features(token_lists))) == 2
