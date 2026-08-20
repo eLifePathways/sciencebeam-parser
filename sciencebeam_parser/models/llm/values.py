@@ -1,7 +1,19 @@
 import json
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+import logging
+from typing import (
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple
+)
 
 from sciencebeam_parser.models.llm.decode import LlmResponseError, iter_words
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def get_values_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
@@ -50,7 +62,7 @@ def find_unclaimed_span(
     positions: Tuple[str, List[int], List[int]],
     claimed: Sequence[bool],
     context: str = ''
-) -> Tuple[int, int]:
+) -> Optional[Tuple[int, int]]:
     """The earliest occurrence whose tokens are all unclaimed.
 
     Document order is not assumed: models emit `date` out of position often
@@ -71,9 +83,15 @@ def find_unclaimed_span(
         start = characters.find(wanted, start + 1)
     suffix = f' [{context}]' if context else ''
     if seen_but_claimed:
-        raise LlmResponseError(
-            f'value claimed by an earlier field: {wanted[:60]!r}{suffix}'
+        # Two fields over the same span is the model being wrong, not the response
+        # being malformed, and the guarantee is untouched: the text is in the
+        # source either way. Dropping the later claim costs one field; raising
+        # would cost every reference in the document.
+        LOGGER.warning(
+            'llm dropping a field whose text an earlier field already claimed:'
+            ' %r%s', wanted[:60], suffix
         )
+        return None
     raise LlmResponseError(f'value not found in source: {wanted[:60]!r}{suffix}')
 
 
@@ -152,11 +170,14 @@ def get_labels_for_fields(
         wanted = ''.join(iter_words(entry['text'])).lower()
         if not wanted:
             continue
-        first_token, last_token = find_unclaimed_span(
+        span = find_unclaimed_span(
             wanted, positions, claimed,
             context=f'{context}label={entry["label"]}'
             f' reference={" ".join(tokens)[:60]!r}'
         )
+        if span is None:
+            continue
+        first_token, last_token = span
         for token_index in range(first_token, last_token + 1):
             claimed[token_index] = True
             token_labels[token_index] = (

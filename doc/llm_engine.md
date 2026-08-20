@@ -121,6 +121,12 @@ model id is refused at load, because that tier requires allowing training on pro
 A response that cannot be decoded raises. There is no fallback to a CRF engine and no partial
 labelling: a score is only meaningful if every label came from the model under test.
 
+The line between raising and continuing follows the guarantee. A value absent from the source
+**raises** — that is the guarantee itself. Two fields claiming the same span does **not**: the text is
+in the source either way, so the later claim is dropped with a warning. Raising there would cost
+every reference in the document over one confused field, and a well-formed but implausible labelling
+is meant to be scored rather than rejected.
+
 A response cut off at the output limit raises `LlmTruncatedResponseError` naming
 `finish_reason`, the completion token count and the task, rather than surfacing as a JSON parse
 error. Raise `max_output_tokens`, or send less per request.

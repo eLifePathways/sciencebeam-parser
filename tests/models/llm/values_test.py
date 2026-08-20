@@ -79,9 +79,22 @@ class TestDecodeValuesResponse:
         assert labels[18] == 'B-<date>'
         assert labels[2] == 'B-<author>'
 
-    def test_should_raise_when_two_fields_claim_the_same_tokens(self):
-        with pytest.raises(LlmResponseError, match='claimed by an earlier field'):
-            get_labels(response([('pages', '34'), ('volume', '34')]))
+    def test_should_drop_a_field_whose_tokens_an_earlier_field_claimed(self, caplog):
+        with caplog.at_level('WARNING'):
+            labels = get_labels(response([('pages', '34'), ('volume', '34')]))
+        assert labels[22] == 'B-<pages>'
+        assert 'B-<volume>' not in labels
+        assert 'already claimed' in caplog.text
+
+    def test_should_keep_the_other_fields_when_one_overlaps(self):
+        labels = get_labels(response([
+            ('pages', '34'), ('volume', '34'), ('date', '2016')
+        ]))
+        assert labels[18] == 'B-<date>'
+
+    def test_should_still_raise_when_a_value_is_absent_from_the_source(self):
+        with pytest.raises(LlmResponseError, match='not found in source'):
+            get_labels(response([('title', 'text that is not in the input at all')]))
 
     def test_should_match_a_repeated_value_at_its_next_occurrence(self):
         labels = get_labels(response([('pages', '.'), ('title', 'High quality')]))
