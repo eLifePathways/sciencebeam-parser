@@ -66,6 +66,58 @@ python -m sciencebeam_parser.training.cli.generate_data \
 
 Additionally the `--gzip` argument can be passed in, resulting in gzip (`.gz`) compressed output files.
 
+#### The quality record
+
+Every run writes a `quality.jsonl` per model it generated for, one JSON line per
+source document, whether the document succeeded or not. It holds the count at each
+stage where the cardinality of the labels can change, so that a corpus can be
+compared against the JATS it was aligned from without counting labels in the
+generated data afterwards.
+
+The record is per model because generation is run per model: a corpus commonly
+holds one model's data at one document set and another model's at a different one,
+and a record covering the whole corpus would describe the last run rather than the
+data beside it. With `--use-directory-structure` each file sits beside that model's
+`corpus` directory, otherwise it is `<model>.quality.jsonl` in the output path:
+
+```text
+reference-segmenter/quality.jsonl
+citation/quality.jsonl
+```
+
+```json
+{
+  "document_id": "PPR459453",
+  "source_filename": "PPR459453.pdf",
+  "status": "ok",
+  "model": "citation",
+  "jats": {"status": "ok", "reference_count": 45, "aligned_reference_count": 2},
+  "written": true,
+  "entity_element_count": 2,
+  "label_counts": {"<title>": {"jats": 44, "marked": 2}}
+}
+```
+
+- `jats.status` is `ok`, `missing` (no JATS was matched), `unparsable` or
+  `unreadable`. A `reference_count` of 0 with status `ok` is a JATS that declares
+  no references — there was never anything to align.
+- `aligned_reference_count` is how many of those references the aligner placed, so
+  the difference from `reference_count` is alignment's.
+- `entity_element_count` is what the model wrote per entity: `bibl` for
+  `reference-segmenter` and `citation`, and absent for a model whose labels mark
+  regions rather than repeated entities. `written: false` is a model that found no
+  entities and so wrote no file at all.
+- `label_counts` is per citation label, over references rather than occurrences:
+  `jats` counts references whose JATS carries a sub-field for that label, `marked`
+  counts references the training data marks it in. The two differ legitimately —
+  a printed reference does not carry everything its JATS does, so a low rate for
+  an identifier or a URL is usually the page rather than the pipeline.
+
+The record is written by the parent process as each document finishes, so a run
+that is interrupted keeps the records it had, and a document that timed out or
+failed is present with a `status` of `timeout` or `error` in every model's file
+rather than missing.
+
 ### Annotating `tei` training data for the sequence models
 
 After the `tei` training data has been generated, it should get reviewed and manually annotated.
