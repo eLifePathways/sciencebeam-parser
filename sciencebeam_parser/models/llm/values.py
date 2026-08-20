@@ -1,15 +1,7 @@
 import json
-import re
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
-from sciencebeam_parser.models.llm.decode import LlmResponseError
-
-
-WORD_SEPARATOR = re.compile(r'[^0-9A-Za-zÀ-ɏ]+')
-
-
-def iter_words(text: str) -> List[str]:
-    return [word for word in WORD_SEPARATOR.split(text) if word]
+from sciencebeam_parser.models.llm.decode import LlmResponseError, iter_words
 
 
 def get_values_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:

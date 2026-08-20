@@ -57,6 +57,24 @@ Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM
 `temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
 `max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`.
 
+### Response shapes for the reference segmenter
+
+`lines` returns a line number per reference. `evidence` returns the line number **and** the first
+words on it — the number is still the answer, the words are only a check on it, so a wrong quote
+costs a check rather than the reference.
+
+The pilot behind this found `evidence` worth about 0.19 `partial_list` on a 12B and 0.003 on the 9B
+shipped here, at roughly four times the output tokens, which is why `lines` is the default. On one
+real reference list both found 33 references against a gold of 33, in 5.3s and 6.9s. `evidence` earns
+its cost on a weaker model, not on a capable one.
+
+A quote is accepted against the line it names or the one below it, since models name the line
+holding the reference number while quoting the words underneath. Anything else increments
+`sciencebeam.evidence_mismatches` on the span and logs a warning; set `evidence_mismatch_raises` to
+make the check load-bearing instead. It is off by default because a mismatch is a well-formed answer
+whose evidence disagrees, not a protocol violation — and in the pilot a 12B mismatched on 158 of 210
+references while the 9B mismatched on 1 of 118.
+
 ### Batching (citation)
 
 `processor.py` hands the engine every reference of a document at once, so the citation model batches

@@ -7,6 +7,18 @@ LINE_START = 'LINESTART'
 
 LABEL_ONLY_LINE = re.compile(r'^[\[(]?\d{1,3}[\])]?[.)]?$')
 
+WORD_SEPARATOR = re.compile(r'[^0-9A-Za-zÀ-ɏ]+')
+
+
+def iter_words(text: str) -> List[str]:
+    """Words with punctuation removed, so a quote can be compared with tokens.
+
+    One implementation, imported by the value shapes too: two of these drifting
+    apart is how a match silently stops matching.
+    """
+    return [word for word in WORD_SEPARATOR.split(text) if word]
+
+
 LINES_RESPONSE_SCHEMA: Mapping[str, Any] = {
     'type': 'object',
     'additionalProperties': False,
@@ -15,6 +27,27 @@ LINES_RESPONSE_SCHEMA: Mapping[str, Any] = {
         'starts': {
             'type': 'array',
             'items': {'type': 'integer'},
+        },
+    },
+}
+
+
+EVIDENCE_RESPONSE_SCHEMA: Mapping[str, Any] = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['references'],
+    'properties': {
+        'references': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'additionalProperties': False,
+                'required': ['line', 'starts_with'],
+                'properties': {
+                    'line': {'type': 'integer'},
+                    'starts_with': {'type': 'string', 'maxLength': 48},
+                },
+            },
         },
     },
 }
@@ -96,6 +129,88 @@ def snap_starts_to_label_lines(
             continue
         snapped.append(start)
     return sorted(snapped)
+
+
+def parse_evidence_line_starts(
+    content: str,
+    line_count: int
+) -> Tuple[List[int], List[str]]:
+    """Line numbers are the answer; the quoted words are only evidence for them.
+
+    Keeping the payload an index means a wrong quote costs a check rather than
+    the reference, which is the failure mode the anchor shape had.
+    """
+    try:
+        payload = json.loads(content)
+    except ValueError as exc:
+        raise LlmResponseError(f'response is not json: {exc}') from exc
+    if not isinstance(payload, dict) or 'references' not in payload:
+        raise LlmResponseError('response has no "references"')
+    entries = payload['references']
+    if not isinstance(entries, list) or not entries:
+        raise LlmResponseError('"references" is empty or not a list')
+    starts: List[int] = []
+    claims: List[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or 'line' not in entry:
+            raise LlmResponseError(f'reference entry is malformed: {entry!r}')
+        line = entry['line']
+        if isinstance(line, bool) or not isinstance(line, int):
+            raise LlmResponseError(f'line number is not an integer: {line!r}')
+        if not 0 <= line < line_count:
+            raise LlmResponseError(
+                f'line number {line} out of range for {line_count} lines'
+            )
+        starts.append(line)
+        claims.append(str(entry.get('starts_with') or ''))
+    if starts != sorted(set(starts)):
+        raise LlmResponseError(f'line numbers are not strictly ascending: {starts}')
+    return starts, claims
+
+
+def count_evidence_mismatches(
+    starts: Sequence[int],
+    claims: Sequence[str],
+    lines: Sequence[Sequence[str]]
+) -> int:
+    """A quote is accepted against the line it names or the one below it.
+
+    Models name the line holding the reference number while quoting the words on
+    the line under it, which is the training convention rather than an error.
+    """
+    mismatches = 0
+    for line, claim in zip(starts, claims):
+        wanted = iter_words(claim)
+        if not wanted:
+            continue
+        candidates = []
+        for offset in (0, 1):
+            if 0 <= line + offset < len(lines):
+                candidates.append(
+                    iter_words(' '.join(lines[line + offset]))[:len(wanted)]
+                )
+        if wanted not in candidates:
+            mismatches += 1
+    return mismatches
+
+
+def decode_evidence_response(
+    content: str,
+    tokens: Sequence[str],
+    line_status_values: Sequence[str]
+) -> Tuple[List[Tuple[str, str]], int]:
+    if len(tokens) != len(line_status_values):
+        raise LlmResponseError(
+            f'token count {len(tokens)} does not match feature rows'
+            f' {len(line_status_values)}'
+        )
+    line_numbers = get_line_numbers(line_status_values)
+    lines = get_lines(tokens, line_numbers)
+    starts, claims = parse_evidence_line_starts(content, line_count=len(lines))
+    mismatches = count_evidence_mismatches(starts, claims, lines)
+    snapped = snap_starts_to_label_lines(starts, lines)
+    labels = iter_labels_for_line_starts(tokens, line_numbers, snapped)
+    return list(zip(tokens, labels)), mismatches
 
 
 def iter_labels_for_line_starts(

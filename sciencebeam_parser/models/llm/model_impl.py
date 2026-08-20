@@ -9,8 +9,11 @@ from sciencebeam_parser.models.llm.client import (
 )
 from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
 from sciencebeam_parser.models.llm.decode import (
+    EVIDENCE_RESPONSE_SCHEMA,
     LINES_RESPONSE_SCHEMA,
     LlmInputTooLargeError,
+    LlmResponseError,
+    decode_evidence_response,
     decode_line_starts_response,
     get_line_numbers,
     render_numbered_lines
@@ -32,9 +35,12 @@ LOGGER = logging.getLogger(__name__)
 LINE_STATUS_FEATURE_NAME = 'line_status'
 
 LINES_SHAPE = 'lines'
+EVIDENCE_SHAPE = 'evidence'
 VALUES_SHAPE = 'values'
 
-SUPPORTED_RESPONSE_SHAPES = (LINES_SHAPE, VALUES_SHAPE)
+LINE_BASED_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE)
+
+SUPPORTED_RESPONSE_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE, VALUES_SHAPE)
 
 
 def _get_content_or_none(response_json) -> Optional[str]:
@@ -63,7 +69,7 @@ class LlmModelImpl(ModelImpl):
         )
         self.line_status_index = (
             get_feature_column_index(config.task, LINE_STATUS_FEATURE_NAME)
-            if config.response_shape == LINES_SHAPE else -1
+            if config.response_shape in LINE_BASED_SHAPES else -1
         )
 
     def __repr__(self) -> str:
@@ -112,6 +118,17 @@ class LlmModelImpl(ModelImpl):
                 f' prompt={self.config.prompt_version!r} tokens={token_count}]'
             ) from exc
 
+    def _check_evidence(self, mismatches: int) -> None:
+        if not mismatches:
+            return
+        message = (
+            f'{mismatches} reference(s) quoted words that are not on the line they'
+            ' named, or the line below it'
+        )
+        if self.config.evidence_mismatch_raises:
+            raise LlmResponseError(message)
+        LOGGER.warning('llm %s: %s', self.config.task, message)
+
     def _check_input_size(self, line_count: int, token_count: int) -> None:
         """A references region far larger than a reference list is a segmentation
         failure upstream, not something to extract from. Warn rather than raise by
@@ -146,8 +163,10 @@ class LlmModelImpl(ModelImpl):
             self.config.prompt_version,
             render_numbered_lines(tokens, line_numbers)
         )
+        is_evidence = self.config.response_shape == EVIDENCE_SHAPE
+        schema = EVIDENCE_RESPONSE_SCHEMA if is_evidence else LINES_RESPONSE_SCHEMA
         with llm_span(self.config, prompt, self.config.record_trace_content) as span:
-            response_json = self.client.get_completion(prompt, LINES_RESPONSE_SCHEMA)
+            response_json = self.client.get_completion(prompt, schema)
             span.set_attribute('sciencebeam.input_lines', max(line_numbers) + 1)
             span.set_attribute('sciencebeam.input_tokens', len(tokens))
             set_response_attributes(
@@ -155,7 +174,16 @@ class LlmModelImpl(ModelImpl):
                 self.config.record_trace_content
             )
             content = self._get_content(response_json, len(tokens))
-            labeled = decode_line_starts_response(content, tokens, line_status_values)
+            if is_evidence:
+                labeled, mismatches = decode_evidence_response(
+                    content, tokens, line_status_values
+                )
+                span.set_attribute('sciencebeam.evidence_mismatches', mismatches)
+                self._check_evidence(mismatches)
+            else:
+                labeled = decode_line_starts_response(
+                    content, tokens, line_status_values
+                )
         LOGGER.info(
             'llm labelled %d tokens over %d lines (model=%r provider=%r)',
             len(tokens), max(line_numbers) + 1, self.config.model,
