@@ -4,7 +4,10 @@ from typing import Any, List, Mapping, Optional
 import pytest
 
 from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
-from sciencebeam_parser.models.llm.decode import LlmResponseError
+from sciencebeam_parser.models.llm.decode import (
+    LlmInputTooLargeError,
+    LlmResponseError
+)
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.model_impl import LlmModelImpl
 
@@ -152,3 +155,43 @@ class TestLlmModelImplValuesShape:
         prompt = model_impl.client.prompts[0]
         assert 'Fleming PS , Koletsi D : High quality' in prompt
         assert 'page range is TWO' in prompt
+
+
+BIG_LINE_STATUS = ['LINESTART', 'LINEEND'] * 400
+
+
+def get_big_input():
+    tokens = [str(index) for index in range(len(BIG_LINE_STATUS))]
+    features = [
+        ['x'] * LINE_STATUS_INDEX + [status] + ['y'] for status in BIG_LINE_STATUS
+    ]
+    return tokens, features
+
+
+class TestInputSize:
+    def test_should_warn_above_the_warn_threshold(self, caplog):
+        model_impl = get_model_impl(json.dumps({'starts': [0]}))
+        tokens, features = get_big_input()
+        with caplog.at_level('WARNING'):
+            model_impl.predict_labels([tokens], [features])
+        assert 'segmentation model' in caplog.text
+
+    def test_should_not_warn_for_an_ordinary_reference_list(self, caplog):
+        model_impl = get_model_impl(json.dumps({'starts': [0]}))
+        with caplog.at_level('WARNING'):
+            model_impl.predict_labels([TOKENS], [feature_rows()])
+        assert 'segmentation model' not in caplog.text
+
+    def test_should_raise_when_a_hard_limit_is_configured_and_exceeded(self):
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({**CONFIG, 'max_input_lines': 10}),
+            client=FakeClient(content=json.dumps({'starts': [0]}))
+        )
+        tokens, features = get_big_input()
+        with pytest.raises(LlmInputTooLargeError, match='max_input_lines=10'):
+            model_impl.predict_labels([tokens], [features])
+
+    def test_should_not_raise_when_no_hard_limit_is_configured(self):
+        model_impl = get_model_impl(json.dumps({'starts': [0]}))
+        tokens, features = get_big_input()
+        assert model_impl.predict_labels([tokens], [features])

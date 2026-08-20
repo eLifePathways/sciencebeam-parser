@@ -24,6 +24,10 @@ class LlmResponseError(ValueError):
     pass
 
 
+class LlmInputTooLargeError(ValueError):
+    pass
+
+
 def get_line_numbers(line_status_values: Sequence[str]) -> List[int]:
     line_numbers: List[int] = []
     current = -1

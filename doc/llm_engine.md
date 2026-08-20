@@ -77,3 +77,61 @@ labelling: a score is only meaningful if every label came from the model under t
 A response cut off at the output limit raises `LlmTruncatedResponseError` naming
 `finish_reason`, the completion token count and the task, rather than surfacing as a JSON parse
 error. Raise `max_output_tokens`, or send less per request.
+
+## Tracing (optional)
+
+Spans follow OpenTelemetry's GenAI semantic conventions — `gen_ai.operation.name`,
+`gen_ai.request.model`, `gen_ai.usage.input_tokens` and so on — so they are meaningful in any OTLP
+backend. [OpenInference](https://github.com/Arize-ai/openinference) names are emitted alongside
+them, so a backend that reads those rather than the GenAI conventions still renders the span as an
+LLM call; [Phoenix](https://phoenix.arize.com/) is the one used in development.
+
+```sh
+make dev-install                                       # includes the telemetry extra
+make docker-start-telemetry                            # Phoenix on http://localhost:6006
+export SCIENCEBEAM_PARSER__PROFILE=llm_references      # or llm_citation, llm_reference_segmenter
+make dev-start-with-telemetry                          # the host parser, endpoint already set
+```
+
+Phoenix runs as a compose service behind the `telemetry` profile, so a plain `docker-start` does
+not bring an observability server up with it. The image is pinned in
+`docker-compose.override.yml`; bump it deliberately rather than tracking `latest`. Traces persist in a named volume across restarts;
+`make docker-stop-telemetry` removes the container and keeps them, and
+`make docker-logs-telemetry` follows its logs.
+
+`dev-start-with-telemetry` is the host parser with the collector endpoint already set; it does not
+choose a profile, which is set the usual way and is not specific to this engine. A parser running
+inside compose would point at `http://phoenix:6006` instead, since `localhost` there is the
+container.
+
+The endpoint variable is what turns emission on, so a parser already running has to be restarted to
+start tracing.
+
+Without the extra installed, or without a collector endpoint set, nothing is emitted and the engine
+behaves identically. An existing tracer provider is left alone rather than replaced.
+
+Configuration is plain OTLP: `OTEL_EXPORTER_OTLP_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, read by the exporter itself. Nothing in the engine names a
+backend — Phoenix is only what listens in development, and any OTLP collector works in its place.
+`PHOENIX_COLLECTOR_ENDPOINT` is *not* read: it is Phoenix's own variable, and honouring it would put
+one backend's configuration into the engine.
+
+The response body is attached to the span even when it fails to decode, which is the point: a
+truncated or malformed response is visible rather than inferred from an exception.
+
+**A span carrying prompt text is a copy of manuscript text.** Sending it to a collector on localhost
+is not a new disclosure when the same text is already going to the model, but sending it anywhere
+else is. Set `record_trace_content: false` in the model config to keep the metrics and drop the
+text.
+
+## Input size
+
+`sciencebeam.input_lines` and `sciencebeam.input_tokens` are on every span, because what the engine
+receives is whatever the *segmentation* model labelled `<references>` — not necessarily a reference
+list. A region of a thousand lines is a mislabelled region, and it degrades the `wapiti` path
+identically, so it is worth being able to see and filter on.
+
+Above `warn_input_lines` (default 300) the engine logs a warning naming the count. `max_input_lines`
+(default 0, off) raises instead, for a run where failing fast is wanted — off by default because
+raising would fail exactly the documents where the CRF path produces poor output, which flatters a
+comparison rather than informing it.

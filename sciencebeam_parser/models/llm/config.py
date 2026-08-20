@@ -25,6 +25,9 @@ class LlmEngineConfig:
     timeout_seconds: float = 300.0
     max_output_tokens: int = 8000
     max_attempts: int = 4
+    record_trace_content: bool = True
+    warn_input_lines: int = 300
+    max_input_lines: int = 0
     extra_body: Dict[str, Any] = field(default_factory=dict)
 
     @staticmethod

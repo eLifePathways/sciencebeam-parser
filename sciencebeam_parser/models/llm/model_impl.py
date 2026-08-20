@@ -10,6 +10,7 @@ from sciencebeam_parser.models.llm.client import (
 from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
 from sciencebeam_parser.models.llm.decode import (
     LINES_RESPONSE_SCHEMA,
+    LlmInputTooLargeError,
     decode_line_starts_response,
     get_line_numbers,
     render_numbered_lines
@@ -17,6 +18,7 @@ from sciencebeam_parser.models.llm.decode import (
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.prompt import get_prompt
 from sciencebeam_parser.models.llm.tasks import get_citation_labels
+from sciencebeam_parser.models.llm.telemetry import llm_span, set_response_attributes
 from sciencebeam_parser.models.llm.values import (
     decode_values_response,
     get_values_response_schema
@@ -32,6 +34,14 @@ LINES_SHAPE = 'lines'
 VALUES_SHAPE = 'values'
 
 SUPPORTED_RESPONSE_SHAPES = (LINES_SHAPE, VALUES_SHAPE)
+
+
+def _get_content_or_none(response_json) -> Optional[str]:
+    """The raw content even when it will fail to decode, so the trace shows it."""
+    choices = response_json.get('choices') or []
+    if not choices:
+        return None
+    return choices[0].get('message', {}).get('content')
 
 
 class LlmModelImpl(ModelImpl):
@@ -89,6 +99,27 @@ class LlmModelImpl(ModelImpl):
                 f' prompt={self.config.prompt_version!r} tokens={token_count}]'
             ) from exc
 
+    def _check_input_size(self, line_count: int, token_count: int) -> None:
+        """A references region far larger than a reference list is a segmentation
+        failure upstream, not something to extract from. Warn rather than raise by
+        default: raising would fail exactly the documents where the CRF engine
+        produces poor output, which flatters a comparison rather than informing it.
+        """
+        if self.config.max_input_lines and line_count > self.config.max_input_lines:
+            raise LlmInputTooLargeError(
+                f'{line_count} lines ({token_count} tokens) exceeds'
+                f' max_input_lines={self.config.max_input_lines};'
+                ' a references region this large is usually a mislabelled'
+                ' segmentation region rather than a reference list'
+            )
+        if self.config.warn_input_lines and line_count > self.config.warn_input_lines:
+            LOGGER.warning(
+                'llm %s input is %d lines (%d tokens), which is larger than a'
+                ' reference list usually is; check whether the segmentation model'
+                ' labelled the right region',
+                self.config.task, line_count, token_count
+            )
+
     def _predict_labels_for_sequence(
         self,
         tokens: List[str],
@@ -98,14 +129,22 @@ class LlmModelImpl(ModelImpl):
             return self._predict_labels_from_values(tokens)
         line_status_values = [row[self.line_status_index] for row in feature_rows]
         line_numbers = get_line_numbers(line_status_values)
+        self._check_input_size(max(line_numbers) + 1, len(tokens))
         prompt = get_prompt(
             self.config.task,
             self.config.prompt_version,
             render_numbered_lines(tokens, line_numbers)
         )
-        response_json = self.client.get_completion(prompt, LINES_RESPONSE_SCHEMA)
-        content = self._get_content(response_json, len(tokens))
-        labeled = decode_line_starts_response(content, tokens, line_status_values)
+        with llm_span(self.config, prompt, self.config.record_trace_content) as span:
+            response_json = self.client.get_completion(prompt, LINES_RESPONSE_SCHEMA)
+            span.set_attribute('sciencebeam.input_lines', max(line_numbers) + 1)
+            span.set_attribute('sciencebeam.input_tokens', len(tokens))
+            set_response_attributes(
+                span, response_json, _get_content_or_none(response_json),
+                self.config.record_trace_content
+            )
+            content = self._get_content(response_json, len(tokens))
+            labeled = decode_line_starts_response(content, tokens, line_status_values)
         LOGGER.info(
             'llm labelled %d tokens over %d lines (model=%r provider=%r)',
             len(tokens), max(line_numbers) + 1, self.config.model,
@@ -117,11 +156,17 @@ class LlmModelImpl(ModelImpl):
         prompt = get_prompt(
             self.config.task, self.config.prompt_version, ' '.join(tokens)
         )
-        response_json = self.client.get_completion(
-            prompt, get_values_response_schema(self.labels)
-        )
-        content = self._get_content(response_json, len(tokens))
-        labeled = decode_values_response(content, tokens, self.labels)
+        with llm_span(self.config, prompt, self.config.record_trace_content) as span:
+            response_json = self.client.get_completion(
+                prompt, get_values_response_schema(self.labels)
+            )
+            span.set_attribute('sciencebeam.input_tokens', len(tokens))
+            set_response_attributes(
+                span, response_json, _get_content_or_none(response_json),
+                self.config.record_trace_content
+            )
+            content = self._get_content(response_json, len(tokens))
+            labeled = decode_values_response(content, tokens, self.labels)
         LOGGER.info(
             'llm labelled %d tokens from values (model=%r provider=%r)',
             len(tokens), self.config.model, response_json.get('provider')
