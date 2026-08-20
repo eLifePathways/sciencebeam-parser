@@ -191,7 +191,7 @@ sequence_model_profiles:
       task: 'reference_segmenter'
       response_shape: 'lines'
       model: 'qwen/qwen3.5-9b'
-      provider: 'siliconflow'
+      provider: 'venice'
       prompt_version: 'lines-v2'
       reasoning: 'off'
   llm_citation:
@@ -201,7 +201,12 @@ sequence_model_profiles:
       task: 'citation'
       response_shape: 'values'
       model: 'qwen/qwen3.5-9b'
-      provider: 'siliconflow'
+      # Venice over SiliconFlow on measurement, not preference: 33 references in
+      # 4 batches took 12s against 39s, at the same fp8 quantisation and price,
+      # and 100% reported uptime against 96%. It costs about 0.007 token accuracy
+      # (0.860 against 0.867), which is inside the run-to-run spread of most
+      # things measured here, and latency has been the binding constraint.
+      provider: 'venice'
       prompt_version: 'values-v3'
       reasoning: 'off'
       # References of a document arrive in one call to the engine, which sends
@@ -210,7 +215,9 @@ sequence_model_profiles:
       # amount in one long stream that cannot be overlapped, and long generations
       # are what draw provider timeouts. More, smaller batches run concurrently
       # instead: 4 calls took 111s sequentially and 58s at 4 concurrent, with the
-      # same accuracy. Lower the concurrency if the provider answers with 429s.
+      # same accuracy. Beyond 4 it stops helping on either provider measured, so
+      # the bound is provider throughput rather than parallelism. Lower it if the
+      # provider answers with 429s.
       max_references_per_request: 10
       max_concurrent_requests: 4
   llm_references:
@@ -220,7 +227,12 @@ sequence_model_profiles:
       task: 'citation'
       response_shape: 'values'
       model: 'qwen/qwen3.5-9b'
-      provider: 'siliconflow'
+      # Venice over SiliconFlow on measurement, not preference: 33 references in
+      # 4 batches took 12s against 39s, at the same fp8 quantisation and price,
+      # and 100% reported uptime against 96%. It costs about 0.007 token accuracy
+      # (0.860 against 0.867), which is inside the run-to-run spread of most
+      # things measured here, and latency has been the binding constraint.
+      provider: 'venice'
       prompt_version: 'values-v3'
       reasoning: 'off'
       # References of a document arrive in one call to the engine, which sends
@@ -229,7 +241,9 @@ sequence_model_profiles:
       # amount in one long stream that cannot be overlapped, and long generations
       # are what draw provider timeouts. More, smaller batches run concurrently
       # instead: 4 calls took 111s sequentially and 58s at 4 concurrent, with the
-      # same accuracy. Lower the concurrency if the provider answers with 429s.
+      # same accuracy. Beyond 4 it stops helping on either provider measured, so
+      # the bound is provider throughput rather than parallelism. Lower it if the
+      # provider answers with 429s.
       max_references_per_request: 10
       max_concurrent_requests: 4
 

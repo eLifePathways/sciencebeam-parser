@@ -36,7 +36,7 @@ reference_segmenter:
   task: 'reference_segmenter'      # selects the prompt and the feature layout
   response_shape: 'lines'          # line numbers where each reference begins
   model: 'qwen/qwen3.5-9b'
-  provider: 'siliconflow'          # pinned; routing fails closed without a match
+  provider: 'venice'               # pinned; routing fails closed without a match
   prompt_version: 'lines-v1'       # sciencebeam_parser/models/llm/prompts/<task>/<version>.md
   reasoning: 'off'                 # models that think by default must be told not to
 citation:
@@ -208,3 +208,26 @@ Above `warn_input_lines` (default 300) the engine logs a warning naming the coun
 (default 0, off) raises instead, for a run where failing fast is wanted — off by default because
 raising would fail exactly the documents where the CRF path produces poor output, which flatters a
 comparison rather than informing it.
+
+## Choosing a provider
+
+The same model id served by two providers is not the same service. For
+`qwen/qwen3.5-9b`, measured on 33 references in 4 batches:
+
+| provider | quantisation | seconds | token-acc | reported uptime (30m / 1d) |
+| --- | --- | --- | --- | --- |
+| Venice | fp8 | **12** | 0.860 | 100% / 100% |
+| SiliconFlow | fp8 | 39 | 0.867 | 96% / 99% |
+
+Venice is shipped: 3.3× faster at the same quantisation and price, for about 0.007 token accuracy —
+inside the run-to-run spread of most things measured here, and latency has been the binding
+constraint throughout. On the segmenter the same document took 2.1s against 3.9s, with identical
+output.
+
+Worth re-checking rather than trusting: OpenRouter reports `uptime_last_30m` and `uptime_last_1d` per
+endpoint, and they move. `GET /api/v1/models/{author}/{slug}/endpoints` lists them alongside
+quantisation and per-provider parameter support. Note that latency and throughput often come back
+`None` there, so those have to be measured rather than read.
+
+Not every provider is reachable under the zero-retention pin — Parasail answered 429 immediately —
+so a candidate has to be tried, not just looked up.
