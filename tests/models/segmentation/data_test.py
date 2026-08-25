@@ -512,6 +512,22 @@ class TestSegmentationLineFeaturesProvider:
             },
         ]
 
+    def test_should_set_is_http_for_line_starting_with_http_url(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(blocks=[
+                LayoutBlock.for_text('https://doi.org/10.1101/043794'),
+                LayoutBlock.for_text('regular text line')
+            ])
+        ])
+        feature_values = [
+            features.get_str_is_http_token_based()
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert feature_values == ['1', '0']
+
 
 class TestSegmentationLineFeaturesProviderVectorAround:
     def _make_doc_with_block_and_graphics(
