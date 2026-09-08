@@ -1,0 +1,403 @@
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Optional, Tuple
+
+from sciencebeam_parser.models.llm.client import (
+    LlmClient,
+    LlmCompletionClient,
+    LlmRequestError,
+    LlmTruncatedResponseError,
+    get_response_content
+)
+from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
+from sciencebeam_parser.models.llm.decode import (
+    EVIDENCE_RESPONSE_SCHEMA,
+    LINES_RESPONSE_SCHEMA,
+    LlmInputTooLargeError,
+    LlmMalformedResponseError,
+    LlmResponseError,
+    decode_evidence_response,
+    decode_line_starts_response,
+    get_line_numbers,
+    render_numbered_lines
+)
+from sciencebeam_parser.models.llm.features import get_feature_column_index
+from sciencebeam_parser.models.llm.prompt import get_prompt
+from sciencebeam_parser.models.llm.tasks import get_citation_labels
+from sciencebeam_parser.models.llm.telemetry import llm_span, set_response_attributes
+from sciencebeam_parser.models.llm.values import (
+    decode_batched_values_response,
+    get_batched_values_response_schema,
+    render_numbered_references
+)
+from sciencebeam_parser.models.model_impl import ModelImpl
+
+
+LOGGER = logging.getLogger(__name__)
+
+LINE_STATUS_FEATURE_NAME = 'line_status'
+
+LINES_SHAPE = 'lines'
+EVIDENCE_SHAPE = 'evidence'
+VALUES_SHAPE = 'values'
+
+LINE_BASED_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE)
+
+SUPPORTED_RESPONSE_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE, VALUES_SHAPE)
+
+
+def _get_content_or_none(response_json) -> Optional[str]:
+    """The raw content even when it will fail to decode, so the trace shows it."""
+    choices = response_json.get('choices') or []
+    if not choices:
+        return None
+    return choices[0].get('message', {}).get('content')
+
+
+class LlmModelImpl(ModelImpl):
+    def __init__(
+        self,
+        config: LlmEngineConfig,
+        client: Optional[LlmCompletionClient] = None
+    ):
+        if config.response_shape not in SUPPORTED_RESPONSE_SHAPES:
+            raise LlmConfigError(
+                f'unsupported response_shape {config.response_shape!r};'
+                f' supported: {list(SUPPORTED_RESPONSE_SHAPES)}'
+            )
+        self.config = config
+        self.client = client if client is not None else LlmClient(config)
+        self.labels = (
+            get_citation_labels() if config.response_shape == VALUES_SHAPE else []
+        )
+        self.line_status_index = (
+            get_feature_column_index(config.task, LINE_STATUS_FEATURE_NAME)
+            if config.response_shape in LINE_BASED_SHAPES else -1
+        )
+
+    def __repr__(self) -> str:
+        return '%s(task=%r, model=%r, shape=%r, prompt=%r)' % (
+            type(self).__name__, self.config.task, self.config.model,
+            self.config.response_shape, self.config.prompt_version
+        )
+
+    def preload(self):
+        self.client.validate_configuration()
+
+    def predict_labels(
+        self,
+        texts: List[List[str]],
+        features: List[List[List[str]]],
+        output_format: Optional[str] = None
+    ) -> List[List[Tuple[str, str]]]:
+        if output_format:
+            raise NotImplementedError(
+                f'{type(self).__name__} does not support output_format={output_format!r}'
+            )
+        if self.config.response_shape == VALUES_SHAPE:
+            return self._predict_labels_in_batches(texts)
+        return [
+            self._predict_labels_for_sequence(sequence_texts, sequence_features)
+            for sequence_texts, sequence_features in zip(texts, features)
+        ]
+
+    def _predict_labels_in_batches(
+        self, texts: List[List[str]]
+    ) -> List[List[Tuple[str, str]]]:
+        # An empty reference has nothing to ask about, and sending one would put a
+        # blank slot in the batch for the model to misnumber against.
+        wanted = [index for index, tokens in enumerate(texts) if tokens]
+        if len(wanted) != len(texts):
+            LOGGER.info(
+                'llm %s: skipping %d empty reference(s) of %d',
+                self.config.task, len(texts) - len(wanted), len(texts)
+            )
+        if not wanted:
+            return [[] for _ in texts]
+        labelled_by_index = self._predict_labels_for_non_empty(
+            [texts[index] for index in wanted]
+        )
+        results: List[List[Tuple[str, str]]] = [[] for _ in texts]
+        for index, labelled in zip(wanted, labelled_by_index):
+            results[index] = labelled
+        return results
+
+    def _predict_labels_for_non_empty(
+        self, texts: List[List[str]]
+    ) -> List[List[Tuple[str, str]]]:
+        batch_size = max(1, self.config.max_references_per_request)
+        batches = [
+            texts[start:start + batch_size]
+            for start in range(0, len(texts), batch_size)
+        ]
+        workers = max(1, min(self.config.max_concurrent_requests, len(batches)))
+        if workers == 1 or len(batches) == 1:
+            per_batch = [self._predict_labels_splitting_on_truncation(batch)
+                         for batch in batches]
+        else:
+            # Batches are independent, so the wall-clock is the slowest batch
+            # rather than their sum. Order is preserved by mapping rather than
+            # completion order, and the first exception propagates.
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                per_batch = list(pool.map(
+                    self._predict_labels_splitting_on_truncation, batches
+                ))
+        return [labelled for batch in per_batch for labelled in batch]
+
+    def _predict_labels_splitting_on_truncation(
+        self, token_lists: List[List[str]]
+    ) -> List[List[Tuple[str, str]]]:
+        """Halve a batch whose answer ran out of room, and ask about each half.
+
+        A truncated answer is unusable — the engine cannot tell a field that was
+        cut off from one that was never sent — so the alternative is losing the
+        whole document. Halving costs at most one extra call per split and
+        recovers a batch that was simply too long to answer in one response.
+
+        A single reference that still truncates raises: its answer is already
+        many times the size of its input, which is a generation that will not
+        terminate rather than a batch to divide further.
+        """
+        try:
+            return self._retrying_on_malformed(
+                f'{len(token_lists)}-reference',
+                lambda: self._predict_labels_from_values(token_lists)
+            )
+        except LlmTruncatedResponseError:
+            if len(token_lists) <= 1:
+                raise
+            middle = len(token_lists) // 2
+            LOGGER.warning(
+                'llm %s: answer for %d references hit the output limit;'
+                ' asking again as %d and %d',
+                self.config.task, len(token_lists), middle, len(token_lists) - middle
+            )
+            return (
+                self._predict_labels_splitting_on_truncation(token_lists[:middle])
+                + self._predict_labels_splitting_on_truncation(token_lists[middle:])
+            )
+
+    def _retrying_on_malformed(self, describe: str, issue):
+        """Ask again when the response cannot be parsed.
+
+        Generation is not bit-reproducible even at temperature 0, so a second
+        request often parses where the first did not. Bounded, and confined to
+        parse failures: a strictness setting that fires is a decision, and
+        repeating the request would spend tokens on the same answer.
+        """
+        attempts = max(0, self.config.max_malformed_response_retries) + 1
+        for attempt in range(attempts):
+            try:
+                return issue()
+            except LlmMalformedResponseError as exc:
+                if attempt + 1 >= attempts:
+                    raise
+                LOGGER.warning(
+                    'llm %s: %s response could not be parsed, asking again'
+                    ' (attempt %d of %d): %s',
+                    self.config.task, describe, attempt + 2, attempts, exc
+                )
+        raise AssertionError('unreachable')
+
+    def _get_content(self, response_json, token_count: int) -> str:
+        try:
+            return get_response_content(response_json)
+        except LlmTruncatedResponseError as exc:
+            # Re-raised as its own class rather than the base one, so a caller can
+            # tell a response that ran out of room from one that failed outright.
+            raise LlmTruncatedResponseError(self._describe(exc, token_count)) from exc
+        except LlmRequestError as exc:
+            raise LlmRequestError(self._describe(exc, token_count)) from exc
+
+    def _describe(self, exc: Exception, token_count: int) -> str:
+        return (
+            f'{exc} [task={self.config.task!r} model={self.config.model!r}'
+            f' shape={self.config.response_shape!r}'
+            f' prompt={self.config.prompt_version!r} tokens={token_count}]'
+        )
+
+    def _check_dropped_fields(self, dropped: int, reference_count: int) -> None:
+        if not dropped:
+            return
+        message = (
+            f'{dropped} field(s) across {reference_count} reference(s) could not be'
+            ' located and were dropped; a region that is not a reference list is'
+            ' the usual cause'
+        )
+        if self.config.dropped_field_raises:
+            raise LlmResponseError(message)
+        LOGGER.warning('llm %s: %s', self.config.task, message)
+
+    def _check_unanswered_references(self, unanswered: int, reference_count: int) -> None:
+        if not unanswered:
+            return
+        message = (
+            f'{unanswered} of {reference_count} reference(s) in the batch are still'
+            ' unanswered after asking again, and are left unlabelled'
+        )
+        if self.config.unanswered_reference_raises:
+            raise LlmResponseError(message)
+        LOGGER.warning('llm %s: %s', self.config.task, message)
+
+    def _check_evidence(self, mismatches: int) -> None:
+        if not mismatches:
+            return
+        message = (
+            f'{mismatches} reference(s) quoted words that are not on the line they'
+            ' named, or the line below it'
+        )
+        if self.config.evidence_mismatch_raises:
+            raise LlmResponseError(message)
+        LOGGER.warning('llm %s: %s', self.config.task, message)
+
+    def _check_input_size(self, line_count: int, token_count: int) -> None:
+        """A references region far larger than a reference list is a segmentation
+        failure upstream, not something to extract from. Warn rather than raise by
+        default: raising would fail exactly the documents where the CRF engine
+        produces poor output, which flatters a comparison rather than informing it.
+        """
+        if self.config.max_input_lines and line_count > self.config.max_input_lines:
+            raise LlmInputTooLargeError(
+                f'{line_count} lines ({token_count} tokens) exceeds'
+                f' max_input_lines={self.config.max_input_lines};'
+                ' a references region this large is usually a mislabelled'
+                ' segmentation region rather than a reference list'
+            )
+        if self.config.warn_input_lines and line_count > self.config.warn_input_lines:
+            LOGGER.warning(
+                'llm %s input is %d lines (%d tokens), which is larger than a'
+                ' reference list usually is; check whether the segmentation model'
+                ' labelled the right region',
+                self.config.task, line_count, token_count
+            )
+
+    def _predict_labels_for_sequence(
+        self,
+        tokens: List[str],
+        feature_rows: List[List[str]]
+    ) -> List[Tuple[str, str]]:
+        if not tokens:
+            # A references region can come back empty, and there is nothing to ask
+            # about. Returning early also keeps max() below off an empty sequence.
+            return []
+        line_status_values = [row[self.line_status_index] for row in feature_rows]
+        line_numbers = get_line_numbers(line_status_values)
+        self._check_input_size(max(line_numbers) + 1, len(tokens))
+        prompt = get_prompt(
+            self.config.task,
+            self.config.prompt_version,
+            render_numbered_lines(tokens, line_numbers)
+        )
+        is_evidence = self.config.response_shape == EVIDENCE_SHAPE
+        schema = EVIDENCE_RESPONSE_SCHEMA if is_evidence else LINES_RESPONSE_SCHEMA
+        return self._retrying_on_malformed(
+            f'{max(line_numbers) + 1}-line',
+            lambda: self._label_sequence_once(
+                prompt, schema, tokens, line_numbers, line_status_values, is_evidence
+            )
+        )
+
+    def _label_sequence_once(
+        self,
+        prompt: str,
+        schema,
+        tokens: List[str],
+        line_numbers: List[int],
+        line_status_values: List[str],
+        is_evidence: bool
+    ) -> List[Tuple[str, str]]:
+        with llm_span(self.config, prompt, self.config.record_trace_content) as span:
+            response_json = self.client.get_completion(prompt, schema)
+            span.set_attribute('sciencebeam.input_lines', max(line_numbers) + 1)
+            span.set_attribute('sciencebeam.input_tokens', len(tokens))
+            set_response_attributes(
+                span, response_json, _get_content_or_none(response_json),
+                self.config.record_trace_content
+            )
+            content = self._get_content(response_json, len(tokens))
+            if is_evidence:
+                labeled, mismatches = decode_evidence_response(
+                    content, tokens, line_status_values
+                )
+                span.set_attribute('sciencebeam.evidence_mismatches', mismatches)
+                self._check_evidence(mismatches)
+            else:
+                labeled = decode_line_starts_response(
+                    content, tokens, line_status_values
+                )
+        LOGGER.info(
+            'llm labelled %d tokens over %d lines (model=%r provider=%r)',
+            len(tokens), max(line_numbers) + 1, self.config.model,
+            response_json.get('provider')
+        )
+        return labeled
+
+    def _predict_labels_from_values(
+        self, token_lists: List[List[str]]
+    ) -> List[List[Tuple[str, str]]]:
+        """One call per batch, then a smaller call for whatever it left out.
+
+        Skipped references are always at the end of the batch, so asking again
+        for just those puts them at the start of a short batch instead. Retrying
+        the missing ones, rather than shrinking every batch, keeps the batch size
+        a throughput setting: a smaller batch means more batches, and it is the
+        tail of each that goes missing.
+        """
+        labeled, missing = self._predict_labels_for_one_batch(token_lists)
+        for attempt in range(self.config.max_missing_reference_retries):
+            if not missing:
+                break
+            LOGGER.info(
+                'llm %s: asking again for %d reference(s) the batch left out'
+                ' (attempt %d)',
+                self.config.task, len(missing), attempt + 1
+            )
+            retried, still_missing_in_retry = self._predict_labels_for_one_batch(
+                [token_lists[index] for index in missing]
+            )
+            recovered = [
+                index for position, index in enumerate(missing)
+                if position not in set(still_missing_in_retry)
+            ]
+            for position, index in enumerate(missing):
+                labeled[index] = retried[position]
+            missing = [missing[position] for position in still_missing_in_retry]
+            if not recovered:
+                # The model is not going to answer for these; another identical
+                # request would only cost tokens.
+                break
+        self._check_unanswered_references(len(missing), len(token_lists))
+        return labeled
+
+    def _predict_labels_for_one_batch(
+        self, token_lists: List[List[str]]
+    ) -> Tuple[List[List[Tuple[str, str]]], List[int]]:
+        token_count = sum(len(tokens) for tokens in token_lists)
+        prompt = get_prompt(
+            self.config.task,
+            self.config.prompt_version,
+            render_numbered_references(token_lists)
+        )
+        with llm_span(self.config, prompt, self.config.record_trace_content) as span:
+            response_json = self.client.get_completion(
+                prompt, get_batched_values_response_schema(self.labels)
+            )
+            span.set_attribute('sciencebeam.input_tokens', token_count)
+            span.set_attribute('sciencebeam.batch_size', len(token_lists))
+            set_response_attributes(
+                span, response_json, _get_content_or_none(response_json),
+                self.config.record_trace_content
+            )
+            content = self._get_content(response_json, token_count)
+            labeled, dropped, missing = decode_batched_values_response(
+                content, token_lists, self.labels
+            )
+            span.set_attribute('sciencebeam.dropped_fields', dropped)
+            span.set_attribute('sciencebeam.unanswered_references', len(missing))
+            self._check_dropped_fields(dropped, len(token_lists))
+        LOGGER.info(
+            'llm labelled %d references, %d tokens (model=%r provider=%r)',
+            len(token_lists), token_count, self.config.model,
+            response_json.get('provider')
+        )
+        return labeled, missing

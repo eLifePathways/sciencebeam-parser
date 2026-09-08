@@ -13,6 +13,12 @@ NOT_SLOW_PYTEST_ARGS = -m 'not slow'
 
 SCIENCEBEAM_PARSER_PORT = 8080
 
+# Phoenix renders the llm engine's OpenInference spans. 6006 serves both its UI
+# and its OTLP collector.
+# Phoenix is the collector used in development; the engine only knows OTLP.
+PHOENIX_PORT = 6006
+OTEL_EXPORTER_OTLP_ENDPOINT = http://localhost:$(PHOENIX_PORT)
+
 # Seconds to wait for the parser API on startup. Cold starts re-download pdfalto
 # + GROBID lexicons, so allow several minutes.
 API_WAIT_TIMEOUT ?= 300
@@ -109,7 +115,8 @@ dev-install:
 		--dev \
 		--extra cpu \
 		--extra delft \
-		--extra cv
+		--extra cv \
+		--extra telemetry
 
 
 dev-venv: venv-create dev-install
@@ -173,6 +180,14 @@ dev-start:
 	SCIENCEBEAM_DELFT_BATCH_SIZE=$(SCIENCEBEAM_DELFT_BATCH_SIZE) \
 	SCIENCEBEAM_DELFT_STATEFUL=$(SCIENCEBEAM_DELFT_STATEFUL) \
 		$(PYTHON) -m sciencebeam_parser.service.server --port=$(SCIENCEBEAM_PARSER_PORT)
+
+
+# The host parser with tracing pointed at the collector. Which profile is active
+# is separate and set the usual way, with SCIENCEBEAM_PARSER__PROFILE. Start the
+# collector first with docker-start-telemetry.
+dev-start-with-telemetry:
+	OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_EXPORTER_OTLP_ENDPOINT) \
+	$(MAKE) dev-start
 
 
 dev-start-debug:
@@ -424,6 +439,24 @@ docker-start-and-wait-for-api:
 
 docker-logs:
 	$(DOCKER_COMPOSE) logs -f
+
+
+# Phoenix renders the llm engine's OpenInference spans. Behind a compose profile,
+# so a plain docker-start does not bring an observability server up with it.
+docker-start-telemetry:
+	$(DOCKER_COMPOSE) --profile telemetry up -d phoenix
+	@echo "Phoenix UI: $(OTEL_EXPORTER_OTLP_ENDPOINT)"
+
+
+# stop + rm rather than `down`, which would take the rest of the stack with it.
+# The named volume survives either way, so traces persist across restarts.
+docker-stop-telemetry:
+	$(DOCKER_COMPOSE) --profile telemetry stop phoenix
+	$(DOCKER_COMPOSE) --profile telemetry rm -f phoenix
+
+
+docker-logs-telemetry:
+	$(DOCKER_COMPOSE) --profile telemetry logs -f phoenix
 
 
 docker-end-to-end-pdfalto: docker-start-and-wait-for-api

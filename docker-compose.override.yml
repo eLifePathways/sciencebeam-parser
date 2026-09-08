@@ -36,5 +36,26 @@ services:
       - ./benchmarks:/opt/sciencebeam_parser/benchmarks
       - huggingface-cache:/root/.cache/huggingface
 
+  # Tracing for the llm engine, dev-only and opt-in: the profile keeps it out of
+  # a plain `docker compose up`. 6006 serves both the UI and the OTLP collector.
+  # A parser running in compose would point at http://phoenix:6006; one running on
+  # the host at http://localhost:6006.
+  phoenix:
+    # Pinned: a dev tool whose version moves under you makes "it worked
+    # yesterday" unanswerable, and the trace schema is what the spans are read
+    # through. Tags also exist unprefixed (20.3.0) and as -nonroot / -debug.
+    image: arizephoenix/phoenix:version-20.3.0
+    profiles:
+      - telemetry
+    ports:
+      - "6006:6006"
+    environment:
+      # Phoenix keeps traces in a sqlite db under its working dir; without a
+      # volume they are lost on restart, which defeats comparing runs.
+      - PHOENIX_WORKING_DIR=/mnt/phoenix
+    volumes:
+      - phoenix-data:/mnt/phoenix
+
 volumes:
   huggingface-cache:
+  phoenix-data:
