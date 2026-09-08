@@ -144,9 +144,8 @@ class LlmModelImpl(ModelImpl):
         if not unanswered:
             return
         message = (
-            f'{unanswered} of {reference_count} reference(s) in the batch went'
-            ' unanswered and are unlabelled; a smaller'
-            ' max_references_per_request is the usual remedy'
+            f'{unanswered} of {reference_count} reference(s) in the batch are still'
+            ' unanswered after asking again, and are left unlabelled'
         )
         if self.config.unanswered_reference_raises:
             raise LlmResponseError(message)
@@ -228,6 +227,43 @@ class LlmModelImpl(ModelImpl):
     def _predict_labels_from_values(
         self, token_lists: List[List[str]]
     ) -> List[List[Tuple[str, str]]]:
+        """One call per batch, then a smaller call for whatever it left out.
+
+        Skipped references are always at the end of the batch, so asking again
+        for just those puts them at the start of a short batch instead. Retrying
+        the missing ones, rather than shrinking every batch, keeps the batch size
+        a throughput setting: a smaller batch means more batches, and it is the
+        tail of each that goes missing.
+        """
+        labeled, missing = self._predict_labels_for_one_batch(token_lists)
+        for attempt in range(self.config.max_missing_reference_retries):
+            if not missing:
+                break
+            LOGGER.info(
+                'llm %s: asking again for %d reference(s) the batch left out'
+                ' (attempt %d)',
+                self.config.task, len(missing), attempt + 1
+            )
+            retried, still_missing_in_retry = self._predict_labels_for_one_batch(
+                [token_lists[index] for index in missing]
+            )
+            recovered = [
+                index for position, index in enumerate(missing)
+                if position not in set(still_missing_in_retry)
+            ]
+            for position, index in enumerate(missing):
+                labeled[index] = retried[position]
+            missing = [missing[position] for position in still_missing_in_retry]
+            if not recovered:
+                # The model is not going to answer for these; another identical
+                # request would only cost tokens.
+                break
+        self._check_unanswered_references(len(missing), len(token_lists))
+        return labeled
+
+    def _predict_labels_for_one_batch(
+        self, token_lists: List[List[str]]
+    ) -> Tuple[List[List[Tuple[str, str]]], List[int]]:
         token_count = sum(len(tokens) for tokens in token_lists)
         prompt = get_prompt(
             self.config.task,
@@ -245,16 +281,15 @@ class LlmModelImpl(ModelImpl):
                 self.config.record_trace_content
             )
             content = self._get_content(response_json, token_count)
-            labeled, dropped, unanswered = decode_batched_values_response(
+            labeled, dropped, missing = decode_batched_values_response(
                 content, token_lists, self.labels
             )
             span.set_attribute('sciencebeam.dropped_fields', dropped)
-            span.set_attribute('sciencebeam.unanswered_references', unanswered)
+            span.set_attribute('sciencebeam.unanswered_references', len(missing))
             self._check_dropped_fields(dropped, len(token_lists))
-            self._check_unanswered_references(unanswered, len(token_lists))
         LOGGER.info(
             'llm labelled %d references, %d tokens (model=%r provider=%r)',
             len(token_lists), token_count, self.config.model,
             response_json.get('provider')
         )
-        return labeled
+        return labeled, missing

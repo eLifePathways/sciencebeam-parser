@@ -11,6 +11,7 @@ from sciencebeam_parser.models.llm.decode import (
 )
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.model_impl import LlmModelImpl
+from sciencebeam_parser.models.llm.values import render_numbered_references
 
 
 CONFIG = {
@@ -34,9 +35,13 @@ def feature_rows():
 
 
 class FakeClient:
-    """Stands in for the network. No test in this module reaches an endpoint."""
-    def __init__(self, content: Optional[str] = None, error: Optional[Exception] = None):
-        self.content = content
+    """Stands in for the network. No test in this module reaches an endpoint.
+
+    `content` may be a list, one entry per call, so a test can make the first
+    response leave a reference out and the next one answer it.
+    """
+    def __init__(self, content=None, error: Optional[Exception] = None):
+        self.contents = content if isinstance(content, list) else [content]
         self.error = error
         self.prompts: List[str] = []
         self.lock = threading.Lock()
@@ -49,9 +54,13 @@ class FakeClient:
         assert response_schema['type'] == 'object'
         with self.lock:
             self.prompts.append(prompt)
+            index = min(len(self.prompts) - 1, len(self.contents) - 1)
         if self.error:
             raise self.error
-        return {'choices': [{'message': {'content': self.content}}], 'provider': 'SiliconFlow'}
+        return {
+            'choices': [{'message': {'content': self.contents[index]}}],
+            'provider': 'SiliconFlow'
+        }
 
 
 def get_model_impl(content: Optional[str] = None, error: Optional[Exception] = None):
@@ -219,6 +228,79 @@ class TestCitationBatching:
         assert result[1][0] == ('Rada', 'B-<author>')
 
 
+class TestRetryForMissingReferences:
+    """Skipped references are always the tail of the batch, so the repair call
+    sends only those — which puts them at the start of a short batch.
+    """
+    def test_should_ask_again_for_a_reference_the_batch_left_out(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        first = batched([('author', 'Fleming PS')])            # answers 0 only
+        second = batched([('author', 'Rada G')])               # answers the retry's 0
+        model_impl = get_citation_model_impl([first, second])
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 2
+        assert result[1][0] == ('Rada', 'B-<author>')
+
+    def test_should_send_only_the_missing_reference_in_the_retry(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl([
+            batched([('author', 'Fleming PS')]), batched([('author', 'Rada G')])
+        ])
+        model_impl.predict_labels(token_lists, no_features(token_lists))
+        # the prompt template's worked example contains REFERENCE markers of its
+        # own, so compare the rendered block rather than search the whole prompt
+        first, retry = model_impl.client.prompts
+        assert render_numbered_references([CITATION_TOKENS, SECOND_REFERENCE]) in first
+        assert render_numbered_references([SECOND_REFERENCE]) in retry
+        assert render_numbered_references([CITATION_TOKENS, SECOND_REFERENCE]) not in retry
+
+    def test_should_keep_the_first_answer_for_the_references_already_given(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl([
+            batched([('author', 'Fleming PS')]), batched([('author', 'Rada G')])
+        ])
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert result[0][0] == ('Fleming', 'B-<author>')
+
+    def test_should_not_ask_again_when_the_batch_was_complete(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(
+            batched([('author', 'Fleming PS')], [('author', 'Rada G')])
+        )
+        model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 1
+
+    def test_should_give_up_rather_than_loop_when_the_retry_answers_nothing(self, caplog):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        empty = json.dumps({'references': []})
+        model_impl = get_citation_model_impl(
+            [batched([('author', 'Fleming PS')]), empty, empty],
+            max_missing_reference_retries=5
+        )
+        with caplog.at_level('WARNING'):
+            result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 2
+        assert [label for _, label in result[1]] == ['O'] * len(SECOND_REFERENCE)
+        assert 'still unanswered' in caplog.text
+
+    def test_should_not_retry_when_disabled(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(
+            batched([('author', 'Fleming PS')]), max_missing_reference_retries=0
+        )
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 1
+        assert [label for _, label in result[1]] == ['O'] * len(SECOND_REFERENCE)
+
+    def test_should_return_every_input_token_after_a_retry(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl([
+            batched([('author', 'Fleming PS')]), batched([('author', 'Rada G')])
+        ])
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert [[token for token, _ in r] for r in result] == token_lists
+
+
 class TestUnansweredReferences:
     """A batch answer the engine cannot honour costs those references, not the
     document. Every one of these cases used to raise, which lost all the
@@ -275,9 +357,10 @@ class TestUnansweredReferences:
     def test_should_raise_when_configured_to_be_strict(self):
         token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
         model_impl = get_citation_model_impl(
-            batched([('author', 'Fleming PS')]), unanswered_reference_raises=True
+            batched([('author', 'Fleming PS')]), unanswered_reference_raises=True,
+            max_missing_reference_retries=0
         )
-        with pytest.raises(LlmResponseError, match='went unanswered'):
+        with pytest.raises(LlmResponseError, match='still unanswered'):
             model_impl.predict_labels(token_lists, no_features(token_lists))
 
     def test_should_still_raise_for_a_response_that_cannot_be_parsed(self):

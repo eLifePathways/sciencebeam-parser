@@ -56,7 +56,7 @@ second profile and running the benchmark, not building a second evaluation route
 Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM works),
 `temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
 `max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`,
-`unanswered_reference_raises`.
+`unanswered_reference_raises`, `max_missing_reference_retries`.
 
 ### What the segmenter is told to skip
 
@@ -98,11 +98,32 @@ mistake a flat field list would have matched against the whole document and labe
 
 An index the batch cannot honour costs that reference rather than the batch. A reference the model
 skipped, answered twice, or numbered outside the batch is left unlabelled, counted on
-`sciencebeam.unanswered_references` and logged; the rest of the batch stands. Omitting the last
-reference of ten is the failure mode seen in practice, and failing the request over it lost the
-other nine along with every field the CRF models had already produced for that document. Lowering
-`max_references_per_request` is the lever when it happens often; `unanswered_reference_raises` makes
-it strict.
+`sciencebeam.unanswered_references` and logged; the rest of the batch stands. Failing the request
+instead lost the other nine along with every field the CRF models had already produced for that
+document.
+
+Skipped references are then asked for again, in a batch containing only them
+(`max_missing_reference_retries`, default 1). Measured over 372 batches and 3394 references: 16
+batches (4.3%) skipped something, 22 references in all (0.65%), 1.38 per affected batch. Every one
+of the 16 included the **last** slot of its batch and none was mid-batch, so a reference that was
+tenth of ten is first in a retry batch of one.
+
+The tail concentration says what the failure is not — not a model losing track of ten items, which
+would drop them anywhere. Two mechanisms remain, both of which can only drop a suffix: the response
+schema declares `references` as an array with no `minItems`, so constrained decoding may legally
+close it early; or generation stops on its own. Neither is proven. `.temp/spec-004-llm-pilot/
+tail-loss-test.py` reruns real batches from a document that skipped, against the same model,
+provider and prompt, with and without `minItems` and at four times the token budget — and every
+variant answered completely, at 2158 output tokens for ten references and 6576 for thirty, against
+a cap of 8000. So it is intermittent and not reproducible from batch content and size alone; load
+and concurrency are the untested variables.
+
+That is what makes the retry the right shape of fix rather than a smaller
+`max_references_per_request`: it repairs the loss without needing the cause. Note that shrinking the
+batch multiplies the number of batches, and the failure is per-batch, so it is not obviously a
+mitigation — whether the 4.3% per-batch rate falls with batch size has not been measured.
+
+`unanswered_reference_raises` makes what remains after the retry fatal.
 
 Both settings are in `config.yml` rather than only in code, since they are the knobs worth turning:
 
