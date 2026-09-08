@@ -97,31 +97,14 @@ reference's tokens only, which catches the model attributing one reference's aut
 mistake a flat field list would have matched against the whole document and labelled silently.
 
 An index the batch cannot honour costs that reference rather than the batch. A reference the model
-skipped, answered twice, or numbered outside the batch is left unlabelled, counted on
-`sciencebeam.unanswered_references` and logged; the rest of the batch stands. Failing the request
-instead lost the other nine along with every field the CRF models had already produced for that
-document.
+skipped, answered twice, or numbered outside the batch is left unlabelled and counted on
+`sciencebeam.unanswered_references`; the rest of the batch stands.
 
-Skipped references are then asked for again, in a batch containing only them
-(`max_missing_reference_retries`, default 1). Measured over 372 batches and 3394 references: 16
-batches (4.3%) skipped something, 22 references in all (0.65%), 1.38 per affected batch. Every one
-of the 16 included the **last** slot of its batch and none was mid-batch, so a reference that was
-tenth of ten is first in a retry batch of one.
-
-The tail concentration says what the failure is not — not a model losing track of ten items, which
-would drop them anywhere. Two mechanisms remain, both of which can only drop a suffix: the response
-schema declares `references` as an array with no `minItems`, so constrained decoding may legally
-close it early; or generation stops on its own. Neither is proven. `.temp/spec-004-llm-pilot/
-tail-loss-test.py` reruns real batches from a document that skipped, against the same model,
-provider and prompt, with and without `minItems` and at four times the token budget — and every
-variant answered completely, at 2158 output tokens for ten references and 6576 for thirty, against
-a cap of 8000. So it is intermittent and not reproducible from batch content and size alone; load
-and concurrency are the untested variables.
-
-That is what makes the retry the right shape of fix rather than a smaller
-`max_references_per_request`: it repairs the loss without needing the cause. Note that shrinking the
-batch multiplies the number of batches, and the failure is per-batch, so it is not obviously a
-mitigation — whether the 4.3% per-batch rate falls with batch size has not been measured.
+Skipped references are asked for again in a batch containing only them
+(`max_missing_reference_retries`, default 1), and the retry stops as soon as a round recovers
+nothing. Skips concentrate in the last slot of a batch, so a reference that was tenth of ten is
+first in a retry batch of one. Lowering `max_references_per_request` does not help with them: the
+failure is per-batch, so fewer references per call means more calls.
 
 `unanswered_reference_raises` makes what remains after the retry fatal.
 
