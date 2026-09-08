@@ -215,8 +215,9 @@ jobs:
             "${PUSH_CURRENT_ARG[@]}"
 
       # The client only sees {"detail":"Internal Server Error"}, so without this a
-      # 500 during the run is undiagnosable once the runner is gone. Bounded and
-      # compressed: the log runs about 1.5 MB per 60 documents uncompressed.
+      # 500 during the run is undiagnosable once the runner is gone. Bounded to
+      # the tail because the log runs about 1.5 MB per 60 documents; upload-artifact
+      # zips what it is given, so compressing here would only nest an archive.
       - name: Parser log
         if: always()
         run: |
@@ -229,14 +230,13 @@ jobs:
           else
             echo 'none' >> $GITHUB_STEP_SUMMARY
           fi
-          gzip parser.log
 
       - name: Upload parser log
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: parser-log-${{ github.sha }}
-          path: parser.log.gz
+          path: parser.log
           retention-days: 30
 
       - name: Write job summary
