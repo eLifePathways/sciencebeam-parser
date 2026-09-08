@@ -4,6 +4,7 @@ from typing import Any, List, Mapping, Optional
 
 import pytest
 
+from sciencebeam_parser.models.llm.client import LlmTruncatedResponseError
 from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
 from sciencebeam_parser.models.llm.decode import (
     LlmInputTooLargeError,
@@ -124,6 +125,8 @@ CITATION_CONFIG = {
 }
 
 CITATION_TOKENS = ['Fleming', 'PS', ',', 'Koletsi', 'D', ':', 'High', 'quality']
+# the prompt's worked example uses REFERENCE markers of its own
+EXAMPLES_IN_CITATION_PROMPT = 4
 SECOND_REFERENCE = ['Rada', 'G', ':', 'What', 'is', 'best']
 
 
@@ -265,6 +268,78 @@ class TestEmptyInput:
         assert render_numbered_references([CITATION_TOKENS]) in model_impl.client.prompts[0]
         assert result[0] == [] and result[2] == []
         assert result[1][0] == ('Fleming', 'B-<author>')
+
+
+class TruncatingClient:
+    """Truncates any batch larger than `answers_up_to`, as a provider does when a
+    response runs past max_tokens: valid-looking JSON, finish_reason='length'.
+    """
+    def __init__(self, answers_up_to: int):
+        self.answers_up_to = answers_up_to
+        self.prompts: List[str] = []
+        self.batch_sizes: List[int] = []
+
+    def validate_configuration(self) -> None:
+        pass
+
+    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]):
+        assert response_schema['type'] == 'object'
+        self.prompts.append(prompt)
+        size = prompt.count('REFERENCE ') - EXAMPLES_IN_CITATION_PROMPT
+        self.batch_sizes.append(size)
+        if size > self.answers_up_to:
+            return {'choices': [{
+                'message': {'content': '{"references": [{"index": 0, "fie'},
+                'finish_reason': 'length',
+            }], 'usage': {'completion_tokens': 16000}}
+        return {
+            'choices': [{'message': {'content': batched(*([[]] * size))},
+                         'finish_reason': 'stop'}],
+            'provider': 'Venice',
+        }
+
+
+def get_truncating_model_impl(answers_up_to: int, **overrides):
+    return LlmModelImpl(
+        LlmEngineConfig.from_model_config({**CITATION_CONFIG, **overrides}),
+        client=TruncatingClient(answers_up_to)
+    )
+
+
+class TestSplitOnTruncation:
+    """An answer that ran out of room is unusable, and the batch is the only thing
+    the engine can change about it.
+    """
+    def test_should_halve_a_batch_whose_answer_was_truncated(self, caplog):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE, CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_truncating_model_impl(answers_up_to=2)
+        with caplog.at_level('WARNING'):
+            result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert model_impl.client.batch_sizes == [4, 2, 2]
+        assert [[t for t, _ in r] for r in result] == token_lists
+        assert 'hit the output limit' in caplog.text
+
+    def test_should_halve_repeatedly_until_the_answer_fits(self):
+        token_lists = [CITATION_TOKENS] * 4
+        model_impl = get_truncating_model_impl(answers_up_to=1)
+        model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert model_impl.client.batch_sizes == [4, 2, 1, 1, 2, 1, 1]
+
+    def test_should_raise_when_a_single_reference_still_truncates(self):
+        model_impl = get_truncating_model_impl(answers_up_to=0)
+        with pytest.raises(LlmTruncatedResponseError, match='output token limit'):
+            model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
+
+    def test_should_not_split_a_batch_that_answered(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_truncating_model_impl(answers_up_to=10)
+        model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert model_impl.client.batch_sizes == [2]
+
+    def test_should_keep_the_truncation_type_rather_than_the_base_error(self):
+        model_impl = get_truncating_model_impl(answers_up_to=0)
+        with pytest.raises(LlmTruncatedResponseError):
+            model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
 
 
 class TestRetryForMissingReferences:

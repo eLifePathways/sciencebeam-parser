@@ -6,6 +6,7 @@ from sciencebeam_parser.models.llm.client import (
     LlmClient,
     LlmCompletionClient,
     LlmRequestError,
+    LlmTruncatedResponseError,
     get_response_content
 )
 from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
@@ -130,24 +131,64 @@ class LlmModelImpl(ModelImpl):
         ]
         workers = max(1, min(self.config.max_concurrent_requests, len(batches)))
         if workers == 1 or len(batches) == 1:
-            per_batch = [self._predict_labels_from_values(batch) for batch in batches]
+            per_batch = [self._predict_labels_splitting_on_truncation(batch)
+                         for batch in batches]
         else:
             # Batches are independent, so the wall-clock is the slowest batch
             # rather than their sum. Order is preserved by mapping rather than
             # completion order, and the first exception propagates.
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                per_batch = list(pool.map(self._predict_labels_from_values, batches))
+                per_batch = list(pool.map(
+                    self._predict_labels_splitting_on_truncation, batches
+                ))
         return [labelled for batch in per_batch for labelled in batch]
+
+    def _predict_labels_splitting_on_truncation(
+        self, token_lists: List[List[str]]
+    ) -> List[List[Tuple[str, str]]]:
+        """Halve a batch whose answer ran out of room, and ask about each half.
+
+        A truncated answer is unusable — the engine cannot tell a field that was
+        cut off from one that was never sent — so the alternative is losing the
+        whole document. Halving costs at most one extra call per split and
+        recovers a batch that was simply too long to answer in one response.
+
+        A single reference that still truncates raises: its answer is already
+        many times the size of its input, which is a generation that will not
+        terminate rather than a batch to divide further.
+        """
+        try:
+            return self._predict_labels_from_values(token_lists)
+        except LlmTruncatedResponseError:
+            if len(token_lists) <= 1:
+                raise
+            middle = len(token_lists) // 2
+            LOGGER.warning(
+                'llm %s: answer for %d references hit the output limit;'
+                ' asking again as %d and %d',
+                self.config.task, len(token_lists), middle, len(token_lists) - middle
+            )
+            return (
+                self._predict_labels_splitting_on_truncation(token_lists[:middle])
+                + self._predict_labels_splitting_on_truncation(token_lists[middle:])
+            )
 
     def _get_content(self, response_json, token_count: int) -> str:
         try:
             return get_response_content(response_json)
+        except LlmTruncatedResponseError as exc:
+            # Re-raised as its own class rather than the base one, so a caller can
+            # tell a response that ran out of room from one that failed outright.
+            raise LlmTruncatedResponseError(self._describe(exc, token_count)) from exc
         except LlmRequestError as exc:
-            raise LlmRequestError(
-                f'{exc} [task={self.config.task!r} model={self.config.model!r}'
-                f' shape={self.config.response_shape!r}'
-                f' prompt={self.config.prompt_version!r} tokens={token_count}]'
-            ) from exc
+            raise LlmRequestError(self._describe(exc, token_count)) from exc
+
+    def _describe(self, exc: Exception, token_count: int) -> str:
+        return (
+            f'{exc} [task={self.config.task!r} model={self.config.model!r}'
+            f' shape={self.config.response_shape!r}'
+            f' prompt={self.config.prompt_version!r} tokens={token_count}]'
+        )
 
     def _check_dropped_fields(self, dropped: int, reference_count: int) -> None:
         if not dropped:

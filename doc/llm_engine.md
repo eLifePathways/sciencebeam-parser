@@ -164,7 +164,16 @@ a run that wants strictness.
 
 A response cut off at the output limit raises `LlmTruncatedResponseError` naming
 `finish_reason`, the completion token count and the task, rather than surfacing as a JSON parse
-error. Raise `max_output_tokens`, or send less per request.
+error. `max_output_tokens` defaults to 16000: the `values` shape returns about 4.3 times its input
+in tokens, or 217 per reference, measured at both 10 and 30 references per batch, so a batch of ten
+wants roughly 2200 and the largest region seen in a benchmark run wanted about 4200. The earlier
+8000 left under twice the expected need, which is not enough headroom for a long reference list.
+
+A batch that still truncates is halved and asked again, once per split, down to a single reference —
+a truncated answer is unusable, since a field that was cut off cannot be told from one that was
+never sent, so the alternative is losing the document. One reference that still truncates raises:
+its answer is already several times the size of its input, which is a generation that will not
+terminate rather than a batch to divide further.
 
 ## Tracing (optional)
 
