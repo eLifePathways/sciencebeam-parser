@@ -61,85 +61,71 @@ Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM
 ### What the segmenter is told to skip
 
 The region it receives is whatever segmentation labelled `<references>`, which is sometimes a table
-or body text (see
-`.project-notes/references-region-includes-non-reference-content.md`). The prompt therefore says to
-report only actual bibliographic references and to return an empty list if none of the lines are
-references — deciding what is a reference is the segmenter's job, so this is not the same as papering
-over the upstream defect in the citation prompt.
-
-An empty answer is accepted rather than rejected, since "no references in this region" is a valid
-thing for the model to conclude.
+or body text. The prompt says to report only bibliographic references, and an empty answer is
+accepted — "no references in this region" is a valid conclusion.
 
 ### Response shapes for the reference segmenter
 
 `lines` returns a line number per reference. `evidence` returns the line number **and** the first
-words on it — the number is still the answer, the words are only a check on it, so a wrong quote
-costs a check rather than the reference.
-
-The pilot behind this found `evidence` worth about 0.19 `partial_list` on a 12B and 0.003 on the 9B
-shipped here, at roughly four times the output tokens, which is why `lines` is the default. On one
-real reference list both found 33 references against a gold of 33, in 5.3s and 6.9s. `evidence` earns
-its cost on a weaker model, not on a capable one.
+words on it, so a wrong quote costs a check rather than the reference. `lines` is the default;
+`evidence` costs about four times the output tokens and earns it on a weaker model than the one
+shipped here.
 
 A quote is accepted against the line it names or the one below it, since models name the line
-holding the reference number while quoting the words underneath. Anything else increments
-`sciencebeam.evidence_mismatches` on the span and logs a warning; set `evidence_mismatch_raises` to
-make the check load-bearing instead. It is off by default because a mismatch is a well-formed answer
-whose evidence disagrees, not a protocol violation — and in the pilot a 12B mismatched on 158 of 210
-references while the 9B mismatched on 1 of 118.
+holding the reference number while quoting the words underneath. Anything else counts on
+`sciencebeam.evidence_mismatches` and logs a warning; `evidence_mismatch_raises` makes the check
+load-bearing.
 
 ### Batching (citation)
 
-`processor.py` hands the engine every reference of a document at once, so the citation model batches
-them: `max_references_per_request` (default 10) references per call, each numbered in the prompt,
-with one entry per reference expected in the response. Values are located within their own
-reference's tokens only, which catches the model attributing one reference's author to another — a
-mistake a flat field list would have matched against the whole document and labelled silently.
-
-An index the batch cannot honour costs that reference rather than the batch. A reference the model
-skipped, answered twice, or numbered outside the batch is left unlabelled and counted on
-`sciencebeam.unanswered_references`; the rest of the batch stands.
-
-Skipped references are asked for again in a batch containing only them
-(`max_missing_reference_retries`, default 1), and the retry stops as soon as a round recovers
-nothing. Skips concentrate in the last slot of a batch, so a reference that was tenth of ten is
-first in a retry batch of one. Lowering `max_references_per_request` does not help with them: the
-failure is per-batch, so fewer references per call means more calls.
-
-`unanswered_reference_raises` makes what remains after the retry fatal.
-
-Both settings are in `config.yml` rather than only in code, since they are the knobs worth turning:
+The citation model receives every reference of a document at once and batches them, each numbered in
+the prompt, with one entry per reference expected in the response. Values are located within their
+own reference's tokens only, so a value belonging to a neighbour is dropped rather than labelled.
 
 ```yaml
 max_references_per_request: 10   # references per call
 max_concurrent_requests: 4       # calls in flight at once
 ```
 
-Measured on 10 references: one batched call took 22s against 48s for ten single calls, at token
-accuracy 0.906 against 0.904 — twice as fast at no cost in accuracy. On 33 references in 4 batches,
-concurrency took 111s down to 58s with accuracy unchanged.
+Batching is worth roughly 2x over one call per reference, and concurrency about 2x again up to 4
+calls; beyond that provider throughput is the bound. A larger batch does not generate fewer tokens —
+it generates them in one long stream that cannot be overlapped, and long generations draw provider
+timeouts, so more smaller batches is the direction that helps.
 
-**Raising the batch size is the wrong lever.** Decode cost is linear in output tokens however they
-are grouped, so a bigger batch does not generate less — it generates the same amount in one long
-stream that cannot be overlapped, and long generations are what draw provider timeouts (one cost
-about five minutes in retry). More, smaller batches running concurrently is the direction that helps.
+A reference the model skips, answers twice, or numbers outside the batch is left unlabelled and
+counted on `sciencebeam.unanswered_references`; the rest of the batch stands. Skipped ones are asked
+for again in a batch containing only them (`max_missing_reference_retries`, default 1), stopping as
+soon as a round recovers nothing. `unanswered_reference_raises` makes what remains fatal.
 
-Lower `max_concurrent_requests` if the provider answers with 429s; the client retries them with
-backoff, but a rate-limited provider can make concurrency a net loss. Note also that spans from
-worker threads are siblings rather than nested, and that the service may already handle documents
-concurrently, which multiplies with this.
+An answer that hits `max_output_tokens` is unusable, since a field cut off cannot be told from one
+never sent, so the batch is halved and asked again down to a single reference. The default of 16000
+allows about 4x the input, which is what this shape returns.
+
+Retries use a jittered backoff and honour `Retry-After`, spending longer on a 429 than on a server
+error. A 429 from OpenRouter is its pooled allocation with the provider rather than a limit on the
+key, so a provider key on the account — or `endpoint` pointed straight at the provider — buys a
+separate limit. Lower `max_concurrent_requests` if they persist.
+
+Spans from worker threads are siblings rather than nested, and the service may already handle
+documents concurrently, which multiplies with this.
 
 ## What it guarantees
 
 No text reaches a document that was not in the source. Under `lines` the model returns line numbers
 and never text at all. Under `values` it returns text, and every value is located back in the token
-sequence — one that cannot be found, or that a previous field already claimed, is dropped rather
-than labelled. Either way `Model._iter_flat_label_model_data_lists_to` independently rejects any
-result whose tokens are not the input tokens.
+sequence. Either way `Model._iter_flat_label_model_data_lists_to` independently rejects any result
+whose tokens are not the input tokens.
 
-Dropping an unhonourable claim keeps the guarantee rather than weakening it: what is discarded never
-becomes a label, so the guarantee constrains only what a response can *add*, never what it may lose.
-Losses are counted on the span and logged, and the `*_raises` settings make each one strict.
+**A response the engine cannot parse raises; a claim the engine cannot honour is dropped and
+counted.** Bad JSON or a malformed reference entry are the first. A value that is not in the
+reference, or one a previous field already claimed, are the second — dropped with a warning naming
+the reference, label and text, counted on `sciencebeam.dropped_fields`. Dropping keeps the guarantee
+rather than weakening it: a discarded value never becomes a label, so the guarantee constrains what
+a response can *add* and not what it may lose. The `*_raises` settings make each loss strict
+instead.
+
+There is no fallback to a CRF engine and no partial labelling: a score is only meaningful if every
+label came from the model under test.
 
 The `citation` label vocabulary is read from the model's own label map rather than restated in the
 prompt source, so it cannot drift from the labels the extractor understands.
@@ -147,33 +133,6 @@ prompt source, so it cannot drift from the labels the extractor understands.
 Every request enforces zero data retention — `zdr`, `data_collection: deny`,
 `allow_fallbacks: false`, `require_parameters: true`, and `only: [provider]` when pinned. A `:free`
 model id is refused at load, because that tier requires allowing training on prompts.
-
-A response that cannot be decoded raises. There is no fallback to a CRF engine and no partial
-labelling: a score is only meaningful if every label came from the model under test.
-
-**A response the engine cannot parse raises; a claim the engine cannot honour is dropped and
-counted.** Bad JSON, a missing reference entry, an index out of range are the first. An invented
-value, or two fields over one span, are the second — dropped with a warning naming the reference,
-label and text, counted on `sciencebeam.dropped_fields`.
-
-Dropping satisfies the guarantee rather than weakening it: a discarded value never becomes a label,
-so no text reaches the document that was not in the source. Raising would be stronger than the
-guarantee needs, and it destroys every reference in a document over one invented field — which is
-common, because the region handed over is often not a reference list. Set `dropped_field_raises` for
-a run that wants strictness.
-
-A response cut off at the output limit raises `LlmTruncatedResponseError` naming
-`finish_reason`, the completion token count and the task, rather than surfacing as a JSON parse
-error. `max_output_tokens` defaults to 16000: the `values` shape returns about 4.3 times its input
-in tokens, or 217 per reference, measured at both 10 and 30 references per batch, so a batch of ten
-wants roughly 2200 and the largest region seen in a benchmark run wanted about 4200. The earlier
-8000 left under twice the expected need, which is not enough headroom for a long reference list.
-
-A batch that still truncates is halved and asked again, once per split, down to a single reference —
-a truncated answer is unusable, since a field that was cut off cannot be told from one that was
-never sent, so the alternative is losing the document. One reference that still truncates raises:
-its answer is already several times the size of its input, which is a generation that will not
-terminate rather than a batch to divide further.
 
 ## Tracing (optional)
 
@@ -223,15 +182,12 @@ text.
 
 ## Input size
 
-`sciencebeam.input_lines` and `sciencebeam.input_tokens` are on every span, because what the engine
-receives is whatever the *segmentation* model labelled `<references>` — not necessarily a reference
-list. A region of a thousand lines is a mislabelled region, and it degrades the `wapiti` path
-identically, so it is worth being able to see and filter on.
+What the engine receives is whatever the *segmentation* model labelled `<references>`, which is not
+necessarily a reference list, so `sciencebeam.input_lines` and `sciencebeam.input_tokens` are on
+every span to make an oversized region visible.
 
 Above `warn_input_lines` (default 300) the engine logs a warning naming the count. `max_input_lines`
-(default 0, off) raises instead, for a run where failing fast is wanted — off by default because
-raising would fail exactly the documents where the CRF path produces poor output, which flatters a
-comparison rather than informing it.
+(default 0, off) raises instead, for a run where failing fast is wanted.
 
 ## Choosing a provider
 
@@ -243,18 +199,13 @@ The same model id served by two providers is not the same service. For
 | Venice | fp8 | **12** | 0.860 | 100% / 100% |
 | SiliconFlow | fp8 | 39 | 0.867 | 96% / 99% |
 
-Venice is shipped: 3.3× faster at the same quantisation and price, for about 0.007 token accuracy —
-inside the run-to-run spread of most things measured here, and latency has been the binding
-constraint throughout. On the segmenter the same document took 2.1s against 3.9s, with identical
-output.
+Venice is shipped: 3.3x faster at the same quantisation and price, for a token-accuracy difference
+inside the run-to-run spread.
 
-Worth re-checking rather than trusting: OpenRouter reports `uptime_last_30m` and `uptime_last_1d` per
-endpoint, and they move. `GET /api/v1/models/{author}/{slug}/endpoints` lists them alongside
-quantisation and per-provider parameter support. Note that latency and throughput often come back
-`None` there, so those have to be measured rather than read.
-
-Not every provider is reachable under the zero-retention pin — Parasail answered 429 immediately —
-so a candidate has to be tried, not just looked up.
+`GET /api/v1/models/{author}/{slug}/endpoints` lists the providers for a model with their
+quantisation, pricing and reported uptime, which move over time. Latency and throughput usually come
+back `None` there, and not every provider is reachable under the zero-retention pin, so a candidate
+has to be measured rather than looked up.
 
 ## CI
 
@@ -271,12 +222,11 @@ validates its endpoint and model id while the container starts. A missing key or
 endpoint therefore fails at "Wait for parser" with the reason in the container logs, rather than
 part-way through a run.
 
-**PLOS cannot be combined with an LLM profile.** `benchmarks/run.py` refuses it, naming the profile
-and the corpus, because provider zero-retention does not cover OpenRouter itself and those
-manuscripts are not redistributable. This matters most on `main`, where the workflow adds
-`--include-corpus plos-manuscripts` automatically — so an LLM profile on `main` fails rather than
-quietly sending private manuscripts to a third party. Point the engine at a self-hosted endpoint if
-that corpus needs covering.
+**PLOS cannot be combined with an LLM profile.** `benchmarks/run.py` refuses it, because provider
+zero-retention does not cover OpenRouter itself and those manuscripts are not redistributable. The
+workflow adds `--include-corpus plos-manuscripts` automatically on `main`, so an LLM profile there
+fails rather than sending private manuscripts to a third party. Point the engine at a self-hosted
+endpoint if that corpus needs covering.
 
 Nothing is traced in CI: no collector endpoint is set, so the engine emits no spans.
 

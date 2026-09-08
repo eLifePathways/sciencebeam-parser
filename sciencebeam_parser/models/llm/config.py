@@ -24,7 +24,7 @@ class LlmEngineConfig:
     temperature: float = 0.0
     timeout_seconds: float = 300.0
     max_output_tokens: int = 16000
-    max_attempts: int = 4
+    max_attempts: int = 5
     record_trace_content: bool = True
     warn_input_lines: int = 300
     max_input_lines: int = 0
