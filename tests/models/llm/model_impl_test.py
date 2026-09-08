@@ -306,6 +306,72 @@ def get_truncating_model_impl(answers_up_to: int, **overrides):
     )
 
 
+class TestRetryOnMalformedResponse:
+    """Generation is not bit-reproducible even at temperature 0, so a response
+    that will not parse is worth asking for again — but only that: a strictness
+    setting that fires is a decision, not a bad sample.
+    """
+    def test_should_ask_again_when_the_response_is_not_json(self, caplog):
+        model_impl = get_model_impl(['{"starts": [0', json.dumps({'starts': [0]})])
+        with caplog.at_level('WARNING'):
+            result = model_impl.predict_labels([TOKENS], [feature_rows()])
+        assert len(model_impl.client.prompts) == 2
+        assert [token for token, _ in result[0]] == TOKENS
+        assert 'could not be parsed, asking again' in caplog.text
+
+    def test_should_send_the_same_prompt_again(self):
+        model_impl = get_model_impl(['{"starts": [0', json.dumps({'starts': [0]})])
+        model_impl.predict_labels([TOKENS], [feature_rows()])
+        first, second = model_impl.client.prompts
+        assert first == second
+
+    def test_should_ask_again_when_a_key_is_missing(self):
+        model_impl = get_model_impl(['{}', json.dumps({'starts': [0]})])
+        model_impl.predict_labels([TOKENS], [feature_rows()])
+        assert len(model_impl.client.prompts) == 2
+
+    def test_should_give_up_after_the_configured_retries(self):
+        model_impl = get_model_impl('{"starts": [0')
+        with pytest.raises(LlmResponseError, match='not json'):
+            model_impl.predict_labels([TOKENS], [feature_rows()])
+        assert len(model_impl.client.prompts) == 2
+
+    def test_should_not_retry_when_disabled(self):
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config(
+                {**CONFIG, 'max_malformed_response_retries': 0}
+            ),
+            client=FakeClient(content='{"starts": [0')
+        )
+        with pytest.raises(LlmResponseError):
+            model_impl.predict_labels([TOKENS], [feature_rows()])
+        assert len(model_impl.client.prompts) == 1
+
+    def test_should_not_ask_again_when_the_response_parsed(self):
+        model_impl = get_model_impl(json.dumps({'starts': [0]}))
+        model_impl.predict_labels([TOKENS], [feature_rows()])
+        assert len(model_impl.client.prompts) == 1
+
+    def test_should_ask_again_for_a_citation_batch(self):
+        token_lists = [CITATION_TOKENS]
+        model_impl = get_citation_model_impl(
+            ['{"references": [', batched([('author', 'Fleming PS')])]
+        )
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 2
+        assert result[0][0] == ('Fleming', 'B-<author>')
+
+    def test_should_not_retry_a_strictness_failure(self):
+        # dropped_field_raises firing is a decision, so the same answer would
+        # only come back again
+        model_impl = get_citation_model_impl(
+            batched([('title', 'a paraphrased title')]), dropped_field_raises=True
+        )
+        with pytest.raises(LlmResponseError, match='could not be located'):
+            model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
+        assert len(model_impl.client.prompts) == 1
+
+
 class TestSplitOnTruncation:
     """An answer that ran out of room is unusable, and the batch is the only thing
     the engine can change about it.

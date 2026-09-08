@@ -11,7 +11,7 @@ from typing import (
 )
 
 from sciencebeam_parser.models.llm.decode import (
-    LlmResponseError,
+    LlmMalformedResponseError,
     get_json_payload,
     iter_words
 )
@@ -97,18 +97,18 @@ def find_unclaimed_span(
 def parse_values(content: str, labels: Sequence[str]) -> List[Dict[str, str]]:
     payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'fields' not in payload:
-        raise LlmResponseError('response has no "fields"')
+        raise LlmMalformedResponseError('response has no "fields"')
     fields = payload['fields']
     if not isinstance(fields, list):
-        raise LlmResponseError('"fields" is not a list')
+        raise LlmMalformedResponseError('"fields" is not a list')
     known = set(labels)
     parsed: List[Dict[str, str]] = []
     for entry in fields:
         if not isinstance(entry, dict) or 'label' not in entry or 'text' not in entry:
-            raise LlmResponseError(f'field entry is malformed: {entry!r}')
+            raise LlmMalformedResponseError(f'field entry is malformed: {entry!r}')
         label = entry['label']
         if label not in known:
-            raise LlmResponseError(f'unknown label {label!r}')
+            raise LlmMalformedResponseError(f'unknown label {label!r}')
         parsed.append({'label': label, 'text': entry['text']})
     return parsed
 
@@ -220,17 +220,17 @@ def parse_batched_values(
     """
     payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'references' not in payload:
-        raise LlmResponseError('response has no "references"')
+        raise LlmMalformedResponseError('response has no "references"')
     entries = payload['references']
     if not isinstance(entries, list):
-        raise LlmResponseError('"references" is not a list')
+        raise LlmMalformedResponseError('"references" is not a list')
     by_index: Dict[int, List[Dict[str, str]]] = {}
     for entry in entries:
         if not isinstance(entry, dict) or 'index' not in entry:
-            raise LlmResponseError(f'reference entry is malformed: {entry!r}')
+            raise LlmMalformedResponseError(f'reference entry is malformed: {entry!r}')
         index = entry['index']
         if isinstance(index, bool) or not isinstance(index, int):
-            raise LlmResponseError(f'reference index is not an integer: {index!r}')
+            raise LlmMalformedResponseError(f'reference index is not an integer: {index!r}')
         if not 0 <= index < reference_count:
             LOGGER.warning(
                 'llm returned reference index %d, outside the %d sent; skipping it',

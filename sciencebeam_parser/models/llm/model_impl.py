@@ -14,6 +14,7 @@ from sciencebeam_parser.models.llm.decode import (
     EVIDENCE_RESPONSE_SCHEMA,
     LINES_RESPONSE_SCHEMA,
     LlmInputTooLargeError,
+    LlmMalformedResponseError,
     LlmResponseError,
     decode_evidence_response,
     decode_line_starts_response,
@@ -158,7 +159,10 @@ class LlmModelImpl(ModelImpl):
         terminate rather than a batch to divide further.
         """
         try:
-            return self._predict_labels_from_values(token_lists)
+            return self._retrying_on_malformed(
+                f'{len(token_lists)}-reference',
+                lambda: self._predict_labels_from_values(token_lists)
+            )
         except LlmTruncatedResponseError:
             if len(token_lists) <= 1:
                 raise
@@ -172,6 +176,28 @@ class LlmModelImpl(ModelImpl):
                 self._predict_labels_splitting_on_truncation(token_lists[:middle])
                 + self._predict_labels_splitting_on_truncation(token_lists[middle:])
             )
+
+    def _retrying_on_malformed(self, describe: str, issue):
+        """Ask again when the response cannot be parsed.
+
+        Generation is not bit-reproducible even at temperature 0, so a second
+        request often parses where the first did not. Bounded, and confined to
+        parse failures: a strictness setting that fires is a decision, and
+        repeating the request would spend tokens on the same answer.
+        """
+        attempts = max(0, self.config.max_malformed_response_retries) + 1
+        for attempt in range(attempts):
+            try:
+                return issue()
+            except LlmMalformedResponseError as exc:
+                if attempt + 1 >= attempts:
+                    raise
+                LOGGER.warning(
+                    'llm %s: %s response could not be parsed, asking again'
+                    ' (attempt %d of %d): %s',
+                    self.config.task, describe, attempt + 2, attempts, exc
+                )
+        raise AssertionError('unreachable')
 
     def _get_content(self, response_json, token_count: int) -> str:
         try:
@@ -264,6 +290,22 @@ class LlmModelImpl(ModelImpl):
         )
         is_evidence = self.config.response_shape == EVIDENCE_SHAPE
         schema = EVIDENCE_RESPONSE_SCHEMA if is_evidence else LINES_RESPONSE_SCHEMA
+        return self._retrying_on_malformed(
+            f'{max(line_numbers) + 1}-line',
+            lambda: self._label_sequence_once(
+                prompt, schema, tokens, line_numbers, line_status_values, is_evidence
+            )
+        )
+
+    def _label_sequence_once(
+        self,
+        prompt: str,
+        schema,
+        tokens: List[str],
+        line_numbers: List[int],
+        line_status_values: List[str],
+        is_evidence: bool
+    ) -> List[Tuple[str, str]]:
         with llm_span(self.config, prompt, self.config.record_trace_content) as span:
             response_json = self.client.get_completion(prompt, schema)
             span.set_attribute('sciencebeam.input_lines', max(line_numbers) + 1)

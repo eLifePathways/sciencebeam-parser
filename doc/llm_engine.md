@@ -56,7 +56,8 @@ second profile and running the benchmark, not building a second evaluation route
 Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM works),
 `temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
 `max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`,
-`unanswered_reference_raises`, `max_missing_reference_retries`.
+`unanswered_reference_raises`, `max_missing_reference_retries`,
+`max_malformed_response_retries`.
 
 ### What the segmenter is told to skip
 
@@ -116,13 +117,17 @@ and never text at all. Under `values` it returns text, and every value is locate
 sequence. Either way `Model._iter_flat_label_model_data_lists_to` independently rejects any result
 whose tokens are not the input tokens.
 
-**A response the engine cannot parse raises; a claim the engine cannot honour is dropped and
-counted.** Bad JSON or a malformed reference entry are the first. A value that is not in the
-reference, or one a previous field already claimed, are the second — dropped with a warning naming
-the reference, label and text, counted on `sciencebeam.dropped_fields`. Dropping keeps the guarantee
-rather than weakening it: a discarded value never becomes a label, so the guarantee constrains what
-a response can *add* and not what it may lose. The `*_raises` settings make each loss strict
-instead.
+**A response the engine cannot parse is asked for again and then raises; a claim the engine cannot
+honour is dropped and counted.** Bad JSON or a malformed entry are the first: re-requested with the
+same prompt `max_malformed_response_retries` times (default 1), since generation is not
+bit-reproducible even at temperature 0. A value that is not in the reference, or one a previous
+field already claimed, are the second — dropped with a warning naming the reference, label and text,
+counted on `sciencebeam.dropped_fields`. Dropping keeps the guarantee rather than weakening it: a
+discarded value never becomes a label, so the guarantee constrains what a response can *add* and not
+what it may lose.
+
+The `*_raises` settings make each loss strict instead. Those are not retried — a strictness setting
+firing is a decision, and the same answer would come back.
 
 There is no fallback to a CRF engine and no partial labelling: a score is only meaningful if every
 label came from the model under test.

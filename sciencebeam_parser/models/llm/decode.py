@@ -57,6 +57,16 @@ class LlmResponseError(ValueError):
     pass
 
 
+class LlmMalformedResponseError(LlmResponseError):
+    """The response could not be parsed, as distinct from a claim it makes that
+    the engine will not honour.
+
+    Only this one is worth asking again for. A strictness setting that fires is a
+    decision rather than a bad sample, and repeating the request would only spend
+    tokens on the same answer.
+    """
+
+
 class LlmInputTooLargeError(ValueError):
     pass
 
@@ -102,7 +112,7 @@ def get_json_payload(content: str):
             content[max(0, position - 60):position + 20] if position is not None
             else content[:120]
         )
-        raise LlmResponseError(
+        raise LlmMalformedResponseError(
             f'response is not json: {exc}; {len(content)} chars,'
             f' around the failure: ...{excerpt!r}'
         ) from exc
@@ -111,21 +121,21 @@ def get_json_payload(content: str):
 def parse_line_starts(content: str, line_count: int) -> List[int]:
     payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'starts' not in payload:
-        raise LlmResponseError('response has no "starts"')
+        raise LlmMalformedResponseError('response has no "starts"')
     starts = payload['starts']
     if not isinstance(starts, list):
-        raise LlmResponseError('"starts" is not a list')
+        raise LlmMalformedResponseError('"starts" is not a list')
     resolved: List[int] = []
     for value in starts:
         if isinstance(value, bool) or not isinstance(value, int):
-            raise LlmResponseError(f'line number is not an integer: {value!r}')
+            raise LlmMalformedResponseError(f'line number is not an integer: {value!r}')
         if not 0 <= value < line_count:
-            raise LlmResponseError(
+            raise LlmMalformedResponseError(
                 f'line number {value} out of range for {line_count} lines'
             )
         resolved.append(value)
     if resolved != sorted(set(resolved)):
-        raise LlmResponseError(f'line numbers are not strictly ascending: {resolved}')
+        raise LlmMalformedResponseError(f'line numbers are not strictly ascending: {resolved}')
     return resolved
 
 
@@ -160,26 +170,26 @@ def parse_evidence_line_starts(
     """
     payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'references' not in payload:
-        raise LlmResponseError('response has no "references"')
+        raise LlmMalformedResponseError('response has no "references"')
     entries = payload['references']
     if not isinstance(entries, list):
-        raise LlmResponseError('"references" is not a list')
+        raise LlmMalformedResponseError('"references" is not a list')
     starts: List[int] = []
     claims: List[str] = []
     for entry in entries:
         if not isinstance(entry, dict) or 'line' not in entry:
-            raise LlmResponseError(f'reference entry is malformed: {entry!r}')
+            raise LlmMalformedResponseError(f'reference entry is malformed: {entry!r}')
         line = entry['line']
         if isinstance(line, bool) or not isinstance(line, int):
-            raise LlmResponseError(f'line number is not an integer: {line!r}')
+            raise LlmMalformedResponseError(f'line number is not an integer: {line!r}')
         if not 0 <= line < line_count:
-            raise LlmResponseError(
+            raise LlmMalformedResponseError(
                 f'line number {line} out of range for {line_count} lines'
             )
         starts.append(line)
         claims.append(str(entry.get('starts_with') or ''))
     if starts != sorted(set(starts)):
-        raise LlmResponseError(f'line numbers are not strictly ascending: {starts}')
+        raise LlmMalformedResponseError(f'line numbers are not strictly ascending: {starts}')
     return starts, claims
 
 
@@ -215,7 +225,7 @@ def decode_evidence_response(
     line_status_values: Sequence[str]
 ) -> Tuple[List[Tuple[str, str]], int]:
     if len(tokens) != len(line_status_values):
-        raise LlmResponseError(
+        raise LlmMalformedResponseError(
             f'token count {len(tokens)} does not match feature rows'
             f' {len(line_status_values)}'
         )
@@ -264,7 +274,7 @@ def decode_line_starts_response(
     line_status_values: Sequence[str]
 ) -> List[Tuple[str, str]]:
     if len(tokens) != len(line_status_values):
-        raise LlmResponseError(
+        raise LlmMalformedResponseError(
             f'token count {len(tokens)} does not match feature rows'
             f' {len(line_status_values)}'
         )
@@ -275,7 +285,7 @@ def decode_line_starts_response(
     )
     labels = iter_labels_for_line_starts(tokens, line_numbers, line_starts)
     if len(labels) != len(tokens):
-        raise LlmResponseError(
+        raise LlmMalformedResponseError(
             f'produced {len(labels)} labels for {len(tokens)} tokens'
         )
     return list(zip(tokens, labels))

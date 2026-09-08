@@ -30,6 +30,7 @@ class LlmEngineConfig:
     max_input_lines: int = 0
     max_references_per_request: int = 10
     max_missing_reference_retries: int = 1
+    max_malformed_response_retries: int = 1
     max_concurrent_requests: int = 4
     evidence_mismatch_raises: bool = False
     dropped_field_raises: bool = False
