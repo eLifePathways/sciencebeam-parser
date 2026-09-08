@@ -3,6 +3,7 @@ import json
 import pytest
 
 from sciencebeam_parser.models.llm.decode import (
+    get_json_payload,
     LlmResponseError,
     decode_line_starts_response,
     get_line_numbers,
@@ -127,3 +128,34 @@ class TestSnapStartsToLabelLines:
     def test_should_not_snap_two_starts_onto_the_same_label_line(self):
         lines = get_lines(TOKENS, get_line_numbers(LINE_STATUS))
         assert snap_starts_to_label_lines([1, 2], lines) == [0, 2]
+
+
+class TestGetJsonPayload:
+    """The response is otherwise only on the telemetry span, so a run without a
+    collector has to be able to tell what arrived from the error alone.
+    """
+    def test_should_parse_valid_json(self):
+        assert get_json_payload('{"starts": [0]}') == {'starts': [0]}
+
+    def test_should_report_the_length_so_truncation_is_recognisable(self):
+        content = '{"starts": [0, 14, 31, 48'
+        with pytest.raises(LlmResponseError, match=f'{len(content)} chars'):
+            get_json_payload(content)
+
+    def test_should_quote_the_text_around_the_failure(self):
+        with pytest.raises(LlmResponseError, match='31,\\]'):
+            get_json_payload('{"starts": [0, 14, 31,]}')
+
+    def test_should_keep_the_underlying_message(self):
+        with pytest.raises(LlmResponseError, match='Expecting value'):
+            get_json_payload('{"starts": [0, 14, 31,]}')
+
+    def test_should_bound_the_excerpt_for_a_long_response(self):
+        with pytest.raises(LlmResponseError) as caught:
+            get_json_payload('{"starts": [' + '0, ' * 400)
+        assert len(str(caught.value)) < 300
+
+    def test_should_chain_the_original_error(self):
+        with pytest.raises(LlmResponseError) as caught:
+            get_json_payload('not json at all')
+        assert isinstance(caught.value.__cause__, ValueError)

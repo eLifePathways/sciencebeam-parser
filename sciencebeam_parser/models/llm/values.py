@@ -10,7 +10,11 @@ from typing import (
     Tuple
 )
 
-from sciencebeam_parser.models.llm.decode import LlmResponseError, iter_words
+from sciencebeam_parser.models.llm.decode import (
+    LlmResponseError,
+    get_json_payload,
+    iter_words
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -91,10 +95,7 @@ def find_unclaimed_span(
 
 
 def parse_values(content: str, labels: Sequence[str]) -> List[Dict[str, str]]:
-    try:
-        payload = json.loads(content)
-    except ValueError as exc:
-        raise LlmResponseError(f'response is not json: {exc}') from exc
+    payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'fields' not in payload:
         raise LlmResponseError('response has no "fields"')
     fields = payload['fields']
@@ -217,10 +218,7 @@ def parse_batched_values(
     still missing survives as unlabelled text, so a skipped index costs those
     fields rather than the whole document.
     """
-    try:
-        payload = json.loads(content)
-    except ValueError as exc:
-        raise LlmResponseError(f'response is not json: {exc}') from exc
+    payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'references' not in payload:
         raise LlmResponseError('response has no "references"')
     entries = payload['references']

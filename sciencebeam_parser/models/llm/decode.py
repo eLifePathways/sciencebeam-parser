@@ -87,11 +87,29 @@ def render_numbered_lines(tokens: Sequence[str], line_numbers: Sequence[int]) ->
     )
 
 
-def parse_line_starts(content: str, line_count: int) -> List[int]:
+def get_json_payload(content: str):
+    """Parsed json, or an error carrying enough of the response to diagnose it.
+
+    The content is otherwise only on the telemetry span, so a run without a
+    collector — CI, for one — leaves no way to tell a response truncated
+    mid-array from one with a stray token in it.
+    """
     try:
-        payload = json.loads(content)
+        return json.loads(content)
     except ValueError as exc:
-        raise LlmResponseError(f'response is not json: {exc}') from exc
+        position = getattr(exc, 'pos', None)
+        excerpt = (
+            content[max(0, position - 60):position + 20] if position is not None
+            else content[:120]
+        )
+        raise LlmResponseError(
+            f'response is not json: {exc}; {len(content)} chars,'
+            f' around the failure: ...{excerpt!r}'
+        ) from exc
+
+
+def parse_line_starts(content: str, line_count: int) -> List[int]:
+    payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'starts' not in payload:
         raise LlmResponseError('response has no "starts"')
     starts = payload['starts']
@@ -140,10 +158,7 @@ def parse_evidence_line_starts(
     Keeping the payload an index means a wrong quote costs a check rather than
     the reference, which is the failure mode the anchor shape had.
     """
-    try:
-        payload = json.loads(content)
-    except ValueError as exc:
-        raise LlmResponseError(f'response is not json: {exc}') from exc
+    payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'references' not in payload:
         raise LlmResponseError('response has no "references"')
     entries = payload['references']
