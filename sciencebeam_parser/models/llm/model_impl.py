@@ -140,6 +140,18 @@ class LlmModelImpl(ModelImpl):
             raise LlmResponseError(message)
         LOGGER.warning('llm %s: %s', self.config.task, message)
 
+    def _check_unanswered_references(self, unanswered: int, reference_count: int) -> None:
+        if not unanswered:
+            return
+        message = (
+            f'{unanswered} of {reference_count} reference(s) in the batch went'
+            ' unanswered and are unlabelled; a smaller'
+            ' max_references_per_request is the usual remedy'
+        )
+        if self.config.unanswered_reference_raises:
+            raise LlmResponseError(message)
+        LOGGER.warning('llm %s: %s', self.config.task, message)
+
     def _check_evidence(self, mismatches: int) -> None:
         if not mismatches:
             return
@@ -233,11 +245,13 @@ class LlmModelImpl(ModelImpl):
                 self.config.record_trace_content
             )
             content = self._get_content(response_json, token_count)
-            labeled, dropped = decode_batched_values_response(
+            labeled, dropped, unanswered = decode_batched_values_response(
                 content, token_lists, self.labels
             )
             span.set_attribute('sciencebeam.dropped_fields', dropped)
+            span.set_attribute('sciencebeam.unanswered_references', unanswered)
             self._check_dropped_fields(dropped, len(token_lists))
+            self._check_unanswered_references(unanswered, len(token_lists))
         LOGGER.info(
             'llm labelled %d references, %d tokens (model=%r provider=%r)',
             len(token_lists), token_count, self.config.model,

@@ -32,6 +32,7 @@ class LlmEngineConfig:
     max_concurrent_requests: int = 4
     evidence_mismatch_raises: bool = False
     dropped_field_raises: bool = False
+    unanswered_reference_raises: bool = False
     extra_body: Dict[str, Any] = field(default_factory=dict)
 
     @staticmethod

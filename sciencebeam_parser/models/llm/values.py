@@ -208,7 +208,14 @@ def parse_batched_values(
     content: str,
     reference_count: int,
     labels: Sequence[str]
-) -> List[List[Dict[str, str]]]:
+) -> Tuple[List[List[Dict[str, str]]], int]:
+    """Answers for each reference sent, and how many went unanswered.
+
+    An index the batch cannot honour — outside the batch, repeated, or simply
+    absent — leaves that reference without fields rather than failing the batch.
+    The reference survives as unlabelled text, so one skipped index costs those
+    fields instead of the whole document.
+    """
     try:
         payload = json.loads(content)
     except ValueError as exc:
@@ -219,6 +226,7 @@ def parse_batched_values(
     if not isinstance(entries, list):
         raise LlmResponseError('"references" is not a list')
     by_index: Dict[int, List[Dict[str, str]]] = {}
+    unhonoured = 0
     for entry in entries:
         if not isinstance(entry, dict) or 'index' not in entry:
             raise LlmResponseError(f'reference entry is malformed: {entry!r}')
@@ -226,29 +234,43 @@ def parse_batched_values(
         if isinstance(index, bool) or not isinstance(index, int):
             raise LlmResponseError(f'reference index is not an integer: {index!r}')
         if not 0 <= index < reference_count:
-            raise LlmResponseError(
-                f'reference index {index} out of range for {reference_count}'
-                ' references sent'
+            LOGGER.warning(
+                'llm returned reference index %d, outside the %d sent; skipping it',
+                index, reference_count
             )
+            unhonoured += 1
+            continue
         if index in by_index:
-            raise LlmResponseError(f'reference index {index} appears twice')
+            LOGGER.warning(
+                'llm returned reference index %d twice; keeping the first answer',
+                index
+            )
+            unhonoured += 1
+            continue
         by_index[index] = parse_values(
             json.dumps({'fields': entry.get('fields') or []}), labels
         )
     missing = sorted(set(range(reference_count)) - set(by_index))
     if missing:
-        raise LlmResponseError(
-            f'no answer for reference(s) {missing} of {reference_count} sent'
+        LOGGER.warning(
+            'llm gave no answer for reference(s) %s of %d sent;'
+            ' leaving them unlabelled',
+            missing, reference_count
         )
-    return [by_index[index] for index in range(reference_count)]
+    return (
+        [by_index.get(index) or [] for index in range(reference_count)],
+        len(missing) + unhonoured
+    )
 
 
 def decode_batched_values_response(
     content: str,
     token_lists: Sequence[Sequence[str]],
     labels: Sequence[str]
-) -> Tuple[List[List[Tuple[str, str]]], int]:
-    fields_per_reference = parse_batched_values(content, len(token_lists), labels)
+) -> Tuple[List[List[Tuple[str, str]]], int, int]:
+    fields_per_reference, unanswered = parse_batched_values(
+        content, len(token_lists), labels
+    )
     results: List[List[Tuple[str, str]]] = []
     dropped_total = 0
     for index, (fields, tokens) in enumerate(zip(fields_per_reference, token_lists)):
@@ -257,4 +279,4 @@ def decode_batched_values_response(
         )
         dropped_total += dropped
         results.append(list(zip(tokens, token_labels)))
-    return results, dropped_total
+    return results, dropped_total, unanswered

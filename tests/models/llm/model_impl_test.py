@@ -218,25 +218,77 @@ class TestCitationBatching:
         assert [label for _, label in result[0]] == ['O'] * len(CITATION_TOKENS)
         assert result[1][0] == ('Rada', 'B-<author>')
 
-    def test_should_raise_when_a_reference_has_no_answer(self):
+
+class TestUnansweredReferences:
+    """A batch answer the engine cannot honour costs those references, not the
+    document. Every one of these cases used to raise, which lost all the
+    references in the batch and every field the other models had produced.
+    """
+    def test_should_leave_an_unanswered_reference_unlabelled(self, caplog):
         token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
         model_impl = get_citation_model_impl(batched([('author', 'Fleming PS')]))
-        with pytest.raises(LlmResponseError, match=r'no answer for reference\(s\) \[1\]'):
-            model_impl.predict_labels(token_lists, no_features(token_lists))
+        with caplog.at_level('WARNING'):
+            result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert [label for _, label in result[1]] == ['O'] * len(SECOND_REFERENCE)
+        assert 'no answer for reference(s) [1]' in caplog.text
 
-    def test_should_raise_when_a_reference_index_appears_twice(self):
+    def test_should_keep_the_answered_references_in_the_same_batch(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(batched([('author', 'Fleming PS')]))
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert result[0][0] == ('Fleming', 'B-<author>')
+
+    def test_should_return_every_reference_sent_even_when_unanswered(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(batched([('author', 'Fleming PS')]))
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert [[token for token, _ in labelled] for labelled in result] == token_lists
+
+    def test_should_keep_the_first_answer_when_an_index_appears_twice(self, caplog):
         token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
         content = json.dumps({'references': [
-            {'index': 0, 'fields': []}, {'index': 0, 'fields': []}
+            {'index': 0, 'fields': [{'label': 'author', 'text': 'Fleming PS'}]},
+            {'index': 0, 'fields': [{'label': 'title', 'text': 'High quality'}]},
+            {'index': 1, 'fields': []},
         ]})
         model_impl = get_citation_model_impl(content)
-        with pytest.raises(LlmResponseError, match='appears twice'):
+        with caplog.at_level('WARNING'):
+            result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        labels = [label for _, label in result[0]]
+        assert 'B-<author>' in labels
+        assert 'B-<title>' not in labels
+        assert 'twice' in caplog.text
+
+    def test_should_skip_an_index_outside_the_batch(self, caplog):
+        content = json.dumps({'references': [
+            {'index': 5, 'fields': []},
+            {'index': 0, 'fields': [{'label': 'author', 'text': 'Fleming PS'}]},
+        ]})
+        model_impl = get_citation_model_impl(content)
+        with caplog.at_level('WARNING'):
+            result = model_impl.predict_labels(
+                [CITATION_TOKENS], no_features([CITATION_TOKENS])
+            )
+        assert result[0][0] == ('Fleming', 'B-<author>')
+        assert 'outside the 1 sent' in caplog.text
+
+    def test_should_raise_when_configured_to_be_strict(self):
+        token_lists = [CITATION_TOKENS, SECOND_REFERENCE]
+        model_impl = get_citation_model_impl(
+            batched([('author', 'Fleming PS')]), unanswered_reference_raises=True
+        )
+        with pytest.raises(LlmResponseError, match='went unanswered'):
             model_impl.predict_labels(token_lists, no_features(token_lists))
 
-    def test_should_raise_when_a_reference_index_is_out_of_range(self):
-        content = json.dumps({'references': [{'index': 5, 'fields': []}]})
+    def test_should_still_raise_for_a_response_that_cannot_be_parsed(self):
+        model_impl = get_citation_model_impl('{"references": [')
+        with pytest.raises(LlmResponseError, match='not json'):
+            model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
+
+    def test_should_still_raise_for_a_malformed_reference_entry(self):
+        content = json.dumps({'references': [{'fields': []}]})
         model_impl = get_citation_model_impl(content)
-        with pytest.raises(LlmResponseError, match='out of range'):
+        with pytest.raises(LlmResponseError, match='malformed'):
             model_impl.predict_labels([CITATION_TOKENS], no_features([CITATION_TOKENS]))
 
 

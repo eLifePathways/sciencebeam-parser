@@ -55,7 +55,8 @@ second profile and running the benchmark, not building a second evaluation route
 
 Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM works),
 `temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
-`max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`.
+`max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`,
+`unanswered_reference_raises`.
 
 ### What the segmenter is told to skip
 
@@ -91,11 +92,17 @@ references while the 9B mismatched on 1 of 118.
 
 `processor.py` hands the engine every reference of a document at once, so the citation model batches
 them: `max_references_per_request` (default 10) references per call, each numbered in the prompt,
-with one entry per reference required in the response. Requiring an answer for every reference sent
-makes a merged or omitted reference fail validation rather than score, and values are located within
-their own reference's tokens only — which also catches the model attributing one reference's author
-to another, a mistake a flat field list would have matched against the whole document and labelled
-silently. Lowering the bound is the lever if it happens often.
+with one entry per reference expected in the response. Values are located within their own
+reference's tokens only, which catches the model attributing one reference's author to another — a
+mistake a flat field list would have matched against the whole document and labelled silently.
+
+An index the batch cannot honour costs that reference rather than the batch. A reference the model
+skipped, answered twice, or numbered outside the batch is left unlabelled, counted on
+`sciencebeam.unanswered_references` and logged; the rest of the batch stands. Omitting the last
+reference of ten is the failure mode seen in practice, and failing the request over it lost the
+other nine along with every field the CRF models had already produced for that document. Lowering
+`max_references_per_request` is the lever when it happens often; `unanswered_reference_raises` makes
+it strict.
 
 Both settings are in `config.yml` rather than only in code, since they are the knobs worth turning:
 
@@ -122,9 +129,13 @@ concurrently, which multiplies with this.
 
 No text reaches a document that was not in the source. Under `lines` the model returns line numbers
 and never text at all. Under `values` it returns text, and every value is located back in the token
-sequence — one that cannot be found, or that a previous field already claimed, raises. Either way
-`Model._iter_flat_label_model_data_lists_to` independently rejects any result whose tokens are not
-the input tokens.
+sequence — one that cannot be found, or that a previous field already claimed, is dropped rather
+than labelled. Either way `Model._iter_flat_label_model_data_lists_to` independently rejects any
+result whose tokens are not the input tokens.
+
+Dropping an unhonourable claim keeps the guarantee rather than weakening it: what is discarded never
+becomes a label, so the guarantee constrains only what a response can *add*, never what it may lose.
+Losses are counted on the span and logged, and the `*_raises` settings make each one strict.
 
 The `citation` label vocabulary is read from the model's own label map rather than restated in the
 prompt source, so it cannot drift from the labels the extractor understands.
