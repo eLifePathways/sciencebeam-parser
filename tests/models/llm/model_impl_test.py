@@ -228,6 +228,45 @@ class TestCitationBatching:
         assert result[1][0] == ('Rada', 'B-<author>')
 
 
+class TestEmptyInput:
+    """A references region can come back with no tokens. Asking the model about
+    nothing wastes a call, and the line-based path used to reach max() on an
+    empty sequence — an unhandled ValueError, so the service answered 500.
+    """
+    def test_should_return_no_labels_for_an_empty_sequence(self):
+        model_impl = get_model_impl(json.dumps({'starts': [0]}))
+        assert model_impl.predict_labels([[]], [[]]) == [[]]
+
+    def test_should_not_call_the_model_for_an_empty_sequence(self):
+        model_impl = get_model_impl(json.dumps({'starts': [0]}))
+        model_impl.predict_labels([[]], [[]])
+        assert model_impl.client.prompts == []
+
+    def test_should_still_predict_the_non_empty_sequences(self):
+        model_impl = get_model_impl(json.dumps({'starts': [0]}))
+        result = model_impl.predict_labels([[], TOKENS], [[], feature_rows()])
+        assert result[0] == []
+        assert [token for token, _ in result[1]] == TOKENS
+
+    def test_should_return_no_labels_for_an_empty_reference(self):
+        model_impl = get_citation_model_impl(batched([]))
+        assert model_impl.predict_labels([[]], no_features([[]])) == [[]]
+
+    def test_should_not_call_the_model_for_an_empty_reference(self):
+        model_impl = get_citation_model_impl(batched([]))
+        model_impl.predict_labels([[]], no_features([[]]))
+        assert model_impl.client.prompts == []
+
+    def test_should_keep_an_empty_reference_out_of_the_batch(self):
+        token_lists = [[], CITATION_TOKENS, []]
+        model_impl = get_citation_model_impl(batched([('author', 'Fleming PS')]))
+        result = model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert len(model_impl.client.prompts) == 1
+        assert render_numbered_references([CITATION_TOKENS]) in model_impl.client.prompts[0]
+        assert result[0] == [] and result[2] == []
+        assert result[1][0] == ('Fleming', 'B-<author>')
+
+
 class TestRetryForMissingReferences:
     """Skipped references are always the tail of the batch, so the repair call
     sends only those — which puts them at the start of a short batch.

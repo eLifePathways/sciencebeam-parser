@@ -102,6 +102,27 @@ class LlmModelImpl(ModelImpl):
     def _predict_labels_in_batches(
         self, texts: List[List[str]]
     ) -> List[List[Tuple[str, str]]]:
+        # An empty reference has nothing to ask about, and sending one would put a
+        # blank slot in the batch for the model to misnumber against.
+        wanted = [index for index, tokens in enumerate(texts) if tokens]
+        if len(wanted) != len(texts):
+            LOGGER.info(
+                'llm %s: skipping %d empty reference(s) of %d',
+                self.config.task, len(texts) - len(wanted), len(texts)
+            )
+        if not wanted:
+            return [[] for _ in texts]
+        labelled_by_index = self._predict_labels_for_non_empty(
+            [texts[index] for index in wanted]
+        )
+        results: List[List[Tuple[str, str]]] = [[] for _ in texts]
+        for index, labelled in zip(wanted, labelled_by_index):
+            results[index] = labelled
+        return results
+
+    def _predict_labels_for_non_empty(
+        self, texts: List[List[str]]
+    ) -> List[List[Tuple[str, str]]]:
         batch_size = max(1, self.config.max_references_per_request)
         batches = [
             texts[start:start + batch_size]
@@ -188,6 +209,10 @@ class LlmModelImpl(ModelImpl):
         tokens: List[str],
         feature_rows: List[List[str]]
     ) -> List[Tuple[str, str]]:
+        if not tokens:
+            # A references region can come back empty, and there is nothing to ask
+            # about. Returning early also keeps max() below off an empty sequence.
+            return []
         line_status_values = [row[self.line_status_index] for row in feature_rows]
         line_numbers = get_line_numbers(line_status_values)
         self._check_input_size(max(line_numbers) + 1, len(tokens))

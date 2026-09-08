@@ -214,6 +214,31 @@ jobs:
             ${{ env.BENCHMARK_CORPORA }} \
             "${PUSH_CURRENT_ARG[@]}"
 
+      # The client only sees {"detail":"Internal Server Error"}, so without this a
+      # 500 during the run is undiagnosable once the runner is gone. Bounded and
+      # compressed: the log runs about 1.5 MB per 60 documents uncompressed.
+      - name: Parser log
+        if: always()
+        run: |
+          docker logs --tail 20000 sciencebeam-parser > parser.log 2>&1 || true
+          echo "### Parser errors" >> $GITHUB_STEP_SUMMARY
+          if grep -qE 'ERROR|Traceback' parser.log; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -E 'ERROR|Traceback' -A 12 parser.log | tail -c 8000 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo 'none' >> $GITHUB_STEP_SUMMARY
+          fi
+          gzip parser.log
+
+      - name: Upload parser log
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: parser-log-${{ github.sha }}
+          path: parser.log.gz
+          retention-days: 30
+
       - name: Write job summary
         run: |
           REPORT=${{ env.BENCHMARK_RUN }}/report.md
