@@ -3,6 +3,10 @@ dataset:
   # to drop rows whose ground truth an audit found unusable, and following the
   # branch means every recorded aggregate moves with the next rebuild without
   # anything erroring. The tag is b3ce8af8487495462a2589e80f9fdfe31c736ef4.
+  #
+  # The tag predates the 2026-09-02 schema migration, so the `id_column` values
+  # below are the old `ppr_id`/`article_id` on purpose. A repin makes them all
+  # `id`, and needs no `variant` bump: the newer rows are a subset, ids unchanged.
   repo_id: elifepathways/sciencebeam-v2-benchmarking
   revision: benchmark-v001
   splits:
