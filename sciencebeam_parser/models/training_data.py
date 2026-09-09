@@ -7,7 +7,7 @@ from lxml import etree
 from lxml.builder import ElementMaker
 
 from sciencebeam_parser.utils.xml_writer import XmlTreeWriter
-from sciencebeam_parser.utils.labels import get_split_prefix_label
+from sciencebeam_parser.utils.labels import OTHER_LABELS, get_split_prefix_label
 from sciencebeam_parser.utils.tokenizer import get_tokenized_tokens
 from sciencebeam_parser.document.tei.common import TEI_E, TEI_NS_PREFIX, tei_xpath
 from sciencebeam_parser.document.layout_document import (
@@ -28,9 +28,6 @@ LOGGER = logging.getLogger(__name__)
 
 
 NO_NS_TEI_E = ElementMaker()
-
-
-OTHER_LABELS = {'<other>', 'O'}
 
 
 class ExtractInstruction:
@@ -436,7 +433,8 @@ def _iter_flat_tei_training_text_from_element(
             path=current_path,
             is_start=is_start
         )
-        is_start = False
+        if not parent_element.text.isspace():
+            is_start = False
 
     for child_element in parent_element:
         if is_line_break_element(child_element):
@@ -454,7 +452,8 @@ def _iter_flat_tei_training_text_from_element(
                 path=current_path,
                 is_start=is_start
             )
-            is_start = False
+            if not child_element.tail.isspace():
+                is_start = False
 
 
 def _iter_tei_training_lines_from_element(
@@ -568,7 +567,7 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
         self.root_training_xml_xpath = './' + '/'.join(root_training_xml_element_path)
         self.line_as_token = line_as_token
 
-    def _get_label_for_element_path(
+    def get_label_for_element_path(
         self,
         tei_training_element_path: TeiTrainingElementPath,
         text: str
@@ -596,8 +595,6 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
                 )
             )
             LOGGER.debug('tei_training_lines: %r', tei_training_lines)
-            prefix = ''
-            prev_label = ''
             for line_index, line in enumerate(tei_training_lines):
                 line_meta = LayoutLineMeta(line_id=1 + line_index)
                 for text in line.text_list:
@@ -605,15 +602,13 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
                         continue
                     token_count = 0
                     if text.path.element_list:
-                        label = self._get_label_for_element_path(text.path, text=text.text)
-                        if prev_label != label:
-                            prefix = 'B-' if text.is_start else 'I-'
+                        label = self.get_label_for_element_path(text.path, text=text.text)
+                        prefix = 'B-' if text.is_start else 'I-'
                     else:
                         label = 'O'
                         prefix = ''
                     if label in OTHER_LABELS:
                         prefix = ''
-                    prev_label = label
                     for token_text in get_tokenized_tokens(text.text):
                         yield LabeledLayoutToken(
                             label=prefix + label,

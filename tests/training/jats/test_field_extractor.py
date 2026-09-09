@@ -2,7 +2,10 @@ from collections import defaultdict
 
 from lxml import etree
 
-from sciencebeam_parser.training.jats.field_extractor import JatsFieldExtractor
+from sciencebeam_parser.training.jats.field_extractor import (
+    JatsFieldExtractor,
+    iter_reference_sub_field_names
+)
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
 
 
@@ -469,3 +472,66 @@ class TestSubArticle:
         assert 'Review text' in sub[0].text
         assert len(body) == 1
         assert 'Main article' in body[0].text
+
+
+class TestIterReferenceSubFieldNames:
+    def test_yields_the_sub_fields_each_reference_carries(self):
+        sub_field_names = list(iter_reference_sub_field_names(_parse_jats(
+            '<article><back><ref-list>'
+            '<ref><label>1</label><element-citation>'
+            '<person-group person-group-type="author"><name><surname>Smith</surname></name>'
+            '</person-group>'
+            '<article-title>First Title</article-title><source>Journal One</source>'
+            '<year>2020</year>'
+            '</element-citation></ref>'
+            '<ref><element-citation>'
+            '<article-title>Second Title</article-title>'
+            '<pub-id pub-id-type="doi">10.1234/abc</pub-id>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )))
+        assert sub_field_names == [
+            frozenset({
+                JatsSubFieldNames.REFERENCE_LABEL,
+                JatsSubFieldNames.REFERENCE_AUTHOR,
+                JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,
+                JatsSubFieldNames.REFERENCE_SOURCE,
+                JatsSubFieldNames.REFERENCE_YEAR,
+            }),
+            frozenset({
+                JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,
+                JatsSubFieldNames.REFERENCE_DOI,
+            }),
+        ]
+
+    def test_excludes_a_sub_article_reference_list(self):
+        # Those entries are never offered to the aligner, so counting them would
+        # report a shortfall the pipeline never had.
+        sub_field_names = list(iter_reference_sub_field_names(_parse_jats(
+            '<article>'
+            '<back><ref-list><ref><element-citation>'
+            '<article-title>Main Title</article-title>'
+            '</element-citation></ref></ref-list></back>'
+            '<sub-article article-type="peer-review">'
+            '<back><ref-list><ref><element-citation>'
+            '<article-title>Review Title</article-title>'
+            '</element-citation></ref></ref-list></back>'
+            '</sub-article>'
+            '</article>'
+        )))
+        assert sub_field_names == [frozenset({JatsSubFieldNames.REFERENCE_ARTICLE_TITLE})]
+
+    def test_skips_a_reference_with_no_text(self):
+        sub_field_names = list(iter_reference_sub_field_names(_parse_jats(
+            '<article><back><ref-list>'
+            '<ref><element-citation><article-title>A Title</article-title>'
+            '</element-citation></ref>'
+            '<ref><element-citation/></ref>'
+            '</ref-list></back></article>'
+        )))
+        assert sub_field_names == [frozenset({JatsSubFieldNames.REFERENCE_ARTICLE_TITLE})]
+
+    def test_yields_nothing_for_a_jats_declaring_no_references(self):
+        assert not list(iter_reference_sub_field_names(_parse_jats(
+            '<article><back><sec><p>Some appendix text.</p></sec></back></article>'
+        )))

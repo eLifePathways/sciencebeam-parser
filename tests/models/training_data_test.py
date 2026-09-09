@@ -171,6 +171,51 @@ class TestTrainingTeiParser:
                 tei_root
             )
 
+    def test_should_start_a_new_entity_for_each_sibling_element_with_the_same_label(self):
+        tei_root = _get_training_tei_with_text([
+            E('p', TOKEN_1, E('lb')),
+            '\n',
+            E('p', TOKEN_2, E('lb')),
+            '\n'
+        ])
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<paragraph>'),
+            (TOKEN_2, 'B-<paragraph>')
+        ]]
+
+    @pytest.mark.parametrize('separator', ['\n', ' ', '\n  ', ', '])
+    def test_should_start_a_new_entity_for_a_sibling_element_whatever_separates_them(
+        self, separator: str
+    ):
+        tei_root = _get_training_tei_with_text([
+            E('p', TOKEN_1, E('lb')),
+            separator,
+            E('p', TOKEN_2, E('lb')),
+            '\n'
+        ])
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        label_by_token = dict(tag_result[0])
+        assert label_by_token[TOKEN_1] == 'B-<paragraph>'
+        assert label_by_token[TOKEN_2] == 'B-<paragraph>'
+
+    def test_should_keep_an_element_spanning_multiple_lines_as_one_entity(self):
+        tei_root = _get_training_tei_with_text([
+            E('p', TOKEN_1, E('lb'), '\n', TOKEN_2, E('lb')),
+            '\n'
+        ])
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<paragraph>'),
+            (TOKEN_2, 'I-<paragraph>')
+        ]]
+
     def test_unannotated_tokens_after_annotated_span_use_O(self):
         # training_data.py emits plain 'O' for all unannotated tokens regardless of
         # position. The I-<other> GROBID convention is applied later by

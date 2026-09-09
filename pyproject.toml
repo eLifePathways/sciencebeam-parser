@@ -15,15 +15,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# torch is declared here, rather than left to arrive through delft, so that
+# [tool.uv.sources] binds it to the CPU index across the whole lock
 cpu = [
-  "torch>=2.5.1",
-  "torchvision>=0.20.1"
+  "torch>=2.11.0",
+  "torchvision>=0.26.0"
 ]
 delft = [
-    "sciencebeam-trainer-delft[delft]>=0.0.38",
+    "sciencebeam-trainer-delft[delft]>=1.0.1",
 ]
 cv = [
     "layoutparser==0.3.2",
+]
+# Tracing for the llm engine. Optional: without it, and without a collector
+# endpoint, the engine emits nothing and behaves identically.
+telemetry = [
+    "opentelemetry-sdk>=1.29",
+    "opentelemetry-exporter-otlp-proto-http>=1.29",
 ]
 
 [dependency-groups]
@@ -46,9 +54,6 @@ dev = [
 ocr = [
     "tesserocr==2.5.2",
 ]
-tf = [
-    "tensorflow>=2.17.1",
-]
 
 
 [tool.uv.sources]
@@ -66,6 +71,7 @@ include = ["sciencebeam_parser*"]
 [tool.setuptools.package-data]
 "sciencebeam_parser" = [
   "py.typed",
+  "resources/*.yml",
   "resources/default_config/*.yml",
   "resources/xslt/*.xsl"
 ]

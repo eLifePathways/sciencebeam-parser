@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
+
 _REFERENCE_MODEL_LABELS: Dict[str, frozenset] = {
     'segmentation':        frozenset({'<references>'}),
     'reference-segmenter': frozenset({'<reference>'}),
@@ -13,7 +15,7 @@ _HEADER_MODEL_LABELS: Dict[str, frozenset] = {
 
 MODEL_RELEVANT_LABELS: Dict[str, Dict[str, frozenset]] = {
     'reference_doi':        {**_REFERENCE_MODEL_LABELS,
-                             'citation': frozenset({'<pubnum>', '<web>'})},
+                             'citation': frozenset({IDENTIFIER_LABEL, '<web>'})},
     'reference_title':      {**_REFERENCE_MODEL_LABELS, 'citation': frozenset({'<title>'})},
     'first_reference_text': _REFERENCE_MODEL_LABELS,
     'title':                {**_HEADER_MODEL_LABELS, 'header': frozenset({'<title>'})},

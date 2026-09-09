@@ -1,5 +1,7 @@
 from typing import Dict
 
+from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
+
 
 class JatsFieldNames:
     TITLE = 'title'
@@ -116,9 +118,9 @@ CITATION_LABEL_BY_SUB_FIELD: Dict[str, str] = {
     JatsSubFieldNames.REFERENCE_ISSUE:           '<issue>',
     JatsSubFieldNames.REFERENCE_FPAGE:           '<pages>',
     JatsSubFieldNames.REFERENCE_LPAGE:           '<pages>',
-    JatsSubFieldNames.REFERENCE_DOI:             '<idno>',
-    JatsSubFieldNames.REFERENCE_PMID:            '<pubnum>',
-    JatsSubFieldNames.REFERENCE_PMCID:           '<pubnum>',
+    JatsSubFieldNames.REFERENCE_DOI:             IDENTIFIER_LABEL,
+    JatsSubFieldNames.REFERENCE_PMID:            IDENTIFIER_LABEL,
+    JatsSubFieldNames.REFERENCE_PMCID:           IDENTIFIER_LABEL,
     JatsSubFieldNames.REFERENCE_WEB:             '<web>',
     JatsSubFieldNames.REFERENCE_LABEL:           '<note>',
     JatsSubFieldNames.REFERENCE_PUBLISHER_NAME:  '<publisher>',

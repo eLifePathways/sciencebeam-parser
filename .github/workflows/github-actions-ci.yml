@@ -117,18 +117,8 @@ jobs:
         include:
           - runs-on: macos-latest
             install-poppler: brew install poppler
-            pytest-args: >-
-              --ignore=tests/cv_models
-              tests/
           - runs-on: ubuntu-24.04-arm
             install-poppler: sudo apt-get update && sudo apt-get install -y poppler-utils
-            pytest-args: >-
-              tests/external/pdfalto/url_test.py
-              tests/external/pdfalto/parser_test.py
-              tests/document
-              tests/utils
-              tests/config
-              tests/lookup
     runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Check out repository code
@@ -144,16 +134,14 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen --group dev --extra delft
-        if: runner.os != 'Linux' || runner.arch != 'ARM64'
 
-      - name: Install dependencies (Linux arm64 - skip delft extras with no arm64 wheels)
-        run: |
-          uv sync --frozen --group dev
-          uv pip install "sciencebeam-trainer-delft>=0.0.36"
-        if: runner.os == 'Linux' && runner.arch == 'ARM64'
-
+      # the slow cases download model artifacts; the Docker pytest target runs them
       - name: Run pytest
-        run: uv run python -m pytest -p no:cacheprovider ${{ matrix.pytest-args }}
+        run: >-
+          uv run python -m pytest -p no:cacheprovider
+          -m "not slow"
+          --ignore=tests/cv_models
+          tests/
 
 
   testpypi-publish:

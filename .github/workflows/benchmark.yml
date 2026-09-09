@@ -174,6 +174,11 @@ jobs:
             --baseline-only
 
       - name: Start sciencebeam-parser
+        env:
+          # An llm profile reads this; every other profile ignores it. Passed as a
+          # bare `-e NAME` so the value never appears in a command line, and so an
+          # unset secret leaves it unset in the container rather than empty.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           PROFILE_ENV=()
           if [ -n "${{ env.BENCHMARK_PROFILE }}" ]; then
@@ -183,6 +188,7 @@ jobs:
             -e SCIENCEBEAM_PARSER__PRELOAD_ON_STARTUP=true \
             -v "${{ steps.gcp_auth.outputs.key_path }}:/creds/gcp-key.json:ro" \
             -e GOOGLE_APPLICATION_CREDENTIALS=/creds/gcp-key.json \
+            -e OPENROUTER_API_KEY \
             "${PROFILE_ENV[@]}" ${{ steps.image_tag.outputs.value }}
 
       - name: Wait for parser
@@ -194,7 +200,10 @@ jobs:
             sleep 5
           done
           docker logs sciencebeam-parser >&2
-          echo "Parser never became healthy" >&2; exit 1
+          echo "Parser never became healthy" >&2
+          echo "For an llm profile, PRELOAD_ON_STARTUP validates the endpoint and" >&2
+          echo "model id at startup, so a missing OPENROUTER_API_KEY fails here." >&2
+          exit 1
 
       - name: Run benchmark
         env:
@@ -216,6 +225,31 @@ jobs:
             --profile "${{ env.BENCHMARK_PROFILE }}" \
             ${{ env.BENCHMARK_CORPORA }} \
             "${PUSH_CURRENT_ARG[@]}"
+
+      # The client only sees {"detail":"Internal Server Error"}, so without this a
+      # 500 during the run is undiagnosable once the runner is gone. Bounded to
+      # the tail because the log runs about 1.5 MB per 60 documents; upload-artifact
+      # zips what it is given, so compressing here would only nest an archive.
+      - name: Parser log
+        if: always()
+        run: |
+          docker logs --tail 20000 sciencebeam-parser > parser.log 2>&1 || true
+          echo "### Parser errors" >> $GITHUB_STEP_SUMMARY
+          if grep -qE 'ERROR|Traceback' parser.log; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -E 'ERROR|Traceback' -A 12 parser.log | tail -c 8000 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo 'none' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload parser log
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: parser-log-${{ github.sha }}
+          path: parser.log
+          retention-days: 30
 
       - name: Write job summary
         run: |

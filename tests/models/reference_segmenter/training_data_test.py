@@ -295,6 +295,57 @@ class TestTableTrainingTeiParser:
             (TOKEN_2, 'B-<reference>')
         ]]
 
+    def test_should_start_a_new_reference_for_each_bibl_without_a_label(self):
+        tei_root = _get_training_tei_with_references([
+            E('bibl', TOKEN_1, E('lb')),
+            '\n',
+            E('bibl', TOKEN_2, E('lb')),
+            '\n'
+        ])
+        tag_result = get_training_tei_parser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<reference>'),
+            (TOKEN_2, 'B-<reference>')
+        ]]
+
+    def test_should_start_the_reference_after_whitespace_preceding_the_label(self):
+        tei_root = _get_training_tei_with_references([E(
+            'bibl',
+            ' ',
+            E('label', TOKEN_1),
+            ' ',
+            TOKEN_2,
+            E('lb'),
+            '\n'
+        )])
+        tag_result = get_training_tei_parser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<label>'),
+            (TOKEN_2, 'B-<reference>')
+        ]]
+
+    def test_should_keep_a_reference_spanning_multiple_lines_as_one_entity(self):
+        tei_root = _get_training_tei_with_references([E(
+            'bibl',
+            TOKEN_1,
+            E('lb'),
+            '\n',
+            TOKEN_2,
+            E('lb'),
+            '\n'
+        )])
+        tag_result = get_training_tei_parser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<reference>'),
+            (TOKEN_2, 'I-<reference>')
+        ]]
+
     def test_should_parse_single_label_with_multiple_lines(self):
         tei_root = _get_training_tei_with_references([E(
             'bibl',

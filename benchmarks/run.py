@@ -5,7 +5,7 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple, Union
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import httpx
 import yaml
@@ -292,6 +292,39 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         LOGGER.info("Only one summary available; skipping comparison report")
 
 
+# Corpora that must not be sent to a third-party model. Provider zero-retention
+# does not cover the intermediary, and these manuscripts are not redistributable,
+# so an LLM profile and one of these together is refused rather than warned about.
+RESTRICTED_CORPORA_FOR_LLM = frozenset({"plos-manuscripts"})
+
+
+def check_llm_profile_corpora(
+    config: dict, profile: Optional[str], include: Optional[Sequence[str]]
+) -> None:
+    if not profile:
+        return
+    sequence_model_profiles = config.get("sequence_model_profiles")
+    if not isinstance(sequence_model_profiles, dict):
+        return
+    profile_models = sequence_model_profiles.get(profile)
+    if not isinstance(profile_models, dict):
+        return
+    uses_llm = any(
+        isinstance(model_config, dict) and model_config.get("engine") == "llm"
+        for model_config in profile_models.values()
+    )
+    if not uses_llm:
+        return
+    restricted = sorted(RESTRICTED_CORPORA_FOR_LLM.intersection(include or ()))
+    if restricted:
+        raise SystemExit(
+            f"refusing to run profile {profile!r}, which uses the llm engine, over "
+            f"{', '.join(restricted)}: those manuscripts are not redistributable and "
+            "provider zero-retention does not cover the intermediary. Drop the corpus "
+            "or point the engine at a self-hosted endpoint."
+        )
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(
         description="Run benchmark: fetch gold, run baselines, predict, score, compare"
@@ -329,6 +362,8 @@ def main(argv=None) -> None:
 
     with open(args.config, encoding="utf-8") as f:
         config = yaml.safe_load(f)
+
+    check_llm_profile_corpora(config, args.profile, args.include_corpus)
 
     if args.predictions_repo:
         store: PredictionsStore = RepoPredictionsStore(Path(args.predictions_repo))

@@ -1,4 +1,7 @@
-from typing import Tuple
+from typing import FrozenSet, Tuple
+
+
+OTHER_LABELS: FrozenSet[str] = frozenset({'<other>', 'O'})
 
 
 def strip_tag_prefix(tag: str) -> str:

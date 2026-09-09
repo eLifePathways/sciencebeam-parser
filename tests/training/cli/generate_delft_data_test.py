@@ -1,8 +1,9 @@
 # pylint: disable=not-callable
+import json
 import logging
 import gzip
 from pathlib import Path
-from typing import Iterator, Optional, Sequence
+from typing import Iterator, List, Optional, Sequence
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,9 +28,14 @@ from sciencebeam_parser.models.data import DocumentFeaturesContext, ModelDataGen
 
 import sciencebeam_parser.training.cli.generate_delft_data as generate_delft_data_module
 from sciencebeam_parser.training.cli.generate_delft_data import (
+    get_document_id_for_tei_file,
     main,
     translate_tag_result_tags_IOB_to_grobid,
     translate_tags_IOB_to_grobid
+)
+from sciencebeam_parser.training.quality.gate import CorpusMostlyExcludedError
+from sciencebeam_parser.training.grobid_column_layout import (
+    get_grobid_column_layout_for_model_name
 )
 from sciencebeam_parser.utils.xml_writer import XmlTreeWriter
 from tests.processors.fulltext.model_mocks import MockFullTextModels
@@ -70,13 +76,40 @@ def _document_features_context(
     )
 
 
-def _test_generate_delft_with_multiple_tokens_tei_and_raw(
+def _get_raw_feature_rows(model_name: str, token_count: int) -> List[List[str]]:
+    """Distinguishable placeholder values, one row per token, at the width the
+    data generator would have produced."""
+    layout = get_grobid_column_layout_for_model_name(model_name)
+    column_count = len(layout.get_data_generator_column_names()) - 1
+    return [
+        [f'{token_index}.{column_index}' for column_index in range(column_count)]
+        for token_index in range(token_count)
+    ]
+
+
+def _get_expected_training_feature_rows(
+    model_name: str,
+    raw_feature_rows: Sequence[Sequence[str]],
+    include_extra_columns: bool = False
+) -> List[List[str]]:
+    layout = get_grobid_column_layout_for_model_name(model_name)
+    column_count = len(
+        layout.get_training_data_column_names(include_extra_columns)
+    ) - 1
+    assert layout.get_training_data_feature_indices(include_extra_columns) == list(
+        range(column_count)
+    ), 'expected the emitted columns to be a prefix of the generated ones'
+    return [list(row[:column_count]) for row in raw_feature_rows]
+
+
+def _test_generate_delft_with_multiple_tokens_tei_and_raw(  # pylint: disable=too-many-locals
     tmp_path: Path,
     model_name: str,
     file_suffix: str,
     tei_root: etree.ElementBase,
     tokens: Sequence[str],
-    expected_labels: Sequence[str]
+    expected_labels: Sequence[str],
+    include_extra_columns: bool = False
 ):
     assert len(tokens) == len(expected_labels)
     tei_source_path = tmp_path / 'tei'
@@ -87,21 +120,26 @@ def _test_generate_delft_with_multiple_tokens_tei_and_raw(
         etree.tostring(tei_root)
     )
     raw_source_path.mkdir(parents=True, exist_ok=True)
-    expected_features = [[
-        [f'{i}.1', f'{i}.2', f'{i}.3']
-        for i in range(len(tokens))
-    ]]
+    raw_feature_rows = _get_raw_feature_rows(model_name, len(tokens))
     (raw_source_path / f'sample{file_suffix}').write_text('\n'.join([
-        f'{token} {" ".join(expected_token_features)}'
-        for token, expected_token_features in zip(tokens, expected_features[0])
+        f'{token} {" ".join(raw_token_features)}'
+        for token, raw_token_features in zip(tokens, raw_feature_rows)
     ]))
     main([
         f'--model-name={model_name}',
         f'--tei-source-path={tei_source_path}/*.tei.xml',
         f'--raw-source-path={raw_source_path}',
         f'--delft-output-path={output_path}'
-    ])
+    ] + (['--include-extra-columns'] if include_extra_columns else []))
     assert output_path.exists()
+    expected_features = [_get_expected_training_feature_rows(
+        model_name, raw_feature_rows, include_extra_columns
+    )]
+    assert [
+        len(line.split())
+        for line in output_path.read_text().splitlines()
+        if line.strip()
+    ] == [1 + len(expected_features[0][0]) + 1] * len(tokens)
     texts, _labels, _features = load_data_and_labels_crf_file(
         str(output_path)
     )
@@ -117,7 +155,8 @@ def _test_generate_delft_with_two_tokens_tei_and_raw(
     model_name: str,
     file_suffix: str,
     tei_root: etree.ElementBase,
-    expected_labels: Sequence[str]
+    expected_labels: Sequence[str],
+    include_extra_columns: bool = False
 ):
     _test_generate_delft_with_multiple_tokens_tei_and_raw(
         tmp_path=tmp_path,
@@ -125,7 +164,8 @@ def _test_generate_delft_with_two_tokens_tei_and_raw(
         file_suffix=file_suffix,
         tei_root=tei_root,
         expected_labels=expected_labels,
-        tokens=[TOKEN_1, TOKEN_2]
+        tokens=[TOKEN_1, TOKEN_2],
+        include_extra_columns=include_extra_columns
     )
 
 
@@ -158,7 +198,10 @@ def _test_generate_delft_with_multiple_tokens_tei_only(  # pylint: disable=too-m
     expected_data_lines = list(data_generator.iter_data_lines_for_layout_document(
         layout_document
     ))
-    _expected_texts, expected_features = load_data_crf_lines(expected_data_lines)
+    _expected_texts, generated_features = load_data_crf_lines(expected_data_lines)
+    expected_features = [_get_expected_training_feature_rows(
+        model_name, generated_features.tolist()[0]
+    )]
     LOGGER.debug('expected_features: %r', expected_features)
     texts, labels, features = load_data_and_labels_crf_file(
         str(output_path)
@@ -170,7 +213,7 @@ def _test_generate_delft_with_multiple_tokens_tei_only(  # pylint: disable=too-m
     assert len(texts) == 1
     assert list(texts[0]) == tokens
     assert list(labels[0]) == expected_labels
-    assert features.tolist() == expected_features.tolist()
+    assert features.tolist() == expected_features
 
 
 def _test_generate_delft_with_two_tokens_tei_only(
@@ -248,6 +291,52 @@ class TestMain:
             ])),
             expected_labels=['B-<header>', 'B-<body>']
         )
+
+    def test_should_include_the_segmentation_extra_column_when_asked_for(
+        self,
+        tmp_path: Path
+    ):
+        _test_generate_delft_with_two_tokens_tei_and_raw(
+            tmp_path=tmp_path,
+            model_name='segmentation',
+            file_suffix='.segmentation',
+            tei_root=E('tei', E('text', *[
+                E('front', TOKEN_1, E('lb')),
+                '\n',
+                E('body', TOKEN_2, E('lb')),
+                '\n'
+            ])),
+            expected_labels=['B-<header>', 'B-<body>'],
+            include_extra_columns=True
+        )
+
+    def test_should_reject_a_raw_file_of_another_width(
+        self,
+        tmp_path: Path
+    ):
+        tei_source_path = tmp_path / 'tei'
+        raw_source_path = tmp_path / 'raw'
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (tei_source_path / 'sample.segmentation.tei.xml').write_bytes(etree.tostring(
+            E('tei', E('text', *[
+                E('front', TOKEN_1, E('lb')),
+                '\n',
+                E('body', TOKEN_2, E('lb')),
+                '\n'
+            ]))
+        ))
+        raw_source_path.mkdir(parents=True, exist_ok=True)
+        (raw_source_path / 'sample.segmentation').write_text('\n'.join([
+            f'{TOKEN_1} feature1 feature2',
+            f'{TOKEN_2} feature1 feature2'
+        ]))
+        with pytest.raises(ValueError):
+            main([
+                '--model-name=segmentation',
+                f'--tei-source-path={tei_source_path}/*.tei.xml',
+                f'--raw-source-path={raw_source_path}',
+                f'--delft-output-path={tmp_path}/output.data'
+            ])
 
     def test_should_be_able_to_generate_header_training_data(
         self,
@@ -508,13 +597,10 @@ class TestMain:
             gzip.compress(etree.tostring(tei_root))
         )
         raw_source_path.mkdir(parents=True, exist_ok=True)
-        expected_features = [[
-            [f'{i}.1', f'{i}.2', f'{i}.3']
-            for i in range(len(tokens))
-        ]]
+        raw_feature_rows = _get_raw_feature_rows(model_name, len(tokens))
         (raw_source_path / f'sample{file_suffix}.gz').write_text('\n'.join([
-            f'{token} {" ".join(expected_token_features)}'
-            for token, expected_token_features in zip(tokens, expected_features[0])
+            f'{token} {" ".join(raw_token_features)}'
+            for token, raw_token_features in zip(tokens, raw_feature_rows)
         ]))
         main([
             f'--model-name={model_name}',
@@ -529,3 +615,266 @@ class TestMain:
         LOGGER.debug('texts: %r', texts)
         assert len(texts) == 1
         assert list(texts[0]) == tokens
+
+
+@log_on_exception
+class TestQualityRecord:
+    def _write_reference_segmenter_tei(
+        self, tei_source_path: Path, document_id: str, bibl_count: int
+    ) -> None:
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (
+            tei_source_path / f'{document_id}.references.referenceSegmenter.tei.xml'
+        ).write_bytes(etree.tostring(E('tei', E('text', E('listBibl', *[
+            child
+            for index in range(bibl_count)
+            for child in (E('bibl', f'reference{index}', E('lb')), '\n')
+        ])))))
+
+    def test_should_record_the_entity_count_the_parse_returns(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'tei'
+        self._write_reference_segmenter_tei(tei_source_path, 'document1', bibl_count=3)
+        output_path = tmp_path / 'output.data'
+        main([
+            '--model-name=reference_segmenter',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--delft-output-path={output_path}'
+        ])
+        quality_record_path = Path(str(output_path) + '.quality.jsonl')
+        rows = [
+            json.loads(line)
+            for line in quality_record_path.read_text(encoding='utf-8').splitlines()
+        ]
+        assert len(rows) == 1
+        assert rows[0]['document_id'] == 'document1'
+        assert rows[0]['model'] == 'reference-segmenter'
+        assert rows[0]['entity_start_count'] == 3
+
+    def test_should_join_the_record_generation_wrote(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
+        self._write_reference_segmenter_tei(tei_source_path, 'document1', bibl_count=3)
+        generated_record_path = (
+            tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        )
+        generated_record_path.write_text(json.dumps({
+            'document_id': 'document1',
+            'model': 'reference-segmenter',
+            'status': 'ok',
+            'jats': {'status': 'ok', 'reference_count': 4},
+            'written': True,
+            'entity_element_count': 3,
+        }) + '\n', encoding='utf-8')
+        output_path = tmp_path / 'output.data'
+        main([
+            '--model-name=reference_segmenter',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--quality-record-path={generated_record_path}',
+            f'--delft-output-path={output_path}'
+        ])
+        row = json.loads(
+            Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
+        )
+        assert row['corpus'] == 'ore'
+        assert row['entity_start_count'] == 3
+        assert row['generated']['entity_element_count'] == 3
+        assert row['generated']['jats']['reference_count'] == 4
+
+    def test_should_write_the_record_where_asked(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'tei'
+        self._write_reference_segmenter_tei(tei_source_path, 'document1', bibl_count=1)
+        quality_output_path = tmp_path / 'elsewhere' / 'quality.jsonl'
+        main([
+            '--model-name=reference_segmenter',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--delft-output-path={tmp_path}/output.data',
+            f'--quality-output-path={quality_output_path}'
+        ])
+        assert quality_output_path.exists()
+
+    def test_should_record_the_labels_a_citation_sequence_marks(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'tei'
+        tei_source_path.mkdir(parents=True)
+        (tei_source_path / 'document1.references.tei.xml').write_bytes(etree.tostring(
+            TEI_E('TEI', TEI_E('text', TEI_E('back', TEI_E('listBibl', *[
+                TEI_E('bibl', TEI_E('title', TOKEN_1, {'level': 'a'}), ' ', TOKEN_2),
+                '\n',
+            ]))))
+        ))
+        output_path = tmp_path / 'output.data'
+        main([
+            '--model-name=citation',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--delft-output-path={output_path}'
+        ])
+        row = json.loads(
+            Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
+        )
+        assert row['sequence_count'] == 1
+        assert row['label_start_counts'] == {'<title>': 1}
+        # every bibl is its own sequence, so there is no entity count to take
+        assert 'entity_start_count' not in row
+
+
+class TestGetDocumentIdForTeiFile:
+    def test_should_strip_the_model_suffix(self):
+        assert get_document_id_for_tei_file(
+            '/tei/PPR459453.references.referenceSegmenter.tei.xml',
+            '.references.referenceSegmenter.tei.xml'
+        ) == 'PPR459453'
+
+    def test_should_strip_a_gzip_suffix_first(self):
+        assert get_document_id_for_tei_file(
+            '/tei/PPR459453.references.tei.xml.gz', '.references.tei.xml'
+        ) == 'PPR459453'
+
+    def test_should_fall_back_for_a_model_with_no_declared_suffix(self):
+        assert get_document_id_for_tei_file('/tei/PPR459453.tei.xml', None) == 'PPR459453'
+
+    def test_should_fall_back_when_the_file_does_not_carry_the_suffix(self):
+        assert get_document_id_for_tei_file(
+            '/tei/PPR459453.something-else.tei.xml', '.references.tei.xml'
+        ) == 'PPR459453'
+
+
+@log_on_exception
+class TestQualityFilter:
+    def _write_tei(self, tei_source_path: Path, document_id: str, bibl_count: int) -> None:
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (
+            tei_source_path / f'{document_id}.references.referenceSegmenter.tei.xml'
+        ).write_bytes(etree.tostring(E('tei', E('text', E('listBibl', *[
+            child
+            for index in range(bibl_count)
+            for child in (E('bibl', f'reference{index}', E('lb')), '\n')
+        ])))))
+
+    def _write_generated_record(
+        self, record_path: Path, rows: Sequence[dict]
+    ) -> None:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(
+            '\n'.join(json.dumps(row) for row in rows) + '\n', encoding='utf-8'
+        )
+
+    def _run(self, tmp_path: Path, tei_source_path: Path, record_path: Path, *extra):
+        output_path = tmp_path / 'output.data'
+        main([
+            '--model-name=reference_segmenter',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--quality-record-path={record_path}',
+            f'--delft-output-path={output_path}',
+            '--quality-filter',
+            *extra
+        ])
+        return output_path
+
+    def test_should_leave_out_a_document_short_at_the_tei_stage(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
+        self._write_tei(tei_source_path, 'truncated', bibl_count=2)
+        for index in range(9):
+            self._write_tei(tei_source_path, f'sound{index}', bibl_count=4)
+        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        self._write_generated_record(record_path, [
+            {
+                'document_id': 'truncated', 'written': True,
+                'jats': {'status': 'ok', 'reference_count': 45},
+                'entity_element_count': 2,
+            },
+        ] + [
+            {
+                'document_id': f'sound{index}', 'written': True,
+                'jats': {'status': 'ok', 'reference_count': 4},
+                'entity_element_count': 4,
+            }
+            for index in range(9)
+        ])
+        output_path = self._run(tmp_path, tei_source_path, record_path)
+        texts, _labels, _features = load_data_and_labels_crf_file(str(output_path))
+        assert len(texts) == 9
+        rows = {
+            json.loads(line)['document_id']: json.loads(line)
+            for line in Path(
+                str(output_path) + '.quality.jsonl'
+            ).read_text(encoding='utf-8').splitlines()
+        }
+        assert rows['truncated']['excluded'] is True
+        assert rows['truncated']['exclusion_reasons'] == ['elements-short-of-jats']
+        assert rows['truncated']['exclusion_detail']['element_ratio'] == 0.044
+        assert rows['sound0']['excluded'] is False
+
+    def test_should_keep_every_document_without_the_filter(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
+        self._write_tei(tei_source_path, 'truncated', bibl_count=2)
+        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        self._write_generated_record(record_path, [{
+            'document_id': 'truncated', 'written': True,
+            'jats': {'status': 'ok', 'reference_count': 45},
+            'entity_element_count': 2,
+        }])
+        output_path = tmp_path / 'output.data'
+        main([
+            '--model-name=reference_segmenter',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--quality-record-path={record_path}',
+            f'--delft-output-path={output_path}'
+        ])
+        texts, _labels, _features = load_data_and_labels_crf_file(str(output_path))
+        assert len(texts) == 1
+        row = json.loads(
+            Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
+        )
+        assert 'excluded' not in row
+
+    def test_should_leave_no_usable_data_behind_when_it_refuses(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
+        for index in range(3):
+            self._write_tei(tei_source_path, f'truncated{index}', bibl_count=2)
+        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        self._write_generated_record(record_path, [
+            {
+                'document_id': f'truncated{index}', 'written': True,
+                'jats': {'status': 'ok', 'reference_count': 45},
+                'entity_element_count': 2,
+            }
+            for index in range(3)
+        ])
+        with pytest.raises(CorpusMostlyExcludedError):
+            self._run(tmp_path, tei_source_path, record_path)
+        # a training run reading the path must not find a corpus there
+        assert not (tmp_path / 'output.data').exists()
+        # the record stays, so the refusal can be accounted for
+        assert (tmp_path / 'output.data.quality.jsonl').exists()
+
+    def test_should_refuse_when_a_corpus_is_mostly_excluded(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
+        for index in range(3):
+            self._write_tei(tei_source_path, f'truncated{index}', bibl_count=2)
+        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        self._write_generated_record(record_path, [
+            {
+                'document_id': f'truncated{index}', 'written': True,
+                'jats': {'status': 'ok', 'reference_count': 45},
+                'entity_element_count': 2,
+            }
+            for index in range(3)
+        ])
+        with pytest.raises(CorpusMostlyExcludedError):
+            self._run(tmp_path, tei_source_path, record_path)
+
+    def test_should_allow_a_stated_larger_loss(self, tmp_path: Path):
+        tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
+        for index in range(3):
+            self._write_tei(tei_source_path, f'truncated{index}', bibl_count=2)
+        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        self._write_generated_record(record_path, [
+            {
+                'document_id': f'truncated{index}', 'written': True,
+                'jats': {'status': 'ok', 'reference_count': 45},
+                'entity_element_count': 2,
+            }
+            for index in range(3)
+        ])
+        output_path = self._run(
+            tmp_path, tei_source_path, record_path, '--max-excluded-ratio=1.0'
+        )
+        assert output_path.exists()

@@ -135,19 +135,19 @@ COPY --from=python-dist-builder /opt/sciencebeam_parser/dist /dist
 # lint-flake8
 FROM dev AS lint-flake8
 
-RUN python -m flake8 sciencebeam_parser tests
+RUN python -m flake8 sciencebeam_parser tests benchmarks
 
 
 # lint-pylint
 FROM dev AS lint-pylint
 
-RUN python -m pylint sciencebeam_parser tests
+RUN python -m pylint sciencebeam_parser tests benchmarks
 
 
 # lint-mypy
 FROM dev AS lint-mypy
 
-RUN python -m mypy --ignore-missing-imports sciencebeam_parser tests
+RUN python -m mypy --ignore-missing-imports sciencebeam_parser tests benchmarks
 
 
 # pytest
@@ -174,6 +174,8 @@ COPY docker/entrypoint.sh ./docker/entrypoint.sh
 
 ENV SCIENCEBEAM_DELFT_MAX_SEQUENCE_LENGTH=2000
 ENV SCIENCEBEAM_DELFT_INPUT_WINDOW_STRIDE=1800
+# torch would otherwise pick CUDA whenever the host happens to expose a GPU
+ENV SCIENCEBEAM_DELFT_DEVICE=cpu
 
 CMD [ "--port=8070", "--host=0.0.0.0" ]
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/opt/sciencebeam_parser/docker/entrypoint.sh"]
@@ -197,6 +199,8 @@ COPY docker/entrypoint.sh ./docker/entrypoint.sh
 
 ENV SCIENCEBEAM_DELFT_MAX_SEQUENCE_LENGTH=2000
 ENV SCIENCEBEAM_DELFT_INPUT_WINDOW_STRIDE=1800
+# torch would otherwise pick CUDA whenever the host happens to expose a GPU
+ENV SCIENCEBEAM_DELFT_DEVICE=cpu
 
 # temporary workaround for tesserocr https://github.com/sirfz/tesserocr/issues/165
 ENV LC_ALL=C
