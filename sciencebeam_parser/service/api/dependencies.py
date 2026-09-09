@@ -116,6 +116,33 @@ def get_sciencebeam_parser_session_dependency_factory(
     return get_session
 
 
+def get_session_source_for_data_wrapper(
+    session: ScienceBeamParserSession,
+    data_wrapper: MediaDataWrapper
+) -> ScienceBeamParserSessionSource:
+    """Turn an upload into a session source, for every route that takes one.
+
+    Shared rather than repeated, because a route with its own copy is a route
+    that silently stops logging or naming the document when this one changes.
+    """
+    data_wrapper = get_data_wrapper_with_improved_media_type_or_filename(
+        data_wrapper
+    )
+    # The uploaded name is the only thing tying the rest of this request's log
+    # lines to a document; without it a run is anonymous documents.
+    LOGGER.info(
+        'processing document: filename=%r media_type=%r session=%s',
+        data_wrapper.filename, data_wrapper.media_type, session.temp_path
+    )
+    source_path = session.temp_path / "source.file"
+    source_path.write_bytes(data_wrapper.data)
+    return session.get_source(
+        source_path=str(source_path),
+        source_media_type=data_wrapper.media_type,
+        source_name=data_wrapper.filename,
+    )
+
+
 def get_sciencebeam_parser_session_source_dependency_factory(
     **session_kwargs,
 ) -> ScienceBeamParserSessionSourceDependencyFactory:
@@ -129,16 +156,7 @@ def get_sciencebeam_parser_session_source_dependency_factory(
         ],
         data_wrapper: Annotated[MediaDataWrapper, Depends(get_media_data_wrapper)],
     ) -> Iterator[ScienceBeamParserSessionSource]:
-        data_wrapper = get_data_wrapper_with_improved_media_type_or_filename(
-            data_wrapper
-        )
-        source_path = session.temp_path / "source.file"
-        source_path.write_bytes(data_wrapper.data)
-
-        yield session.get_source(
-            source_path=str(source_path),
-            source_media_type=data_wrapper.media_type,
-        )
+        yield get_session_source_for_data_wrapper(session, data_wrapper)
 
     return get_source
 

@@ -1,5 +1,7 @@
 import json
 import logging
+from contextlib import contextmanager
+from typing import List, Tuple
 from unittest.mock import MagicMock
 
 from fastapi import FastAPI
@@ -13,7 +15,10 @@ from sciencebeam_trainer_delft.sequence_labelling.tag_formatter import (
 )
 
 from sciencebeam_parser.models.data import DEFAULT_APP_FEATURES_CONTEXT
-from sciencebeam_parser.service.api.routers.models import create_models_router
+from sciencebeam_parser.service.api.routers.models import (
+    ModelResponseRouterFactory,
+    create_models_router
+)
 from tests.processors.fulltext.model_mocks import MockFullTextModels
 
 
@@ -33,6 +38,51 @@ def _test_client(mock_fulltext_models: MockFullTextModels) -> TestClient:
     app = FastAPI()
     app.include_router(create_models_router(sciencebeam_parser_mock))
     return TestClient(app)
+
+
+class TestHandlePostSpan:
+    def test_should_name_the_document_and_the_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """This endpoint does not go through the parser's own document span.
+
+        It reads `source.source_path` directly, so without a span of its own the
+        model calls underneath it would belong to no document.
+        """
+        recorded: List[Tuple[str, dict]] = []
+
+        @contextmanager
+        def recording_span(name: str, attributes=None, **_kwargs):
+            recorded.append((name, dict(attributes or {})))
+            yield MagicMock(name='span')
+
+        monkeypatch.setattr(
+            'sciencebeam_parser.service.api.routers.models.span', recording_span
+        )
+        factory = ModelResponseRouterFactory(
+            name='citation',
+            model=MagicMock(name='model'),
+            pdfalto_wrapper=MagicMock(name='pdfalto_wrapper'),
+            app_features_context=DEFAULT_APP_FEATURES_CONTEXT,
+            model_name='citation'
+        )
+        monkeypatch.setattr(
+            factory, '_handle_post', lambda *args, **kwargs: 'the response'
+        )
+        source = MagicMock(name='source')
+        source.source_name = 'the-uploaded-name.pdf'
+        source.source_media_type = 'application/pdf'
+
+        assert factory.handle_post(source, 'json') == 'the response'
+        assert recorded == [(
+            'process_document',
+            {
+                'sciencebeam.document.name': 'the-uploaded-name.pdf',
+                'sciencebeam.document.source_media_type': 'application/pdf',
+                'sciencebeam.model.name': 'citation',
+                'sciencebeam.model.output_format': 'json',
+            }
+        )]
 
 
 class TestGetFeatureNames:

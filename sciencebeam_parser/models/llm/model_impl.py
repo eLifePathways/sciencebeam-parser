@@ -1,5 +1,6 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from typing import List, Optional, Tuple
 
 from sciencebeam_parser.models.llm.client import (
@@ -31,6 +32,7 @@ from sciencebeam_parser.models.llm.values import (
     render_numbered_references
 )
 from sciencebeam_parser.models.model_impl import ModelImpl
+from sciencebeam_parser.utils.telemetry import get_trace_id
 
 
 LOGGER = logging.getLogger(__name__)
@@ -138,9 +140,20 @@ class LlmModelImpl(ModelImpl):
             # Batches are independent, so the wall-clock is the slowest batch
             # rather than their sum. Order is preserved by mapping rather than
             # completion order, and the first exception propagates.
+            #
+            # Each batch runs in a copy of the calling context, because a worker
+            # thread starts with none: without this the span for a batch has no
+            # parent, and a run becomes a flat list of calls belonging to no
+            # document. The copies are taken here rather than in the worker,
+            # where there would be nothing left to copy, and one per batch,
+            # since a context cannot be entered twice at once.
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 per_batch = list(pool.map(
-                    self._predict_labels_splitting_on_truncation, batches
+                    lambda context, batch: context.run(
+                        self._predict_labels_splitting_on_truncation, batch
+                    ),
+                    [copy_context() for _ in batches],
+                    batches
                 ))
         return [labelled for batch in per_batch for labelled in batch]
 
@@ -326,9 +339,10 @@ class LlmModelImpl(ModelImpl):
                     content, tokens, line_status_values
                 )
         LOGGER.info(
-            'llm labelled %d tokens over %d lines (model=%r provider=%r)',
+            'llm labelled %d tokens over %d lines'
+            ' (model=%r provider=%r trace=%s)',
             len(tokens), max(line_numbers) + 1, self.config.model,
-            response_json.get('provider')
+            response_json.get('provider'), get_trace_id(span) or '-'
         )
         return labeled
 
@@ -396,8 +410,9 @@ class LlmModelImpl(ModelImpl):
             span.set_attribute('sciencebeam.unanswered_references', len(missing))
             self._check_dropped_fields(dropped, len(token_lists))
         LOGGER.info(
-            'llm labelled %d references, %d tokens (model=%r provider=%r)',
+            'llm labelled %d references, %d tokens'
+            ' (model=%r provider=%r trace=%s)',
             len(token_lists), token_count, self.config.model,
-            response_json.get('provider')
+            response_json.get('provider'), get_trace_id(span) or '-'
         )
         return labeled, missing
