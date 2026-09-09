@@ -198,12 +198,12 @@ sequence_model_profiles:
   wapiti_citation_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     citation:
-      path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/citation/'
+      path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-09-08_wapiti_grobid_090_scielo_preprints_ore/citation/'
       engine: 'wapiti'
   wapiti_scielo_preprints_ore:
     extends: wapiti_refseg_scielo_preprints_ore
     citation:
-      path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/citation/'
+      path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-09-08_wapiti_grobid_090_scielo_preprints_ore/citation/'
       engine: 'wapiti'
   # Opt-in only: select with SCIENCEBEAM_PARSER__PROFILE, never by default.
   # Requires an api key in SCIENCEBEAM_LLM_API_KEY or OPENROUTER_API_KEY.
