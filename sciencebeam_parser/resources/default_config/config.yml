@@ -179,19 +179,31 @@ sequence_model_profiles:
     citation:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/citation'
       engine: 'wapiti'
-  grobid_custom_hybrid:
+  # Retrained wapiti models, named for the data they were trained on. The
+  # bucket is private, so these profiles need GCS credentials.
+  # One profile per model so a regression can be attributed, plus a combined one.
+  wapiti_grobid_090_grobid_only:
+    extends: grobid_crf_0_9_0
+    reference_segmenter:
+      path: 'gs://sciencebeam-v2-models/wapiti/reference-segmenter/models/2026-08-04_wapiti_grobid_090_grobid_only/reference-segmenter/'
+      engine: 'wapiti'
+    citation:
+      path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-08-04_wapiti_grobid_090_grobid_only/citation/'
+      engine: 'wapiti'
+  wapiti_refseg_grobid_090_scielo_preprints_ore:
+    extends: grobid_crf_0_9_0
+    reference_segmenter:
+      path: 'gs://sciencebeam-v2-models/wapiti/reference-segmenter/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/reference-segmenter/'
+      engine: 'wapiti'
+  wapiti_citation_grobid_090_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     citation:
-      # path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-08-04_wapiti_grobid_090_grobid_only/citation/'
       path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/citation/'
       engine: 'wapiti'
-    reference_segmenter:
-      # TODO: switch back once the release is public
-      # path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/dev/2026-07-01-delft-grobid-reference-segmenter-CustomBidLSTM_CRF-grobid_090-scielo_preprints-v1.tar.gz'
-      # path: 'gs://sciencebeam-v2-models/delft/reference-segmenter/models/2026-07-01_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore/reference-segmenter/'
-      # path: 'gs://sciencebeam-v2-models/wapiti/reference-segmenter/models/2026-07-01_wapiti_grobid_090_scielo_preprints_ore/reference-segmenter'
-      path: 'gs://sciencebeam-v2-models/wapiti/reference-segmenter/models/2026-08-04_wapiti_grobid_090_grobid_only/reference-segmenter/'
-      # path: 'gs://sciencebeam-v2-models/wapiti/reference-segmenter/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/reference-segmenter/'
+  wapiti_grobid_090_scielo_preprints_ore:
+    extends: wapiti_refseg_grobid_090_scielo_preprints_ore
+    citation:
+      path: 'gs://sciencebeam-v2-models/wapiti/citation/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/citation/'
       engine: 'wapiti'
   # Opt-in only: select with SCIENCEBEAM_PARSER__PROFILE, never by default.
   # Requires an api key in SCIENCEBEAM_LLM_API_KEY or OPENROUTER_API_KEY.
@@ -267,8 +279,23 @@ profiles:
     processors:
       fulltext:
         noise_filter_enabled: false
-  grobid_custom_hybrid:
-    sequence_models: grobid_custom_hybrid
+  wapiti_grobid_090_grobid_only:
+    sequence_models: wapiti_grobid_090_grobid_only
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  wapiti_refseg_grobid_090_scielo_preprints_ore:
+    sequence_models: wapiti_refseg_grobid_090_scielo_preprints_ore
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  wapiti_citation_grobid_090_scielo_preprints_ore:
+    sequence_models: wapiti_citation_grobid_090_scielo_preprints_ore
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  wapiti_grobid_090_scielo_preprints_ore:
+    sequence_models: wapiti_grobid_090_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter_enabled: false
