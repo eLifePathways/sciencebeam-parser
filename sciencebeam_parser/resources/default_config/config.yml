@@ -193,7 +193,7 @@ sequence_model_profiles:
   wapiti_refseg_grobid_090_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     reference_segmenter:
-      path: 'gs://sciencebeam-v2-models/wapiti/reference-segmenter/models/2026-08-05_wapiti_grobid_090_scielo_preprints_ore/reference-segmenter/'
+      path: 'gs://sciencebeam-v2-models/wapiti/reference-segmenter/models/2026-09-08_wapiti_grobid_090_scielo_preprints_ore/reference-segmenter/'
       engine: 'wapiti'
   wapiti_citation_grobid_090_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
