@@ -677,8 +677,9 @@ class TestCitationConcurrency:
         every other test.
         """
         # Imported here rather than at the top, because the sdk is an optional
-        # extra and this module has to import without it.
-        # pylint: disable=import-outside-toplevel
+        # extra: this module has to import without it, and the lint image does
+        # not install it.
+        # pylint: disable=import-outside-toplevel,import-error
         pytest.importorskip('opentelemetry.sdk')
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
