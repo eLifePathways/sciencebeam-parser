@@ -1,6 +1,7 @@
 import contextvars
 import json
 import threading
+from contextvars import ContextVar
 from typing import Any, List, Mapping, Optional
 
 import pytest
@@ -15,6 +16,7 @@ from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.model_impl import LlmModelImpl
 from sciencebeam_parser.models.llm.usage import start_request_llm_usage
 from sciencebeam_parser.models.llm.values import render_numbered_references
+from sciencebeam_parser.utils.telemetry import span
 
 
 CONFIG = {
@@ -635,6 +637,92 @@ class TestCitationConcurrency:
         assert [tokens[0] for tokens in token_lists] == [
             labelled[0][0] for labelled in result
         ]
+
+    def test_should_carry_the_calling_context_into_each_worker(self):
+        """What makes a batch's span nest under the document's.
+
+        A worker thread starts with no context, so the current span would
+        otherwise be absent there and every batch would begin its own trace.
+        Asserted on a plain context variable rather than on a span, so it holds
+        whether or not opentelemetry is installed.
+        """
+        current_document: ContextVar[str] = ContextVar('current_document')
+        seen: List[str] = []
+        lock = threading.Lock()
+
+        class ContextObservingClient(FakeClient):
+            def get_completion(self, prompt: str, response_schema):
+                with lock:
+                    seen.append(current_document.get('missing'))
+                return super().get_completion(prompt, response_schema)
+
+        token_lists = [['Alpha'], ['Bravo'], ['Charlie']]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_concurrent_requests': 3,
+            }),
+            client=ContextObservingClient(content=batched([]))
+        )
+        current_document.set('example.pdf')
+        model_impl.predict_labels(token_lists, no_features(token_lists))
+        assert seen == ['example.pdf'] * len(token_lists)
+
+    def test_should_nest_parallel_batch_spans_under_the_document(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The same propagation, asserted against opentelemetry itself.
+
+        The tracer is replaced rather than a global provider installed, since
+        the global one can only be set once per process and would leak into
+        every other test.
+        """
+        # Imported here rather than at the top, because the sdk is an optional
+        # extra: this module has to import without it, and the lint image does
+        # not install it.
+        # pylint: disable=import-outside-toplevel,import-error
+        pytest.importorskip('opentelemetry.sdk')
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        for module in (
+            'sciencebeam_parser.utils.telemetry',
+            'sciencebeam_parser.models.llm.telemetry'
+        ):
+            monkeypatch.setattr(
+                f'{module}.get_tracer', lambda name=None: provider.get_tracer(__name__)
+            )
+
+        token_lists = [['Alpha'], ['Bravo'], ['Charlie'], ['Delta']]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_concurrent_requests': 4,
+            }),
+            client=FakeClient(content=batched([]))
+        )
+        with span('process_document', {'sciencebeam.document.name': 'example.pdf'}):
+            model_impl.predict_labels(token_lists, no_features(token_lists))
+
+        spans = exporter.get_finished_spans()
+        document = [one for one in spans if one.name == 'process_document']
+        calls = [one for one in spans if one.name != 'process_document']
+        assert len(document) == 1
+        assert len(calls) == len(token_lists)
+        assert all(
+            one.parent is not None
+            and one.parent.span_id == document[0].context.span_id
+            for one in calls
+        )
+        assert len({one.context.trace_id for one in spans}) == 1
 
     def test_should_make_one_call_per_batch_when_parallel(self):
         token_lists = [['Alpha'], ['Bravo'], ['Charlie']]

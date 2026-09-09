@@ -46,6 +46,7 @@ from sciencebeam_parser.models.model import Model
 from sciencebeam_parser.service.api.dependencies import (
     get_sciencebeam_parser_session_source_dependency_factory
 )
+from sciencebeam_parser.utils.telemetry import span
 
 
 LOGGER = logging.getLogger(__name__)
@@ -131,7 +132,24 @@ class ModelResponseRouterFactory:
     ) -> Iterable[LayoutDocument]:
         return [layout_document]
 
-    def handle_post(  # pylint: disable=too-many-locals
+    def handle_post(
+        self,
+        source: ScienceBeamParserSessionSource,
+        output_format: str,
+        filter_params: Optional[dict] = None
+    ):
+        # The same span name as the full pipeline, so one query finds every
+        # document however the parser was entered. The model attribute is what
+        # tells a single-model request apart from a whole document.
+        with span('process_document', {
+            'sciencebeam.document.name': source.source_name,
+            'sciencebeam.document.source_media_type': source.source_media_type,
+            'sciencebeam.model.name': self.model_name,
+            'sciencebeam.model.output_format': output_format,
+        }, tracer_name=__name__):
+            return self._handle_post(source, output_format, filter_params)
+
+    def _handle_post(  # pylint: disable=too-many-locals
         self,
         source: ScienceBeamParserSessionSource,
         output_format: str,

@@ -35,6 +35,7 @@ from sciencebeam_parser.utils.lazy import LazyLoaded
 from sciencebeam_parser.utils.media_types import (
     MediaTypes
 )
+from sciencebeam_parser.utils.telemetry import span
 from sciencebeam_parser.utils.text import normalize_text
 from sciencebeam_parser.utils.tokenizer import get_tokenized_tokens
 from sciencebeam_parser.processors.fulltext.api import (
@@ -487,11 +488,16 @@ class ScienceBeamParserSessionSource(_ScienceBeamParserSessionDerivative):
         self,
         session: 'ScienceBeamParserBaseSession',
         source_path: str,
-        source_media_type: str
+        source_media_type: str,
+        source_name: Optional[str] = None
     ):
         super().__init__(session=session)
         self.source_path = source_path
         self.source_media_type = source_media_type
+        # The uploaded name, which `source_path` has already lost: the request
+        # writes the upload to a temporary `source.file`. Only used to say which
+        # document a trace or a log line is about.
+        self.source_name = source_name
         self.lazy_pdf_path = LazyLoaded[str](self._get_or_convert_to_pdf_path)
         self.lazy_alto_xml_path = LazyLoaded[str](self._parse_to_alto_xml)
         self.lazy_parsed_layout_document = LazyLoaded[
@@ -582,13 +588,22 @@ class ScienceBeamParserSessionSource(_ScienceBeamParserSessionDerivative):
         self,
         response_media_type: str
     ) -> str:
-        if response_media_type == MediaTypes.PDF:
-            return self.lazy_pdf_path.get()
-        if response_media_type == MediaTypes.ALTO_XML:
-            return self.lazy_alto_xml_path.get()
-        return self.get_parsed_layout_document().get_local_file_for_response_media_type(
-            response_media_type
-        )
+        # The outermost step of processing one document, and so the span
+        # everything below it nests under — model calls included, which is what
+        # makes a trace answer "which document was this?" on its own.
+        with span('process_document', {
+            'sciencebeam.document.name': self.source_name,
+            'sciencebeam.document.source_media_type': self.source_media_type,
+            'sciencebeam.document.response_media_type': response_media_type,
+        }, tracer_name=__name__):
+            if response_media_type == MediaTypes.PDF:
+                return self.lazy_pdf_path.get()
+            if response_media_type == MediaTypes.ALTO_XML:
+                return self.lazy_alto_xml_path.get()
+            return (
+                self.get_parsed_layout_document()
+                .get_local_file_for_response_media_type(response_media_type)
+            )
 
 
 class ScienceBeamParserSession(ScienceBeamParserBaseSession):
@@ -599,12 +614,14 @@ class ScienceBeamParserSession(ScienceBeamParserBaseSession):
     def get_source(
         self,
         source_path: str,
-        source_media_type: str
+        source_media_type: str,
+        source_name: Optional[str] = None
     ) -> ScienceBeamParserSessionSource:
         return ScienceBeamParserSessionSource(
             self,
             source_path=source_path,
-            source_media_type=source_media_type
+            source_media_type=source_media_type,
+            source_name=source_name
         )
 
 

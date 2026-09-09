@@ -1453,7 +1453,10 @@ def get_layout_document_for_source_filename(
             source_filename,
             auto_decompress=True
         ) as local_source_filename:
-            source = session.get_source(local_source_filename, MediaTypes.PDF)
+            source = session.get_source(
+                local_source_filename, MediaTypes.PDF,
+                source_name=source_filename
+            )
             layout_document = source.get_layout_document()
             return layout_document
 

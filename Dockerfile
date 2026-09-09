@@ -92,7 +92,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --dev \
     --extra cpu \
     --extra delft \
-    --extra cv
+    --extra cv \
+    --extra telemetry
 
 COPY sciencebeam_parser ./sciencebeam_parser
 COPY delft ./delft

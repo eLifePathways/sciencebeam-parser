@@ -14,9 +14,7 @@ from sciencebeam_parser.models.llm.telemetry import (
     OPENINFERENCE_OUTPUT_VALUE,
     OPENINFERENCE_SPAN_KIND,
     OPENINFERENCE_TOKEN_COUNT_COMPLETION,
-    get_configured_endpoint,
     get_invocation_parameters,
-    is_configured,
     llm_span,
     set_response_attributes
 )
@@ -52,37 +50,6 @@ class RecordingSpan:
 def _no_endpoint(monkeypatch: pytest.MonkeyPatch):
     for name in ('OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'):
         monkeypatch.delenv(name, raising=False)
-
-
-class TestIsConfigured:
-    @pytest.mark.usefixtures('no_endpoint')
-    def test_should_be_false_without_an_endpoint(self):
-        assert is_configured() is False
-
-    def test_should_be_true_with_an_otlp_endpoint(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318')
-        assert is_configured() is True
-
-    @pytest.mark.usefixtures('no_endpoint')
-    def test_should_ignore_a_backend_specific_endpoint_variable(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.setenv('PHOENIX_COLLECTOR_ENDPOINT', 'http://localhost:6006')
-        assert is_configured() is False
-
-
-class TestGetConfiguredEndpoint:
-    @pytest.mark.usefixtures('no_endpoint')
-    def test_should_be_none_without_any_endpoint(self):
-        assert get_configured_endpoint() is None
-
-    @pytest.mark.usefixtures('no_endpoint')
-    def test_should_prefer_the_traces_endpoint(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://base:4318')
-        monkeypatch.setenv(
-            'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'http://traces:4318/v1/traces'
-        )
-        assert get_configured_endpoint() == 'http://traces:4318/v1/traces'
 
 
 class TestLlmSpan:
