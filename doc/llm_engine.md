@@ -180,6 +180,12 @@ one backend's configuration into the engine.
 The response body is attached to the span even when it fails to decode, which is the point: a
 truncated or malformed response is visible rather than inferred from an exception.
 
+A call made while serving a request nests under a `process_document` span naming the document, so a
+trace says which document it is about. The log line for a completed call names its trace id, which
+is what joins the log to the prompt and response on the span.
+
+Tracing is not specific to this engine and lives in `utils/telemetry.py`.
+
 **A span carrying prompt text is a copy of manuscript text.** Sending it to a collector on localhost
 is not a new disclosure when the same text is already going to the model, but sending it anywhere
 else is. Set `record_trace_content: false` in the model config to keep the metrics and drop the

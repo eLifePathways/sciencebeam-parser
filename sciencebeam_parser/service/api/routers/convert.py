@@ -13,7 +13,8 @@ from sciencebeam_parser.service.api.dependencies import (
     ScienceBeamParserSessionSourceDependencyFactory,
     assert_and_get_first_accept_matching_media_type_factory,
     get_media_data_wrapper,
-    get_sciencebeam_parser
+    get_sciencebeam_parser,
+    get_session_source_for_data_wrapper
 )
 from sciencebeam_parser.service.api.routers.docs import (
     PDF_CONTENT_DOC,
@@ -21,10 +22,7 @@ from sciencebeam_parser.service.api.routers.docs import (
     TEI_AND_JATS_ZIP_CONTENT_DOC
 )
 from sciencebeam_parser.service.api.routers.utils import get_processed_source_to_response_media_type
-from sciencebeam_parser.utils.data_wrapper import (
-    MediaDataWrapper,
-    get_data_wrapper_with_improved_media_type_or_filename
-)
+from sciencebeam_parser.utils.data_wrapper import MediaDataWrapper
 from sciencebeam_parser.utils.media_types import MediaTypes
 from sciencebeam_parser.utils.text import parse_comma_separated_value
 
@@ -73,16 +71,7 @@ def get_convert_sciencebeam_parser_session_source_dependency_factory(
         ],
         data_wrapper: Annotated[MediaDataWrapper, Depends(get_media_data_wrapper)],
     ) -> Iterator[ScienceBeamParserSessionSource]:
-        data_wrapper = get_data_wrapper_with_improved_media_type_or_filename(
-            data_wrapper
-        )
-        source_path = session.temp_path / "source.file"
-        source_path.write_bytes(data_wrapper.data)
-
-        yield session.get_source(
-            source_path=str(source_path),
-            source_media_type=data_wrapper.media_type,
-        )
+        yield get_session_source_for_data_wrapper(session, data_wrapper)
 
     return get_source
 

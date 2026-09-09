@@ -1,21 +1,12 @@
-import importlib
 import json
 import logging
-import os
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, Mapping, Optional, Protocol
+from typing import Any, Dict, Iterator, Mapping, Optional
+
+from sciencebeam_parser.utils.telemetry import NoOpSpan, SpanLike, get_tracer
 
 
 LOGGER = logging.getLogger(__name__)
-
-# Standard OTLP configuration, read by the exporter itself. Nothing here names a
-# backend; Phoenix is only what happens to listen in development.
-OTLP_ENDPOINT_ENV_NAMES = (
-    'OTEL_EXPORTER_OTLP_ENDPOINT',
-    'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
-)
-
-SERVICE_NAME = 'sciencebeam-parser'
 
 OPERATION_NAME = 'chat'
 
@@ -45,77 +36,6 @@ OPENINFERENCE_INPUT_VALUE = 'input.value'
 OPENINFERENCE_OUTPUT_VALUE = 'output.value'
 
 
-class SpanLike(Protocol):
-    def set_attribute(self, key: str, value: Any) -> None:
-        ...
-
-
-class NoOpSpan:
-    def set_attribute(self, key: str, value: Any) -> None:
-        pass
-
-
-def is_configured() -> bool:
-    return any(os.environ.get(name) for name in OTLP_ENDPOINT_ENV_NAMES)
-
-
-def get_configured_endpoint() -> Optional[str]:
-    return (
-        os.environ.get('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT')
-        or os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT')
-    )
-
-
-def _import_optional(name: str):
-    try:
-        return importlib.import_module(name)
-    except ImportError:
-        return None
-
-
-def _get_tracer():
-    """None unless opentelemetry is installed and an OTLP endpoint is set.
-
-    Absent either, the engine emits nothing and behaves identically — tracing is
-    an optional extra, not a dependency of the default install.
-    """
-    if not is_configured():
-        return None
-    trace = _import_optional('opentelemetry.trace')
-    if trace is None:
-        LOGGER.info(
-            'an otlp endpoint is set but opentelemetry is not installed;'
-            ' install the "telemetry" extra to emit spans'
-        )
-        return None
-    _ensure_tracer_provider(trace)
-    return trace.get_tracer(__name__)
-
-
-def _ensure_tracer_provider(trace) -> None:
-    current = trace.get_tracer_provider()
-    if type(current).__name__ not in ('DefaultTracerProvider', 'ProxyTracerProvider'):
-        return
-    resources = _import_optional('opentelemetry.sdk.resources')
-    sdk_trace = _import_optional('opentelemetry.sdk.trace')
-    export = _import_optional('opentelemetry.sdk.trace.export')
-    otlp = _import_optional(
-        'opentelemetry.exporter.otlp.proto.http.trace_exporter'
-    )
-    if not all((resources, sdk_trace, export, otlp)):
-        LOGGER.info('no opentelemetry sdk or otlp exporter; not configuring a provider')
-        return
-    provider = sdk_trace.TracerProvider(
-        resource=resources.Resource.create({'service.name': SERVICE_NAME})
-    )
-    provider.add_span_processor(export.BatchSpanProcessor(otlp.OTLPSpanExporter()))
-    trace.set_tracer_provider(provider)
-    LOGGER.info(
-        'configured otlp tracing for %r, exporting to %s',
-        SERVICE_NAME, get_configured_endpoint()
-    )
-
-
 def get_invocation_parameters(config) -> str:
     return json.dumps({
         'temperature': config.temperature,
@@ -128,7 +48,7 @@ def get_invocation_parameters(config) -> str:
 
 @contextmanager
 def llm_span(config, prompt: str, record_content: bool = True) -> Iterator[SpanLike]:
-    tracer = _get_tracer()
+    tracer = get_tracer(__name__)
     if tracer is None:
         yield NoOpSpan()
         return

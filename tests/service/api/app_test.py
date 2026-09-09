@@ -174,6 +174,29 @@ class TestApiApp:
             }, headers={'Accept': 'media/unsupported'})
             assert response.status_code == 406
 
+        def test_should_log_the_uploaded_filename(
+            self,
+            test_client: TestClient,
+            get_local_file_for_response_media_type_mock: MagicMock,
+            request_temp_path: Path,
+            caplog: pytest.LogCaptureFixture
+        ):
+            expected_output_path = request_temp_path / 'result.xml'
+            expected_output_path.write_bytes(TEI_XML_CONTENT_1)
+            get_local_file_for_response_media_type_mock.return_value = str(
+                expected_output_path
+            )
+            with caplog.at_level(
+                logging.INFO, logger='sciencebeam_parser.service.api.dependencies'
+            ):
+                response = test_client.post(self.get_api_path(), files={
+                    'input': (PDF_FILENAME_1, BytesIO(PDF_CONTENT_1))
+                })
+            assert response.status_code == 200
+            assert any(
+                PDF_FILENAME_1 in message for message in caplog.messages
+            ), caplog.messages
+
     class TestProcessHeaderDocument(_AbstractPdfConversionApiTest):
         def get_api_path(self) -> str:
             return '/processHeaderDocument'

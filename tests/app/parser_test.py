@@ -1,7 +1,8 @@
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, List, Tuple
 from zipfile import ZipFile
 
 from lxml import etree
@@ -239,6 +240,39 @@ class TestScienceBeamParser:
             fulltext_models.preload.assert_called()
 
     class TestGetLocalFileForResponseMediaType:
+        def test_should_name_the_document_on_the_span(
+            self,
+            sciencebeam_parser_session: ScienceBeamParserSession,
+            doc_converter_wrapper_mock: MagicMock,
+            request_temp_path: Path,
+            monkeypatch: pytest.MonkeyPatch
+        ):
+            recorded: List[Tuple[str, dict]] = []
+
+            @contextmanager
+            def recording_span(name: str, attributes=None, **_kwargs):
+                recorded.append((name, dict(attributes or {})))
+                yield MagicMock(name='span')
+
+            monkeypatch.setattr(
+                'sciencebeam_parser.app.parser.span', recording_span
+            )
+            docx_path = request_temp_path / 'test.docx'
+            doc_converter_wrapper_mock.convert.return_value = 'test.pdf'
+            sciencebeam_parser_session.get_source(
+                str(docx_path),
+                MediaTypes.DOCX,
+                source_name='the-uploaded-name.docx'
+            ).get_local_file_for_response_media_type(MediaTypes.PDF)
+            assert recorded == [(
+                'process_document',
+                {
+                    'sciencebeam.document.name': 'the-uploaded-name.docx',
+                    'sciencebeam.document.source_media_type': MediaTypes.DOCX,
+                    'sciencebeam.document.response_media_type': MediaTypes.PDF,
+                }
+            )]
+
         def test_should_raise_for_unsupported_request_media_type(
             self,
             sciencebeam_parser_session: ScienceBeamParserSession,
