@@ -108,7 +108,7 @@ class TestSetResponseAttributes:
         attributes = span.as_dict()
         assert attributes[GEN_AI_USAGE_OUTPUT_TOKENS] == 20
         assert attributes[OPENINFERENCE_TOKEN_COUNT_COMPLETION] == 20
-        assert attributes['sciencebeam.cost_usd'] == 0.0001
+        assert attributes['sciencebeam.cost_credits'] == 0.0001
 
     def test_should_record_the_resolved_provider(self):
         span = RecordingSpan()
