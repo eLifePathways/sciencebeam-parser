@@ -93,6 +93,20 @@ def _ensure_tracer_provider(trace) -> None:
     )
 
 
+def set_current_span_attribute(key: str, value: Any) -> None:
+    """Annotate the call in progress without being handed its span.
+
+    For work that runs inside a span opened by a caller it does not know about,
+    which is the shape a wrapper has.
+    """
+    if not is_configured():
+        return
+    trace = _import_optional('opentelemetry.trace')
+    if trace is None:
+        return
+    trace.get_current_span().set_attribute(key, value)
+
+
 def get_trace_id(active_span: SpanLike) -> Optional[str]:
     """The span's trace id, so a log line can name the trace holding its content.
 

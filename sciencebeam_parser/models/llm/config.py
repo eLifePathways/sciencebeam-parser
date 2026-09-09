@@ -32,6 +32,7 @@ class LlmEngineConfig:
     max_missing_reference_retries: int = 1
     max_malformed_response_retries: int = 1
     max_concurrent_requests: int = 4
+    response_cache_dir: str = ''
     evidence_mismatch_raises: bool = False
     dropped_field_raises: bool = False
     unanswered_reference_raises: bool = False

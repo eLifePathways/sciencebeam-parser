@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from typing import List, Optional, Tuple
 
+from sciencebeam_parser.models.llm.cache import CachingLlmClient, get_response_cache
 from sciencebeam_parser.models.llm.client import (
     LlmClient,
     LlmCompletionClient,
@@ -70,6 +71,10 @@ class LlmModelImpl(ModelImpl):
             )
         self.config = config
         self.client = client if client is not None else LlmClient(config)
+        if config.response_cache_dir:
+            self.client = CachingLlmClient(
+                config, self.client, get_response_cache(config.response_cache_dir)
+            )
         self.labels = (
             get_citation_labels() if config.response_shape == VALUES_SHAPE else []
         )

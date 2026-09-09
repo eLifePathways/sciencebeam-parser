@@ -1,0 +1,186 @@
+import hashlib
+import json
+import logging
+import os
+import tempfile
+import threading
+from functools import lru_cache
+from typing import Any, Dict, Mapping, Optional
+
+from sciencebeam_parser.models.llm.client import LlmCompletionClient, get_request_body
+from sciencebeam_parser.models.llm.config import LlmEngineConfig
+from sciencebeam_parser.utils.telemetry import set_current_span_attribute
+
+
+LOGGER = logging.getLogger(__name__)
+
+CACHE_HIT_ATTRIBUTE = 'sciencebeam.llm.cache_hit'
+
+REQUEST_FILENAME = 'request.json'
+
+
+def get_request_key(endpoint: str, request_body: Mapping[str, Any]) -> str:
+    """The request as sent, hashed.
+
+    Derived from the body rather than from a list of parameters believed to
+    matter, so a parameter added to the body later is covered without anyone
+    remembering to add it here.
+    """
+    serialised = json.dumps(
+        {'endpoint': endpoint, 'request': request_body},
+        sort_keys=True, ensure_ascii=False, separators=(',', ':')
+    )
+    return hashlib.sha256(serialised.encode('utf-8')).hexdigest()
+
+
+def _write_atomically(path: str, value: Any) -> None:
+    """A reader meets a whole entry or no entry, however many workers are writing."""
+    handle, temp_path = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.tmp-')
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as temp_file:
+            json.dump(value, temp_file, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+class LlmResponseCache:
+    """Completions on disk, ordered per request, so a run replays as it happened.
+
+    Holds document text: a prompt is the manuscript region, and a `values`
+    response is field values copied out of it.
+    """
+
+    def __init__(self, cache_dir: str):
+        self.cache_dir = os.path.abspath(os.path.expanduser(cache_dir))
+        self._lock = threading.Lock()
+        self._claimed: Dict[str, int] = {}
+        self._has_logged_a_hit = False
+        self.hit_count = 0
+        self.miss_count = 0
+        LOGGER.info(
+            'llm response cache enabled at %s; it holds document text, and'
+            ' clearing it is deleting the directory',
+            self.cache_dir
+        )
+
+    def __repr__(self) -> str:
+        return f'{type(self).__name__}({self.cache_dir!r})'
+
+    def get_summary(self) -> str:
+        return f'{self.hit_count} replayed, {self.miss_count} live'
+
+    def claim_ordinal(self, key: str) -> int:
+        """Which call this is for that request, counted for the life of the process.
+
+        It does not ask why a request repeated: a response that failed to parse
+        and a re-ask for a reference the batch left out both have to be told
+        apart from the call before them, and only a counter covers both.
+        """
+        with self._lock:
+            ordinal = self._claimed.get(key, 0)
+            self._claimed[key] = ordinal + 1
+            return ordinal
+
+    def get_response(self, key: str, ordinal: int) -> Optional[Mapping[str, Any]]:
+        path = self._get_response_path(key, ordinal)
+        try:
+            with open(path, 'r', encoding='utf-8') as response_file:
+                response = json.load(response_file)
+        except FileNotFoundError:
+            self._count(hit=False)
+            return None
+        except (OSError, ValueError) as exc:
+            LOGGER.warning('llm cache entry %s is unreadable, asking live: %s', path, exc)
+            self._count(hit=False)
+            return None
+        self._count(hit=True)
+        return response
+
+    def put(
+        self,
+        key: str,
+        ordinal: int,
+        request_body: Mapping[str, Any],
+        response: Mapping[str, Any]
+    ) -> None:
+        key_dir = self._get_key_dir(key)
+        os.makedirs(key_dir, exist_ok=True)
+        request_path = os.path.join(key_dir, REQUEST_FILENAME)
+        if not os.path.exists(request_path):
+            # Once per key, so a directory named by a one-way hash can still be
+            # read back to the question it answers.
+            _write_atomically(request_path, request_body)
+        _write_atomically(self._get_response_path(key, ordinal), response)
+
+    def _get_key_dir(self, key: str) -> str:
+        return os.path.join(self.cache_dir, key[:2], key)
+
+    def _get_response_path(self, key: str, ordinal: int) -> str:
+        return os.path.join(self._get_key_dir(key), f'{ordinal:03d}.json')
+
+    def _count(self, hit: bool) -> None:
+        with self._lock:
+            if hit:
+                self.hit_count += 1
+                should_log = not self._has_logged_a_hit
+                self._has_logged_a_hit = True
+            else:
+                self.miss_count += 1
+                should_log = False
+        if should_log:
+            LOGGER.info(
+                'llm response cache is warm; this run replays stored answers and'
+                ' spends less than a cold one would'
+            )
+
+
+@lru_cache(maxsize=None)
+def get_response_cache(cache_dir: str) -> LlmResponseCache:
+    """One cache per directory for the life of the process.
+
+    Two models configured against the same directory share the ordinals and the
+    counts, which makes both the run's rather than one model's.
+    """
+    return LlmResponseCache(cache_dir)
+
+
+class CachingLlmClient:
+    """Replays completions from disk, and lets everything else through.
+
+    Wraps the client rather than the transport, so a 429 or a connection error is
+    still retried live and never stored, and a clean response is stored even when
+    it goes on to fail decoding — that body is what a decoder fix is developed
+    against.
+    """
+
+    def __init__(
+        self,
+        config: LlmEngineConfig,
+        delegate: LlmCompletionClient,
+        cache: LlmResponseCache
+    ):
+        self.config = config
+        self.delegate = delegate
+        self.cache = cache
+
+    def __repr__(self) -> str:
+        return f'{type(self).__name__}({self.delegate!r}, {self.cache!r})'
+
+    def validate_configuration(self) -> None:
+        self.delegate.validate_configuration()
+
+    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]) -> Mapping[str, Any]:
+        request_body = get_request_body(self.config, prompt, response_schema)
+        key = get_request_key(self.config.endpoint, request_body)
+        ordinal = self.cache.claim_ordinal(key)
+        cached = self.cache.get_response(key, ordinal)
+        set_current_span_attribute(CACHE_HIT_ATTRIBUTE, cached is not None)
+        if cached is not None:
+            LOGGER.debug('llm cache replaying %s call %d', key[:12], ordinal)
+            return cached
+        # An exception stores nothing, so a failure is asked again live.
+        response = self.delegate.get_completion(prompt, response_schema)
+        self.cache.put(key, ordinal, request_body, response)
+        return response

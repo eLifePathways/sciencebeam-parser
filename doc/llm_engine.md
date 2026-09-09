@@ -61,7 +61,7 @@ Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM
 `temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
 `max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`,
 `unanswered_reference_raises`, `max_missing_reference_retries`,
-`max_malformed_response_retries`.
+`max_malformed_response_retries`, `response_cache_dir`.
 
 ### What the segmenter is told to skip
 
@@ -246,6 +246,41 @@ every span to make an oversized region visible.
 
 Above `warn_input_lines` (default 300) the engine logs a warning naming the count. `max_input_lines`
 (default 0, off) raises instead, for a run where failing fast is wanted.
+
+## Response cache (development only)
+
+Generation is not reproducible even at `temperature: 0`, so a decoder or scoring change is otherwise
+evaluated against a moving target. `response_cache_dir` stores each completion on disk and replays
+it, which freezes model output across runs and lets an interrupted run continue where it stopped.
+
+```yaml
+citation:
+  engine: 'llm'
+  response_cache_dir: 'data/llm-response-cache'   # empty (the default) is off
+```
+
+**The directory holds document text** — a prompt is the manuscript region it was asked about, and a
+`values` response is field values copied out of it. Keep it under `data/`, which is gitignored and
+shared between worktrees, so a branch made to fix a decoder starts warm. Do not point it at
+`download_dir`, which holds public model artifacts and has a different lifetime. Do not enable it in
+CI: those calls are meant to be live, and a stored response there would hide a failure.
+
+Entries are keyed by the request as sent, so a change to the prompt version, model, temperature,
+output limit, provider routing, reasoning or `extra_body` is a miss rather than a stale hit. Nothing
+expires and nothing is evicted; clearing the cache is deleting the directory. The setting that
+surprises is `max_references_per_request` — changing it rewrites every prompt, so the whole cache
+goes cold.
+
+Only clean responses are stored, so a 429 or a connection error is still retried live. A response
+that fails to decode is stored too, since that body is what a decoder fix has to be developed
+against, and repeated identical requests are replayed in the order they were made — a run that
+recovered on its second attempt recovers again. Ordinals are counted for the life of the process, so
+a warm re-run means a new parser process, which is what the benchmark starts anyway; a service that
+parses the same document twice will call live the second time.
+
+Each call carries `sciencebeam.llm.cache_hit` on its span, so a trace shows which answers were
+replayed, and the first replay of a process logs that the cache is warm — a run that was
+accidentally warm is cheaper than a cold one and should not be reported as its cost.
 
 ## Choosing a provider
 

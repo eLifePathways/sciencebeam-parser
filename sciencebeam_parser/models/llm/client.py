@@ -80,33 +80,41 @@ class LlmCompletionClient(Protocol):
         ...
 
 
+def get_request_body(
+    config: LlmEngineConfig, prompt: str, response_schema: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """Every parameter that can change an answer, in the form it is sent.
+
+    Module level rather than a method because the response cache keys on it, and
+    a second assembly of the same parameters would drift from this one.
+    """
+    body: Dict[str, Any] = {
+        'model': config.model,
+        'temperature': config.temperature,
+        'max_tokens': config.max_output_tokens,
+        'messages': [{'role': 'user', 'content': prompt}],
+        'response_format': {
+            'type': 'json_schema',
+            'json_schema': {
+                'name': 'sciencebeam_labels',
+                'strict': True,
+                'schema': response_schema,
+            },
+        },
+        'provider': config.provider_routing,
+        **config.extra_body,
+    }
+    if config.reasoning == 'off':
+        body['reasoning'] = {'enabled': False}
+    return body
+
+
 class LlmClient:
     def __init__(self, config: LlmEngineConfig):
         self.config = config
 
     def _headers(self) -> Dict[str, str]:
         return {'Authorization': f'Bearer {get_api_key()}'}
-
-    def _request_body(self, prompt: str, response_schema: Mapping[str, Any]) -> Dict[str, Any]:
-        body: Dict[str, Any] = {
-            'model': self.config.model,
-            'temperature': self.config.temperature,
-            'max_tokens': self.config.max_output_tokens,
-            'messages': [{'role': 'user', 'content': prompt}],
-            'response_format': {
-                'type': 'json_schema',
-                'json_schema': {
-                    'name': 'sciencebeam_labels',
-                    'strict': True,
-                    'schema': response_schema,
-                },
-            },
-            'provider': self.config.provider_routing,
-            **self.config.extra_body,
-        }
-        if self.config.reasoning == 'off':
-            body['reasoning'] = {'enabled': False}
-        return body
 
     def validate_configuration(self) -> None:
         """Fails at load rather than at first request, and spends no tokens."""
@@ -141,7 +149,7 @@ class LlmClient:
         self, prompt: str, response_schema: Mapping[str, Any]
     ) -> Mapping[str, Any]:
         url = f'{self.config.endpoint.rstrip("/")}/chat/completions'
-        body = self._request_body(prompt, response_schema)
+        body = get_request_body(self.config, prompt, response_schema)
         last_error = ''
         retry_status: Optional[int] = None
         retry_after: Optional[float] = None
