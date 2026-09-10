@@ -5,10 +5,10 @@ dataset:
     train:
       ore:
         file: ore-jats/train-00000-of-00001.parquet
-        id_column: id
+        id_column: ppr_id
       scielo_preprints-jats:
         file: scielo-preprints-jats/train-00000-of-00001.parquet
-        id_column: id
+        id_column: ppr_id
 
 # Corpora confirmed CC-BY 4.0.  Others are excluded until per-record licence
 # data is available in the dataset.
@@ -16,9 +16,8 @@ cc_by_corpora:
   - ore
   - scielo_preprints-jats
 
-# Train-split row counts at revision main (2026-09-09); `main` moves, so re-check
-# after a rebuild:
-#   ore: 37, scielo_preprints-jats: 84
+# Dataset row counts at revision main:
+#   ore: 199, scielo_preprints-jats: 1000
 sampling:
   smoke:
     ore: 10
