@@ -53,7 +53,7 @@ BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
 # GROBID baseline version and the path benchmarks.run writes it to (note the
 # 'default' profile segment). The baseline (run-b) is produced by benchmarks.run on
 # the host; see docker-benchmark-with-baselines.
-GROBID_BASELINE_VERSION ?= 0.9.0-crf
+GROBID_BASELINE_VERSION ?= 0.9.1-crf
 GROBID_BASELINE_RUN_LOCAL ?= benchmarks/runs/baselines/grobid/$(GROBID_BASELINE_VERSION)/default/$(BENCHMARK_SPLIT)
 # GROBID instance for docker-compare-model-data (run on the host at GROBID_URL).
 GROBID_IMAGE ?= grobid/grobid:$(GROBID_BASELINE_VERSION)
