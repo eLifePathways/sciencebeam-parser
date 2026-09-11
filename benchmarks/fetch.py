@@ -323,3 +323,23 @@ def fetch_training_source(
     filtered_cfg = {**cfg, "sampling": filtered_sampling}
     in_split = allowed.intersection(cfg["dataset"]["splits"].get(split, {}))
     return fetch_data(filtered_cfg, mode, split, data_dir, include=in_split)
+
+
+def get_corpus_variants(
+    config: dict, split: str, include: Optional[Iterable[str]] = None
+) -> dict:
+    """Each covered corpus's prediction variant.
+
+    Limited to the corpora the run covers, so predictions for a corpus that was not
+    run are neither looked for nor stored. A versioned corpus names its version here,
+    which is what keeps predictions against two versions of it apart.
+    """
+    split_cfg = config["dataset"]["splits"].get(split, {})
+    result = {}
+    for corpus in included_corpora(config, split, include):
+        corpus_cfg = split_cfg[corpus]
+        if isinstance(corpus_cfg, dict):
+            result[corpus] = corpus_cfg.get("variant", "v1")
+        else:
+            result[corpus] = "v1"
+    return result

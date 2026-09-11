@@ -10,7 +10,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple, Union
 import httpx
 import yaml
 
-from benchmarks.fetch import fetch_gold, included_corpora
+from benchmarks.fetch import fetch_gold, get_corpus_variants
 from benchmarks.predict import run_predict
 from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
@@ -75,26 +75,6 @@ def _baseline_env_vars(tool: str, profile: Optional[str]) -> dict:
     if profile and profile != "default":
         env["SCIENCEBEAM_PARSER__PROFILE"] = profile
     return env
-
-
-def _get_corpus_variants(
-    config: dict, split: str, include: Optional[Iterable[str]] = None
-) -> dict:
-    """Each covered corpus's prediction variant.
-
-    Limited to the corpora the run covers, so predictions for a corpus that was not
-    run are neither looked for nor stored. A versioned corpus names its version here,
-    which is what keeps predictions against two versions of it apart.
-    """
-    split_cfg = config["dataset"]["splits"].get(split, {})
-    result = {}
-    for corpus in included_corpora(config, split, include):
-        corpus_cfg = split_cfg[corpus]
-        if isinstance(corpus_cfg, dict):
-            result[corpus] = corpus_cfg.get("variant", "v1")
-        else:
-            result[corpus] = "v1"
-    return result
 
 
 def _coverage(expected_ids: set, done_ids: set) -> dict:
@@ -251,7 +231,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     include: Optional[Iterable[str]] = None,
 ) -> None:
     # pylint: disable=too-many-locals
-    corpus_variants = _get_corpus_variants(config, split, include)
+    corpus_variants = get_corpus_variants(config, split, include)
     expected_ids = {
         (r["corpus"], r["record_id"])
         for r in fetch_gold(config, mode, split, data_dir, include=include)

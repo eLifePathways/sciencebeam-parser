@@ -4,12 +4,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from benchmarks.fetch import get_corpus_variants
 from benchmarks.predictions_store import LocalPredictionsStore
 from benchmarks.run import (
     _baseline_env_vars,
     _coverage,
     _run_baseline,
-    _get_corpus_variants,
     _make_label,
     _tool_docker_config,
     run_benchmark,
@@ -66,11 +66,11 @@ class TestBaselineEnvVars:
 class TestGetCorpusVariants:
     def test_reads_variant_from_config(self):
         config = {"dataset": {"splits": {"train": {"biorxiv": {"variant": "v2"}}}}}
-        assert _get_corpus_variants(config, "train") == {"biorxiv": "v2"}
+        assert get_corpus_variants(config, "train") == {"biorxiv": "v2"}
 
     def test_defaults_to_v1(self):
         config = {"dataset": {"splits": {"train": {"biorxiv": {}}}}}
-        assert _get_corpus_variants(config, "train") == {"biorxiv": "v1"}
+        assert get_corpus_variants(config, "train") == {"biorxiv": "v1"}
 
     def test_leaves_out_an_opt_in_corpus_nobody_asked_for(self):
         config = {"dataset": {"splits": {"train": {
@@ -79,8 +79,8 @@ class TestGetCorpusVariants:
         }}}}
         # Predictions for a corpus the run did not cover must be neither looked
         # for in the store nor pushed to it.
-        assert _get_corpus_variants(config, "train") == {"biorxiv": "v1"}
-        assert _get_corpus_variants(config, "train", ["plos"]) == {
+        assert get_corpus_variants(config, "train") == {"biorxiv": "v1"}
+        assert get_corpus_variants(config, "train", ["plos"]) == {
             "biorxiv": "v1", "plos": "plos-v002",
         }
 

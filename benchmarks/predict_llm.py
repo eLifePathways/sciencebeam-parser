@@ -22,13 +22,18 @@ import httpx
 import yaml
 from lxml import etree
 
-from benchmarks.fetch import fetch_data, resolved_sources
+from benchmarks.fetch import fetch_data, get_corpus_variants, resolved_sources
+from benchmarks.predictions_store import RepoPredictionsStore
 from benchmarks.predict import _append_manifest, _load_done, _Progress
 
 LOGGER = logging.getLogger(__name__)
 
 # JATS document order, which is also merge order.
 SECTIONS: Tuple[str, ...] = ("front", "body", "back")
+
+# Must match the `tool:` of the eval.yml baseline, which is how the store path
+# is built on both sides.
+TOOL_NAME = "jats-agentic-annotation"
 
 PREPROCESS_PATH = "/preprocess"
 ANNOTATE_PATH = "/annotate"
@@ -230,6 +235,7 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
     concurrency: int = DEFAULT_CONCURRENCY,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     include: Optional[Iterable[str]] = None,
+    push_to: Optional[Path] = None,
 ) -> None:
     check_restricted_corpora(include)
     records = fetch_data(config, mode, split, data_dir, include=include)
@@ -266,6 +272,16 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
         n_ok, n_err, time.monotonic() - t_start,
     )
 
+    if push_to:
+        store = RepoPredictionsStore(push_to)
+        store.push(
+            TOOL_NAME, checkpoint, "default", split, run_dir,
+            get_corpus_variants(config, split, include),
+            {"tool": TOOL_NAME, "version": checkpoint, "profile": "default",
+             "split": split, "mode": mode, "endpoint": endpoint},
+        )
+        LOGGER.info("Pushed %d prediction(s) to %s", n_ok, push_to)
+
 
 def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(
@@ -300,6 +316,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--include-corpus", action="append", default=None, dest="include_corpus",
         metavar="CORPUS", help="Also run an opt-in corpus, repeatable",
     )
+    parser.add_argument(
+        "--push-to", default=None, metavar="REPO",
+        help="Checked-out predictions repo to commit and push the results to",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -318,6 +338,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         concurrency=args.concurrency,
         timeout=args.timeout,
         include=args.include_corpus,
+        push_to=Path(args.push_to) if args.push_to else None,
     )
 
 
