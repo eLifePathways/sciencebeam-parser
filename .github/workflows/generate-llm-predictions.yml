@@ -14,8 +14,9 @@ on:
         default: 'https://elifepathways--jats-orchestrator-web.modal.run'
         type: string
       checkpoint:
-        description: 'Checkpoint id; becomes the version the predictions are stored under'
-        required: true
+        description: 'Checkpoint id; blank uses the version eval.yml names for this tool'
+        required: false
+        default: ''
         type: string
       mode:
         description: 'Samples nest, so the largest mode covers every smaller one'
@@ -70,14 +71,18 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          CHECKPOINT_ARG=""
+          if [ -n "${{ inputs.checkpoint }}" ]; then
+            CHECKPOINT_ARG="--checkpoint ${{ inputs.checkpoint }}"
+          fi
           uv run python -m benchmarks.predict_llm \
             --config benchmarks/eval.yml \
             --mode "${{ inputs.mode }}" \
             --split "${{ inputs.split }}" \
             --data benchmarks/data \
-            --out "benchmarks/runs/llm-${{ inputs.checkpoint }}" \
+            --out benchmarks/runs/llm \
             --endpoint "${{ inputs.endpoint }}" \
-            --checkpoint "${{ inputs.checkpoint }}" \
+            ${CHECKPOINT_ARG} \
             --concurrency "${{ inputs.concurrency }}" \
             --push-to sciencebeam-eval-predictions
 
@@ -86,11 +91,11 @@ jobs:
       - name: Summarise
         if: always()
         run: |
-          MANIFEST="benchmarks/runs/llm-${{ inputs.checkpoint }}/predictions/manifest.jsonl"
+          MANIFEST="benchmarks/runs/llm/predictions/manifest.jsonl"
           {
             echo "### LLM prediction run"
             echo ""
-            echo "- checkpoint: \`${{ inputs.checkpoint }}\`"
+            echo "- checkpoint: \`$(grep -A2 'tool: jats-agentic-annotation' benchmarks/eval.yml | grep version: | awk '{print $2}')\`"
             echo "- ${{ inputs.split }} / ${{ inputs.mode }}"
             if [ -f "$MANIFEST" ]; then
               echo "- ok: $(grep -c '"status": "ok"' "$MANIFEST" || echo 0)"
@@ -104,6 +109,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: llm-predictions-${{ inputs.checkpoint }}
-          path: benchmarks/runs/llm-${{ inputs.checkpoint }}/
+          name: llm-predictions
+          path: benchmarks/runs/llm/
           retention-days: 30

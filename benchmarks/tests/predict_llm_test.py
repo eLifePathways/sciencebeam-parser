@@ -1,9 +1,11 @@
 import pytest
+import yaml
 
 from lxml import etree
 
 from benchmarks.predict_llm import (
     check_restricted_corpora,
+    checkpoint_from_config,
     merge_section_documents,
 )
 
@@ -79,3 +81,27 @@ class TestCheckRestrictedCorpora:
     def test_should_refuse_the_private_manuscripts(self):
         with pytest.raises(SystemExit, match='not redistributable'):
             check_restricted_corpora(['biorxiv', 'plos-manuscripts'])
+
+
+class TestCheckpointFromConfig:
+    """Generation and the benchmark read one field, so they cannot disagree."""
+
+    def test_should_read_the_version_of_this_tool(self):
+        config = {"baselines": [
+            {"tool": "grobid", "version": "0.9.1-crf", "profile": "default"},
+            {"tool": "jats-agentic-annotation", "version": "ckpt-1", "profile": "default"},
+        ]}
+        assert checkpoint_from_config(config) == "ckpt-1"
+
+    def test_should_be_none_when_the_tool_is_absent(self):
+        config = {"baselines": [{"tool": "grobid", "version": "0.9.1-crf"}]}
+        assert checkpoint_from_config(config) is None
+
+    def test_should_be_none_without_baselines(self):
+        assert checkpoint_from_config({}) is None
+
+    def test_should_match_the_shipped_config(self):
+        # The generation default has to resolve, or a dispatch with no checkpoint
+        # exits rather than running for hours.
+        with open("benchmarks/eval.yml", encoding="utf-8") as f:
+            assert checkpoint_from_config(yaml.safe_load(f))

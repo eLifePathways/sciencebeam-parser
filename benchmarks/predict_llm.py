@@ -283,6 +283,18 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
         LOGGER.info("Pushed %d prediction(s) to %s", n_ok, push_to)
 
 
+def checkpoint_from_config(config: dict) -> Optional[str]:
+    """The checkpoint the eval config already names for this tool.
+
+    One source of truth: generation stores under the version the benchmark reads,
+    so the two cannot be pointed at different paths by a typo.
+    """
+    for baseline in config.get("baselines", []):
+        if isinstance(baseline, dict) and baseline.get("tool") == TOOL_NAME:
+            return baseline.get("version")
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(
         description="Predict: annotate each PDF with the trained JATS model and save JATS XML"
@@ -300,8 +312,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         ),
     )
     parser.add_argument(
-        "--checkpoint", required=True,
-        help="Checkpoint identifier, recorded with the run and used as its store version",
+        "--checkpoint", default=None,
+        help=(
+            "Checkpoint identifier, recorded with the run and used as its store"
+            " version. Defaults to the version the eval config gives this tool"
+        ),
     )
     parser.add_argument(
         "--concurrency", type=int, default=DEFAULT_CONCURRENCY,
@@ -327,6 +342,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     with open(args.config, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
+    checkpoint = args.checkpoint or checkpoint_from_config(config)
+    if not checkpoint:
+        raise SystemExit(
+            f"no --checkpoint given and {args.config} names no version for "
+            f"{TOOL_NAME!r}; predictions would have nowhere to be stored"
+        )
+
     run_predict_llm(
         config=config,
         mode=args.mode,
@@ -334,7 +356,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         data_dir=Path(args.data),
         run_dir=Path(args.out),
         endpoint=args.endpoint,
-        checkpoint=args.checkpoint,
+        checkpoint=checkpoint,
         concurrency=args.concurrency,
         timeout=args.timeout,
         include=args.include_corpus,
