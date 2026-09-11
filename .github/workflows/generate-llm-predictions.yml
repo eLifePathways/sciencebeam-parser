@@ -1,0 +1,114 @@
+# Annotates the benchmark corpora with the trained JATS model and stores the
+# result. Separate from benchmark.yml because it is slow -- minutes per document
+# -- and because it is the only job that sends manuscripts to the model.
+#
+# No GPU: the model is served over HTTP, so a standard runner is enough.
+name: Generate LLM predictions
+
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Annotation service base URL'
+        required: true
+        default: 'https://elifepathways--jats-orchestrator-web.modal.run'
+        type: string
+      checkpoint:
+        description: 'Checkpoint id; blank uses the version eval.yml names for this tool'
+        required: false
+        default: ''
+        type: string
+      mode:
+        description: 'Samples nest, so the largest mode covers every smaller one'
+        required: false
+        default: 'smoke'
+        type: choice
+        options: [smoke, small, medium, large, full]
+      split:
+        description: 'validation is what PR benchmark runs read'
+        required: false
+        default: 'validation'
+        type: choice
+        options: [validation, train, test]
+      concurrency:
+        description: 'Documents in flight; each holds 3 calls open'
+        required: false
+        default: '2'
+        type: string
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    # Well beyond benchmark.yml's 120, since 60 documents at minutes each will
+    # not fit in it. Six hours is the GitHub maximum.
+    timeout-minutes: 360
+    environment: benchmark
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: uv sync --frozen --group benchmark
+
+      - name: Checkout predictions repo
+        uses: actions/checkout@v5
+        with:
+          repository: elifepathways/sciencebeam-eval-predictions
+          path: sciencebeam-eval-predictions
+          token: ${{ secrets.PREDICTIONS_REPO_PAT }}
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: .gitignore
+          sparse-checkout-cone-mode: false
+
+      - name: Annotate and store
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          CHECKPOINT_ARG=""
+          if [ -n "${{ inputs.checkpoint }}" ]; then
+            CHECKPOINT_ARG="--checkpoint ${{ inputs.checkpoint }}"
+          fi
+          uv run python -m benchmarks.predict_llm \
+            --config benchmarks/eval.yml \
+            --mode "${{ inputs.mode }}" \
+            --split "${{ inputs.split }}" \
+            --data benchmarks/data \
+            --out benchmarks/runs/llm \
+            --endpoint "${{ inputs.endpoint }}" \
+            ${CHECKPOINT_ARG} \
+            --concurrency "${{ inputs.concurrency }}" \
+            --push-to sciencebeam-eval-predictions
+
+      # A document that failed is recorded rather than raised, so the run can
+      # succeed having annotated nothing. The manifest is what says otherwise.
+      - name: Summarise
+        if: always()
+        run: |
+          MANIFEST="benchmarks/runs/llm/predictions/manifest.jsonl"
+          {
+            echo "### LLM prediction run"
+            echo ""
+            echo "- checkpoint: \`$(grep -A2 'tool: jats-agentic-annotation' benchmarks/eval.yml | grep version: | awk '{print $2}')\`"
+            echo "- ${{ inputs.split }} / ${{ inputs.mode }}"
+            if [ -f "$MANIFEST" ]; then
+              echo "- ok: $(grep -c '"status": "ok"' "$MANIFEST" || echo 0)"
+              echo "- errors: $(grep -c '"status": "error"' "$MANIFEST" || echo 0)"
+            else
+              echo "- no manifest written"
+            fi
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: llm-predictions
+          path: benchmarks/runs/llm/
+          retention-days: 30

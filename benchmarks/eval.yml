@@ -221,3 +221,10 @@ baselines:
     version: main
     profile: grobid_crf
     generate: false
+  # Read but never run: annotating needs a GPU the runner lacks, so predictions
+  # are generated separately (benchmarks.predict_llm) and pushed to the store.
+  # `version` is the checkpoint, and must match what generation used.
+  - tool: jats-agentic-annotation
+    version: qwen3.5-9b-teacher-distill-v1
+    profile: default
+    generate: false

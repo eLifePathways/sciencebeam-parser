@@ -253,3 +253,86 @@ class TestRepoStoreDoneIdsAreVariantAware:
         with patch("subprocess.run", self._git_mock({})):
             done = self._store(tmp_path).get_done_ids("grobid", "0.9", "default", "train")
         assert done == {("biorxiv", "r1"), ("biorxiv", "r2")}
+
+
+class TestRepoPredictionsStoreWithJatsPredictions:
+    """A JATS-producing tool round-trips like any other.
+
+    All three failed silently while the store looked only for `.tei.xml`.
+    """
+
+    def _store(self, tmp_path: Path) -> RepoPredictionsStore:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        return RepoPredictionsStore(repo_dir=repo)
+
+    def test_stored_ids_counts_jats_predictions(self, tmp_path: Path):
+        store = self._store(tmp_path)
+        manifest_text = (
+            json.dumps({"corpus": "biorxiv", "record_id": "doc1", "status": "ok"}) + "\n"
+        )
+        prefix = "jats-agentic-annotation/tfull/default"
+        keys = {
+            ("show", f"HEAD:{prefix}/train/manifest.jsonl"): manifest_text,
+            (
+                "ls-tree", "-r", "--name-only", "HEAD",
+                f"{prefix}/biorxiv/v1/train/",
+            ): f"{prefix}/biorxiv/v1/train/doc1.jats.xml\n",
+        }
+        with patch("subprocess.run", _make_git_mock(keys)):
+            result = store.get_done_ids(
+                "jats-agentic-annotation", "tfull", "default", "train",
+                {"biorxiv": "v1"},
+            )
+        assert result == {("biorxiv", "doc1")}
+
+    def test_fetch_copies_jats_predictions(self, tmp_path: Path):
+        store = self._store(tmp_path)
+        src = store.repo_dir / "jats-agentic-annotation/tfull/default/biorxiv/v1/train"
+        src.mkdir(parents=True)
+        (src / "doc1.jats.xml").write_text("<article/>")
+        local_dir = tmp_path / "local"
+        with patch.object(store, "_git"):
+            store.fetch(
+                "jats-agentic-annotation", "tfull", "default", "train",
+                local_dir, {"biorxiv": "v1"},
+            )
+        copied = local_dir / "predictions" / "biorxiv" / "doc1.jats.xml"
+        assert copied.read_text() == "<article/>"
+
+    def test_push_copies_jats_predictions(self, tmp_path: Path):
+        store = self._store(tmp_path)
+        local_dir = tmp_path / "local"
+        corpus_dir = local_dir / "predictions" / "biorxiv"
+        corpus_dir.mkdir(parents=True)
+        (corpus_dir / "doc1.jats.xml").write_text("<article/>")
+
+        def fake_git(*_args, **_kw):
+            result = MagicMock()
+            result.returncode = 1  # changes present
+            result.stdout = ""
+            return result
+
+        with patch.object(store, "_git", side_effect=fake_git):
+            store.push(
+                "jats-agentic-annotation", "tfull", "default", "train", local_dir,
+                {"biorxiv": "v1"}, {"tool": "jats-agentic-annotation"},
+            )
+
+        dest = (
+            store.repo_dir
+            / "jats-agentic-annotation/tfull/default/biorxiv/v1/train/doc1.jats.xml"
+        )
+        assert dest.exists()
+
+    def test_push_and_fetch_keep_tei_and_jats_side_by_side(self, tmp_path: Path):
+        store = self._store(tmp_path)
+        src = store.repo_dir / "mixed/v1/default/biorxiv/v1/train"
+        src.mkdir(parents=True)
+        (src / "doc1.tei.xml").write_text("<TEI/>")
+        (src / "doc2.jats.xml").write_text("<article/>")
+        local_dir = tmp_path / "local"
+        with patch.object(store, "_git"):
+            store.fetch("mixed", "v1", "default", "train", local_dir, {"biorxiv": "v1"})
+        names = sorted(p.name for p in (local_dir / "predictions" / "biorxiv").iterdir())
+        assert names == ["doc1.tei.xml", "doc2.jats.xml"]

@@ -256,15 +256,40 @@ jobs:
           if [ -f ${{ env.BENCHMARK_RUN }}/comparison.md ]; then
             REPORT=${{ env.BENCHMARK_RUN }}/comparison.md
           fi
-          COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-            --jq '[.[] | select(.body | startswith("## ScienceBeam Parser Evaluation"))] | .[0].id // empty')
-          if [ -n "$COMMENT_ID" ]; then
-            gh api repos/${{ github.repository }}/issues/comments/${COMMENT_ID} \
-              -X PATCH -f body="$(cat ${REPORT})"
-          else
-            gh pr comment ${{ github.event.pull_request.number }} \
-              --body-file "${REPORT}"
-          fi
+          PR=${{ github.event.pull_request.number }}
+          LABEL="${{ steps.image_tag.outputs.value }} (${{ env.BENCHMARK_MODE }}, ${{ env.BENCHMARK_SPLIT }})"
+
+          # A new comment per run rather than an edit, because an edit sends no
+          # notification -- a finished run looked like one that never triggered.
+          # Older reports are collapsed rather than deleted, so a PR with several
+          # runs stays readable and every run's numbers remain there to compare.
+          #
+          # The marker is what finds them again, and carries the label so a
+          # collapsed summary can still say which run it was.
+          gh api "repos/${{ github.repository }}/issues/${PR}/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- benchmark-report:"))
+                      | select(.body | contains("<summary><b>Benchmark") | not) | .id' \
+          | while read -r id; do
+              gh api "repos/${{ github.repository }}/issues/comments/${id}" --jq .body > old.md
+              OLD_LABEL=$(head -1 old.md | sed -e 's/^<!-- benchmark-report: //' -e 's/ -->$//')
+              {
+                head -1 old.md
+                echo "<details>"
+                echo "<summary><b>Benchmark</b> — ${OLD_LABEL}</summary>"
+                echo ""
+                tail -n +2 old.md
+                echo ""
+                echo "</details>"
+              } > collapsed.md
+              gh api "repos/${{ github.repository }}/issues/comments/${id}" \
+                -X PATCH -f body="$(cat collapsed.md)"
+            done
+
+          {
+            echo "<!-- benchmark-report: ${LABEL} -->"
+            cat "${REPORT}"
+          } > benchmark-comment.md
+          gh pr comment "${PR}" --body-file benchmark-comment.md
 
       - name: Upload run artifacts
         if: always()

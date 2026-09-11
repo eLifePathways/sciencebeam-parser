@@ -9,6 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from benchmarks.prediction_files import (
+    is_prediction_file,
+    iter_prediction_files,
+    record_id_from_name,
+)
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -115,7 +121,6 @@ class RepoPredictionsStore:
 
     def _stored_ids(self, prefix: str, split: str, corpus_variants: dict) -> set:
         """(corpus, record_id) for every prediction filed under these variants."""
-        suffix = ".tei.xml"
         stored = set()
         for corpus, variant in corpus_variants.items():
             listing = self._git(
@@ -126,8 +131,8 @@ class RepoPredictionsStore:
                 continue
             for line in listing.stdout.splitlines():
                 name = line.strip().rsplit("/", 1)[-1]
-                if name.endswith(suffix):
-                    stored.add((corpus, name[: -len(suffix)]))
+                if is_prediction_file(name):
+                    stored.add((corpus, record_id_from_name(name)))
         return stored
 
     def fetch(
@@ -143,7 +148,7 @@ class RepoPredictionsStore:
                 continue
             dest = local_dir / "predictions" / corpus
             dest.mkdir(parents=True, exist_ok=True)
-            for f in src.glob("*.tei.xml"):
+            for f in iter_prediction_files(src):
                 shutil.copy2(f, dest / f.name)
         manifest_src = self.repo_dir / prefix / split / "manifest.jsonl"
         if manifest_src.exists():
@@ -160,7 +165,7 @@ class RepoPredictionsStore:
                 continue
             dest_corpus = dest_base / corpus / variant / split
             dest_corpus.mkdir(parents=True, exist_ok=True)
-            for f in src_corpus.glob("*.tei.xml"):
+            for f in iter_prediction_files(src_corpus):
                 shutil.copy2(f, dest_corpus / f.name)
         manifest_src = local_dir / "predictions" / "manifest.jsonl"
         if manifest_src.exists():
