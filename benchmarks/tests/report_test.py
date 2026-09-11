@@ -355,3 +355,159 @@ class TestOverallRestrictedToCommonCorpora:
         # The unequal-columns warning belongs to b's own section, not the overall row.
         overall = report.split("<details>", maxsplit=1)[0]
         assert "Unequal document sets" not in overall
+
+
+def _usage(
+    calls: int = 8,
+    input_tokens: int = 800,
+    output_tokens: int = 400,
+    peak_output_tokens: int = 120,
+    cost: Optional[float] = 0.0032,
+    n_attempted: int = 10,
+    n_with_usage: int = 10,
+    by_task: Optional[dict] = None,
+) -> dict:
+    entry: dict = {
+        "n_attempted": n_attempted,
+        "n_with_usage": n_with_usage,
+        "calls": calls,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "reasoning_tokens": 0,
+        "peak_output_tokens": peak_output_tokens,
+    }
+    if cost is not None:
+        entry["cost_credits"] = cost
+    if by_task is not None:
+        entry["by_task"] = by_task
+    return entry
+
+
+def _with_usage(summary: dict, usage_by_corpus: dict) -> dict:
+    return {**summary, "llm_usage": usage_by_corpus}
+
+
+class TestRenderUsageSection:
+    def _labeled(self, crf_usage=None, llm_usage=None, corpora=None):
+        corpora = corpora or ["biorxiv"]
+        agg = [_agg("string", "levenshtein", {"title": 0.8})]
+        crf = _title_summary(0.8, corpora=_multi_corpus(corpora, agg))
+        llm = _title_summary(0.85, corpora=_multi_corpus(corpora, agg))
+        return [
+            ("crf (default)", _with_usage(crf, crf_usage) if crf_usage else crf),
+            ("llm (values)", _with_usage(llm, llm_usage) if llm_usage else llm),
+        ]
+
+    def test_should_not_render_a_section_without_any_usage(self):
+        report = _render_comparison_report(self._labeled())
+        assert "LLM usage" not in report
+
+    def test_should_render_totals_for_the_variant_that_spent(self):
+        report = _render_comparison_report(
+            self._labeled(llm_usage={"biorxiv": _usage()})
+        )
+        assert "LLM usage" in report
+        usage_row = next(
+            line for line in report.splitlines() if line.startswith("| llm (values)")
+        )
+        assert "10 / 10" in usage_row
+        assert "800" in usage_row
+        assert "0.0032" in usage_row
+
+    def test_should_state_that_it_covers_every_document_attempted(self):
+        report = _render_comparison_report(
+            self._labeled(llm_usage={"biorxiv": _usage()})
+        )
+        assert "every document attempted" in report
+
+    def test_should_show_a_variant_without_usage_as_absent(self):
+        report = _render_comparison_report(
+            self._labeled(llm_usage={"biorxiv": _usage()})
+        )
+        crf_row = next(
+            line for line in report.splitlines() if line.startswith("| crf (default)")
+        )
+        assert "—" in crf_row
+        assert "0.0032" not in crf_row
+
+    def test_should_show_cost_as_absent_when_the_backend_stated_none(self):
+        report = _render_comparison_report(
+            self._labeled(llm_usage={"biorxiv": _usage(cost=None)})
+        )
+        usage_row = next(
+            line for line in report.splitlines() if line.startswith("| llm (values)")
+        )
+        assert "800" in usage_row
+        assert usage_row.rstrip().endswith("— | — |")
+
+    def test_should_show_partly_recorded_usage_as_a_fraction(self):
+        report = _render_comparison_report(
+            self._labeled(llm_usage={"biorxiv": _usage(n_attempted=10, n_with_usage=4)})
+        )
+        usage_row = next(
+            line for line in report.splitlines() if line.startswith("| llm (values)")
+        )
+        assert "4 / 10" in usage_row
+
+    def test_should_render_a_usage_table_per_corpus(self):
+        corpora = ["biorxiv", "ore"]
+        report = _render_comparison_report(self._labeled(
+            llm_usage={
+                "biorxiv": _usage(calls=8),
+                "ore": _usage(calls=2),
+            },
+            corpora=corpora,
+        ))
+        assert report.count("**LLM usage**, over every document attempted in this corpus.") == 2
+
+    def test_should_sum_corpora_in_the_overall_table(self):
+        report = _render_comparison_report(self._labeled(
+            llm_usage={
+                "biorxiv": _usage(calls=8, n_attempted=10, n_with_usage=10),
+                "ore": _usage(calls=2, n_attempted=5, n_with_usage=5),
+            },
+            corpora=["biorxiv", "ore"],
+        ))
+        overall_row = next(
+            line for line in report.splitlines()
+            if line.startswith("| llm (values)")
+        )
+        assert "15 / 15" in overall_row
+        assert "| 10 |" in overall_row
+
+    def test_should_name_the_tasks_when_more_than_one_ran(self):
+        report = _render_comparison_report(self._labeled(llm_usage={
+            "biorxiv": _usage(by_task={
+                "citation": {"calls": 6, "output_tokens": 300},
+                "reference_segmenter": {"calls": 2, "output_tokens": 100},
+            })
+        }))
+        assert "by task — citation: 6 calls" in report
+        assert "reference_segmenter: 2 calls" in report
+
+    def test_should_not_name_a_single_task(self):
+        report = _render_comparison_report(self._labeled(llm_usage={
+            "biorxiv": _usage(by_task={"citation": {"calls": 8, "output_tokens": 400}})
+        }))
+        assert "by task" not in report
+
+
+class TestCachedInputNote:
+    def _labeled(self, usage_by_corpus):
+        agg = [_agg("string", "levenshtein", {"title": 0.8})]
+        crf = _title_summary(0.8, corpora=_multi_corpus(["biorxiv"], agg))
+        llm = _title_summary(0.85, corpora=_multi_corpus(["biorxiv"], agg))
+        return [
+            ("crf", crf),
+            ("llm", _with_usage(llm, usage_by_corpus)),
+        ]
+
+    def test_should_explain_a_provider_cache_where_it_happened(self):
+        usage = {**_usage(), "cached_input_tokens": 18432}
+        report = _render_comparison_report(self._labeled({"biorxiv": usage}))
+        assert "18,432 served from the provider's own prefix cache" in report
+
+    def test_should_stay_silent_where_nothing_was_cached(self):
+        usage = {**_usage(), "cached_input_tokens": 0}
+        report = _render_comparison_report(self._labeled({"biorxiv": usage}))
+        assert "prefix cache" not in report

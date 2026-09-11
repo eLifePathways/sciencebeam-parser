@@ -96,7 +96,7 @@ def set_response_attributes(
             for attribute in attributes:
                 span.set_attribute(attribute, usage[key])
     if usage.get('cost') is not None:
-        span.set_attribute('sciencebeam.cost_usd', usage['cost'])
+        span.set_attribute('sciencebeam.cost_credits', usage['cost'])
     response_model = response_json.get('model')
     if response_model:
         span.set_attribute(GEN_AI_RESPONSE_MODEL, response_model)

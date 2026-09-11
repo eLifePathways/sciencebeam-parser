@@ -26,6 +26,7 @@ from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.prompt import get_prompt
 from sciencebeam_parser.models.llm.tasks import get_citation_labels
 from sciencebeam_parser.models.llm.telemetry import llm_span, set_response_attributes
+from sciencebeam_parser.models.llm.usage import record_llm_usage
 from sciencebeam_parser.models.llm.values import (
     decode_batched_values_response,
     get_batched_values_response_schema,
@@ -142,11 +143,12 @@ class LlmModelImpl(ModelImpl):
             # completion order, and the first exception propagates.
             #
             # Each batch runs in a copy of the calling context, because a worker
-            # thread starts with none: without this the span for a batch has no
-            # parent, and a run becomes a flat list of calls belonging to no
-            # document. The copies are taken here rather than in the worker,
-            # where there would be nothing left to copy, and one per batch,
-            # since a context cannot be entered twice at once.
+            # thread starts with none. Two things ride in it: without the parent
+            # span a batch's calls belong to no document, and the request's usage
+            # accumulator is unbound rather than stale, so what a batch spends is
+            # recorded nowhere. The copies are taken here rather than in the
+            # worker, where there would be nothing left to copy, and one per
+            # batch, since a context cannot be entered twice at once.
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 per_batch = list(pool.map(
                     lambda context, batch: context.run(
@@ -321,6 +323,7 @@ class LlmModelImpl(ModelImpl):
     ) -> List[Tuple[str, str]]:
         with llm_span(self.config, prompt, self.config.record_trace_content) as span:
             response_json = self.client.get_completion(prompt, schema)
+            record_llm_usage(self.config.task, response_json)
             span.set_attribute('sciencebeam.input_lines', max(line_numbers) + 1)
             span.set_attribute('sciencebeam.input_tokens', len(tokens))
             set_response_attributes(
@@ -396,6 +399,7 @@ class LlmModelImpl(ModelImpl):
             response_json = self.client.get_completion(
                 prompt, get_batched_values_response_schema(self.labels)
             )
+            record_llm_usage(self.config.task, response_json)
             span.set_attribute('sciencebeam.input_tokens', token_count)
             span.set_attribute('sciencebeam.batch_size', len(token_lists))
             set_response_attributes(

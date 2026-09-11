@@ -366,3 +366,57 @@ class TestRunScoreCorpusSelection:
             tmp_path, run_json={"split": "validation", "corpora": ["ore", "plos"]}
         )
         assert scored == ["ore", "plos"]
+
+
+class TestRunScoreLlmUsage:
+    _CONFIG = {
+        "dataset": {"splits": {"train": {"biorxiv": {}}}},
+        "fields": ["title"],
+        "scoring": {
+            "default_methods": ["levenshtein"],
+            "default_type": "string",
+            "per_field": {},
+        },
+    }
+
+    def _run(self, tmp_path: Path, manifest_entries: list) -> dict:
+        run_dir = tmp_path / "run"
+        manifest = run_dir / "predictions" / "manifest.jsonl"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            "".join(json.dumps(entry) + "\n" for entry in manifest_entries)
+        )
+        with patch("benchmarks.score.register_functions"), \
+             patch("benchmarks.score.parse_xml_mapping"), \
+             patch("benchmarks.score._score_corpus", return_value={"n": 1}):
+            run_score(
+                config=self._CONFIG,
+                run_dir=run_dir,
+                data_dir=tmp_path / "data",
+                out_path=tmp_path / "report.md",
+                split_override="train",
+            )
+        return json.loads((run_dir / "summary.json").read_text())
+
+    def test_should_aggregate_usage_from_the_manifest(self, tmp_path: Path):
+        summary = self._run(tmp_path, [
+            {
+                "corpus": "biorxiv", "record_id": "doc1", "status": "ok",
+                "llm_usage": {"calls": 2, "input_tokens": 200, "output_tokens": 100},
+            },
+            {
+                "corpus": "biorxiv", "record_id": "doc2", "status": "error",
+                "llm_usage": {"calls": 1, "input_tokens": 100, "output_tokens": 16000},
+            },
+        ])
+        usage = summary["llm_usage"]["biorxiv"]
+        assert usage["calls"] == 3
+        assert usage["output_tokens"] == 16100
+        assert usage["n_attempted"] == 2
+        assert usage["n_with_usage"] == 2
+
+    def test_should_leave_the_summary_unchanged_without_usage(self, tmp_path: Path):
+        summary = self._run(tmp_path, [
+            {"corpus": "biorxiv", "record_id": "doc1", "status": "ok"},
+        ])
+        assert "llm_usage" not in summary

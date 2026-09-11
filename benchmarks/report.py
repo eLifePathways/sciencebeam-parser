@@ -4,7 +4,9 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from benchmarks.llm_usage import usage_for_corpora
 
 LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +57,91 @@ def _fmt_delta(delta: Optional[float]) -> str:
 
 def _corpus_f1_getter(corpus: str) -> Callable[[dict, str, str], Optional[float]]:
     return lambda s, f, m: _get_f1(s, corpus, f, m)
+
+
+USAGE_HEADERS = (
+    "Variant", "Docs with usage", "Calls", "Input tokens", "Output tokens",
+    "Output/doc", "Peak call", "Credits", "Credits/doc",
+)
+
+
+def _fmt_count(value: Optional[float]) -> str:
+    return f"{round(value):,}" if value else "—"
+
+
+def _fmt_credits(value: Optional[float], places: int = 4) -> str:
+    return f"{value:.{places}f}" if value is not None else "—"
+
+
+def _usage_row(label: str, usage: Optional[Dict[str, Any]]) -> str:
+    if not usage or not usage.get("calls"):
+        attempted = (usage or {}).get("n_attempted") or 0
+        docs = f"0 / {attempted}" if attempted else "—"
+        return f"| {label} | {docs} | " + " | ".join(["—"] * 7) + " |"
+    recorded = usage.get("n_with_usage") or 0
+    cost = usage.get("cost_credits")
+    cells = [
+        f"{recorded} / {usage.get('n_attempted') or 0}",
+        _fmt_count(usage.get("calls")),
+        _fmt_count(usage.get("input_tokens")),
+        _fmt_count(usage.get("output_tokens")),
+        _fmt_count((usage.get("output_tokens") or 0) / recorded if recorded else None),
+        _fmt_count(usage.get("peak_output_tokens")),
+        _fmt_credits(cost),
+        _fmt_credits(cost / recorded if cost is not None and recorded else None, 5),
+    ]
+    return f"| {label} | " + " | ".join(cells) + " |"
+
+
+def _render_by_task_lines(labeled_usage: List[Tuple[str, Optional[dict]]]) -> List[str]:
+    """Which model spent it, where more than one task ran."""
+    lines = []
+    for label, usage in labeled_usage:
+        by_task = (usage or {}).get("by_task") or {}
+        if len(by_task) < 2:
+            continue
+        parts = [
+            f"{task}: {entry.get('calls', 0)} calls,"
+            f" {_fmt_count(entry.get('output_tokens'))} output tokens"
+            for task, entry in by_task.items()
+        ]
+        lines.append(f"> **{label}** by task — " + "; ".join(parts))
+    return lines
+
+
+def _cached_input_note(labeled_usage: List[Tuple[str, Optional[dict]]]) -> str:
+    """Only where it happened, since a cost difference it explains is otherwise
+    attributed to the variant."""
+    cached = sum((usage or {}).get("cached_input_tokens") or 0 for _, usage in labeled_usage)
+    if not cached:
+        return ""
+    return (
+        f" Input tokens include {cached:,} served from the provider's own prefix"
+        " cache, which is where a credit difference over the same input comes from."
+    )
+
+
+def _render_usage_table(
+    labeled_summaries: List[Tuple[str, dict]],
+    corpora: List[str],
+    note: str,
+) -> List[str]:
+    """Empty unless some variant recorded usage, so a CRF-only report is unchanged."""
+    labeled_usage = [
+        (label, usage_for_corpora(summary, corpora))
+        for label, summary in labeled_summaries
+    ]
+    if not any(usage and usage.get("calls") for _, usage in labeled_usage):
+        return []
+    by_task_lines = _render_by_task_lines(labeled_usage)
+    return [
+        note + _cached_input_note(labeled_usage),
+        "",
+        "| " + " | ".join(USAGE_HEADERS) + " |",
+        "|" + "|".join(["---"] * len(USAGE_HEADERS)) + "|",
+        *[_usage_row(label, usage) for label, usage in labeled_usage],
+        *(["", *by_task_lines] if by_task_lines else []),
+    ]
 
 
 def _render_field_table(  # pylint: disable=too-many-locals
@@ -142,6 +229,12 @@ def _render_corpus_section(
         labeled_summaries, field_names, field_measures, field_scoring_types,
         _corpus_f1_getter(corpus),
     ))
+    usage_lines = _render_usage_table(
+        labeled_summaries, [corpus],
+        "**LLM usage**, over every document attempted in this corpus.",
+    )
+    if usage_lines:
+        lines += ["", *usage_lines]
     return lines
 
 
@@ -206,6 +299,17 @@ def _render_comparison_report(
             labeled_summaries, field_names, field_measures, field_scoring_types, corpora,
         ))
         lines.append("")
+
+    usage_lines = _render_usage_table(
+        labeled_summaries, corpora,
+        "### LLM usage\n\nWhat producing these predictions spent, over every document"
+        " attempted — deliberately a wider set than the scores above, since an errored"
+        " document still spent its tokens. A variant short of usage for documents it"
+        " attempted was served them from the predictions store, or produced them before"
+        " this was recorded. Cost is absent where the backend states none.",
+    )
+    if usage_lines:
+        lines += [*usage_lines, ""]
 
     for corpus in corpora:
         n_primary = primary_summary.get("corpora", {}).get(corpus, {}).get("n", 0)
