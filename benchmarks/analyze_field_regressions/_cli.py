@@ -14,7 +14,7 @@ Usage:
     python -m benchmarks.analyze_field_regressions \\
         --field reference_doi \\
         --run-a benchmarks/runs/train \\
-        --run-b benchmarks/runs/baselines/grobid/0.9.0-crf/default/train \\
+        --run-b benchmarks/runs/baselines/grobid/0.9.1-crf/default/train \\
         --out benchmarks/runs/train/field-analysis/reference_doi
 """
 
