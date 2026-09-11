@@ -19,6 +19,7 @@ from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
 from benchmarks.fetch import included_corpora
+from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
 from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
 
 LOGGER = logging.getLogger(__name__)
@@ -259,11 +260,14 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
             field_scoring_types, xml_mapping
         )
 
+    llm_usage = aggregate_llm_usage(read_manifest_entries(run_dir), corpora)
+
     (run_dir / "summary.json").write_text(json.dumps({
         "fields": field_names,
         "field_measures": field_measures,
         "field_scoring_types": field_scoring_types,
         "corpora": corpus_results,
+        **({"llm_usage": llm_usage} if llm_usage else {}),
     }, indent=2))
 
     report = _render_report(corpus_results, field_names, field_scoring_types, run_record)

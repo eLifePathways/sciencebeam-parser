@@ -1,3 +1,4 @@
+import contextvars
 import json
 import threading
 from contextvars import ContextVar
@@ -13,6 +14,7 @@ from sciencebeam_parser.models.llm.decode import (
 )
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.model_impl import LlmModelImpl
+from sciencebeam_parser.models.llm.usage import start_request_llm_usage
 from sciencebeam_parser.models.llm.values import render_numbered_references
 from sciencebeam_parser.utils.telemetry import span
 
@@ -759,3 +761,122 @@ class TestCitationConcurrency:
             client=FakeClient(content=batched([]))
         )
         assert len(model_impl.predict_labels(token_lists, no_features(token_lists))) == 2
+
+
+class UsageClient:
+    """Reports usage per call, and can be made to block until several calls are
+    in flight at once. `content` may be a list, one entry per call."""
+    def __init__(
+        self,
+        content,
+        completion_tokens: int = 50,
+        concurrent_calls: int = 0
+    ):
+        self.contents = content if isinstance(content, list) else [content]
+        self.completion_tokens = completion_tokens
+        self.lock = threading.Lock()
+        self.prompts: List[str] = []
+        self.barrier = (
+            threading.Barrier(concurrent_calls, timeout=5)
+            if concurrent_calls else None
+        )
+
+    def validate_configuration(self) -> None:
+        pass
+
+    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]):
+        assert response_schema['type'] == 'object'
+        if self.barrier is not None:
+            self.barrier.wait()
+        with self.lock:
+            self.prompts.append(prompt)
+            index = min(len(self.prompts) - 1, len(self.contents) - 1)
+        return {
+            'choices': [{
+                'message': {'content': self.contents[index]},
+                'finish_reason': 'stop',
+            }],
+            'model': CITATION_CONFIG['model'],
+            'provider': 'SiliconFlow',
+            'usage': {
+                'prompt_tokens': 100,
+                'completion_tokens': self.completion_tokens,
+                'cost': 0.0004,
+            },
+        }
+
+
+def _usage_of_request(model_impl: LlmModelImpl, token_lists, features):
+    def request():
+        accumulator = start_request_llm_usage()
+        try:
+            model_impl.predict_labels(token_lists, features)
+        except LlmResponseError:
+            pass
+        return accumulator.to_dict()
+    return contextvars.copy_context().run(request)
+
+
+class TestUsageAccumulation:
+    def test_should_attribute_every_batch_of_one_document_to_one_accumulator(self):
+        """The batches run in a thread pool, whose workers start with an empty
+        context, so this is the case a single-batch document does not cover."""
+        token_lists = [[f'Reference{index}'] for index in range(8)]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_concurrent_requests': 4,
+            }),
+            client=UsageClient(content=batched([]), concurrent_calls=4)
+        )
+        usage = _usage_of_request(model_impl, token_lists, no_features(token_lists))
+        assert usage is not None
+        assert usage['calls'] == 8
+        assert usage['output_tokens'] == 8 * 50
+        assert usage['by_task'][CITATION_CONFIG['task']]['calls'] == 8
+
+    def test_should_attribute_a_single_batch_document(self):
+        token_lists = [['Alpha']]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_concurrent_requests': 4,
+            }),
+            client=UsageClient(content=batched([]))
+        )
+        usage = _usage_of_request(model_impl, token_lists, no_features(token_lists))
+        assert usage is not None
+        assert usage['calls'] == 1
+
+    def test_should_record_usage_of_a_response_that_cannot_be_parsed(self):
+        token_lists = [['Alpha']]
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config({
+                **CITATION_CONFIG,
+                'max_references_per_request': 1,
+                'max_malformed_response_retries': 0,
+            }),
+            client=UsageClient(content='{"references": [')
+        )
+        usage = _usage_of_request(model_impl, token_lists, no_features(token_lists))
+        assert usage is not None
+        assert usage['calls'] == 1
+        assert usage['output_tokens'] == 50
+
+    def test_should_record_usage_of_every_attempt_when_asking_again(self):
+        model_impl = LlmModelImpl(
+            LlmEngineConfig.from_model_config(CONFIG),
+            client=UsageClient(content=['{"starts": [0', json.dumps({'starts': [0]})])
+        )
+        usage = _usage_of_request(model_impl, [TOKENS], [feature_rows()])
+        assert usage is not None
+        assert usage['calls'] == 2
+        assert usage['output_tokens'] == 100
+
+    def test_should_record_nothing_when_the_engine_was_not_used(self):
+        def request():
+            accumulator = start_request_llm_usage()
+            return accumulator.to_dict()
+        assert contextvars.copy_context().run(request) is None

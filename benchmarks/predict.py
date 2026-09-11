@@ -12,6 +12,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import httpx
 import yaml
 
+from sciencebeam_parser.models.llm.usage import USAGE_HEADER_NAME
+
 from benchmarks.fetch import fetch_data, resolved_sources
 
 LOGGER = logging.getLogger(__name__)
@@ -49,6 +51,25 @@ def _append_manifest(run_dir: Path, entry: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+def _llm_usage_entry(response: Optional[httpx.Response]) -> Dict[str, Any]:
+    """The parser's usage header, as given, or nothing.
+
+    Omitted rather than zeroed when the header is absent: a CRF-only run, a
+    timeout that produced no response at all, and a document that genuinely
+    spent nothing are three different things, and only the last is a zero.
+    """
+    if response is None:
+        return {}
+    header_value = response.headers.get(USAGE_HEADER_NAME)
+    if not header_value:
+        return {}
+    try:
+        return {"llm_usage": json.loads(header_value)}
+    except json.JSONDecodeError:
+        LOGGER.warning("Could not parse %s: %r", USAGE_HEADER_NAME, header_value[:200])
+        return {}
 
 
 def _format_eta(seconds: float) -> str:
@@ -147,6 +168,7 @@ async def _run_predict_async(
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
                         "status": "ok", "elapsed_ms": elapsed_ms,
+                        **_llm_usage_entry(response),
                     })
                     progress.record_ok(corpus, record_id, elapsed_ms)
                 except httpx.HTTPStatusError as exc:
@@ -161,6 +183,7 @@ async def _run_predict_async(
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
                         "status": "error", "error": msg, "error_body": body,
+                        **_llm_usage_entry(exc.response),
                     })
                     progress.record_err(corpus, record_id)
                 except Exception as exc:  # pylint: disable=broad-exception-caught

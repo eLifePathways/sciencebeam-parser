@@ -191,6 +191,49 @@ is not a new disclosure when the same text is already going to the model, but se
 else is. Set `record_trace_content: false` in the model config to keep the metrics and drop the
 text.
 
+## What a request spent
+
+Every response to a document endpoint that used the engine carries an
+`X-ScienceBeam-LLM-Usage` header: a JSON object with what that request spent, in total and broken
+down by task. A request that made no completion call carries no header at all, so a CRF-only profile
+is unaffected.
+
+```json
+{
+  "calls": 8,
+  "input_tokens": 24960,
+  "cached_input_tokens": 18432,
+  "output_tokens": 7200,
+  "reasoning_tokens": 0,
+  "peak_output_tokens": 1240,
+  "cost_credits": 0.0071,
+  "models": ["qwen/qwen3.5-9b"],
+  "providers": ["SiliconFlow"],
+  "by_task": {"citation": {"calls": 8, "...": "..."}}
+}
+```
+
+`reasoning_tokens` and `cached_input_tokens` are **breakdowns, not additions**: the provider reports
+`prompt_tokens + completion_tokens` as its `total_tokens`, with reasoning counted inside the
+completion and provider-cached tokens inside the prompt. `peak_output_tokens` is the largest single
+call, which is what to compare against `max_output_tokens` — a document's total rises with its
+reference list and says nothing about the ceiling.
+
+`cost_credits` is OpenRouter credits, exactly as the provider reported them for those calls, and is
+**absent, not zero,** where the backend reports none — as a self-hosted endpoint does. It is not
+derived from a rate table here, so whatever the provider did or did not discount is already in the
+number. `cached_input_tokens` is why two runs over the same input can report the same tokens and
+different credits, and the benchmark report notes it where it is non-zero. This is the provider's
+own prefix caching, unrelated to any response cache of ours.
+
+A response the engine could not use has still been paid for, so a request that fails reports what it
+spent before failing: the header is on the 500 as well as the 200. A request that produced no
+response at all — a client-side timeout — reports nothing, which is not the same as zero.
+
+`benchmarks/predict.py` records the header per document in `predictions/manifest.jsonl`,
+`benchmarks/score.py` aggregates it per corpus into `summary.json`, and `benchmarks/report.py` puts
+it in `comparison.md` beside the scores.
+
 ## Input size
 
 What the engine receives is whatever the *segmentation* model labelled `<references>`, which is not
@@ -239,7 +282,9 @@ workflow adds `--include-corpus plos-manuscripts` automatically on `main`, so an
 fails rather than sending private manuscripts to a third party. Point the engine at a self-hosted
 endpoint if that corpus needs covering.
 
-Nothing is traced in CI: no collector endpoint is set, so the engine emits no spans.
+Nothing is traced in CI: no collector endpoint is set, so the engine emits no spans. What a run
+spent still reaches the job summary and the PR comment, through the usage header and the benchmark's
+own manifest rather than through a collector.
 
 Unit tests reach no network. The engine's tests are fixture-driven and the client is a `Protocol`, so
 the ordinary CI job needs no secret at all.
