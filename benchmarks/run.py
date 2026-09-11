@@ -12,6 +12,7 @@ import yaml
 
 from benchmarks.fetch import fetch_gold, included_corpora
 from benchmarks.predict import run_predict
+from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
 from benchmarks.score import run_score
@@ -122,7 +123,14 @@ def _generate_predictions(  # pylint: disable=too-many-arguments,too-many-positi
     config: dict, mode: str, split: str, data_dir: Path, run_dir: Path,
     tool: str, version: str, profile: str, concurrency: int,
     include: Optional[Iterable[str]] = None,
+    endpoint: Optional[str] = None,
 ) -> None:
+    # A served model has no container to start, and its version is the checkpoint.
+    if endpoint:
+        run_predict_llm(config, mode, split, data_dir, run_dir,
+                        endpoint, version, concurrency, include=include)
+        return
+
     dcfg = _tool_docker_config(tool, version)
     container = f"benchmark-baseline-{tool}"
     _docker_stop(container)
@@ -151,6 +159,7 @@ def _run_baseline(  # pylint: disable=too-many-locals
     store: PredictionsStore,
     concurrency: int,
     include: Optional[Iterable[str]] = None,
+    endpoint: Optional[str] = None,
 ) -> Optional[Tuple[str, Path]]:
     run_dir = runs_dir / "baselines" / tool / version / profile / split
     done_ids = store.get_done_ids(tool, version, profile, split, corpus_variants)
@@ -211,7 +220,8 @@ def _run_baseline(  # pylint: disable=too-many-locals
 
     if missing:
         _generate_predictions(config, mode, split, data_dir, run_dir,
-                              tool, version, profile, concurrency, include=include)
+                              tool, version, profile, concurrency, include=include,
+                              endpoint=endpoint)
         store.push(tool, version, profile, split, run_dir, corpus_variants, {
             "tool": tool, "version": version, "profile": profile,
             "split": split, "mode": mode,
@@ -255,6 +265,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
             baseline["tool"], baseline["version"], profile,
             baseline.get("generate", True),
             expected_ids, corpus_variants, store, concurrency, include,
+            baseline.get("endpoint"),
         )
         if entry:
             labeled_paths.append(entry)
@@ -292,10 +303,8 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         LOGGER.info("Only one summary available; skipping comparison report")
 
 
-# Corpora that must not be sent to a third-party model. Provider zero-retention
-# does not cover the intermediary, and these manuscripts are not redistributable,
-# so an LLM profile and one of these together is refused rather than warned about.
-RESTRICTED_CORPORA_FOR_LLM = frozenset({"plos-manuscripts"})
+# The restricted set lives with the code that sends documents; see
+# `benchmarks.predict_llm`.
 
 
 def check_llm_profile_corpora(

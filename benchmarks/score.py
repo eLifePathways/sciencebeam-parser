@@ -19,6 +19,7 @@ from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
 from benchmarks.fetch import included_corpora
+from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
 
 LOGGER = logging.getLogger(__name__)
 
@@ -109,8 +110,8 @@ def _score_corpus(  # pylint: disable=too-many-locals
     all_doc_scores: List[dict] = []
     n = 0
 
-    for pred_path in sorted(pred_dir.glob("*.tei.xml")):
-        record_id = pred_path.stem.replace(".tei", "")
+    for pred_path in iter_prediction_files(pred_dir):
+        record_id = record_id_from_path(pred_path)
         gold_path = data_dir / corpus / f"{record_id}.jats.xml"
 
         if not gold_path.exists():
