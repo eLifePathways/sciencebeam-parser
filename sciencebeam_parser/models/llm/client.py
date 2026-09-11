@@ -1,7 +1,7 @@
 import logging
 import random
 import time
-from typing import Any, Dict, Mapping, Optional, Protocol
+from typing import Any, Dict, Mapping, Optional, Protocol, Tuple
 
 import httpx
 
@@ -70,12 +70,23 @@ class LlmRequestError(RuntimeError):
     pass
 
 
+# Where in the engine's retry logic a call sits: `(0,)` is the first ask,
+# `(1,)` the same question after an unparseable answer, `(0, 1)` a re-ask for
+# the references a batch left out. Only the response cache reads it, and it does
+# so because the engine issues byte-identical requests on purpose and expects
+# different answers back.
+FIRST_ATTEMPT: Tuple[int, ...] = (0,)
+
+
 class LlmCompletionClient(Protocol):
     def validate_configuration(self) -> None:
         ...
 
     def get_completion(
-        self, prompt: str, response_schema: Mapping[str, Any]
+        self,
+        prompt: str,
+        response_schema: Mapping[str, Any],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
     ) -> Mapping[str, Any]:
         ...
 
@@ -142,7 +153,16 @@ class LlmClient:
             self.config.response_shape
         )
 
-    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]) -> Mapping[str, Any]:
+    def get_completion(
+        self,
+        prompt: str,
+        response_schema: Mapping[str, Any],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
+    ) -> Mapping[str, Any]:
+        # `attempt` places the call in the engine's retry logic, which is not the
+        # transport's retry loop below and is of no use to it. It is on the seam
+        # because the cache wrapping this client needs it, and both are one
+        # Protocol.
         return self._post_with_retry(prompt, response_schema)
 
     def _post_with_retry(

@@ -5,9 +5,13 @@ import os
 import tempfile
 import threading
 from functools import lru_cache
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Mapping, Optional, Tuple
 
-from sciencebeam_parser.models.llm.client import LlmCompletionClient, get_request_body
+from sciencebeam_parser.models.llm.client import (
+    FIRST_ATTEMPT,
+    LlmCompletionClient,
+    get_request_body
+)
 from sciencebeam_parser.models.llm.config import LlmEngineConfig
 from sciencebeam_parser.utils.telemetry import set_current_span_attribute
 
@@ -45,8 +49,15 @@ def _write_atomically(path: str, value: Any) -> None:
             os.remove(temp_path)
 
 
+def get_entry_name(attempt: Tuple[int, ...]) -> str:
+    """The file an attempt is stored as: `000` the first ask, `001` the same
+    question after an unparseable answer, `000-001` a re-ask for the references
+    a batch left out."""
+    return '-'.join(f'{index:03d}' for index in attempt)
+
+
 class LlmResponseCache:
-    """Completions on disk, ordered per request, so a run replays as it happened.
+    """Completions on disk, one per attempt, so a run replays as it happened.
 
     Holds document text: a prompt is the manuscript region, and a `values`
     response is field values copied out of it.
@@ -55,7 +66,6 @@ class LlmResponseCache:
     def __init__(self, cache_dir: str):
         self.cache_dir = os.path.abspath(os.path.expanduser(cache_dir))
         self._lock = threading.Lock()
-        self._claimed: Dict[str, int] = {}
         self._has_logged_a_hit = False
         self.hit_count = 0
         self.miss_count = 0
@@ -71,20 +81,10 @@ class LlmResponseCache:
     def get_summary(self) -> str:
         return f'{self.hit_count} replayed, {self.miss_count} live'
 
-    def claim_ordinal(self, key: str) -> int:
-        """Which call this is for that request, counted for the life of the process.
-
-        It does not ask why a request repeated: a response that failed to parse
-        and a re-ask for a reference the batch left out both have to be told
-        apart from the call before them, and only a counter covers both.
-        """
-        with self._lock:
-            ordinal = self._claimed.get(key, 0)
-            self._claimed[key] = ordinal + 1
-            return ordinal
-
-    def get_response(self, key: str, ordinal: int) -> Optional[Mapping[str, Any]]:
-        path = self._get_response_path(key, ordinal)
+    def get_response(
+        self, key: str, attempt: Tuple[int, ...]
+    ) -> Optional[Mapping[str, Any]]:
+        path = self._get_response_path(key, attempt)
         try:
             with open(path, 'r', encoding='utf-8') as response_file:
                 response = json.load(response_file)
@@ -101,7 +101,7 @@ class LlmResponseCache:
     def put(
         self,
         key: str,
-        ordinal: int,
+        attempt: Tuple[int, ...],
         request_body: Mapping[str, Any],
         response: Mapping[str, Any]
     ) -> None:
@@ -112,13 +112,13 @@ class LlmResponseCache:
             # Once per key, so a directory named by a one-way hash can still be
             # read back to the question it answers.
             _write_atomically(request_path, request_body)
-        _write_atomically(self._get_response_path(key, ordinal), response)
+        _write_atomically(self._get_response_path(key, attempt), response)
 
     def _get_key_dir(self, key: str) -> str:
         return os.path.join(self.cache_dir, key[:2], key)
 
-    def _get_response_path(self, key: str, ordinal: int) -> str:
-        return os.path.join(self._get_key_dir(key), f'{ordinal:03d}.json')
+    def _get_response_path(self, key: str, attempt: Tuple[int, ...]) -> str:
+        return os.path.join(self._get_key_dir(key), get_entry_name(attempt) + '.json')
 
     def _count(self, hit: bool) -> None:
         with self._lock:
@@ -140,8 +140,10 @@ class LlmResponseCache:
 def get_response_cache(cache_dir: str) -> LlmResponseCache:
     """One cache per directory for the life of the process.
 
-    Two models configured against the same directory share the ordinals and the
-    counts, which makes both the run's rather than one model's.
+    Two models configured against the same directory then share the counts,
+    which makes them the run's rather than one model's. It holds no other state:
+    which entry a call reads comes from the caller, so nothing here has to be
+    scoped to a run or reset between documents.
     """
     return LlmResponseCache(cache_dir)
 
@@ -171,16 +173,22 @@ class CachingLlmClient:
     def validate_configuration(self) -> None:
         self.delegate.validate_configuration()
 
-    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]) -> Mapping[str, Any]:
+    def get_completion(
+        self,
+        prompt: str,
+        response_schema: Mapping[str, Any],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
+    ) -> Mapping[str, Any]:
         request_body = get_request_body(self.config, prompt, response_schema)
         key = get_request_key(self.config.endpoint, request_body)
-        ordinal = self.cache.claim_ordinal(key)
-        cached = self.cache.get_response(key, ordinal)
+        cached = self.cache.get_response(key, attempt)
         set_current_span_attribute(CACHE_HIT_ATTRIBUTE, cached is not None)
         if cached is not None:
-            LOGGER.debug('llm cache replaying %s call %d', key[:12], ordinal)
+            LOGGER.debug(
+                'llm cache replaying %s %s', key[:12], get_entry_name(attempt)
+            )
             return cached
         # An exception stores nothing, so a failure is asked again live.
-        response = self.delegate.get_completion(prompt, response_schema)
-        self.cache.put(key, ordinal, request_body, response)
+        response = self.delegate.get_completion(prompt, response_schema, attempt)
+        self.cache.put(key, attempt, request_body, response)
         return response

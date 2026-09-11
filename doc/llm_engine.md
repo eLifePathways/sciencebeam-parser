@@ -253,11 +253,27 @@ Generation is not reproducible even at `temperature: 0`, so a decoder or scoring
 evaluated against a moving target. `response_cache_dir` stores each completion on disk and replays
 it, which freezes model output across runs and lets an interrupted run continue where it stopped.
 
+`make dev-start` turns it on at `data/llm-response-cache`, because a development server parses the
+same document over and over and that is exactly when it pays. Set `LLM_RESPONSE_CACHE_DIR=` to turn
+it off for a run. Everywhere else it is off unless configured, per model:
+
 ```yaml
 citation:
   engine: 'llm'
   response_cache_dir: 'data/llm-response-cache'   # empty (the default) is off
 ```
+
+or by environment, which is applied after the profile is resolved and so wins over it:
+
+```sh
+export SCIENCEBEAM_PARSER__MODELS__REFERENCE_SEGMENTER__RESPONSE_CACHE_DIR=data/llm-response-cache
+export SCIENCEBEAM_PARSER__MODELS__CITATION__RESPONSE_CACHE_DIR=data/llm-response-cache
+```
+
+For the containerised parser, set the same variables to a path inside the container and bind-mount a
+host directory onto it. That is left out of `docker-compose.override.yml` on purpose: compose
+creates a missing bind-mount source itself, and a `data/` owned by root in a fresh clone is worse
+than typing the mount.
 
 **The directory holds document text** — a prompt is the manuscript region it was asked about, and a
 `values` response is field values copied out of it. Keep it under `data/`, which is gitignored and
@@ -273,13 +289,18 @@ goes cold.
 
 Only clean responses are stored, so a 429 or a connection error is still retried live. A response
 that fails to decode is stored too, since that body is what a decoder fix has to be developed
-against, and repeated identical requests are replayed in the order they were made — a run that
-recovered on its second attempt recovers again. Ordinals are counted for the life of the process, so
-a warm re-run means a new parser process, which is what the benchmark starts anyway; a service that
-parses the same document twice will call live the second time.
+against.
+
+Each entry is named for where the engine was when it asked, not for how many times it has asked
+before: `000` is the first ask, `001` the same question again after an unparseable answer, and
+`000-001` a re-ask for the references a batch left out. That is what lets the engine's own retries
+keep working with the cache on — they send byte-identical requests on purpose and need a different
+answer, so a plain key-to-response cache would hand back the answer that already failed and turn a
+run that recovers into one that does not. It also means a second request for the same document
+replays, whether or not the server has been restarted.
 
 Each call carries `sciencebeam.llm.cache_hit` on its span, so a trace shows which answers were
-replayed, and the first replay of a process logs that the cache is warm — a run that was
+replayed, and the first replay in a process logs that the cache is warm — a run that was
 accidentally warm is cheaper than a cold one and should not be reported as its cost.
 
 ## Choosing a provider

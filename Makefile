@@ -19,6 +19,14 @@ SCIENCEBEAM_PARSER_PORT = 8080
 PHOENIX_PORT = 6006
 OTEL_EXPORTER_OTLP_ENDPOINT = http://localhost:$(PHOENIX_PORT)
 
+# The llm engine's response cache, on for a development server and off in the
+# shipped config: here a repeated document is the normal case and a frozen answer
+# is what makes a decoder change measurable, where a deployment parses documents
+# that are all different and would only accumulate manuscript text. Under data/,
+# which is gitignored and shared between worktrees. Empty it to turn this off,
+# and delete the directory to clear it.
+LLM_RESPONSE_CACHE_DIR ?= data/llm-response-cache
+
 # Seconds to wait for the parser API on startup. Cold starts re-download
 # GROBID lexicons, so allow several minutes.
 API_WAIT_TIMEOUT ?= 300
@@ -179,6 +187,8 @@ dev-start:
 	SCIENCEBEAM_DELFT_INPUT_WINDOW_STRIDE=$(SCIENCEBEAM_DELFT_INPUT_WINDOW_STRIDE) \
 	SCIENCEBEAM_DELFT_BATCH_SIZE=$(SCIENCEBEAM_DELFT_BATCH_SIZE) \
 	SCIENCEBEAM_DELFT_STATEFUL=$(SCIENCEBEAM_DELFT_STATEFUL) \
+	SCIENCEBEAM_PARSER__MODELS__REFERENCE_SEGMENTER__RESPONSE_CACHE_DIR=$(LLM_RESPONSE_CACHE_DIR) \
+	SCIENCEBEAM_PARSER__MODELS__CITATION__RESPONSE_CACHE_DIR=$(LLM_RESPONSE_CACHE_DIR) \
 		$(PYTHON) -m sciencebeam_parser.service.server --port=$(SCIENCEBEAM_PARSER_PORT)
 
 

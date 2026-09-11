@@ -1,7 +1,7 @@
 import json
 import os
 import threading
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import pytest
 
@@ -12,7 +12,7 @@ from sciencebeam_parser.models.llm.cache import (
     get_request_key,
     get_response_cache
 )
-from sciencebeam_parser.models.llm.client import get_request_body
+from sciencebeam_parser.models.llm.client import FIRST_ATTEMPT, get_request_body
 from sciencebeam_parser.models.llm.config import LlmEngineConfig
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.model_impl import LlmModelImpl
@@ -63,16 +63,23 @@ class FakeClient:
     def __init__(self, contents: Optional[List[str]] = None):
         self.contents = list(contents) if contents is not None else ['{"starts": [0, 1]}']
         self.prompts: List[str] = []
+        self.attempts: List[Tuple[int, ...]] = []
         self.lock = threading.Lock()
 
     def validate_configuration(self) -> None:
         pass
 
-    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]) -> Dict[str, Any]:
+    def get_completion(
+        self,
+        prompt: str,
+        response_schema: Mapping[str, Any],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
+    ) -> Dict[str, Any]:
         assert response_schema
         with self.lock:
             index = min(len(self.prompts), len(self.contents) - 1)
             self.prompts.append(prompt)
+            self.attempts.append(attempt)
         return get_response(self.contents[index])
 
     @property
@@ -84,21 +91,19 @@ class NeverCalledClient:
     def validate_configuration(self) -> None:
         pass
 
-    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]):
-        raise AssertionError(f'the cache should have answered {prompt[:40]!r}')
+    def get_completion(
+        self,
+        prompt: str,
+        response_schema: Mapping[str, Any],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
+    ):
+        raise AssertionError(
+            f'the cache should have answered {prompt[:40]!r} at {attempt}'
+        )
 
 
 def get_caching_client(config: LlmEngineConfig, delegate, cache_dir) -> CachingLlmClient:
     return CachingLlmClient(config, delegate, LlmResponseCache(str(cache_dir)))
-
-
-def start_a_new_process() -> None:
-    """The ordinals are the process's, and a second run is a second process.
-
-    The benchmark starts a container per run, so this is what a warm re-run is;
-    without it a replay would carry on counting where the live run stopped.
-    """
-    get_response_cache.cache_clear()
 
 
 class TestGetRequestKey:
@@ -180,42 +185,71 @@ class TestCachingLlmClient:
         assert replay.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [0, 1]}')
         assert replay.cache.hit_count == 1
 
-    def test_should_serve_a_repeated_request_the_next_entry_rather_than_the_first(
-        self, tmp_path
-    ):
-        # The missing-reference re-ask repeats a request within one run, so a
-        # lookup would hand it the answer that already left the reference out.
+    def test_should_replay_the_same_request_at_the_same_attempt_again(self, tmp_path):
+        # Two calls to the api for one document, against a server that stays up:
+        # the second asks the same question at the same point in the retry logic,
+        # so it replays rather than paying again.
+        config = get_config()
+        delegate = FakeClient()
+        client = get_caching_client(config, delegate, tmp_path)
+        first = client.get_completion(PROMPT, SCHEMA)
+        assert client.get_completion(PROMPT, SCHEMA) == first
+        assert delegate.call_count == 1
+
+    def test_should_ask_live_for_a_repeat_the_engine_numbers_differently(self, tmp_path):
+        # A parse retry, or a re-ask for the references a batch left out, sends
+        # the same bytes on purpose and needs a different answer. Serving the
+        # stored one would defeat the retry it is part of.
         config = get_config()
         delegate = FakeClient(['{"starts": [0]}', '{"starts": [0, 1]}'])
         client = get_caching_client(config, delegate, tmp_path)
-        assert client.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [0]}')
-        assert client.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [0, 1]}')
+        assert client.get_completion(PROMPT, SCHEMA, (0,)) == get_response('{"starts": [0]}')
+        assert client.get_completion(PROMPT, SCHEMA, (1,)) == get_response(
+            '{"starts": [0, 1]}'
+        )
         assert delegate.call_count == 2
 
-    def test_should_replay_a_repeated_request_in_the_same_order(self, tmp_path):
+    def test_should_replay_a_repeated_request_attempt_for_attempt(self, tmp_path):
         config = get_config()
         delegate = FakeClient(['{"starts": [0]}', '{"starts": [0, 1]}'])
         client = get_caching_client(config, delegate, tmp_path)
-        client.get_completion(PROMPT, SCHEMA)
-        client.get_completion(PROMPT, SCHEMA)
+        client.get_completion(PROMPT, SCHEMA, (0, 0))
+        client.get_completion(PROMPT, SCHEMA, (0, 1))
         replay = get_caching_client(config, NeverCalledClient(), tmp_path)
-        assert replay.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [0]}')
-        assert replay.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [0, 1]}')
+        assert replay.get_completion(PROMPT, SCHEMA, (0, 0)) == get_response(
+            '{"starts": [0]}'
+        )
+        assert replay.get_completion(PROMPT, SCHEMA, (0, 1)) == get_response(
+            '{"starts": [0, 1]}'
+        )
 
-    def test_should_go_live_when_the_run_asks_more_times_than_were_stored(self, tmp_path):
+    def test_should_go_live_for_an_attempt_that_was_never_stored(self, tmp_path):
         config = get_config()
         get_caching_client(config, FakeClient(['{"starts": [0]}']), tmp_path).get_completion(
-            PROMPT, SCHEMA
+            PROMPT, SCHEMA, (0,)
         )
         delegate = FakeClient(['{"starts": [0, 1]}'])
         client = get_caching_client(config, delegate, tmp_path)
-        client.get_completion(PROMPT, SCHEMA)
-        assert client.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [0, 1]}')
+        assert client.get_completion(PROMPT, SCHEMA, (1,)) == get_response(
+            '{"starts": [0, 1]}'
+        )
         assert delegate.call_count == 1
+
+    def test_should_name_entries_by_where_the_engine_was(self, tmp_path):
+        config = get_config()
+        client = get_caching_client(config, FakeClient(), tmp_path)
+        client.get_completion(PROMPT, SCHEMA, (0,))
+        client.get_completion(PROMPT, SCHEMA, (1,))
+        client.get_completion(PROMPT, SCHEMA, (0, 1))
+        names = sorted(
+            path.name for path in tmp_path.rglob('*.json')
+            if path.name != REQUEST_FILENAME
+        )
+        assert names == ['000-001.json', '000.json', '001.json']
 
     def test_should_store_nothing_when_the_request_fails_outright(self, tmp_path):
         class FailingClient(NeverCalledClient):
-            def get_completion(self, prompt, response_schema):
+            def get_completion(self, prompt, response_schema, attempt=FIRST_ATTEMPT):
                 raise RuntimeError('http 400')
 
         config = get_config()
@@ -263,17 +297,18 @@ class TestCachingLlmClient:
 
 
 class TestConcurrentMisses:
-    def test_should_leave_no_partially_written_entry(self, tmp_path):
-        # Both workers miss and both call; the rename is what keeps a reader from
-        # meeting half a file, not a lock around the request.
+    def test_should_leave_exactly_one_valid_entry(self, tmp_path):
+        # All four miss and all four call, since waiting on a miss would cost
+        # more than the duplicate does. They write the same entry, and the rename
+        # is what keeps a reader from meeting half a file.
         started = threading.Barrier(4)
         config = get_config()
         cache = LlmResponseCache(str(tmp_path))
 
         class SlowClient(FakeClient):
-            def get_completion(self, prompt, response_schema):
+            def get_completion(self, prompt, response_schema, attempt=FIRST_ATTEMPT):
                 started.wait(timeout=5)
-                return super().get_completion(prompt, response_schema)
+                return super().get_completion(prompt, response_schema, attempt)
 
         client = CachingLlmClient(config, SlowClient(), cache)
         results: List[Any] = []
@@ -292,9 +327,8 @@ class TestConcurrentMisses:
         entries = [
             path for path in tmp_path.rglob('*.json') if path.name != REQUEST_FILENAME
         ]
-        assert len(entries) == 4
-        for entry in entries:
-            assert json.loads(entry.read_text(encoding='utf-8'))
+        assert len(entries) == 1
+        assert json.loads(entries[0].read_text(encoding='utf-8'))
         assert not list(tmp_path.rglob('.tmp-*'))
 
 
@@ -316,7 +350,6 @@ class TestLlmModelImplWithACache:
         config = get_config(response_cache_dir=str(tmp_path))
         live = LlmModelImpl(config, client=FakeClient())
         expected = live.predict_labels([TOKENS], [feature_rows()])
-        start_a_new_process()
         replay = LlmModelImpl(config, client=NeverCalledClient())
         assert replay.predict_labels([TOKENS], [feature_rows()]) == expected
 
@@ -329,7 +362,6 @@ class TestLlmModelImplWithACache:
         expected = live.predict_labels([TOKENS], [feature_rows()])
         assert delegate.call_count == 2
 
-        start_a_new_process()
         replay = LlmModelImpl(config, client=NeverCalledClient())
         assert replay.predict_labels([TOKENS], [feature_rows()]) == expected
 
