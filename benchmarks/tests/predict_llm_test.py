@@ -101,7 +101,6 @@ class TestCheckpointFromConfig:
         assert checkpoint_from_config({}) is None
 
     def test_should_match_the_shipped_config(self):
-        # The generation default has to resolve, or a dispatch with no checkpoint
-        # exits rather than running for hours.
+        # Or a dispatch with no checkpoint exits instead of generating.
         with open("benchmarks/eval.yml", encoding="utf-8") as f:
             assert checkpoint_from_config(yaml.safe_load(f))
