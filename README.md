@@ -324,3 +324,5 @@ Non-release builds are available with the `_unstable` image suffix, e.g. `ghcr.i
 * [Architecture](ARCHITECTURE.md)
 * [Python API](doc/python_library.md)
 * [Training](doc/training.md)
+* [Benchmarks](doc/benchmarks.md)
+* [LLM engine](doc/llm_engine.md)
