@@ -329,7 +329,18 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
     check_restricted_corpora(include)
     records = fetch_data(config, mode, split, data_dir, include=include)
     sources = resolved_sources(config, split, include)
+    corpus_variants = get_corpus_variants(config, split, include)
+
+    store = RepoPredictionsStore(push_to) if push_to else None
+    if store:
+        # What the store already has is not generated again. Without this a CI
+        # run starts from an empty directory every time and pays in full for
+        # documents it is about to push over the top of.
+        store.fetch(TOOL_NAME, checkpoint, "default", split, run_dir, corpus_variants)
+
     done = _load_done(run_dir)
+    if done:
+        LOGGER.info("Store already has %d prediction(s) for this checkpoint", len(done))
 
     t_start = time.monotonic()
     n_ok, n_err = asyncio.run(
@@ -361,15 +372,13 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
         n_ok, n_err, time.monotonic() - t_start,
     )
 
-    if push_to:
-        store = RepoPredictionsStore(push_to)
+    if store:
         store.push(
-            TOOL_NAME, checkpoint, "default", split, run_dir,
-            get_corpus_variants(config, split, include),
+            TOOL_NAME, checkpoint, "default", split, run_dir, corpus_variants,
             {"tool": TOOL_NAME, "version": checkpoint, "profile": "default",
              "split": split, "mode": mode, "endpoint": endpoint},
         )
-        LOGGER.info("Pushed %d prediction(s) to %s", n_ok, push_to)
+        LOGGER.info("Pushed to %s (%d new this run)", push_to, n_ok)
 
 
 def checkpoint_from_config(config: dict) -> Optional[str]:

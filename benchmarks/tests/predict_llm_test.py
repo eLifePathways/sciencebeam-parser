@@ -12,6 +12,7 @@ from benchmarks.predict_llm import (
     _post_with_retry,
     check_restricted_corpora,
     rollout_usage,
+    run_predict_llm,
     checkpoint_from_config,
     merge_section_documents,
 )
@@ -227,3 +228,48 @@ class TestRolloutUsage:
         assert combined["calls"] == 43
         assert combined["models"] == ["ckpt-1"]
         assert combined["by_task"]["body"]["calls"] == 30
+
+
+class TestRunPredictLlmStoreUse:
+    """A CI run starts from an empty directory, so what the store holds has to be
+    fetched into it -- otherwise every run pays again for documents it already
+    has and is about to push over the top of."""
+
+    def _config(self):
+        return {
+            "dataset": {"splits": {"validation": {
+                "biorxiv": {"file": "x.parquet", "id_column": "id", "variant": "v1"},
+            }}},
+            "sampling": {"smoke": {"biorxiv": 10}},
+            "fields": ["title"],
+            "baselines": [{"tool": "jats-agentic-annotation", "version": "ckpt-1"}],
+        }
+
+    def test_should_fetch_from_the_store_before_generating(self, tmp_path):
+        with patch("benchmarks.predict_llm.fetch_data", return_value=[]), \
+             patch("benchmarks.predict_llm.resolved_sources", return_value={"biorxiv": {}}), \
+             patch("benchmarks.predict_llm.RepoPredictionsStore") as store_cls:
+            store = store_cls.return_value
+            run_predict_llm(
+                config=self._config(), mode="smoke", split="validation",
+                data_dir=tmp_path / "data", run_dir=tmp_path / "run",
+                endpoint="https://example.test", checkpoint="ckpt-1",
+                push_to=tmp_path / "repo",
+            )
+            store.fetch.assert_called_once()
+            assert store.fetch.call_args[0][0] == "jats-agentic-annotation"
+            assert store.fetch.call_args[0][1] == "ckpt-1"
+            # Fetched before pushed, or the push writes back an empty directory.
+            assert store.method_calls[0][0] == "fetch"
+            assert store.method_calls[-1][0] == "push"
+
+    def test_should_not_touch_a_store_when_not_pushing(self, tmp_path):
+        with patch("benchmarks.predict_llm.fetch_data", return_value=[]), \
+             patch("benchmarks.predict_llm.resolved_sources", return_value={"biorxiv": {}}), \
+             patch("benchmarks.predict_llm.RepoPredictionsStore") as store_cls:
+            run_predict_llm(
+                config=self._config(), mode="smoke", split="validation",
+                data_dir=tmp_path / "data", run_dir=tmp_path / "run",
+                endpoint="https://example.test", checkpoint="ckpt-1",
+            )
+            store_cls.assert_not_called()
