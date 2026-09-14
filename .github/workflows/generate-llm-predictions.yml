@@ -6,6 +6,15 @@
 name: Generate LLM predictions
 
 on:
+  # After a merge, so the store is topped up without anyone remembering to ask.
+  # Cheap by design: predictions already in the store are fetched rather than
+  # regenerated, so a run with nothing missing annotates nothing. The paths
+  # filter keeps a docs-only merge from spinning a runner at all.
+  push:
+    branches: [main]
+    paths:
+      - 'benchmarks/**'
+      - '.github/workflows/generate-llm-predictions.yml'
   workflow_dispatch:
     inputs:
       endpoint:
@@ -77,13 +86,13 @@ jobs:
           fi
           uv run python -m benchmarks.predict_llm \
             --config benchmarks/eval.yml \
-            --mode "${{ inputs.mode }}" \
-            --split "${{ inputs.split }}" \
+            --mode "${{ inputs.mode || 'smoke' }}" \
+            --split "${{ inputs.split || 'validation' }}" \
             --data benchmarks/data \
             --out benchmarks/runs/llm \
-            --endpoint "${{ inputs.endpoint }}" \
+            --endpoint "${{ inputs.endpoint || 'https://elifepathways--jats-orchestrator-web.modal.run' }}" \
             ${CHECKPOINT_ARG} \
-            --concurrency "${{ inputs.concurrency }}" \
+            --concurrency "${{ inputs.concurrency || '2' }}" \
             --push-to sciencebeam-eval-predictions
 
       # A document that failed is recorded rather than raised, so the run can
@@ -96,7 +105,7 @@ jobs:
             echo "### LLM prediction run"
             echo ""
             echo "- checkpoint: \`$(grep -A2 'tool: jats-agentic-annotation' benchmarks/eval.yml | grep version: | awk '{print $2}')\`"
-            echo "- ${{ inputs.split }} / ${{ inputs.mode }}"
+            echo "- ${{ inputs.split || 'validation' }} / ${{ inputs.mode || 'smoke' }}"
             if [ -f "$MANIFEST" ]; then
               echo "- ok: $(grep -c '"status": "ok"' "$MANIFEST" || echo 0)"
               echo "- errors: $(grep -c '"status": "error"' "$MANIFEST" || echo 0)"
