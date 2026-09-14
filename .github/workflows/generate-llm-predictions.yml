@@ -5,16 +5,10 @@
 # No GPU: the model is served over HTTP, so a standard runner is enough.
 name: Generate LLM predictions
 
+# Dispatch only: eval.yml names a checkpoint nothing serves yet, so an automatic
+# run would annotate with whatever is deployed and store it under that name.
+# Restore the push trigger once the two match again.
 on:
-  # After a merge, so the store is topped up without anyone remembering to ask.
-  # Cheap by design: predictions already in the store are fetched rather than
-  # regenerated, so a run with nothing missing annotates nothing. The paths
-  # filter keeps a docs-only merge from spinning a runner at all.
-  push:
-    branches: [main]
-    paths:
-      - 'benchmarks/**'
-      - '.github/workflows/generate-llm-predictions.yml'
   workflow_dispatch:
     inputs:
       endpoint:
