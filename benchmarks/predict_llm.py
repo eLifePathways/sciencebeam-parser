@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 import logging
+import random
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -42,6 +43,12 @@ ANNOTATE_PATH = "/annotate"
 DEFAULT_TIMEOUT_SECONDS = 1800
 # Documents in flight. Each one holds three calls open, so this multiplies.
 DEFAULT_CONCURRENCY = 2
+
+# Attempts per call. Modal answers a cold or busy container with a 303 back to
+# the same url, and a loaded one with 408 or 500; both are worth asking again.
+DEFAULT_MAX_ATTEMPTS = 4
+
+RETRY_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 
 # Not redistributable, and generation is the step that uploads them.
 RESTRICTED_CORPORA_FOR_LLM = frozenset({"plos-manuscripts"})
@@ -102,15 +109,48 @@ def merge_section_documents(xml_by_section: Dict[str, str]) -> bytes:
     return etree.tostring(merged, xml_declaration=True, encoding="utf-8")
 
 
-async def _preprocess(
-    client: httpx.AsyncClient, endpoint: str, pdf_path: Path, timeout: int
+async def _post_with_retry(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    client: httpx.AsyncClient,
+    url: str,
+    timeout: int,
+    max_attempts: int,
+    **kwargs: Any,
+) -> httpx.Response:
+    """POST, asking again on the failures that are worth asking again.
+
+    Honours Retry-After where the service sets one, and backs off exponentially
+    with jitter otherwise, so a busy service is not hammered in lockstep by every
+    document in flight.
+    """
+    last_error: Optional[Exception] = None
+    for attempt in range(max_attempts):
+        try:
+            response = await client.post(url, timeout=timeout, **kwargs)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in RETRY_STATUS:
+                raise
+            last_error = exc
+            retry_after = exc.response.headers.get("Retry-After")
+            delay = float(retry_after) if retry_after and retry_after.isdigit() else None
+        except httpx.TransportError as exc:
+            last_error = exc
+            delay = None
+        if attempt == max_attempts - 1:
+            break
+        await asyncio.sleep(delay if delay is not None else (2 ** attempt) + random.random())
+    raise last_error  # type: ignore[misc]
+
+
+async def _preprocess(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    client: httpx.AsyncClient, endpoint: str, pdf_path: Path, timeout: int,
+    max_attempts: int,
 ) -> Dict[str, Any]:
-    response = await client.post(
-        f"{endpoint}{PREPROCESS_PATH}",
+    response = await _post_with_retry(
+        client, f"{endpoint}{PREPROCESS_PATH}", timeout, max_attempts,
         files={"file": (pdf_path.name, pdf_path.read_bytes(), "application/pdf")},
-        timeout=timeout,
     )
-    response.raise_for_status()
     result = response.json()
     if not result.get("markdown"):
         raise RuntimeError(f"preprocess returned no markdown for {pdf_path.name}")
@@ -123,7 +163,8 @@ async def _annotate(
     section: str,
     preprocessed: Dict[str, Any],
     timeout: int,
-) -> str:
+    max_attempts: int,
+) -> Dict[str, Any]:
     data = {
         "markdown": preprocessed["markdown"],
         "section": section,
@@ -134,28 +175,66 @@ async def _annotate(
     if section == "body" and candidates:
         data["candidates"] = json.dumps(candidates)
 
-    response = await client.post(f"{endpoint}{ANNOTATE_PATH}", data=data, timeout=timeout)
-    response.raise_for_status()
+    response = await _post_with_retry(
+        client, f"{endpoint}{ANNOTATE_PATH}", timeout, max_attempts, data=data,
+    )
     payload = response.json()
-    xml = payload.get("xml")
-    if not xml:
+    if not payload.get("xml"):
         raise RuntimeError(f"annotate returned no xml for section {section!r}")
-    return xml
+    return payload
 
 
-async def _predict_one(
-    client: httpx.AsyncClient, endpoint: str, pdf_path: Path, timeout: int
-) -> bytes:
+async def _predict_one(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    client: httpx.AsyncClient, endpoint: str, pdf_path: Path, timeout: int,
+    max_attempts: int, checkpoint: str,
+) -> Tuple[bytes, Dict[str, Any]]:
     """One document's JATS, or an exception.
 
     A failed section fails the document: a partial article scores as one whose
     references were not there, which a service error and a real result share.
     """
-    preprocessed = await _preprocess(client, endpoint, pdf_path, timeout)
-    rollouts = await asyncio.gather(
-        *[_annotate(client, endpoint, section, preprocessed, timeout) for section in SECTIONS]
+    preprocessed = await _preprocess(client, endpoint, pdf_path, timeout, max_attempts)
+    rollouts = await asyncio.gather(*[
+        _annotate(client, endpoint, section, preprocessed, timeout, max_attempts)
+        for section in SECTIONS
+    ])
+    by_section = dict(zip(SECTIONS, rollouts))
+    merged = merge_section_documents(
+        {section: payload["xml"] for section, payload in by_section.items()}
     )
-    return merge_section_documents(dict(zip(SECTIONS, rollouts)))
+    return merged, rollout_usage(by_section, checkpoint, preprocessed)
+
+
+def rollout_usage(
+    by_section: Dict[str, Dict[str, Any]], checkpoint: str, preprocessed: Dict[str, Any]
+) -> Dict[str, Any]:
+    """What a document cost, in the shape `llm_usage` aggregates.
+
+    A turn is one request to the model, so that is what `calls` counts. Tokens are
+    absent rather than zero: the service does not report them, and a document that
+    spent nothing is a different thing from one whose spend is unknown.
+
+    The per-section detail is kept beside the aggregate because the three rollouts
+    are not alike -- body is far the longest -- and an average over them hides the
+    one worth looking at.
+    """
+    return {
+        "calls": sum(payload.get("n_turns") or 0 for payload in by_section.values()),
+        "models": [checkpoint],
+        "by_task": {
+            section: {
+                "calls": payload.get("n_turns") or 0,
+                "tool_calls": payload.get("n_calls") or 0,
+                "structural_calls": payload.get("n_structural_calls") or 0,
+                "merged_candidate_spans": payload.get("n_merged_candidate_spans") or 0,
+                "elapsed_ms": payload.get("elapsed_ms") or 0,
+                "terminated_by": payload.get("terminated_by"),
+            }
+            for section, payload in by_section.items()
+        },
+        "markdown_lines": preprocessed.get("n_md_lines") or 0,
+        "preprocess_ms": preprocessed.get("processing_time_ms") or 0,
+    }
 
 
 async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -165,6 +244,8 @@ async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-pos
     endpoint: str,
     timeout: int,
     concurrency: int,
+    max_attempts: int,
+    checkpoint: str,
 ) -> Tuple[int, int]:
     to_process = [r for r in records if (r["corpus"], r["record_id"]) not in done]
     skipped = len(records) - len(to_process)
@@ -178,7 +259,7 @@ async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-pos
     progress = _Progress(len(to_process))
     sem = asyncio.Semaphore(concurrency)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
 
         async def _process_one(rec: Dict[str, Any]) -> None:
             corpus = rec["corpus"]
@@ -187,8 +268,9 @@ async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-pos
             async with sem:
                 t0 = time.monotonic()
                 try:
-                    merged = await _predict_one(
-                        client, endpoint, Path(rec["pdf_path"]), timeout
+                    merged, usage = await _predict_one(
+                        client, endpoint, Path(rec["pdf_path"]), timeout,
+                        max_attempts, checkpoint,
                     )
                     elapsed_ms = round((time.monotonic() - t0) * 1000)
                     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,7 +278,13 @@ async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-pos
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
                         "status": "ok", "elapsed_ms": elapsed_ms,
+                        "llm_usage": usage,
                     })
+                    LOGGER.info(
+                        "     %s/%s  %d calls over %d sections, %d markdown lines",
+                        corpus, record_id, usage["calls"], len(usage["by_task"]),
+                        usage["markdown_lines"],
+                    )
                     progress.record_ok(corpus, record_id, elapsed_ms)
                 except httpx.HTTPStatusError as exc:
                     msg = str(exc)
@@ -236,6 +324,7 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     include: Optional[Iterable[str]] = None,
     push_to: Optional[Path] = None,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> None:
     check_restricted_corpora(include)
     records = fetch_data(config, mode, split, data_dir, include=include)
@@ -246,7 +335,7 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
     n_ok, n_err = asyncio.run(
         _run_predict_async(
             records, done, run_dir, endpoint.rstrip("/"), timeout,
-            _resolve_concurrency(concurrency),
+            _resolve_concurrency(concurrency), max_attempts, checkpoint,
         )
     )
 

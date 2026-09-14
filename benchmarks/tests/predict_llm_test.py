@@ -1,10 +1,17 @@
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
 import pytest
 import yaml
 
 from lxml import etree
 
+from benchmarks.llm_usage import combine_usage
 from benchmarks.predict_llm import (
+    _post_with_retry,
     check_restricted_corpora,
+    rollout_usage,
     checkpoint_from_config,
     merge_section_documents,
 )
@@ -105,3 +112,118 @@ class TestCheckpointFromConfig:
         # exits rather than running for hours.
         with open("benchmarks/eval.yml", encoding="utf-8") as f:
             assert checkpoint_from_config(yaml.safe_load(f))
+
+
+class TestPostWithRetry:
+    """The first real run lost 40 of 60 documents to an unfollowed redirect and
+    11 more to transient errors nobody asked again about."""
+
+    @staticmethod
+    def _response(status, headers=None):
+        request = httpx.Request("POST", "https://example.test/annotate")
+        return httpx.Response(status, headers=headers or {}, request=request)
+
+    def test_should_return_the_first_success(self):
+        client = MagicMock()
+        client.post = AsyncMock(return_value=self._response(200))
+        result = asyncio.run(_post_with_retry(client, "https://example.test/annotate", 5, 4))
+        assert result.status_code == 200
+        assert client.post.await_count == 1
+
+    def test_should_retry_a_transient_status_then_succeed(self):
+        client = MagicMock()
+        client.post = AsyncMock(side_effect=[self._response(500), self._response(200)])
+        with patch("benchmarks.predict_llm.asyncio.sleep", new=AsyncMock()):
+            result = asyncio.run(_post_with_retry(client, "https://example.test/annotate", 5, 4))
+        assert result.status_code == 200
+        assert client.post.await_count == 2
+
+    def test_should_retry_a_timeout(self):
+        client = MagicMock()
+        client.post = AsyncMock(side_effect=[self._response(408), self._response(200)])
+        with patch("benchmarks.predict_llm.asyncio.sleep", new=AsyncMock()):
+            asyncio.run(_post_with_retry(client, "https://example.test/annotate", 5, 4))
+        assert client.post.await_count == 2
+
+    def test_should_not_retry_a_client_error(self):
+        # A 422 will say the same thing however many times it is asked.
+        client = MagicMock()
+        client.post = AsyncMock(return_value=self._response(422))
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(_post_with_retry(client, "https://example.test/annotate", 5, 4))
+        assert client.post.await_count == 1
+
+    def test_should_give_up_after_max_attempts(self):
+        client = MagicMock()
+        client.post = AsyncMock(return_value=self._response(503))
+        with patch("benchmarks.predict_llm.asyncio.sleep", new=AsyncMock()):
+            with pytest.raises(httpx.HTTPStatusError):
+                asyncio.run(_post_with_retry(client, "https://example.test/annotate", 5, 3))
+        assert client.post.await_count == 3
+
+    def test_should_honour_retry_after(self):
+        client = MagicMock()
+        client.post = AsyncMock(
+            side_effect=[self._response(429, {"Retry-After": "7"}), self._response(200)]
+        )
+        sleep = AsyncMock()
+        with patch("benchmarks.predict_llm.asyncio.sleep", new=sleep):
+            asyncio.run(_post_with_retry(client, "https://example.test/annotate", 5, 4))
+        assert sleep.await_args[0][0] == 7
+
+
+class TestRolloutUsage:
+    """Recorded in the shape benchmarks/llm_usage.py already aggregates, so the
+    annotation model's spend lands in the summary like the engine's does."""
+
+    @staticmethod
+    def _sections():
+        return {
+            "front": {"n_turns": 4, "n_calls": 3, "n_structural_calls": 3,
+                      "n_merged_candidate_spans": 0, "elapsed_ms": 40000,
+                      "terminated_by": "finish"},
+            "body": {"n_turns": 30, "n_calls": 28, "n_structural_calls": 25,
+                     "n_merged_candidate_spans": 12, "elapsed_ms": 120000,
+                     "terminated_by": "finish"},
+            "back": {"n_turns": 9, "n_calls": 8, "n_structural_calls": 8,
+                     "n_merged_candidate_spans": 0, "elapsed_ms": 60000,
+                     "terminated_by": "finish"},
+        }
+
+    def test_should_count_a_turn_as_a_call(self):
+        usage = rollout_usage(self._sections(), "ckpt-1", {})
+        assert usage["calls"] == 43
+
+    def test_should_name_the_checkpoint_as_the_model(self):
+        assert rollout_usage(self._sections(), "ckpt-1", {})["models"] == ["ckpt-1"]
+
+    def test_should_keep_each_section_separately(self):
+        by_task = rollout_usage(self._sections(), "ckpt-1", {})["by_task"]
+        assert set(by_task) == {"front", "body", "back"}
+        assert by_task["body"]["calls"] == 30
+        assert by_task["body"]["merged_candidate_spans"] == 12
+
+    def test_should_record_the_preprocessing_it_was_given(self):
+        usage = rollout_usage(self._sections(), "ckpt-1",
+                              {"n_md_lines": 900, "processing_time_ms": 36000})
+        assert usage["markdown_lines"] == 900
+        assert usage["preprocess_ms"] == 36000
+
+    def test_should_not_invent_token_counts(self):
+        # The service does not report them. A zero would be read as "spent
+        # nothing" rather than "not known", and would sum into the totals.
+        usage = rollout_usage(self._sections(), "ckpt-1", {})
+        assert "input_tokens" not in usage
+        assert "output_tokens" not in usage
+
+    def test_should_survive_a_response_missing_its_counters(self):
+        usage = rollout_usage({"front": {}}, "ckpt-1", {})
+        assert usage["calls"] == 0
+        assert usage["by_task"]["front"]["terminated_by"] is None
+
+    def test_should_aggregate_through_llm_usage(self):
+        # The point of the shape: combine_usage has to understand it.
+        combined = combine_usage([rollout_usage(self._sections(), "ckpt-1", {})])
+        assert combined["calls"] == 43
+        assert combined["models"] == ["ckpt-1"]
+        assert combined["by_task"]["body"]["calls"] == 30
