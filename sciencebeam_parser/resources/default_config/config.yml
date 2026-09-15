@@ -43,9 +43,11 @@ logging:
 download_dir: '~/.cache/sciencebeam-parser/downloads'
 
 pdfalto:
-  # path is auto-detected based on the current platform if not specified
-  # (override with an explicit URL if needed, e.g.:)
+  # Defaults to the executable bundled with the `pdfalto` Python package
+  # (platform-specific wheel). Override with a local path or a URL if needed, e.g.:
+  # path: /usr/local/bin/pdfalto
   # path: https://github.com/kermitt2/pdfalto/releases/download/v0.6.0/pdfalto-bin-linux-64.zip!/pdfalto/linux/64/pdfalto
+  # Setting the PDFALTO_BINARY environment variable also overrides the bundled executable.
   path:
 wapiti:
   install_source: 'https://github.com/kermitt2/Wapiti/archive/a9c25d2bcccd60f1a54a7019689bd5229e866f00.tar.gz'

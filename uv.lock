@@ -2252,6 +2252,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pdfalto"
+version = "0.6.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/d5/34974c789e3b9a274d5f7ac3f75d228cfd5f3d475937776600f52e6326fd/pdfalto-0.6.3.tar.gz", hash = "sha256:b7e33ba98ddd97b20a6f90e32b410a033abb6345c079af7137768d386ef33832", size = 68603517, upload-time = "2026-09-09T07:35:27.074Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/77/d0/99a45eba210200add6e3fa4e5d3cd0d5cbec893e812da8ecc9cd2eb31bcd/pdfalto-0.6.3-py3-none-macosx_11_0_arm64.whl", hash = "sha256:13a7504f62ddf4670b0e24fcfe7e4151d0aa6d253043832342d0104fdb1fcbfd", size = 18751333, upload-time = "2026-09-09T07:35:17.852Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/ba/d280724aec8edaef093181f54509188a6e0aeea0fa6c822faf8d6ebbc7f6/pdfalto-0.6.3-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:95e8b0cccbd199ad8a305898605b9c0eb66ff0a9bc8dc227c7e9651e45d1ef0b", size = 18514399, upload-time = "2026-09-09T07:35:20.07Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/b5/0258922cdbe6ae76e3cbdb841ec6a71b121ada97daa5eee1831d5b38f21d/pdfalto-0.6.3-py3-none-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ac802de19dd497451b028a6b7fa35207d3bcd3f4cf16f81f563beff1e0ac3937", size = 18924255, upload-time = "2026-09-09T07:35:22.255Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/cb/113f35cd40bc307f47b2f162812902e26aaa7ff634eff2a8b46d39d76a77/pdfalto-0.6.3-py3-none-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6526c415d8964519f293cb0a24f5ae04ea1c084946aea548dab7308d74640cd3", size = 18985721, upload-time = "2026-09-09T07:35:24.362Z" },
+]
+
+[[package]]
 name = "pdfminer-six"
 version = "20251107"
 source = { registry = "https://pypi.org/simple" }
@@ -3431,6 +3443,7 @@ dependencies = [
     { name = "gcsfs" },
     { name = "lxml" },
     { name = "pdf2image" },
+    { name = "pdfalto" },
     { name = "pyyaml" },
     { name = "sciencebeam-judge" },
 ]
@@ -3484,6 +3497,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'telemetry'", specifier = ">=1.29" },
     { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.29" },
     { name = "pdf2image", specifier = "==1.16.0" },
+    { name = "pdfalto", specifier = "==0.6.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sciencebeam-judge", specifier = ">=0.0.26" },
     { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=1.0.1" },
