@@ -38,6 +38,7 @@ TOOL_NAME = "jats-agentic-annotation"
 
 PREPROCESS_PATH = "/preprocess"
 ANNOTATE_PATH = "/annotate"
+HEALTH_PATH = "/health"
 
 # One section of a five-line document took 232s, so this is not the parser's scale.
 DEFAULT_TIMEOUT_SECONDS = 1800
@@ -107,6 +108,22 @@ def merge_section_documents(xml_by_section: Dict[str, str]) -> bytes:
             merged.append(annotated)
 
     return etree.tostring(merged, xml_declaration=True, encoding="utf-8")
+
+
+def served_model(endpoint: str, timeout: int = 60) -> Optional[str]:
+    """What the service says it is serving, or None if it will not say.
+
+    Its label and the checkpoint name are not comparable -- `jats-tfull` against
+    a directory name -- so this cannot refuse a mismatch. It makes one visible
+    instead, at the start of the run and in the stored metadata.
+    """
+    try:
+        response = httpx.get(f"{endpoint}{HEALTH_PATH}", timeout=timeout)
+        response.raise_for_status()
+        return response.json().get("model")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        LOGGER.warning("Could not read %s%s: %s", endpoint, HEALTH_PATH, exc)
+        return None
 
 
 async def _post_with_retry(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -327,6 +344,12 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> None:
     check_restricted_corpora(include)
+    serving = served_model(endpoint.rstrip("/"))
+    LOGGER.warning(
+        "Service reports serving %r; these predictions will be stored as %r. "
+        "Check they are the same model before trusting the numbers.",
+        serving or "unknown", checkpoint,
+    )
     records = fetch_data(config, mode, split, data_dir, include=include)
     sources = resolved_sources(config, split, include)
     corpus_variants = get_corpus_variants(config, split, include)
@@ -357,6 +380,7 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
         "profile": "default",
         "endpoint": endpoint,
         "checkpoint": checkpoint,
+        "served_model": serving,
         "sources": sources,
         "split": split,
         "mode": mode,
@@ -376,7 +400,8 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
         store.push(
             TOOL_NAME, checkpoint, "default", split, run_dir, corpus_variants,
             {"tool": TOOL_NAME, "version": checkpoint, "profile": "default",
-             "split": split, "mode": mode, "endpoint": endpoint},
+             "split": split, "mode": mode, "endpoint": endpoint,
+             "served_model": serving},
         )
         LOGGER.info("Pushed to %s (%d new this run)", push_to, n_ok)
 
