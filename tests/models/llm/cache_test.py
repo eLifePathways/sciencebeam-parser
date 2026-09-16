@@ -1,3 +1,4 @@
+import contextvars
 import json
 import os
 import threading
@@ -16,6 +17,11 @@ from sciencebeam_parser.models.llm.client import FIRST_ATTEMPT, get_request_body
 from sciencebeam_parser.models.llm.config import LlmEngineConfig
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.model_impl import LlmModelImpl
+from sciencebeam_parser.models.llm.usage import (
+    REPLAYED_RESPONSE_KEY,
+    get_request_llm_usage_header_value,
+    start_request_llm_usage
+)
 
 
 CONFIG = {
@@ -52,6 +58,12 @@ def get_response(content: str) -> Dict[str, Any]:
         'provider': 'venice',
         'usage': {'prompt_tokens': 10, 'completion_tokens': 20},
     }
+
+
+def get_replayed_response(content: str) -> Dict[str, Any]:
+    """What a replay returns: the stored body, marked so usage counts it as
+    replayed rather than as spend."""
+    return {**get_response(content), REPLAYED_RESPONSE_KEY: True}
 
 
 class FakeClient:
@@ -182,7 +194,9 @@ class TestCachingLlmClient:
         config = get_config()
         get_caching_client(config, FakeClient(), tmp_path).get_completion(PROMPT, SCHEMA)
         replay = get_caching_client(config, NeverCalledClient(), tmp_path)
-        assert replay.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [0, 1]}')
+        assert replay.get_completion(PROMPT, SCHEMA) == get_replayed_response(
+            '{"starts": [0, 1]}'
+        )
         assert replay.cache.hit_count == 1
 
     def test_should_replay_the_same_request_at_the_same_attempt_again(self, tmp_path):
@@ -192,8 +206,10 @@ class TestCachingLlmClient:
         config = get_config()
         delegate = FakeClient()
         client = get_caching_client(config, delegate, tmp_path)
-        first = client.get_completion(PROMPT, SCHEMA)
-        assert client.get_completion(PROMPT, SCHEMA) == first
+        assert client.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [0, 1]}')
+        assert client.get_completion(PROMPT, SCHEMA) == get_replayed_response(
+            '{"starts": [0, 1]}'
+        )
         assert delegate.call_count == 1
 
     def test_should_ask_live_for_a_repeat_the_engine_numbers_differently(self, tmp_path):
@@ -216,10 +232,10 @@ class TestCachingLlmClient:
         client.get_completion(PROMPT, SCHEMA, (0, 0))
         client.get_completion(PROMPT, SCHEMA, (0, 1))
         replay = get_caching_client(config, NeverCalledClient(), tmp_path)
-        assert replay.get_completion(PROMPT, SCHEMA, (0, 0)) == get_response(
+        assert replay.get_completion(PROMPT, SCHEMA, (0, 0)) == get_replayed_response(
             '{"starts": [0]}'
         )
-        assert replay.get_completion(PROMPT, SCHEMA, (0, 1)) == get_response(
+        assert replay.get_completion(PROMPT, SCHEMA, (0, 1)) == get_replayed_response(
             '{"starts": [0, 1]}'
         )
 
@@ -285,6 +301,17 @@ class TestCachingLlmClient:
         client = get_caching_client(config, delegate, tmp_path)
         assert client.get_completion(PROMPT, SCHEMA) == get_response('{"starts": [1]}')
         assert delegate.call_count == 1
+
+    def test_should_not_write_the_replay_marker_to_disk(self, tmp_path):
+        # It is added on the way out, so a stored entry stays the body as returned.
+        config = get_config()
+        client = get_caching_client(config, FakeClient(), tmp_path)
+        client.get_completion(PROMPT, SCHEMA)
+        client.get_completion(PROMPT, SCHEMA)
+        entry = next(
+            path for path in tmp_path.rglob('*.json') if path.name != REQUEST_FILENAME
+        )
+        assert REPLAYED_RESPONSE_KEY not in json.loads(entry.read_text(encoding='utf-8'))
 
     def test_should_pass_validation_through(self, tmp_path):
         class RaisingClient(NeverCalledClient):
@@ -379,6 +406,28 @@ class TestLlmModelImplWithACache:
         ]
         contents = [entry['choices'][0]['message']['content'] for entry in stored]
         assert 'not json at all' in contents
+
+    def test_should_report_a_replayed_run_as_having_spent_nothing(self, tmp_path):
+        # The whole point of the accounting: the stored body carries the original
+        # call's tokens and credits, and this run paid neither.
+        config = get_config(response_cache_dir=str(tmp_path))
+        LlmModelImpl(config, client=FakeClient()).predict_labels(
+            [TOKENS], [feature_rows()]
+        )
+
+        def replay_run():
+            start_request_llm_usage()
+            LlmModelImpl(config, client=NeverCalledClient()).predict_labels(
+                [TOKENS], [feature_rows()]
+            )
+            return get_request_llm_usage_header_value()
+
+        usage = json.loads(contextvars.copy_context().run(replay_run) or '{}')
+        assert usage['calls'] == 0
+        assert usage['output_tokens'] == 0
+        assert 'cost_credits' not in usage
+        assert usage['replayed']['calls'] == 1
+        assert usage['replayed']['output_tokens'] == 20
 
     def test_should_keep_the_resolved_provider_and_usage(self, tmp_path):
         config = get_config(response_cache_dir=str(tmp_path))

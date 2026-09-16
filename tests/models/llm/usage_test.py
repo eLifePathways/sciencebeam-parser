@@ -4,6 +4,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from sciencebeam_parser.models.llm.usage import (
+    REPLAYED_RESPONSE_KEY,
     LlmUsageAccumulator,
     get_request_llm_usage_header_value,
     record_llm_usage,
@@ -118,6 +119,71 @@ class TestLlmUsageAccumulator:
         assert usage is not None
         assert usage['calls'] == 4
         assert usage['input_tokens'] == 400
+
+
+class TestReplayedCalls:
+    def test_should_keep_a_replayed_call_out_of_what_the_run_spent(self):
+        # The stored body carries the original call's tokens and credits. Adding
+        # them in would report a cold run's spend as this run's.
+        accumulator = LlmUsageAccumulator()
+        accumulator.add_response(TASK_1, _response(), replayed=True)
+        usage = accumulator.to_dict()
+        assert usage is not None
+        assert usage['calls'] == 0
+        assert usage['input_tokens'] == 0
+        assert 'cost_credits' not in usage
+
+    def test_should_report_what_a_replayed_call_cost_when_it_was_generated(self):
+        accumulator = LlmUsageAccumulator()
+        accumulator.add_response(TASK_1, _response(), replayed=True)
+        accumulator.add_response(TASK_1, _response(), replayed=True)
+        usage = accumulator.to_dict()
+        assert usage is not None
+        assert usage['replayed'] == {
+            'calls': 2, 'input_tokens': 200, 'output_tokens': 100,
+            'cached_input_tokens': 0, 'reasoning_tokens': 0,
+            'peak_output_tokens': 50, 'cost_credits': 0.0008,
+            'models': ['qwen/qwen3.5-9b'], 'providers': ['SiliconFlow'],
+        }
+
+    def test_should_still_report_a_document_answered_entirely_from_the_cache(self):
+        # Nothing was spent, but the calls happened; dropping the record would
+        # take the document out of the count of documents with usage.
+        accumulator = LlmUsageAccumulator()
+        accumulator.add_response(TASK_1, _response(), replayed=True)
+        assert accumulator.to_dict() is not None
+        assert accumulator.calls == 1
+
+    def test_should_keep_the_two_apart_per_task(self):
+        accumulator = LlmUsageAccumulator()
+        accumulator.add_response(TASK_1, _response())
+        accumulator.add_response(TASK_2, _response(), replayed=True)
+        usage = accumulator.to_dict()
+        assert usage is not None
+        assert usage['by_task'][TASK_1]['calls'] == 1
+        assert 'replayed' not in usage['by_task'][TASK_1]
+        assert usage['by_task'][TASK_2]['calls'] == 0
+        assert usage['by_task'][TASK_2]['replayed']['calls'] == 1
+
+    def test_should_say_nothing_about_replays_when_there_were_none(self):
+        accumulator = LlmUsageAccumulator()
+        accumulator.add_response(TASK_1, _response())
+        usage = accumulator.to_dict()
+        assert usage is not None
+        assert 'replayed' not in usage
+
+    def test_should_treat_a_marked_response_as_replayed(self):
+        def one_replay_and_one_live():
+            start_request_llm_usage()
+            record_llm_usage(TASK_1, {**_response(), REPLAYED_RESPONSE_KEY: True})
+            record_llm_usage(TASK_1, _response())
+            return get_request_llm_usage_header_value()
+
+        usage = json.loads(
+            contextvars.copy_context().run(one_replay_and_one_live) or '{}'
+        )
+        assert usage['calls'] == 1
+        assert usage['replayed']['calls'] == 1
 
 
 class TestRequestLlmUsage:

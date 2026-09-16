@@ -228,7 +228,26 @@ reference list and says nothing about the ceiling.
 derived from a rate table here, so whatever the provider did or did not discount is already in the
 number. `cached_input_tokens` is why two runs over the same input can report the same tokens and
 different credits, and the benchmark report notes it where it is non-zero. This is the provider's
-own prefix caching, unrelated to any response cache of ours.
+own prefix caching, unrelated to the response cache below.
+
+A call the response cache replayed spent nothing now, so it is counted apart rather than added in —
+otherwise a warm run would report the original run's credits as its own. The totals above stay
+**what this run spent**, and a `replayed` block says what the replayed calls were and what they cost
+when they were generated:
+
+```json
+{
+  "calls": 2,
+  "cost_credits": 0.0018,
+  "replayed": {"calls": 6, "input_tokens": 161310, "output_tokens": 2514, "cost_credits": 0.0165}
+}
+```
+
+That figure is a record of one cold run, not a forecast of another: prices and providers move, and
+generation is not reproducible, so a fresh run would not make exactly the same calls. The block is
+absent when nothing was replayed, so a cold run's header, `summary.json` and report are unchanged.
+The report's `Calls` column counts every call the engine made, replayed ones included, while the
+token and credit columns are what was spent; a note beside the table gives the split.
 
 A response the engine could not use has still been paid for, so a request that fails reports what it
 spent before failing: the header is on the 500 as well as the 200. A request that produced no
@@ -300,7 +319,9 @@ run that recovers into one that does not. It also means a second request for the
 replays, whether or not the server has been restarted.
 
 Each call carries `sciencebeam.llm.cache_hit` on its span, so a trace shows which answers were
-replayed, and the first replay in a process logs that the cache is warm — a run that was
+replayed; a replayed call is reported apart from what the run spent, as [What a request
+spent](#what-a-request-spent) describes; and the first replay in a process logs that the cache is
+warm — a run that was
 accidentally warm is cheaper than a cold one and should not be reported as its cost.
 
 ## Choosing a provider

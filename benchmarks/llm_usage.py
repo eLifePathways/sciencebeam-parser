@@ -10,6 +10,8 @@ SUM_KEYS = (
 MAX_KEYS = ("peak_output_tokens",)
 UNION_KEYS = ("models", "providers")
 COUNT_KEYS = ("n_attempted", "n_with_usage")
+# Same shape as an entry, so it combines the same way.
+NESTED_KEYS = ("replayed",)
 
 
 def combine_usage(usage_entries: Iterable[dict]) -> Dict[str, Any]:
@@ -17,6 +19,7 @@ def combine_usage(usage_entries: Iterable[dict]) -> Dict[str, Any]:
     combined: Dict[str, Any] = {key: 0 for key in SUM_KEYS + MAX_KEYS}
     cost: Optional[float] = None
     union: Dict[str, List[str]] = {key: [] for key in UNION_KEYS}
+    nested: Dict[str, List[dict]] = {key: [] for key in NESTED_KEYS}
     by_task: Dict[str, List[dict]] = {}
 
     for entry in usage_entries:
@@ -30,6 +33,9 @@ def combine_usage(usage_entries: Iterable[dict]) -> Dict[str, Any]:
             for value in entry.get(key) or []:
                 if value not in union[key]:
                     union[key].append(value)
+        for key in NESTED_KEYS:
+            if entry.get(key):
+                nested[key].append(entry[key])
         for task, task_entry in (entry.get("by_task") or {}).items():
             by_task.setdefault(task, []).append(task_entry)
 
@@ -38,6 +44,9 @@ def combine_usage(usage_entries: Iterable[dict]) -> Dict[str, Any]:
     for key in UNION_KEYS:
         if union[key]:
             combined[key] = union[key]
+    for key in NESTED_KEYS:
+        if nested[key]:
+            combined[key] = combine_usage(nested[key])
     if by_task:
         combined["by_task"] = {
             task: combine_usage(task_entries)

@@ -420,6 +420,46 @@ class TestRenderUsageSection:
         )
         assert "every document attempted" in report
 
+    def test_should_say_when_calls_were_replayed_from_the_cache(self):
+        report = _render_comparison_report(self._labeled(llm_usage={
+            "biorxiv": {**_usage(calls=2), "replayed": _usage(calls=8, cost=0.5)},
+        }))
+        assert "8 were replayed" in report
+        assert "Of 10 calls" in report
+        assert "what these runs spent rather than what a cold run would cost" in report
+
+    def test_should_say_what_the_replayed_responses_cost_when_generated(self):
+        report = _render_comparison_report(self._labeled(llm_usage={
+            "biorxiv": {**_usage(calls=2), "replayed": _usage(calls=8, cost=0.5)},
+        }))
+        assert "0.5000 credits when they were generated" in report
+        assert "rather than a forecast" in report
+
+    def test_should_say_nothing_about_replays_in_a_cold_report(self):
+        report = _render_comparison_report(
+            self._labeled(llm_usage={"biorxiv": _usage()})
+        )
+        assert "replayed" not in report
+
+    def test_should_count_replayed_calls_in_the_calls_column(self):
+        report = _render_comparison_report(self._labeled(llm_usage={
+            "biorxiv": {**_usage(calls=2), "replayed": _usage(calls=8, cost=0.5)},
+        }))
+        usage_row = next(
+            line for line in report.splitlines() if line.startswith("| llm (values)")
+        )
+        assert "| 10 |" in usage_row
+
+    def test_should_still_render_a_run_answered_entirely_from_the_cache(self):
+        report = _render_comparison_report(self._labeled(llm_usage={
+            "biorxiv": {
+                **_usage(calls=0, input_tokens=0, output_tokens=0, cost=None),
+                "replayed": _usage(calls=8, cost=0.5),
+            },
+        }))
+        assert "LLM usage" in report
+        assert "8 were replayed" in report
+
     def test_should_show_a_variant_without_usage_as_absent(self):
         report = _render_comparison_report(
             self._labeled(llm_usage={"biorxiv": _usage()})

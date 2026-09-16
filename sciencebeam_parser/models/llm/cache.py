@@ -13,6 +13,7 @@ from sciencebeam_parser.models.llm.client import (
     get_request_body
 )
 from sciencebeam_parser.models.llm.config import LlmEngineConfig
+from sciencebeam_parser.models.llm.usage import REPLAYED_RESPONSE_KEY
 from sciencebeam_parser.utils.telemetry import set_current_span_attribute
 
 
@@ -187,7 +188,9 @@ class CachingLlmClient:
             LOGGER.debug(
                 'llm cache replaying %s %s', key[:12], get_entry_name(attempt)
             )
-            return cached
+            # Marked on the way out, so usage counts it as replayed rather than
+            # adding the stored call's tokens and credits to what this run spent.
+            return {**cached, REPLAYED_RESPONSE_KEY: True}
         # An exception stores nothing, so a failure is asked again live.
         response = self.delegate.get_completion(prompt, response_schema, attempt)
         self.cache.put(key, attempt, request_body, response)
