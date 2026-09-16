@@ -12,6 +12,7 @@ from benchmarks.predict_llm import (
     _post_with_retry,
     check_restricted_corpora,
     rollout_usage,
+    served_model,
     run_predict_llm,
     checkpoint_from_config,
     merge_section_documents,
@@ -272,3 +273,25 @@ class TestRunPredictLlmStoreUse:
                 endpoint="https://example.test", checkpoint="ckpt-1",
             )
             store_cls.assert_not_called()
+
+
+class TestServedModel:
+    """A dispatch is always one command away from storing one model's output
+    under another's name, so what the service said is recorded with the run."""
+
+    def test_should_return_the_model_the_service_reports(self):
+        response = MagicMock()
+        response.json.return_value = {"ok": True, "model": "jats-tfull"}
+        with patch("benchmarks.predict_llm.httpx.get", return_value=response):
+            assert served_model("https://example.test") == "jats-tfull"
+
+    def test_should_be_none_when_the_service_does_not_say(self):
+        response = MagicMock()
+        response.json.return_value = {"ok": True}
+        with patch("benchmarks.predict_llm.httpx.get", return_value=response):
+            assert served_model("https://example.test") is None
+
+    def test_should_not_fail_the_run_when_health_is_unreachable(self):
+        # Worth knowing, not worth refusing to generate over.
+        with patch("benchmarks.predict_llm.httpx.get", side_effect=httpx.ConnectError("down")):
+            assert served_model("https://example.test") is None
