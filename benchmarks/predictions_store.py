@@ -173,6 +173,26 @@ class RepoPredictionsStore:
             dest_split.mkdir(parents=True, exist_ok=True)
             shutil.copy2(manifest_src, dest_split / "manifest.jsonl")
 
+    def _push_rebasing(self, attempts: int = 3) -> None:
+        """Push, rebasing onto whatever landed while this run was working.
+
+        A generation run holds its checkout for hours and the benchmark writes
+        the same repo, so by the time it pushes the clone is usually behind and
+        the push is rejected -- losing the whole run at its last step.
+        """
+        for attempt in range(attempts):
+            if self._git("push", check=False).returncode == 0:
+                return
+            if attempt == attempts - 1:
+                break
+            LOGGER.warning("Push rejected, rebasing onto the remote and retrying")
+            rebase = self._git("pull", "--rebase", check=False)
+            if rebase.returncode != 0:
+                raise RuntimeError(
+                    f"could not rebase predictions onto the remote: {rebase.stderr.strip()}"
+                )
+        raise RuntimeError(f"could not push predictions after {attempts} attempts")
+
     def push(
         self, tool: str, version: str, profile: str, split: str,
         local_dir: Path, corpus_variants: dict, metadata: dict,
@@ -192,7 +212,7 @@ class RepoPredictionsStore:
             label = metadata.get("image", f"{tool}:{version}")
             self._git("commit", "-m",
                       f"Update {tool}/{version}/{profile} {split} predictions ({label})")
-            self._git("push")
+            self._push_rebasing()
         else:
             LOGGER.info("No changes to push for %s/%s/%s", tool, version, profile)
 

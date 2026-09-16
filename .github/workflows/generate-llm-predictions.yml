@@ -65,7 +65,9 @@ jobs:
           repository: elifepathways/sciencebeam-eval-predictions
           path: sciencebeam-eval-predictions
           token: ${{ secrets.PREDICTIONS_REPO_PAT }}
-          fetch-depth: 1
+          # Full history, because a run this long is usually behind by the time
+          # it pushes and has to rebase. blob:none keeps that cheap.
+          fetch-depth: 0
           filter: blob:none
           sparse-checkout: .gitignore
           sparse-checkout-cone-mode: false
