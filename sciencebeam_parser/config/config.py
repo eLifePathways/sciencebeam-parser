@@ -2,7 +2,7 @@ import logging
 import os
 import copy
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import yaml
 
@@ -27,11 +27,30 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return result
 
 
-def _resolve_sequence_model_profile(
+def _get_base_profile_names(name: str, extends: Any) -> List[str]:
+    if extends is None:
+        return []
+    if isinstance(extends, str):
+        return [extends]
+    if not isinstance(extends, list):
+        raise ValueError(
+            f'Invalid extends in sequence_model_profile {name!r}: expected a profile name '
+            f'or a list of profile names, but got {extends!r}'
+        )
+    for base_name in extends:
+        if not isinstance(base_name, str):
+            raise ValueError(
+                f'Invalid extends entry in sequence_model_profile {name!r}: '
+                f'expected a profile name, but got {base_name!r}'
+            )
+    return extends
+
+
+def _get_sequence_model_profile_layers(
     seq_profiles: dict,
     name: str,
     _seen: Tuple[str, ...] = ()
-) -> dict:
+) -> List[str]:
     if name not in seq_profiles:
         raise ValueError(
             f'Unknown sequence_model_profile {name!r}. Available: {sorted(seq_profiles)}'
@@ -41,13 +60,22 @@ def _resolve_sequence_model_profile(
             f'Circular extends detected for sequence_model_profile {name!r} '
             f'(chain: {" -> ".join([*_seen, name])})'
         )
-    profile = seq_profiles[name]
-    base_name = profile.get('extends')
-    overlay = {key: value for key, value in profile.items() if key != 'extends'}
-    if not base_name:
-        return overlay
-    base = _resolve_sequence_model_profile(seq_profiles, base_name, _seen + (name,))
-    return _deep_merge(base, overlay)
+    layers: List[str] = []
+    for base_name in _get_base_profile_names(name, seq_profiles[name].get('extends')):
+        layers.extend(_get_sequence_model_profile_layers(seq_profiles, base_name, _seen + (name,)))
+    layers.append(name)
+    return layers
+
+
+def _resolve_sequence_model_profile(seq_profiles: dict, name: str) -> dict:
+    resolved: dict = {}
+    for layer_name in dict.fromkeys(_get_sequence_model_profile_layers(seq_profiles, name)):
+        resolved = _deep_merge(resolved, {
+            key: value
+            for key, value in seq_profiles[layer_name].items()
+            if key != 'extends'
+        })
+    return resolved
 
 
 class AppConfig:

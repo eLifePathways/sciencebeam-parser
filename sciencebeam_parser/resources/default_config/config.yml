@@ -202,10 +202,9 @@ sequence_model_profiles:
       path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/e266cc546e035e0d41734b9403b9cb496b6895a1/citation/wapiti/2026-09-08_wapiti_grobid_090_scielo_preprints_ore'
       engine: 'wapiti'
   wapiti_scielo_preprints_ore:
-    extends: wapiti_refseg_scielo_preprints_ore
-    citation:
-      path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/e266cc546e035e0d41734b9403b9cb496b6895a1/citation/wapiti/2026-09-08_wapiti_grobid_090_scielo_preprints_ore'
-      engine: 'wapiti'
+    extends:
+      - wapiti_refseg_scielo_preprints_ore
+      - wapiti_citation_scielo_preprints_ore
   # Opt-in only: select with SCIENCEBEAM_PARSER__PROFILE, never by default.
   # Requires an api key in SCIENCEBEAM_LLM_API_KEY or OPENROUTER_API_KEY.
   # One profile per model so a failure can be attributed, plus a combined one.
@@ -246,31 +245,9 @@ sequence_model_profiles:
       max_references_per_request: 10
       max_concurrent_requests: 4
   llm_references:
-    extends: llm_reference_segmenter
-    citation:
-      engine: 'llm'
-      task: 'citation'
-      response_shape: 'values'
-      model: 'qwen/qwen3.5-9b'
-      # Venice over SiliconFlow on measurement, not preference: 33 references in
-      # 4 batches took 12s against 39s, at the same fp8 quantisation and price,
-      # and 100% reported uptime against 96%. It costs about 0.007 token accuracy
-      # (0.860 against 0.867), which is inside the run-to-run spread of most
-      # things measured here, and latency has been the binding constraint.
-      provider: 'venice'
-      prompt_version: 'values-v3'
-      reasoning: 'off'
-      # References of a document arrive in one call to the engine, which sends
-      # them in batches. Decode cost is linear in output tokens however they are
-      # grouped, so a larger batch does not generate less — it generates the same
-      # amount in one long stream that cannot be overlapped, and long generations
-      # are what draw provider timeouts. More, smaller batches run concurrently
-      # instead: 4 calls took 111s sequentially and 58s at 4 concurrent, with the
-      # same accuracy. Beyond 4 it stops helping on either provider measured, so
-      # the bound is provider throughput rather than parallelism. Lower it if the
-      # provider answers with 429s.
-      max_references_per_request: 10
-      max_concurrent_requests: 4
+    extends:
+      - llm_reference_segmenter
+      - llm_citation
 
 profiles:
   biorxiv_elife:
