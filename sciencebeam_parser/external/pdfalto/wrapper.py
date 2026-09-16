@@ -45,7 +45,8 @@ class PdfAltoWrapper:
             self.binary_path,
             '-noImageInline',
             '-fullFontName',
-            '-noLineNumbers'
+            '-noLineNumbers',
+            '-discardClippedText'
         ]
         if first_page:
             command.extend(['-f', str(first_page)])
