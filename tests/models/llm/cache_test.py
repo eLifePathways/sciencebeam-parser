@@ -2,6 +2,7 @@ import contextvars
 import json
 import os
 import threading
+from dataclasses import fields
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import pytest
@@ -174,9 +175,17 @@ class TestGetRequestKey:
             other.endpoint, get_request_body(other, PROMPT, SCHEMA)
         ) != get_request_key(config.endpoint, get_request_body(config, PROMPT, SCHEMA))
 
+    def test_should_have_no_way_to_reach_the_cache_directory(self):
+        # It is configured for the app rather than per model, so it is not on the
+        # engine config the request body is built from — structural rather than a
+        # rule get_request_body has to keep.
+        assert 'response_cache_dir' not in {
+            field_.name for field_ in fields(LlmEngineConfig)
+        }
+
     def test_should_not_change_with_a_setting_the_request_does_not_carry(self):
         config = get_config()
-        other = get_config(timeout_seconds=1, max_attempts=2, response_cache_dir='/tmp/x')
+        other = get_config(timeout_seconds=1, max_attempts=2)
         assert get_request_key(
             other.endpoint, get_request_body(other, PROMPT, SCHEMA)
         ) == get_request_key(config.endpoint, get_request_body(config, PROMPT, SCHEMA))
@@ -374,30 +383,27 @@ class TestLlmModelImplWithACache:
         assert model_impl.client is delegate
 
     def test_should_produce_the_same_labels_from_a_warm_cache(self, tmp_path):
-        config = get_config(response_cache_dir=str(tmp_path))
-        live = LlmModelImpl(config, client=FakeClient())
+        config = get_config()
+        live = LlmModelImpl(config, client=FakeClient(), response_cache_dir=str(tmp_path))
         expected = live.predict_labels([TOKENS], [feature_rows()])
-        replay = LlmModelImpl(config, client=NeverCalledClient())
+        replay = LlmModelImpl(config, client=NeverCalledClient(), response_cache_dir=str(tmp_path))
         assert replay.predict_labels([TOKENS], [feature_rows()]) == expected
 
     def test_should_replay_a_malformed_then_parseable_sequence_as_a_success(self, tmp_path):
-        config = get_config(
-            response_cache_dir=str(tmp_path), max_malformed_response_retries=1
-        )
+        config = get_config(max_malformed_response_retries=1)
         delegate = FakeClient(['not json at all', '{"starts": [0, 1]}'])
-        live = LlmModelImpl(config, client=delegate)
+        live = LlmModelImpl(config, client=delegate, response_cache_dir=str(tmp_path))
         expected = live.predict_labels([TOKENS], [feature_rows()])
         assert delegate.call_count == 2
 
-        replay = LlmModelImpl(config, client=NeverCalledClient())
+        replay = LlmModelImpl(config, client=NeverCalledClient(), response_cache_dir=str(tmp_path))
         assert replay.predict_labels([TOKENS], [feature_rows()]) == expected
 
     def test_should_keep_the_unparseable_body_a_decoder_fix_needs(self, tmp_path):
-        config = get_config(
-            response_cache_dir=str(tmp_path), max_malformed_response_retries=1
-        )
+        config = get_config(max_malformed_response_retries=1)
         LlmModelImpl(
-            config, client=FakeClient(['not json at all', '{"starts": [0, 1]}'])
+            config, client=FakeClient(['not json at all', '{"starts": [0, 1]}']),
+            response_cache_dir=str(tmp_path)
         ).predict_labels([TOKENS], [feature_rows()])
         stored = [
             json.loads(path.read_text(encoding='utf-8'))
@@ -410,16 +416,16 @@ class TestLlmModelImplWithACache:
     def test_should_report_a_replayed_run_as_having_spent_nothing(self, tmp_path):
         # The whole point of the accounting: the stored body carries the original
         # call's tokens and credits, and this run paid neither.
-        config = get_config(response_cache_dir=str(tmp_path))
-        LlmModelImpl(config, client=FakeClient()).predict_labels(
+        config = get_config()
+        LlmModelImpl(config, client=FakeClient(), response_cache_dir=str(tmp_path)).predict_labels(
             [TOKENS], [feature_rows()]
         )
 
         def replay_run():
             start_request_llm_usage()
-            LlmModelImpl(config, client=NeverCalledClient()).predict_labels(
-                [TOKENS], [feature_rows()]
-            )
+            LlmModelImpl(
+                config, client=NeverCalledClient(), response_cache_dir=str(tmp_path)
+            ).predict_labels([TOKENS], [feature_rows()])
             return get_request_llm_usage_header_value()
 
         usage = json.loads(contextvars.copy_context().run(replay_run) or '{}')
@@ -430,8 +436,8 @@ class TestLlmModelImplWithACache:
         assert usage['replayed']['output_tokens'] == 20
 
     def test_should_keep_the_resolved_provider_and_usage(self, tmp_path):
-        config = get_config(response_cache_dir=str(tmp_path))
-        LlmModelImpl(config, client=FakeClient()).predict_labels(
+        config = get_config()
+        LlmModelImpl(config, client=FakeClient(), response_cache_dir=str(tmp_path)).predict_labels(
             [TOKENS], [feature_rows()]
         )
         entry = next(
@@ -443,11 +449,12 @@ class TestLlmModelImplWithACache:
 
     def test_should_not_reach_the_cache_directory_of_another_run(self, tmp_path):
         LlmModelImpl(
-            get_config(response_cache_dir=str(tmp_path / 'one')), client=FakeClient()
+            get_config(), client=FakeClient(),
+            response_cache_dir=str(tmp_path / 'one')
         ).predict_labels([TOKENS], [feature_rows()])
         delegate = FakeClient()
         LlmModelImpl(
-            get_config(response_cache_dir=str(tmp_path / 'two')), client=delegate
+            get_config(), client=delegate, response_cache_dir=str(tmp_path / 'two')
         ).predict_labels([TOKENS], [feature_rows()])
         assert delegate.call_count == 1
         assert os.path.isdir(tmp_path / 'two')

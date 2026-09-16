@@ -63,7 +63,8 @@ class LlmModelImpl(ModelImpl):
     def __init__(
         self,
         config: LlmEngineConfig,
-        client: Optional[LlmCompletionClient] = None
+        client: Optional[LlmCompletionClient] = None,
+        response_cache_dir: str = ''
     ):
         if config.response_shape not in SUPPORTED_RESPONSE_SHAPES:
             raise LlmConfigError(
@@ -72,9 +73,9 @@ class LlmModelImpl(ModelImpl):
             )
         self.config = config
         self.client = client if client is not None else LlmClient(config)
-        if config.response_cache_dir:
+        if response_cache_dir:
             self.client = CachingLlmClient(
-                config, self.client, get_response_cache(config.response_cache_dir)
+                config, self.client, get_response_cache(response_cache_dir)
             )
         self.labels = (
             get_citation_labels() if config.response_shape == VALUES_SHAPE else []

@@ -8,7 +8,8 @@ import yaml
 from sciencebeam_parser.config.config import (
     AppConfig,
     _deep_merge,
-    _resolve_sequence_model_profile
+    _resolve_sequence_model_profile,
+    get_llm_response_cache_dir
 )
 
 
@@ -315,6 +316,26 @@ def _env_vars_mock() -> Iterable[dict]:
     mock: dict
     with patch('os.environ', {}) as mock:
         yield mock
+
+
+class TestGetLlmResponseCacheDir:
+    def test_should_be_empty_when_not_configured(self):
+        assert get_llm_response_cache_dir({}) == ''
+
+    def test_should_treat_an_explicit_null_as_off(self):
+        # `SCIENCEBEAM_PARSER__LLM_RESPONSE_CACHE_DIR=` parses to None, which is
+        # how a run turns the cache off without editing the config.
+        assert get_llm_response_cache_dir({'llm_response_cache_dir': None}) == ''
+
+    def test_should_expand_a_home_relative_path(self):
+        assert not get_llm_response_cache_dir(
+            {'llm_response_cache_dir': '~/cache'}
+        ).startswith('~')
+
+    def test_should_read_it_from_an_app_config(self, tmp_path: Path):
+        config_path = tmp_path / 'config.yml'
+        config_path.write_text(yaml.dump({'llm_response_cache_dir': '/tmp/llm'}))
+        assert get_llm_response_cache_dir(AppConfig.load_yaml(str(config_path))) == '/tmp/llm'
 
 
 class TestAppConfig:

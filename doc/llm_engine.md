@@ -61,7 +61,8 @@ Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM
 `temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
 `max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`,
 `unanswered_reference_raises`, `max_missing_reference_retries`,
-`max_malformed_response_retries`, `response_cache_dir`.
+`max_malformed_response_retries`. The response cache is configured for the whole app rather than per
+model — see [Response cache](#response-cache-development-only).
 
 ### What the segmenter is told to skip
 
@@ -269,27 +270,32 @@ Above `warn_input_lines` (default 300) the engine logs a warning naming the coun
 ## Response cache (development only)
 
 Generation is not reproducible even at `temperature: 0`, so a decoder or scoring change is otherwise
-evaluated against a moving target. `response_cache_dir` stores each completion on disk and replays
-it, which freezes model output across runs and lets an interrupted run continue where it stopped.
+evaluated against a moving target. `llm_response_cache_dir` stores each completion on disk and
+replays it, which freezes model output across runs and lets an interrupted run continue where it
+stopped.
 
 `make dev-start` turns it on at `data/llm-response-cache`, because a development server parses the
 same document over and over and that is exactly when it pays. Set `LLM_RESPONSE_CACHE_DIR=` to turn
-it off for a run. Everywhere else it is off unless configured, per model:
+it off for a run. Everywhere else it is off unless configured, **once for the whole app** rather
+than per model — beside `download_dir` rather than inside a model's entry, because it is storage and
+not something that shapes an answer:
 
 ```yaml
-citation:
-  engine: 'llm'
-  response_cache_dir: 'data/llm-response-cache'   # empty (the default) is off
+llm_response_cache_dir: 'data/llm-response-cache'   # empty (the default) is off
 ```
 
-or by environment, which is applied after the profile is resolved and so wins over it:
+or by environment, applied after the profile is resolved and so winning over it:
 
 ```sh
-export SCIENCEBEAM_PARSER__MODELS__REFERENCE_SEGMENTER__RESPONSE_CACHE_DIR=data/llm-response-cache
-export SCIENCEBEAM_PARSER__MODELS__CITATION__RESPONSE_CACHE_DIR=data/llm-response-cache
+export SCIENCEBEAM_PARSER__LLM_RESPONSE_CACHE_DIR=data/llm-response-cache
 ```
 
-For the containerised parser, set the same variables to a path inside the container and bind-mount a
+Every LLM model shares that one directory. They cannot collide in it: an entry is keyed by the
+request as sent, which carries the prompt, the model id and the endpoint. There is deliberately no
+per-model setting, since the only thing it would buy is forcing one model live while another stays
+warm, which has not come up; a per-model override falling back to this one can be added if it does.
+
+For the containerised parser, set the same variable to a path inside the container and bind-mount a
 host directory onto it. That is left out of `docker-compose.override.yml` on purpose: compose
 creates a missing bind-mount source itself, and a `data/` owned by root in a fresh clone is worse
 than typing the mount.

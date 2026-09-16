@@ -164,3 +164,13 @@ def get_download_dir(config: Union[dict, AppConfig]) -> str:
     return os.path.expanduser(
         config.get('download_dir', DEFAULT_DOWNLOAD_DIR)
     )
+
+
+def get_llm_response_cache_dir(config: Union[dict, AppConfig]) -> str:
+    """Where the llm engine replays completions from, or empty for off.
+
+    One directory for every llm model rather than a setting per model: it is
+    storage rather than something that shapes an answer, and entries are keyed by
+    the request, so two models cannot collide in it.
+    """
+    return os.path.expanduser(config.get('llm_response_cache_dir', '') or '')
