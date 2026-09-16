@@ -56,6 +56,7 @@ class FakeClient:
     def __init__(self, content: str):
         self.content = content
         self.prompts: list = []
+        self.attempts: list = []
 
     def validate_configuration(self) -> None:
         pass
@@ -63,6 +64,7 @@ class FakeClient:
     def get_completion(self, prompt, response_schema, attempt=FIRST_ATTEMPT):
         assert response_schema['required'] == ['references']
         self.prompts.append(prompt)
+        self.attempts.append(attempt)
         return {'choices': [{'message': {'content': self.content}}]}
 
 

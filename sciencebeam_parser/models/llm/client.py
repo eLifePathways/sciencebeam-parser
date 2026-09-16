@@ -153,7 +153,7 @@ class LlmClient:
             self.config.response_shape
         )
 
-    def get_completion(
+    def get_completion(  # pylint: disable=unused-argument
         self,
         prompt: str,
         response_schema: Mapping[str, Any],

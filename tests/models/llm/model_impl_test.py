@@ -49,6 +49,7 @@ class FakeClient:
         self.contents = content if isinstance(content, list) else [content]
         self.error = error
         self.prompts: List[str] = []
+        self.attempts: List[Tuple[int, ...]] = []
         self.lock = threading.Lock()
 
     def validate_configuration(self) -> None:
@@ -61,6 +62,7 @@ class FakeClient:
         assert response_schema['type'] == 'object'
         with self.lock:
             self.prompts.append(prompt)
+            self.attempts.append(attempt)
             index = min(len(self.prompts) - 1, len(self.contents) - 1)
         if self.error:
             raise self.error
