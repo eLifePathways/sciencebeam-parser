@@ -2,11 +2,11 @@ import contextvars
 import json
 import threading
 from contextvars import ContextVar
-from typing import Any, List, Mapping, Optional
+from typing import Any, List, Mapping, Optional, Tuple
 
 import pytest
 
-from sciencebeam_parser.models.llm.client import LlmTruncatedResponseError
+from sciencebeam_parser.models.llm.client import FIRST_ATTEMPT, LlmTruncatedResponseError
 from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
 from sciencebeam_parser.models.llm.decode import (
     LlmInputTooLargeError,
@@ -49,16 +49,20 @@ class FakeClient:
         self.contents = content if isinstance(content, list) else [content]
         self.error = error
         self.prompts: List[str] = []
+        self.attempts: List[Tuple[int, ...]] = []
         self.lock = threading.Lock()
 
     def validate_configuration(self) -> None:
         if self.error:
             raise self.error
 
-    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]):
+    def get_completion(
+        self, prompt: str, response_schema: Mapping[str, Any], attempt=FIRST_ATTEMPT
+    ):
         assert response_schema['type'] == 'object'
         with self.lock:
             self.prompts.append(prompt)
+            self.attempts.append(attempt)
             index = min(len(self.prompts) - 1, len(self.contents) - 1)
         if self.error:
             raise self.error
@@ -282,13 +286,17 @@ class TruncatingClient:
         self.answers_up_to = answers_up_to
         self.prompts: List[str] = []
         self.batch_sizes: List[int] = []
+        self.attempts: List[Tuple[int, ...]] = []
 
     def validate_configuration(self) -> None:
         pass
 
-    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]):
+    def get_completion(
+        self, prompt: str, response_schema: Mapping[str, Any], attempt=FIRST_ATTEMPT
+    ):
         assert response_schema['type'] == 'object'
         self.prompts.append(prompt)
+        self.attempts.append(attempt)
         size = prompt.count('REFERENCE ') - EXAMPLES_IN_CITATION_PROMPT
         self.batch_sizes.append(size)
         if size > self.answers_up_to:
@@ -651,7 +659,7 @@ class TestCitationConcurrency:
         lock = threading.Lock()
 
         class ContextObservingClient(FakeClient):
-            def get_completion(self, prompt: str, response_schema):
+            def get_completion(self, prompt: str, response_schema, attempt=FIRST_ATTEMPT):
                 with lock:
                     seen.append(current_document.get('missing'))
                 return super().get_completion(prompt, response_schema)
@@ -776,6 +784,7 @@ class UsageClient:
         self.completion_tokens = completion_tokens
         self.lock = threading.Lock()
         self.prompts: List[str] = []
+        self.attempts: List[Tuple[int, ...]] = []
         self.barrier = (
             threading.Barrier(concurrent_calls, timeout=5)
             if concurrent_calls else None
@@ -784,8 +793,11 @@ class UsageClient:
     def validate_configuration(self) -> None:
         pass
 
-    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]):
+    def get_completion(
+        self, prompt: str, response_schema: Mapping[str, Any], attempt=FIRST_ATTEMPT
+    ):
         assert response_schema['type'] == 'object'
+        self.attempts.append(attempt)
         if self.barrier is not None:
             self.barrier.wait()
         with self.lock:

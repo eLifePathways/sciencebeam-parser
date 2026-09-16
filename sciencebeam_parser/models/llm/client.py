@@ -1,7 +1,7 @@
 import logging
 import random
 import time
-from typing import Any, Dict, Mapping, Optional, Protocol
+from typing import Any, Dict, Mapping, Optional, Protocol, Tuple
 
 import httpx
 
@@ -70,14 +70,54 @@ class LlmRequestError(RuntimeError):
     pass
 
 
+# Where in the engine's retry logic a call sits: `(0,)` is the first ask,
+# `(1,)` the same question after an unparseable answer, `(0, 1)` a re-ask for
+# the references a batch left out. Only the response cache reads it, and it does
+# so because the engine issues byte-identical requests on purpose and expects
+# different answers back.
+FIRST_ATTEMPT: Tuple[int, ...] = (0,)
+
+
 class LlmCompletionClient(Protocol):
     def validate_configuration(self) -> None:
         ...
 
     def get_completion(
-        self, prompt: str, response_schema: Mapping[str, Any]
+        self,
+        prompt: str,
+        response_schema: Mapping[str, Any],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
     ) -> Mapping[str, Any]:
         ...
+
+
+def get_request_body(
+    config: LlmEngineConfig, prompt: str, response_schema: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """Every parameter that can change an answer, in the form it is sent.
+
+    Module level rather than a method because the response cache keys on it, and
+    a second assembly of the same parameters would drift from this one.
+    """
+    body: Dict[str, Any] = {
+        'model': config.model,
+        'temperature': config.temperature,
+        'max_tokens': config.max_output_tokens,
+        'messages': [{'role': 'user', 'content': prompt}],
+        'response_format': {
+            'type': 'json_schema',
+            'json_schema': {
+                'name': 'sciencebeam_labels',
+                'strict': True,
+                'schema': response_schema,
+            },
+        },
+        'provider': config.provider_routing,
+        **config.extra_body,
+    }
+    if config.reasoning == 'off':
+        body['reasoning'] = {'enabled': False}
+    return body
 
 
 class LlmClient:
@@ -86,27 +126,6 @@ class LlmClient:
 
     def _headers(self) -> Dict[str, str]:
         return {'Authorization': f'Bearer {get_api_key()}'}
-
-    def _request_body(self, prompt: str, response_schema: Mapping[str, Any]) -> Dict[str, Any]:
-        body: Dict[str, Any] = {
-            'model': self.config.model,
-            'temperature': self.config.temperature,
-            'max_tokens': self.config.max_output_tokens,
-            'messages': [{'role': 'user', 'content': prompt}],
-            'response_format': {
-                'type': 'json_schema',
-                'json_schema': {
-                    'name': 'sciencebeam_labels',
-                    'strict': True,
-                    'schema': response_schema,
-                },
-            },
-            'provider': self.config.provider_routing,
-            **self.config.extra_body,
-        }
-        if self.config.reasoning == 'off':
-            body['reasoning'] = {'enabled': False}
-        return body
 
     def validate_configuration(self) -> None:
         """Fails at load rather than at first request, and spends no tokens."""
@@ -134,14 +153,23 @@ class LlmClient:
             self.config.response_shape
         )
 
-    def get_completion(self, prompt: str, response_schema: Mapping[str, Any]) -> Mapping[str, Any]:
+    def get_completion(  # pylint: disable=unused-argument
+        self,
+        prompt: str,
+        response_schema: Mapping[str, Any],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
+    ) -> Mapping[str, Any]:
+        # `attempt` places the call in the engine's retry logic, which is not the
+        # transport's retry loop below and is of no use to it. It is on the seam
+        # because the cache wrapping this client needs it, and both are one
+        # Protocol.
         return self._post_with_retry(prompt, response_schema)
 
     def _post_with_retry(
         self, prompt: str, response_schema: Mapping[str, Any]
     ) -> Mapping[str, Any]:
         url = f'{self.config.endpoint.rstrip("/")}/chat/completions'
-        body = self._request_body(prompt, response_schema)
+        body = get_request_body(self.config, prompt, response_schema)
         last_error = ''
         retry_status: Optional[int] = None
         retry_after: Optional[float] = None

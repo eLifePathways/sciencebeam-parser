@@ -73,8 +73,16 @@ def _fmt_credits(value: Optional[float], places: int = 4) -> str:
     return f"{value:.{places}f}" if value is not None else "—"
 
 
+def _all_calls(usage: Optional[Dict[str, Any]]) -> int:
+    """Every completion the engine made, replayed ones included. The token and
+    credit figures beside it are what was *spent*, which excludes them."""
+    if not usage:
+        return 0
+    return (usage.get("calls") or 0) + ((usage.get("replayed") or {}).get("calls") or 0)
+
+
 def _usage_row(label: str, usage: Optional[Dict[str, Any]]) -> str:
-    if not usage or not usage.get("calls"):
+    if not usage or not _all_calls(usage):
         attempted = (usage or {}).get("n_attempted") or 0
         docs = f"0 / {attempted}" if attempted else "—"
         return f"| {label} | {docs} | " + " | ".join(["—"] * 7) + " |"
@@ -82,7 +90,7 @@ def _usage_row(label: str, usage: Optional[Dict[str, Any]]) -> str:
     cost = usage.get("cost_credits")
     cells = [
         f"{recorded} / {usage.get('n_attempted') or 0}",
-        _fmt_count(usage.get("calls")),
+        _fmt_count(_all_calls(usage)),
         _fmt_count(usage.get("input_tokens")),
         _fmt_count(usage.get("output_tokens")),
         _fmt_count((usage.get("output_tokens") or 0) / recorded if recorded else None),
@@ -121,6 +129,35 @@ def _cached_input_note(labeled_usage: List[Tuple[str, Optional[dict]]]) -> str:
     )
 
 
+def _replayed_note(labeled_usage: List[Tuple[str, Optional[dict]]]) -> str:
+    """Only where it happened, so a cold report is byte-for-byte unchanged.
+
+    The credits named are what those responses cost when they were generated, not
+    a forecast of a cold run: prices and providers move, and generation is not
+    reproducible, so a fresh run would not make exactly the same calls.
+    """
+    replayed = [(usage or {}).get("replayed") or {} for _, usage in labeled_usage]
+    replayed_calls = sum(entry.get("calls") or 0 for entry in replayed)
+    if not replayed_calls:
+        return ""
+    total_calls = sum(_all_calls(usage) for _, usage in labeled_usage)
+    costs = [
+        entry["cost_credits"] for entry in replayed
+        if entry.get("cost_credits") is not None
+    ]
+    when_generated = (
+        f" Those responses cost {sum(costs):.4f} credits when they were generated,"
+        " at whatever prices and providers applied then, which is a record of one"
+        " cold run rather than a forecast of another."
+        if costs else ""
+    )
+    return (
+        f" Of {total_calls:,} calls, {replayed_calls:,} were replayed from the"
+        " on-disk response cache and spent nothing, so the tokens and credits here"
+        f" are what these runs spent rather than what a cold run would cost.{when_generated}"
+    )
+
+
 def _render_usage_table(
     labeled_summaries: List[Tuple[str, dict]],
     corpora: List[str],
@@ -131,11 +168,11 @@ def _render_usage_table(
         (label, usage_for_corpora(summary, corpora))
         for label, summary in labeled_summaries
     ]
-    if not any(usage and usage.get("calls") for _, usage in labeled_usage):
+    if not any(_all_calls(usage) for _, usage in labeled_usage):
         return []
     by_task_lines = _render_by_task_lines(labeled_usage)
     return [
-        note + _cached_input_note(labeled_usage),
+        note + _cached_input_note(labeled_usage) + _replayed_note(labeled_usage),
         "",
         "| " + " | ".join(USAGE_HEADERS) + " |",
         "|" + "|".join(["---"] * len(USAGE_HEADERS)) + "|",

@@ -7,6 +7,7 @@ from sciencebeam_parser.utils.telemetry import (
     get_trace_id,
     get_tracer,
     is_configured,
+    set_current_span_attribute,
     span
 )
 
@@ -71,6 +72,18 @@ class TestSpan:
         with span('process_document', {'sciencebeam.document.name': 'a.pdf'}) as started:
             started.set_attribute('anything', 1)
         assert type(started).__name__ == 'NoOpSpan'
+
+
+class TestSetCurrentSpanAttribute:
+    @pytest.mark.usefixtures('no_endpoint')
+    def test_should_be_a_no_op_without_an_endpoint(self):
+        set_current_span_attribute('sciencebeam.llm.cache_hit', True)
+
+    def test_should_be_a_no_op_when_no_span_is_open(self, monkeypatch: pytest.MonkeyPatch):
+        # The response cache annotates whatever call it is inside, and a caller
+        # that opened no span is not a reason to fail the request.
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:6006')
+        set_current_span_attribute('sciencebeam.llm.cache_hit', True)
 
 
 class TestGetTraceId:

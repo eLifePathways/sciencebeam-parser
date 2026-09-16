@@ -61,7 +61,8 @@ Also accepted: `endpoint` (any OpenAI-compatible base URL, so a self-hosted vLLM
 `temperature`, `timeout_seconds`, `max_output_tokens`, `max_attempts`, `extra_body`,
 `max_references_per_request`, `record_trace_content`, `warn_input_lines`, `max_input_lines`,
 `unanswered_reference_raises`, `max_missing_reference_retries`,
-`max_malformed_response_retries`.
+`max_malformed_response_retries`. The response cache is configured for the whole app rather than per
+model — see [Response cache](#response-cache-development-only).
 
 ### What the segmenter is told to skip
 
@@ -228,7 +229,26 @@ reference list and says nothing about the ceiling.
 derived from a rate table here, so whatever the provider did or did not discount is already in the
 number. `cached_input_tokens` is why two runs over the same input can report the same tokens and
 different credits, and the benchmark report notes it where it is non-zero. This is the provider's
-own prefix caching, unrelated to any response cache of ours.
+own prefix caching, unrelated to the response cache below.
+
+A call the response cache replayed spent nothing now, so it is counted apart rather than added in —
+otherwise a warm run would report the original run's credits as its own. The totals above stay
+**what this run spent**, and a `replayed` block says what the replayed calls were and what they cost
+when they were generated:
+
+```json
+{
+  "calls": 2,
+  "cost_credits": 0.0018,
+  "replayed": {"calls": 6, "input_tokens": 161310, "output_tokens": 2514, "cost_credits": 0.0165}
+}
+```
+
+That figure is a record of one cold run, not a forecast of another: prices and providers move, and
+generation is not reproducible, so a fresh run would not make exactly the same calls. The block is
+absent when nothing was replayed, so a cold run's header, `summary.json` and report are unchanged.
+The report's `Calls` column counts every call the engine made, replayed ones included, while the
+token and credit columns are what was spent; a note beside the table gives the split.
 
 A response the engine could not use has still been paid for, so a request that fails reports what it
 spent before failing: the header is on the 500 as well as the 200. A request that produced no
@@ -246,6 +266,91 @@ every span to make an oversized region visible.
 
 Above `warn_input_lines` (default 300) the engine logs a warning naming the count. `max_input_lines`
 (default 0, off) raises instead, for a run where failing fast is wanted.
+
+## Response cache (development only)
+
+Generation is not reproducible even at `temperature: 0`, so a decoder or scoring change is otherwise
+evaluated against a moving target. `llm_response_cache_dir` stores each completion on disk and
+replays it, which freezes model output across runs and lets an interrupted run continue where it
+stopped.
+
+`make dev-start` turns it on at `data/llm-response-cache`, because a development server parses the
+same document over and over and that is exactly when it pays. Set `LLM_RESPONSE_CACHE_DIR=` to turn
+it off for a run. Everywhere else it is off unless configured, **once for the whole app** rather
+than per model — beside `download_dir` rather than inside a model's entry, because it is storage and
+not something that shapes an answer:
+
+```yaml
+llm_response_cache_dir: 'data/llm-response-cache'   # shipped unset, which is off
+```
+
+or by environment, applied after the profile is resolved and so winning over it:
+
+```sh
+export SCIENCEBEAM_PARSER__LLM_RESPONSE_CACHE_DIR=data/llm-response-cache
+```
+
+Setting it to nothing turns it off by either route: an empty environment value parses to null,
+which is what the shipped config already holds.
+
+Every LLM model shares that one directory. They cannot collide in it: an entry is keyed by the
+request as sent, which carries the prompt, the model id and the endpoint. There is deliberately no
+per-model setting, since the only thing it would buy is forcing one model live while another stays
+warm, which has not come up; a per-model override falling back to this one can be added if it does.
+
+For the containerised parser, set the same variable to a path inside the container and bind-mount a
+host directory onto it. That is left out of `docker-compose.override.yml` on purpose: compose
+creates a missing bind-mount source itself, and a `data/` owned by root in a fresh clone is worse
+than typing the mount.
+
+**The directory holds document text** — a prompt is the manuscript region it was asked about, and a
+`values` response is field values copied out of it. Keep it under `data/`, which is gitignored and
+shared between worktrees, so a branch made to fix a decoder starts warm. Do not point it at
+`download_dir`, which holds public model artifacts and has a different lifetime. Do not enable it in
+CI: those calls are meant to be live, and a stored response there would hide a failure.
+
+Entries are keyed by the request as sent, so a change to the prompt version, model, temperature,
+output limit, provider routing, reasoning or `extra_body` is a miss rather than a stale hit. They
+are grouped by task, so the directory can be read:
+
+```text
+data/llm-response-cache/
+  citation/4d/4d2e3158…/{request.json, meta.json, 000.json}
+  reference_segmenter/66/663ece5b…/{request.json, meta.json, 000.json}
+```
+
+`request.json` is the body that was sent. `meta.json` is what the engine knew and the body does not
+carry — `task`, `prompt_version`, `response_shape`, `model`, `provider`, `endpoint` — because the
+body holds the rendered prompt rather than the version it came from, and `model` is one string for
+two tasks served by one model. It is **configuration only, so it is the one file here with no
+document text in it**, which makes `grep -l '"prompt_version": "values-v2"'` a safe way to find
+entries left behind by a prompt you have moved on from.
+
+Grouping by task is also how one model's entries are cleared on their own: delete
+`<cache>/citation/` to force that model live while the other stays warm. The grouping is for
+reading and clearing — the key alone is already unique, and two tasks cannot produce one request
+body because the prompt differs. Nothing
+expires and nothing is evicted; clearing the cache is deleting the directory. The setting that
+surprises is `max_references_per_request` — changing it rewrites every prompt, so the whole cache
+goes cold.
+
+Only clean responses are stored, so a 429 or a connection error is still retried live. A response
+that fails to decode is stored too, since that body is what a decoder fix has to be developed
+against.
+
+Each entry is named for where the engine was when it asked, not for how many times it has asked
+before: `000` is the first ask, `001` the same question again after an unparseable answer, and
+`000-001` a re-ask for the references a batch left out. That is what lets the engine's own retries
+keep working with the cache on — they send byte-identical requests on purpose and need a different
+answer, so a plain key-to-response cache would hand back the answer that already failed and turn a
+run that recovers into one that does not. It also means a second request for the same document
+replays, whether or not the server has been restarted.
+
+Each call carries `sciencebeam.llm.cache_hit` on its span, so a trace shows which answers were
+replayed; a replayed call is reported apart from what the run spent, as [What a request
+spent](#what-a-request-spent) describes; and the first replay in a process logs that the cache is
+warm — a run that was
+accidentally warm is cheaper than a cold one and should not be reported as its cost.
 
 ## Choosing a provider
 

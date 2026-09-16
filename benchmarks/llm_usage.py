@@ -10,39 +10,63 @@ SUM_KEYS = (
 MAX_KEYS = ("peak_output_tokens",)
 UNION_KEYS = ("models", "providers")
 COUNT_KEYS = ("n_attempted", "n_with_usage")
+# Same shape as an entry, so it combines the same way.
+NESTED_KEYS = ("replayed",)
 
 
-def combine_usage(usage_entries: Iterable[dict]) -> Dict[str, Any]:
-    """Sum usage entries, keeping the peak a peak and cost absent where unstated."""
-    combined: Dict[str, Any] = {key: 0 for key in SUM_KEYS + MAX_KEYS}
-    cost: Optional[float] = None
+def _combine_cost(entries: List[dict]) -> Dict[str, Any]:
+    """Absent rather than zero: a self-hosted endpoint reports no cost, and a zero
+    would read as free."""
+    costs = [
+        float(entry["cost_credits"]) for entry in entries
+        if entry.get("cost_credits") is not None
+    ]
+    return {"cost_credits": sum(costs)} if costs else {}
+
+
+def _combine_unions(entries: List[dict]) -> Dict[str, Any]:
     union: Dict[str, List[str]] = {key: [] for key in UNION_KEYS}
-    by_task: Dict[str, List[dict]] = {}
-
-    for entry in usage_entries:
-        for key in SUM_KEYS:
-            combined[key] += entry.get(key) or 0
-        for key in MAX_KEYS:
-            combined[key] = max(combined[key], entry.get(key) or 0)
-        if entry.get("cost_credits") is not None:
-            cost = (cost or 0.0) + float(entry["cost_credits"])
+    for entry in entries:
         for key in UNION_KEYS:
             for value in entry.get(key) or []:
                 if value not in union[key]:
                     union[key].append(value)
-        for task, task_entry in (entry.get("by_task") or {}).items():
-            by_task.setdefault(task, []).append(task_entry)
+    return {key: values for key, values in union.items() if values}
 
-    if cost is not None:
-        combined["cost_credits"] = cost
-    for key in UNION_KEYS:
-        if union[key]:
-            combined[key] = union[key]
-    if by_task:
-        combined["by_task"] = {
-            task: combine_usage(task_entries)
-            for task, task_entries in sorted(by_task.items())
-        }
+
+def _combine_grouped(entries: List[dict], key: str) -> Dict[str, Any]:
+    """`by_task` holds one sub-entry per task, combined the same way as the whole."""
+    grouped: Dict[str, List[dict]] = {}
+    for entry in entries:
+        for name, sub_entry in (entry.get(key) or {}).items():
+            grouped.setdefault(name, []).append(sub_entry)
+    if not grouped:
+        return {}
+    return {key: {
+        name: combine_usage(sub_entries)
+        for name, sub_entries in sorted(grouped.items())
+    }}
+
+
+def _combine_nested(entries: List[dict], key: str) -> Dict[str, Any]:
+    """`replayed` has the same shape as an entry, so it combines the same way."""
+    nested = [entry[key] for entry in entries if entry.get(key)]
+    return {key: combine_usage(nested)} if nested else {}
+
+
+def combine_usage(usage_entries: Iterable[dict]) -> Dict[str, Any]:
+    """Sum usage entries, keeping the peak a peak and cost absent where unstated."""
+    entries = list(usage_entries)
+    combined: Dict[str, Any] = {
+        key: sum(entry.get(key) or 0 for entry in entries) for key in SUM_KEYS
+    }
+    for key in MAX_KEYS:
+        combined[key] = max((entry.get(key) or 0 for entry in entries), default=0)
+    combined.update(_combine_cost(entries))
+    combined.update(_combine_unions(entries))
+    for key in NESTED_KEYS:
+        combined.update(_combine_nested(entries, key))
+    combined.update(_combine_grouped(entries, "by_task"))
     return combined
 
 

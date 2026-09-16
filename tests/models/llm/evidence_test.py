@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from sciencebeam_parser.models.llm.client import FIRST_ATTEMPT
 from sciencebeam_parser.models.llm.config import LlmEngineConfig
 from sciencebeam_parser.models.llm.decode import (
     LlmResponseError,
@@ -55,13 +56,15 @@ class FakeClient:
     def __init__(self, content: str):
         self.content = content
         self.prompts: list = []
+        self.attempts: list = []
 
     def validate_configuration(self) -> None:
         pass
 
-    def get_completion(self, prompt, response_schema):
+    def get_completion(self, prompt, response_schema, attempt=FIRST_ATTEMPT):
         assert response_schema['required'] == ['references']
         self.prompts.append(prompt)
+        self.attempts.append(attempt)
         return {'choices': [{'message': {'content': self.content}}]}
 
 

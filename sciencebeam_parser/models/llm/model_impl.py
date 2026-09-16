@@ -3,7 +3,9 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from typing import List, Optional, Tuple
 
+from sciencebeam_parser.models.llm.cache import CachingLlmClient, get_response_cache
 from sciencebeam_parser.models.llm.client import (
+    FIRST_ATTEMPT,
     LlmClient,
     LlmCompletionClient,
     LlmRequestError,
@@ -61,7 +63,8 @@ class LlmModelImpl(ModelImpl):
     def __init__(
         self,
         config: LlmEngineConfig,
-        client: Optional[LlmCompletionClient] = None
+        client: Optional[LlmCompletionClient] = None,
+        response_cache_dir: Optional[str] = None
     ):
         if config.response_shape not in SUPPORTED_RESPONSE_SHAPES:
             raise LlmConfigError(
@@ -70,6 +73,10 @@ class LlmModelImpl(ModelImpl):
             )
         self.config = config
         self.client = client if client is not None else LlmClient(config)
+        if response_cache_dir:
+            self.client = CachingLlmClient(
+                config, self.client, get_response_cache(response_cache_dir)
+            )
         self.labels = (
             get_citation_labels() if config.response_shape == VALUES_SHAPE else []
         )
@@ -176,7 +183,7 @@ class LlmModelImpl(ModelImpl):
         try:
             return self._retrying_on_malformed(
                 f'{len(token_lists)}-reference',
-                lambda: self._predict_labels_from_values(token_lists)
+                lambda attempt: self._predict_labels_from_values(token_lists, attempt)
             )
         except LlmTruncatedResponseError:
             if len(token_lists) <= 1:
@@ -199,11 +206,14 @@ class LlmModelImpl(ModelImpl):
         request often parses where the first did not. Bounded, and confined to
         parse failures: a strictness setting that fires is a decision, and
         repeating the request would spend tokens on the same answer.
+
+        `issue` is given the attempt number, which is what tells a repeat of the
+        same request apart from the call before it.
         """
         attempts = max(0, self.config.max_malformed_response_retries) + 1
         for attempt in range(attempts):
             try:
-                return issue()
+                return issue(attempt)
             except LlmMalformedResponseError as exc:
                 if attempt + 1 >= attempts:
                     raise
@@ -307,8 +317,9 @@ class LlmModelImpl(ModelImpl):
         schema = EVIDENCE_RESPONSE_SCHEMA if is_evidence else LINES_RESPONSE_SCHEMA
         return self._retrying_on_malformed(
             f'{max(line_numbers) + 1}-line',
-            lambda: self._label_sequence_once(
-                prompt, schema, tokens, line_numbers, line_status_values, is_evidence
+            lambda attempt: self._label_sequence_once(
+                prompt, schema, tokens, line_numbers, line_status_values, is_evidence,
+                (attempt,)
             )
         )
 
@@ -319,10 +330,11 @@ class LlmModelImpl(ModelImpl):
         tokens: List[str],
         line_numbers: List[int],
         line_status_values: List[str],
-        is_evidence: bool
+        is_evidence: bool,
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
     ) -> List[Tuple[str, str]]:
         with llm_span(self.config, prompt, self.config.record_trace_content) as span:
-            response_json = self.client.get_completion(prompt, schema)
+            response_json = self.client.get_completion(prompt, schema, attempt)
             record_llm_usage(self.config.task, response_json)
             span.set_attribute('sciencebeam.input_lines', max(line_numbers) + 1)
             span.set_attribute('sciencebeam.input_tokens', len(tokens))
@@ -350,7 +362,7 @@ class LlmModelImpl(ModelImpl):
         return labeled
 
     def _predict_labels_from_values(
-        self, token_lists: List[List[str]]
+        self, token_lists: List[List[str]], malformed_attempt: int = 0
     ) -> List[List[Tuple[str, str]]]:
         """One call per batch, then a smaller call for whatever it left out.
 
@@ -359,8 +371,14 @@ class LlmModelImpl(ModelImpl):
         the missing ones, rather than shrinking every batch, keeps the batch size
         a throughput setting: a smaller batch means more batches, and it is the
         tail of each that goes missing.
+
+        A batch of one that goes missing re-asks a request identical to the one
+        before it, so each call here is numbered within the malformed attempt it
+        belongs to.
         """
-        labeled, missing = self._predict_labels_for_one_batch(token_lists)
+        labeled, missing = self._predict_labels_for_one_batch(
+            token_lists, (malformed_attempt, 0)
+        )
         for attempt in range(self.config.max_missing_reference_retries):
             if not missing:
                 break
@@ -370,7 +388,8 @@ class LlmModelImpl(ModelImpl):
                 self.config.task, len(missing), attempt + 1
             )
             retried, still_missing_in_retry = self._predict_labels_for_one_batch(
-                [token_lists[index] for index in missing]
+                [token_lists[index] for index in missing],
+                (malformed_attempt, attempt + 1)
             )
             recovered = [
                 index for position, index in enumerate(missing)
@@ -387,7 +406,9 @@ class LlmModelImpl(ModelImpl):
         return labeled
 
     def _predict_labels_for_one_batch(
-        self, token_lists: List[List[str]]
+        self,
+        token_lists: List[List[str]],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
     ) -> Tuple[List[List[Tuple[str, str]]], List[int]]:
         token_count = sum(len(tokens) for tokens in token_lists)
         prompt = get_prompt(
@@ -397,7 +418,7 @@ class LlmModelImpl(ModelImpl):
         )
         with llm_span(self.config, prompt, self.config.record_trace_content) as span:
             response_json = self.client.get_completion(
-                prompt, get_batched_values_response_schema(self.labels)
+                prompt, get_batched_values_response_schema(self.labels), attempt
             )
             record_llm_usage(self.config.task, response_json)
             span.set_attribute('sciencebeam.input_tokens', token_count)

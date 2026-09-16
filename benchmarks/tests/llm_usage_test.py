@@ -89,6 +89,30 @@ class TestCombineUsage:
         assert "cost_credits" not in combined
 
 
+class TestCombineReplayedUsage:
+    def test_should_combine_the_replayed_block_like_any_other_entry(self):
+        replayed = _usage(calls=2, input_tokens=200, output_tokens=100, cost=0.002)
+        combined = combine_usage([
+            {**_usage(), "replayed": replayed},
+            {**_usage(), "replayed": replayed},
+        ])
+        assert combined["calls"] == 2
+        assert combined["replayed"]["calls"] == 4
+        assert combined["replayed"]["input_tokens"] == 400
+        assert combined["replayed"]["cost_credits"] == 0.004
+
+    def test_should_omit_it_where_nothing_was_replayed(self):
+        assert "replayed" not in combine_usage([_usage(), _usage()])
+
+    def test_should_combine_a_run_that_only_partly_replayed(self):
+        combined = combine_usage([
+            {**_usage(), "replayed": _usage(calls=3, cost=0.003)},
+            _usage(),
+        ])
+        assert combined["calls"] == 2
+        assert combined["replayed"]["calls"] == 3
+
+
 class TestAggregateLlmUsage:
     def test_should_be_empty_when_no_entry_carries_usage(self):
         entries = [_manifest_entry(), _manifest_entry(record_id="doc2")]
