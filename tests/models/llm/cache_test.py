@@ -1,6 +1,7 @@
 import contextvars
 import json
 import os
+import shutil
 import threading
 from dataclasses import fields
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -8,6 +9,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import pytest
 
 from sciencebeam_parser.models.llm.cache import (
+    META_FILENAME,
     REQUEST_FILENAME,
     CachingLlmClient,
     LlmResponseCache,
@@ -59,6 +61,14 @@ def get_response(content: str) -> Dict[str, Any]:
         'provider': 'venice',
         'usage': {'prompt_tokens': 10, 'completion_tokens': 20},
     }
+
+
+def get_stored_responses(cache_dir) -> List[Any]:
+    """The stored answers, not the two once-per-key files beside them."""
+    return sorted(
+        path for path in cache_dir.rglob('*.json')
+        if path.name not in (REQUEST_FILENAME, META_FILENAME)
+    )
 
 
 def get_replayed_response(content: str) -> Dict[str, Any]:
@@ -266,10 +276,7 @@ class TestCachingLlmClient:
         client.get_completion(PROMPT, SCHEMA, (0,))
         client.get_completion(PROMPT, SCHEMA, (1,))
         client.get_completion(PROMPT, SCHEMA, (0, 1))
-        names = sorted(
-            path.name for path in tmp_path.rglob('*.json')
-            if path.name != REQUEST_FILENAME
-        )
+        names = [path.name for path in get_stored_responses(tmp_path)]
         assert names == ['000-001.json', '000.json', '001.json']
 
     def test_should_store_nothing_when_the_request_fails_outright(self, tmp_path):
@@ -302,9 +309,7 @@ class TestCachingLlmClient:
     def test_should_ask_live_when_an_entry_is_unreadable(self, tmp_path):
         config = get_config()
         get_caching_client(config, FakeClient(), tmp_path).get_completion(PROMPT, SCHEMA)
-        entry = next(
-            path for path in tmp_path.rglob('*.json') if path.name != REQUEST_FILENAME
-        )
+        entry = get_stored_responses(tmp_path)[0]
         entry.write_text('{ truncated', encoding='utf-8')
         delegate = FakeClient(['{"starts": [1]}'])
         client = get_caching_client(config, delegate, tmp_path)
@@ -317,10 +322,62 @@ class TestCachingLlmClient:
         client = get_caching_client(config, FakeClient(), tmp_path)
         client.get_completion(PROMPT, SCHEMA)
         client.get_completion(PROMPT, SCHEMA)
-        entry = next(
-            path for path in tmp_path.rglob('*.json') if path.name != REQUEST_FILENAME
-        )
+        entry = get_stored_responses(tmp_path)[0]
         assert REPLAYED_RESPONSE_KEY not in json.loads(entry.read_text(encoding='utf-8'))
+
+    def test_should_record_which_model_asked(self, tmp_path):
+        # The body carries the rendered prompt but not the version it came from,
+        # and `model` is one string for two tasks, so neither says which sequence
+        # model an entry belongs to.
+        config = get_config()
+        get_caching_client(config, FakeClient(), tmp_path).get_completion(PROMPT, SCHEMA)
+        meta_paths = list(tmp_path.rglob(META_FILENAME))
+        assert len(meta_paths) == 1
+        assert json.loads(meta_paths[0].read_text(encoding='utf-8')) == {
+            'task': 'reference_segmenter',
+            'prompt_version': 'lines-v1',
+            'response_shape': 'lines',
+            'model': 'qwen/qwen3.5-9b',
+            'provider': None,
+            'endpoint': config.endpoint,
+        }
+
+    def test_should_keep_document_text_out_of_the_meta_file(self, tmp_path):
+        # The one file in the cache that can be read without reading a manuscript.
+        get_caching_client(get_config(), FakeClient(), tmp_path).get_completion(
+            'a prompt holding the manuscript', SCHEMA
+        )
+        meta_text = next(tmp_path.rglob(META_FILENAME)).read_text(encoding='utf-8')
+        assert 'manuscript' not in meta_text
+
+    def test_should_group_entries_by_task(self, tmp_path):
+        get_caching_client(get_config(), FakeClient(), tmp_path).get_completion(
+            PROMPT, SCHEMA
+        )
+        get_caching_client(
+            get_config(task='citation', response_shape='values'),
+            FakeClient(), tmp_path
+        ).get_completion('other prompt', SCHEMA)
+        assert sorted(path.name for path in tmp_path.iterdir()) == [
+            'citation', 'reference_segmenter'
+        ]
+
+    def test_should_let_one_task_be_cleared_on_its_own(self, tmp_path):
+        # The per-model control that is deliberately not a config setting.
+        config = get_config()
+        get_caching_client(config, FakeClient(), tmp_path).get_completion(PROMPT, SCHEMA)
+        shutil.rmtree(tmp_path / 'reference_segmenter')
+        delegate = FakeClient()
+        get_caching_client(config, delegate, tmp_path).get_completion(PROMPT, SCHEMA)
+        assert delegate.call_count == 1
+
+    def test_should_not_let_a_task_name_escape_the_cache_directory(self, tmp_path):
+        cache_dir = tmp_path / 'cache'
+        get_caching_client(
+            get_config(task='../../escaped'), FakeClient(), cache_dir
+        ).get_completion(PROMPT, SCHEMA)
+        assert get_stored_responses(cache_dir)
+        assert not list(tmp_path.glob('escaped'))
 
     def test_should_pass_validation_through(self, tmp_path):
         class RaisingClient(NeverCalledClient):
@@ -360,9 +417,7 @@ class TestConcurrentMisses:
             thread.join(timeout=10)
 
         assert len(results) == 4
-        entries = [
-            path for path in tmp_path.rglob('*.json') if path.name != REQUEST_FILENAME
-        ]
+        entries = get_stored_responses(tmp_path)
         assert len(entries) == 1
         assert json.loads(entries[0].read_text(encoding='utf-8'))
         assert not list(tmp_path.rglob('.tmp-*'))
@@ -407,8 +462,7 @@ class TestLlmModelImplWithACache:
         ).predict_labels([TOKENS], [feature_rows()])
         stored = [
             json.loads(path.read_text(encoding='utf-8'))
-            for path in sorted(tmp_path.rglob('*.json'))
-            if path.name != REQUEST_FILENAME
+            for path in get_stored_responses(tmp_path)
         ]
         contents = [entry['choices'][0]['message']['content'] for entry in stored]
         assert 'not json at all' in contents
@@ -440,9 +494,7 @@ class TestLlmModelImplWithACache:
         LlmModelImpl(config, client=FakeClient(), response_cache_dir=str(tmp_path)).predict_labels(
             [TOKENS], [feature_rows()]
         )
-        entry = next(
-            path for path in tmp_path.rglob('*.json') if path.name != REQUEST_FILENAME
-        )
+        entry = get_stored_responses(tmp_path)[0]
         stored = json.loads(entry.read_text(encoding='utf-8'))
         assert stored['provider'] == 'venice'
         assert stored['usage']['completion_tokens'] == 20

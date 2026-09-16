@@ -310,7 +310,26 @@ shared between worktrees, so a branch made to fix a decoder starts warm. Do not 
 CI: those calls are meant to be live, and a stored response there would hide a failure.
 
 Entries are keyed by the request as sent, so a change to the prompt version, model, temperature,
-output limit, provider routing, reasoning or `extra_body` is a miss rather than a stale hit. Nothing
+output limit, provider routing, reasoning or `extra_body` is a miss rather than a stale hit. They
+are grouped by task, so the directory can be read:
+
+```text
+data/llm-response-cache/
+  citation/4d/4d2e3158…/{request.json, meta.json, 000.json}
+  reference_segmenter/66/663ece5b…/{request.json, meta.json, 000.json}
+```
+
+`request.json` is the body that was sent. `meta.json` is what the engine knew and the body does not
+carry — `task`, `prompt_version`, `response_shape`, `model`, `provider`, `endpoint` — because the
+body holds the rendered prompt rather than the version it came from, and `model` is one string for
+two tasks served by one model. It is **configuration only, so it is the one file here with no
+document text in it**, which makes `grep -l '"prompt_version": "values-v2"'` a safe way to find
+entries left behind by a prompt you have moved on from.
+
+Grouping by task is also how one model's entries are cleared on their own: delete
+`<cache>/citation/` to force that model live while the other stays warm. The grouping is for
+reading and clearing — the key alone is already unique, and two tasks cannot produce one request
+body because the prompt differs. Nothing
 expires and nothing is evicted; clearing the cache is deleting the directory. The setting that
 surprises is `max_references_per_request` — changing it rewrites every prompt, so the whole cache
 goes cold.

@@ -2,10 +2,12 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from sciencebeam_parser.models.llm.client import (
     FIRST_ATTEMPT,
@@ -22,6 +24,51 @@ LOGGER = logging.getLogger(__name__)
 CACHE_HIT_ATTRIBUTE = 'sciencebeam.llm.cache_hit'
 
 REQUEST_FILENAME = 'request.json'
+
+META_FILENAME = 'meta.json'
+
+UNSAFE_TASK_CHARACTERS = re.compile(r'[^A-Za-z0-9_.-]')
+
+
+def get_cache_meta(config: LlmEngineConfig) -> Dict[str, Any]:
+    """What the engine knew and the request body does not carry.
+
+    The body holds the rendered prompt but not the version it came from, and
+    `model` is the same string for two tasks served by one model, so neither says
+    which sequence model an entry belongs to. Configuration only, which makes
+    this the one file in the cache with no document text in it.
+    """
+    return {
+        'task': config.task,
+        'prompt_version': config.prompt_version,
+        'response_shape': config.response_shape,
+        'model': config.model,
+        'provider': config.provider,
+        'endpoint': config.endpoint,
+    }
+
+
+def get_task_dir_name(task: str) -> str:
+    """A task names a directory, so it may not reach outside the cache.
+
+    The config is our own, but this path is created rather than read, and a
+    traversal is not the failure to find out about later.
+    """
+    return UNSAFE_TASK_CHARACTERS.sub('_', task) or '_'
+
+
+@dataclass(frozen=True)
+class CacheEntry:
+    """Which stored answer a call is asking for.
+
+    `task` groups rather than identifies: the key alone is unique, and two tasks
+    cannot produce one request body because the prompt differs. Grouping by it
+    makes the directory browsable, and makes one model's entries something you
+    can clear on their own.
+    """
+    task: str
+    key: str
+    attempt: Tuple[int, ...]
 
 
 def get_request_key(endpoint: str, request_body: Mapping[str, Any]) -> str:
@@ -82,10 +129,8 @@ class LlmResponseCache:
     def get_summary(self) -> str:
         return f'{self.hit_count} replayed, {self.miss_count} live'
 
-    def get_response(
-        self, key: str, attempt: Tuple[int, ...]
-    ) -> Optional[Mapping[str, Any]]:
-        path = self._get_response_path(key, attempt)
+    def get_response(self, entry: CacheEntry) -> Optional[Mapping[str, Any]]:
+        path = self._get_response_path(entry)
         try:
             with open(path, 'r', encoding='utf-8') as response_file:
                 response = json.load(response_file)
@@ -101,25 +146,32 @@ class LlmResponseCache:
 
     def put(
         self,
-        key: str,
-        attempt: Tuple[int, ...],
+        entry: CacheEntry,
         request_body: Mapping[str, Any],
+        meta: Mapping[str, Any],
         response: Mapping[str, Any]
     ) -> None:
-        key_dir = self._get_key_dir(key)
+        key_dir = self._get_key_dir(entry)
         os.makedirs(key_dir, exist_ok=True)
-        request_path = os.path.join(key_dir, REQUEST_FILENAME)
-        if not os.path.exists(request_path):
-            # Once per key, so a directory named by a one-way hash can still be
-            # read back to the question it answers.
-            _write_atomically(request_path, request_body)
-        _write_atomically(self._get_response_path(key, attempt), response)
+        # Each written once per key, so a directory named by a one-way hash can
+        # be read back to the question it answers and to which model asked it.
+        for filename, value in (
+            (REQUEST_FILENAME, request_body), (META_FILENAME, meta)
+        ):
+            path = os.path.join(key_dir, filename)
+            if not os.path.exists(path):
+                _write_atomically(path, value)
+        _write_atomically(self._get_response_path(entry), response)
 
-    def _get_key_dir(self, key: str) -> str:
-        return os.path.join(self.cache_dir, key[:2], key)
+    def _get_key_dir(self, entry: CacheEntry) -> str:
+        return os.path.join(
+            self.cache_dir, get_task_dir_name(entry.task), entry.key[:2], entry.key
+        )
 
-    def _get_response_path(self, key: str, attempt: Tuple[int, ...]) -> str:
-        return os.path.join(self._get_key_dir(key), get_entry_name(attempt) + '.json')
+    def _get_response_path(self, entry: CacheEntry) -> str:
+        return os.path.join(
+            self._get_key_dir(entry), get_entry_name(entry.attempt) + '.json'
+        )
 
     def _count(self, hit: bool) -> None:
         with self._lock:
@@ -181,17 +233,24 @@ class CachingLlmClient:
         attempt: Tuple[int, ...] = FIRST_ATTEMPT
     ) -> Mapping[str, Any]:
         request_body = get_request_body(self.config, prompt, response_schema)
-        key = get_request_key(self.config.endpoint, request_body)
-        cached = self.cache.get_response(key, attempt)
+        entry = CacheEntry(
+            task=self.config.task,
+            key=get_request_key(self.config.endpoint, request_body),
+            attempt=attempt
+        )
+        cached = self.cache.get_response(entry)
         set_current_span_attribute(CACHE_HIT_ATTRIBUTE, cached is not None)
         if cached is not None:
             LOGGER.debug(
-                'llm cache replaying %s %s', key[:12], get_entry_name(attempt)
+                'llm cache replaying %s %s %s',
+                entry.task, entry.key[:12], get_entry_name(attempt)
             )
             # Marked on the way out, so usage counts it as replayed rather than
             # adding the stored call's tokens and credits to what this run spent.
             return {**cached, REPLAYED_RESPONSE_KEY: True}
         # An exception stores nothing, so a failure is asked again live.
         response = self.delegate.get_completion(prompt, response_schema, attempt)
-        self.cache.put(key, attempt, request_body, response)
+        self.cache.put(
+            entry, request_body, get_cache_meta(self.config), response
+        )
         return response
