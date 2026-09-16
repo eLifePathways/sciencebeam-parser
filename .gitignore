@@ -16,3 +16,5 @@ grobid-home
 *.zip
 
 .env.local
+
+.idea

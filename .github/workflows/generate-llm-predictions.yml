@@ -5,6 +5,9 @@
 # No GPU: the model is served over HTTP, so a standard runner is enough.
 name: Generate LLM predictions
 
+# Dispatch only: eval.yml names a checkpoint nothing serves yet, so an automatic
+# run would annotate with whatever is deployed and store it under that name.
+# Restore the push trigger once the two match again.
 on:
   workflow_dispatch:
     inputs:
@@ -62,7 +65,9 @@ jobs:
           repository: elifepathways/sciencebeam-eval-predictions
           path: sciencebeam-eval-predictions
           token: ${{ secrets.PREDICTIONS_REPO_PAT }}
-          fetch-depth: 1
+          # Full history, because a run this long is usually behind by the time
+          # it pushes and has to rebase. blob:none keeps that cheap.
+          fetch-depth: 0
           filter: blob:none
           sparse-checkout: .gitignore
           sparse-checkout-cone-mode: false
@@ -77,13 +82,13 @@ jobs:
           fi
           uv run python -m benchmarks.predict_llm \
             --config benchmarks/eval.yml \
-            --mode "${{ inputs.mode }}" \
-            --split "${{ inputs.split }}" \
+            --mode "${{ inputs.mode || 'smoke' }}" \
+            --split "${{ inputs.split || 'validation' }}" \
             --data benchmarks/data \
             --out benchmarks/runs/llm \
-            --endpoint "${{ inputs.endpoint }}" \
+            --endpoint "${{ inputs.endpoint || 'https://elifepathways--jats-orchestrator-web.modal.run' }}" \
             ${CHECKPOINT_ARG} \
-            --concurrency "${{ inputs.concurrency }}" \
+            --concurrency "${{ inputs.concurrency || '2' }}" \
             --push-to sciencebeam-eval-predictions
 
       # A document that failed is recorded rather than raised, so the run can
@@ -96,7 +101,7 @@ jobs:
             echo "### LLM prediction run"
             echo ""
             echo "- checkpoint: \`$(grep -A2 'tool: jats-agentic-annotation' benchmarks/eval.yml | grep version: | awk '{print $2}')\`"
-            echo "- ${{ inputs.split }} / ${{ inputs.mode }}"
+            echo "- ${{ inputs.split || 'validation' }} / ${{ inputs.mode || 'smoke' }}"
             if [ -f "$MANIFEST" ]; then
               echo "- ok: $(grep -c '"status": "ok"' "$MANIFEST" || echo 0)"
               echo "- errors: $(grep -c '"status": "error"' "$MANIFEST" || echo 0)"

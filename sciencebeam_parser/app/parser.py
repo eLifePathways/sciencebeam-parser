@@ -14,7 +14,10 @@ from sciencebeam_trainer_delft.utils.download_manager import DownloadManager
 
 from sciencebeam_parser.app.context import AppContext
 from sciencebeam_parser.config.config import AppConfig, get_download_dir
-from sciencebeam_parser.external.pdfalto.wrapper import PdfAltoWrapper, get_default_pdfalto_url
+from sciencebeam_parser.external.pdfalto.wrapper import (
+    PdfAltoWrapper,
+    get_default_pdfalto_binary_path
+)
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 from sciencebeam_parser.external.wapiti.wrapper import LazyWapitiBinaryWrapper
 from sciencebeam_parser.lookup.loader import load_lookup_from_config
@@ -233,11 +236,13 @@ class ScienceBeamBaseParser:
         self.download_manager = DownloadManager(
             download_dir=get_download_dir(config)
         )
+        # A configured path (local, URL, or `archive.zip!/inner/path`) overrides the
+        # executable bundled with the `pdfalto` wheel.
+        configured_pdfalto_path = config['pdfalto'].get('path')
         self.pdfalto_wrapper = PdfAltoWrapper(
-            download_with_zip_path_support(
-                self.download_manager,
-                config['pdfalto'].get('path') or get_default_pdfalto_url()
-            )
+            download_with_zip_path_support(self.download_manager, configured_pdfalto_path)
+            if configured_pdfalto_path
+            else get_default_pdfalto_binary_path()
         )
         self.pdfalto_wrapper.ensure_executable()
         self.app_context = AppContext(

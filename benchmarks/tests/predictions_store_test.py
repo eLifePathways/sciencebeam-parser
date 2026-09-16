@@ -5,6 +5,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from benchmarks.predictions_store import (
     LocalPredictionsStore,
     RepoPredictionsStore,
@@ -141,7 +143,9 @@ class TestRepoPredictionsStore:
         def fake_git(*args, **_kw):
             git_calls.append(args)
             result = MagicMock()
-            result.returncode = 1  # simulate diff --cached returning 1 (changes present)
+            # 1 from `diff --cached` means there is something to commit; 0 from
+            # `push` means it landed.
+            result.returncode = 1 if args and args[0] == "diff" else 0
             result.stdout = ""
             return result
 
@@ -307,9 +311,9 @@ class TestRepoPredictionsStoreWithJatsPredictions:
         corpus_dir.mkdir(parents=True)
         (corpus_dir / "doc1.jats.xml").write_text("<article/>")
 
-        def fake_git(*_args, **_kw):
+        def fake_git(*args, **_kw):
             result = MagicMock()
-            result.returncode = 1  # changes present
+            result.returncode = 1 if args and args[0] == "diff" else 0
             result.stdout = ""
             return result
 
@@ -336,3 +340,47 @@ class TestRepoPredictionsStoreWithJatsPredictions:
             store.fetch("mixed", "v1", "default", "train", local_dir, {"biorxiv": "v1"})
         names = sorted(p.name for p in (local_dir / "predictions" / "biorxiv").iterdir())
         assert names == ["doc1.tei.xml", "doc2.jats.xml"]
+
+
+class TestRepoPredictionsStorePushRace:
+    """A generation run holds its checkout for hours while the benchmark writes
+    the same repo, so the push is usually behind by the time it happens."""
+
+    def _store(self, tmp_path: Path) -> RepoPredictionsStore:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        return RepoPredictionsStore(repo_dir=repo)
+
+    @staticmethod
+    def _result(returncode: int) -> MagicMock:
+        result = MagicMock()
+        result.returncode = returncode
+        result.stderr = ""
+        return result
+
+    def test_should_push_once_when_it_succeeds(self, tmp_path: Path):
+        store = self._store(tmp_path)
+        with patch.object(store, "_git", return_value=self._result(0)) as git:
+            store._push_rebasing()  # pylint: disable=protected-access
+        assert [c[0][0] for c in git.call_args_list] == ["push"]
+
+    def test_should_rebase_and_retry_when_rejected(self, tmp_path: Path):
+        store = self._store(tmp_path)
+        results = [self._result(1), self._result(0), self._result(0)]
+        with patch.object(store, "_git", side_effect=results) as git:
+            store._push_rebasing()  # pylint: disable=protected-access
+        assert [c[0][0] for c in git.call_args_list] == ["push", "pull", "push"]
+
+    def test_should_raise_rather_than_lose_the_run_silently(self, tmp_path: Path):
+        store = self._store(tmp_path)
+        # push rejected, rebase fine, push rejected again.
+        results = [self._result(1), self._result(0), self._result(1)]
+        with patch.object(store, "_git", side_effect=results):
+            with pytest.raises(RuntimeError, match="could not push"):
+                store._push_rebasing(attempts=2)  # pylint: disable=protected-access
+
+    def test_should_say_so_when_the_rebase_itself_fails(self, tmp_path: Path):
+        store = self._store(tmp_path)
+        with patch.object(store, "_git", side_effect=[self._result(1), self._result(1)]):
+            with pytest.raises(RuntimeError, match="could not rebase"):
+                store._push_rebasing()  # pylint: disable=protected-access

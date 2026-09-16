@@ -43,6 +43,23 @@ class TestShippedDefaults:
         }
         assert 'llm' not in engines
 
+    def test_should_not_resolve_any_profile_to_a_private_model_location(self):
+        shipped_config = get_shipped_config()
+        paths_by_profile = {
+            profile_name: sorted(
+                model_config['path']
+                for model_config in get_resolved_models(profile_name).values()
+                if isinstance(model_config, dict) and 'path' in model_config
+                and not model_config['path'].startswith(('http://', 'https://'))
+            )
+            for profile_name in sorted(shipped_config['profiles'])
+        }
+        assert not {
+            profile_name: paths
+            for profile_name, paths in paths_by_profile.items()
+            if paths
+        }
+
 
 class TestShippedPrompts:
     @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
