@@ -111,6 +111,65 @@ class TestResolveSequenceModelProfile:
         assert result['header'] == {'path': 'p/header'}
         assert result['table'] == {'path': 'c/table'}
 
+    def test_merges_a_list_of_bases(self):
+        seq_profiles = {
+            'base_1': {'segmentation': {'path': 'base_1/segmentation'}},
+            'base_2': {'header': {'path': 'base_2/header'}},
+            'child': {'extends': ['base_1', 'base_2'], 'table': {'path': 'child/table'}},
+        }
+        result = _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert result['segmentation'] == {'path': 'base_1/segmentation'}
+        assert result['header'] == {'path': 'base_2/header'}
+        assert result['table'] == {'path': 'child/table'}
+
+    def test_later_base_wins_over_earlier_base(self):
+        seq_profiles = {
+            'base_1': {'header': {'path': 'base_1/header', 'engine': 'wapiti'}},
+            'base_2': {'header': {'path': 'base_2/header'}},
+            'child': {'extends': ['base_1', 'base_2']},
+        }
+        result = _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert result['header'] == {'path': 'base_2/header', 'engine': 'wapiti'}
+
+    def test_own_keys_win_over_every_base(self):
+        seq_profiles = {
+            'base_1': {'header': {'path': 'base_1/header'}},
+            'base_2': {'header': {'path': 'base_2/header'}},
+            'child': {'extends': ['base_1', 'base_2'], 'header': {'path': 'child/header'}},
+        }
+        result = _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert result['header'] == {'path': 'child/header'}
+
+    def test_applies_a_shared_base_once_before_the_profiles_overriding_it(self):
+        seq_profiles = {
+            'shared': {
+                'segmentation': {'path': 'shared/segmentation', 'engine': 'wapiti'},
+                'header': {'path': 'shared/header', 'engine': 'wapiti'},
+                'citation': {'path': 'shared/citation', 'engine': 'wapiti'},
+            },
+            'header_only': {'extends': 'shared', 'header': {'path': 'header_only/header'}},
+            'citation_only': {'extends': 'shared', 'citation': {'engine': 'llm'}},
+            'combined': {'extends': ['header_only', 'citation_only']},
+        }
+        result = _resolve_sequence_model_profile(seq_profiles, 'combined')
+        assert result['segmentation'] == {'path': 'shared/segmentation', 'engine': 'wapiti'}
+        assert result['header'] == {'path': 'header_only/header', 'engine': 'wapiti'}
+        assert result['citation'] == {'path': 'shared/citation', 'engine': 'llm'}
+
+    def test_ignores_a_repeated_base_name(self):
+        seq_profiles = {
+            'base_1': {'header': {'path': 'base_1/header'}},
+            'base_2': {'header': {'path': 'base_2/header'}},
+            'child': {'extends': ['base_1', 'base_2', 'base_1']},
+        }
+        result = _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert result['header'] == {'path': 'base_2/header'}
+
+    def test_treats_an_empty_list_as_no_base(self):
+        seq_profiles = {'child': {'extends': [], 'header': {'path': 'child/header'}}}
+        result = _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert result == {'header': {'path': 'child/header'}}
+
     def test_raises_on_unknown_profile(self):
         with pytest.raises(ValueError, match='Unknown sequence_model_profile'):
             _resolve_sequence_model_profile({}, 'missing')
@@ -137,6 +196,39 @@ class TestResolveSequenceModelProfile:
         with pytest.raises(ValueError) as exc_info:
             _resolve_sequence_model_profile(seq_profiles, 'alpha')
         assert 'chain: alpha -> beta -> gamma -> alpha' in str(exc_info.value)
+
+    def test_raises_on_unknown_name_in_a_list(self):
+        seq_profiles = {
+            'base': {'header': {'path': 'base/header'}},
+            'child': {'extends': ['base', 'missing']},
+        }
+        with pytest.raises(ValueError, match="Unknown sequence_model_profile 'missing'"):
+            _resolve_sequence_model_profile(seq_profiles, 'child')
+
+    def test_raises_on_circular_extends_through_a_list_entry(self):
+        seq_profiles = {
+            'base': {'header': {'path': 'base/header'}},
+            'child': {'extends': ['base', 'cycle']},
+            'cycle': {'extends': 'child'},
+        }
+        with pytest.raises(ValueError) as exc_info:
+            _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert 'chain: child -> cycle -> child' in str(exc_info.value)
+
+    def test_raises_on_non_string_entry_in_a_list(self):
+        seq_profiles = {'child': {'extends': ['base', 123]}}
+        with pytest.raises(ValueError) as exc_info:
+            _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert "sequence_model_profile 'child'" in str(exc_info.value)
+        assert '123' in str(exc_info.value)
+
+    @pytest.mark.parametrize('extends', [{'name': 'base'}, {}, 123])
+    def test_raises_on_extends_that_is_neither_a_string_nor_a_list(self, extends):
+        seq_profiles = {'child': {'extends': extends}}
+        with pytest.raises(ValueError) as exc_info:
+            _resolve_sequence_model_profile(seq_profiles, 'child')
+        assert "sequence_model_profile 'child'" in str(exc_info.value)
+        assert repr(extends) in str(exc_info.value)
 
 
 class TestAppConfigResolveProfile:
