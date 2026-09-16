@@ -224,7 +224,7 @@ sequence_model_profiles:
       model: 'qwen/qwen3.5-9b'
       provider: 'venice'
       prompt_version: 'lines-v2'
-      reasoning: 'off'
+      reasoning_enabled: false
   llm_citation:
     extends: grobid_crf_0_9_0
     citation:
@@ -239,7 +239,7 @@ sequence_model_profiles:
       # things measured here, and latency has been the binding constraint.
       provider: 'venice'
       prompt_version: 'values-v3'
-      reasoning: 'off'
+      reasoning_enabled: false
       # References of a document arrive in one call to the engine, which sends
       # them in batches. Decode cost is linear in output tokens however they are
       # grouped, so a larger batch does not generate less — it generates the same
