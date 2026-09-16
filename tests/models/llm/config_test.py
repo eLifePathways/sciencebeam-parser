@@ -35,6 +35,44 @@ class TestLlmEngineConfig:
             })
 
 
+class TestReasoning:
+    def test_should_read_it_as_a_boolean(self):
+        config = LlmEngineConfig.from_model_config({
+            **MINIMAL_CONFIG, 'reasoning_enabled': False
+        })
+        assert config.reasoning_enabled is False
+
+    def test_should_default_to_leaving_it_to_the_model(self):
+        assert LlmEngineConfig.from_model_config(MINIMAL_CONFIG).reasoning_enabled is None
+
+    @pytest.mark.parametrize('value', ['off', 'false', 'low', ''])
+    def test_should_reject_a_string(self, value: str):
+        with pytest.raises(LlmConfigError, match='reasoning_enabled'):
+            LlmEngineConfig.from_model_config({
+                **MINIMAL_CONFIG, 'reasoning_enabled': value
+            })
+
+    def test_should_reject_the_former_reasoning_key(self):
+        """Unknown keys are dropped silently, which is how the ignored values
+        went unnoticed; the key it was renamed from has to say so instead."""
+        with pytest.raises(LlmConfigError, match='reasoning_enabled'):
+            LlmEngineConfig.from_model_config({**MINIMAL_CONFIG, 'reasoning': 'off'})
+
+    def test_should_reject_it_alongside_an_extra_body_reasoning_parameter(self):
+        with pytest.raises(LlmConfigError, match='extra_body'):
+            LlmEngineConfig.from_model_config({
+                **MINIMAL_CONFIG,
+                'reasoning_enabled': False,
+                'extra_body': {'reasoning': {'effort': 'low'}}
+            })
+
+    def test_should_accept_an_extra_body_reasoning_parameter_on_its_own(self):
+        config = LlmEngineConfig.from_model_config({
+            **MINIMAL_CONFIG, 'extra_body': {'reasoning': {'effort': 'low'}}
+        })
+        assert config.extra_body['reasoning'] == {'effort': 'low'}
+
+
 class TestProviderRouting:
     def test_should_enforce_zero_retention_and_fail_closed(self):
         routing = LlmEngineConfig.from_model_config(MINIMAL_CONFIG).provider_routing

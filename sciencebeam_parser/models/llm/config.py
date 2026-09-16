@@ -20,7 +20,7 @@ class LlmEngineConfig:
     response_shape: str = 'lines'
     endpoint: str = DEFAULT_ENDPOINT
     provider: Optional[str] = None
-    reasoning: str = ''
+    reasoning_enabled: Optional[bool] = None
     temperature: float = 0.0
     timeout_seconds: float = 300.0
     max_output_tokens: int = 16000
@@ -37,11 +37,32 @@ class LlmEngineConfig:
     unanswered_reference_raises: bool = False
     extra_body: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if self.reasoning_enabled is not None and not isinstance(self.reasoning_enabled, bool):
+            raise LlmConfigError(
+                'reasoning_enabled must be true or false, but is'
+                f' {self.reasoning_enabled!r}: write it unquoted, since yaml reads a quoted'
+                " 'false' as a string. Provider parameters the engine does not model go under"
+                " extra_body, e.g. extra_body: {reasoning: {effort: 'low'}}"
+            )
+        if self.reasoning_enabled is not None and 'reasoning' in self.extra_body:
+            raise LlmConfigError(
+                'reasoning_enabled and extra_body.reasoning both set the reasoning request'
+                ' parameter, and the first silently wins: keep whichever one is meant'
+            )
+
     @staticmethod
     def from_model_config(config: Mapping[str, Any]) -> 'LlmEngineConfig':
         for required in ('task', 'model', 'prompt_version'):
             if not config.get(required):
                 raise LlmConfigError(f'llm engine requires {required!r} in the model config')
+        if 'reasoning' in config:
+            raise LlmConfigError(
+                "'reasoning' is no longer accepted, because every value except 'off' was"
+                ' ignored: write reasoning_enabled: false (unquoted) for what was'
+                " reasoning: 'off', and put an effort level under extra_body, e.g."
+                " extra_body: {reasoning: {effort: 'low'}}"
+            )
         model = config['model']
         if model.endswith(':free'):
             raise LlmConfigError(

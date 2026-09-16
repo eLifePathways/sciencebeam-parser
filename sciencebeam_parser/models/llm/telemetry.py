@@ -40,7 +40,7 @@ def get_invocation_parameters(config) -> str:
     return json.dumps({
         'temperature': config.temperature,
         'max_tokens': config.max_output_tokens,
-        'reasoning': config.reasoning or 'default',
+        'reasoning_enabled': config.reasoning_enabled,
         'response_shape': config.response_shape,
         'provider_routing': config.provider_routing,
     }, sort_keys=True)

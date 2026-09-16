@@ -135,6 +135,13 @@ class TestShippedLlmProfiles:
         assert other_engines == {'wapiti'}
 
     @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
+    def test_should_ask_every_shipped_model_not_to_reason(self, profile_name: str):
+        models = get_resolved_models(profile_name)
+        for task in LLM_MODELS_BY_PROFILE[profile_name]:
+            config = LlmEngineConfig.from_model_config(models[task])
+            assert config.reasoning_enabled is False
+
+    @pytest.mark.parametrize('profile_name', sorted(LLM_MODELS_BY_PROFILE))
     def test_should_parse_and_reference_a_prompt_that_exists(self, profile_name: str):
         models = get_resolved_models(profile_name)
         for task in LLM_MODELS_BY_PROFILE[profile_name]:

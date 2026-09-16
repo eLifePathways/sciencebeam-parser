@@ -42,7 +42,7 @@ reference_segmenter:
   model: 'qwen/qwen3.5-9b'
   provider: 'venice'               # pinned; routing fails closed without a match
   prompt_version: 'lines-v1'       # sciencebeam_parser/models/llm/prompts/<task>/<version>.md
-  reasoning: 'off'                 # models that think by default must be told not to
+  reasoning_enabled: false         # models that think by default must be told not to
 citation:
   engine: 'llm'
   task: 'citation'
@@ -50,16 +50,38 @@ citation:
   model: 'qwen/qwen3.5-9b'
   provider: 'siliconflow'
   prompt_version: 'values-v1'
-  reasoning: 'off'
+  reasoning_enabled: false
 ```
 
-`reasoning: 'off'` is safe to set for any model. It sends a parameter asking for reasoning to be
-disabled, which a model with no reasoning mode has nothing to do with — and because routing uses
-`require_parameters`, no provider then matches and the request would fail with
+### Reasoning
+
+`reasoning_enabled` is the only reasoning setting the engine models: `false` sends
+`{'enabled': false}`, `true` sends `{'enabled': true}`, and leaving it out sends nothing and lets
+the model do whatever it does by default. Reasoning is counted inside the completion, against
+`max_output_tokens`, so a model that thinks by default spends the answer's budget on thinking.
+
+Write it unquoted. It is a boolean, and a quoted value is rejected at config parse rather than
+accepted and ignored.
+
+`reasoning_enabled: false` is safe to set for any model. It sends a parameter asking for reasoning
+to be disabled, which a model with no reasoning mode has nothing to do with — and because routing
+uses `require_parameters`, no provider then matches and the request would fail with
 `404 No endpoints found`. The engine retries once without the parameter, so a model that never
 reasons behaves as if it had not been set. Models whose endpoints make reasoning mandatory are a
 different case and fail with `400 Reasoning is mandatory for this endpoint`; those cannot be used
 here, since the output budget goes on reasoning before an answer is emitted.
+
+Anything else the provider accepts on this parameter — an effort level, a token budget — goes
+through `extra_body`, which is sent as written and neither validated nor retried:
+
+```yaml
+extra_body:
+  reasoning:
+    effort: 'low'
+```
+
+Setting both is a config error, since `reasoning_enabled` would otherwise overwrite the `extra_body`
+value without saying so.
 
 `response_shape` is configuration rather than a fixed choice, because the best shape differs by
 model and by task and moves with each new checkpoint. Comparing shapes is therefore defining a

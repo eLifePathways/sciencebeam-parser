@@ -126,16 +126,26 @@ def get_llm_config(**kwargs) -> LlmEngineConfig:
 
 class TestRequestBodyReasoning:
     def test_should_ask_for_reasoning_to_be_disabled_when_configured(self):
-        body = get_request_body(get_llm_config(reasoning='off'), 'p', {})
+        body = get_request_body(get_llm_config(reasoning_enabled=False), 'p', {})
         assert body['reasoning'] == {'enabled': False}
+
+    def test_should_ask_for_reasoning_to_be_enabled_when_configured(self):
+        body = get_request_body(get_llm_config(reasoning_enabled=True), 'p', {})
+        assert body['reasoning'] == {'enabled': True}
 
     def test_should_send_nothing_when_reasoning_is_not_configured(self):
         body = get_request_body(get_llm_config(), 'p', {})
         assert 'reasoning' not in body
 
+    def test_should_pass_through_an_extra_body_reasoning_parameter(self):
+        body = get_request_body(
+            get_llm_config(extra_body={'reasoning': {'effort': 'low'}}), 'p', {}
+        )
+        assert body['reasoning'] == {'effort': 'low'}
+
     def test_should_omit_it_when_asked_to(self):
         body = get_request_body(
-            get_llm_config(reasoning='off'), 'p', {}, with_reasoning=False
+            get_llm_config(reasoning_enabled=False), 'p', {}, with_reasoning=False
         )
         assert 'reasoning' not in body
 
@@ -145,7 +155,7 @@ class TestNoEndpointForTheReasoningParameter:
     still has to be supported by a provider, and `require_parameters` then
     matches none of them."""
 
-    def _run(self, monkeypatch, responses):
+    def _run(self, monkeypatch, responses, config=None):
         sent = []
 
         class FakeClient:
@@ -167,7 +177,7 @@ class TestNoEndpointForTheReasoningParameter:
             'sciencebeam_parser.models.llm.client.get_api_key', lambda: 'key'
         )
         monkeypatch.setattr('sciencebeam_parser.models.llm.client.time.sleep', lambda _: None)
-        client = LlmClient(get_llm_config(reasoning='off'))
+        client = LlmClient(config or get_llm_config(reasoning_enabled=False))
         return client.get_completion('prompt', {}), sent
 
     def test_should_ask_again_without_the_parameter(self, monkeypatch):
@@ -182,6 +192,16 @@ class TestNoEndpointForTheReasoningParameter:
         assert result == ok
         assert 'reasoning' in sent[0]
         assert 'reasoning' not in sent[1]
+
+    def test_should_not_drop_a_reasoning_parameter_it_did_not_add(self, monkeypatch):
+        """Dropping an `extra_body` reasoning parameter would ask for more
+        reasoning than was configured, so the 404 stands."""
+        with pytest.raises(LlmRequestError, match='404'):
+            self._run(
+                monkeypatch,
+                [FakeNoEndpoint()],
+                get_llm_config(extra_body={'reasoning': {'effort': 'low'}})
+            )
 
     def test_should_raise_for_a_404_that_is_not_about_endpoints(self, monkeypatch):
         other = type('R', (), {

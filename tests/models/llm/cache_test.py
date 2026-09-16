@@ -173,7 +173,7 @@ class TestGetRequestKey:
         {'temperature': 0.7},
         {'max_output_tokens': 200},
         {'provider': 'siliconflow'},
-        {'reasoning': 'off'},
+        {'reasoning_enabled': False},
         {'extra_body': {'top_p': 0.5}},
     ])
     def test_should_change_with_any_parameter_that_reaches_the_body(self, changed: dict):

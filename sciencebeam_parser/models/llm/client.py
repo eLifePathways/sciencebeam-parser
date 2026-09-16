@@ -118,8 +118,8 @@ def get_request_body(
         'provider': config.provider_routing,
         **config.extra_body,
     }
-    if with_reasoning and config.reasoning == 'off':
-        body['reasoning'] = {'enabled': False}
+    if with_reasoning and config.reasoning_enabled is not None:
+        body['reasoning'] = {'enabled': config.reasoning_enabled}
     return body
 
 
@@ -151,9 +151,9 @@ class LlmClient:
                 f'{self.config.endpoint} does not offer model {self.config.model!r}'
             )
         LOGGER.info(
-            'llm engine configured: model=%r provider=%r prompt=%r shape=%r',
+            'llm engine configured: model=%r provider=%r prompt=%r shape=%r reasoning=%r',
             self.config.model, self.config.provider, self.config.prompt_version,
-            self.config.response_shape
+            self.config.response_shape, self.config.reasoning_enabled
         )
 
     def get_completion(  # pylint: disable=unused-argument
@@ -168,30 +168,41 @@ class LlmClient:
         # Protocol.
         return self._post_with_retry(prompt, response_schema)
 
+    def _wait_before_retry(
+        self,
+        attempt: int,
+        retry_status: Optional[int],
+        retry_after: Optional[float],
+        last_error: str
+    ) -> None:
+        delay = get_retry_delay(attempt, retry_status, retry_after)
+        LOGGER.info(
+            'llm retrying in %.1fs (attempt %d of %d, last: %s)',
+            delay, attempt + 1, self.config.max_attempts, last_error[:80]
+        )
+        time.sleep(delay)
+
     def _post_with_retry(
         self, prompt: str, response_schema: Mapping[str, Any]
     ) -> Mapping[str, Any]:
         url = f'{self.config.endpoint.rstrip("/")}/chat/completions'
         body = get_request_body(self.config, prompt, response_schema)
-        # `reasoning: 'off'` asks for reasoning not to happen, and a model
-        # with no reasoning mode is already not doing any. The parameter
+        # `reasoning_enabled: false` asks for reasoning not to happen, and a
+        # model with no reasoning mode is already not doing any. The parameter
         # still has to be supported by whoever serves the request, and
         # `require_parameters` then leaves no eligible provider: every model
         # without a reasoning mode returns 404 'No endpoints found'.
         # Dropping the parameter for those models changes nothing about what
-        # they do, so the request is retried once without it.
+        # they do, so the request is retried once without it. Nothing else
+        # asking for reasoning can be dropped that way: an effort level or
+        # `enabled: true` would come back as a model reasoning more, not less.
         dropped_reasoning = False
         last_error = ''
         retry_status: Optional[int] = None
         retry_after: Optional[float] = None
         for attempt in range(self.config.max_attempts):
             if attempt:
-                delay = get_retry_delay(attempt, retry_status, retry_after)
-                LOGGER.info(
-                    'llm retrying in %.1fs (attempt %d of %d, last: %s)',
-                    delay, attempt + 1, self.config.max_attempts, last_error[:80]
-                )
-                time.sleep(delay)
+                self._wait_before_retry(attempt, retry_status, retry_after, last_error)
             try:
                 with httpx.Client(timeout=self.config.timeout_seconds) as client:
                     response = client.post(url, headers=self._headers(), json=body)
@@ -208,7 +219,7 @@ class LlmClient:
                 if (
                     response.status_code == 404
                     and not dropped_reasoning
-                    and 'reasoning' in body
+                    and self.config.reasoning_enabled is False
                     and 'No endpoints found' in response.text
                 ):
                     LOGGER.info(
