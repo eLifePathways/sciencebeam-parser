@@ -281,7 +281,7 @@ than per model — beside `download_dir` rather than inside a model's entry, bec
 not something that shapes an answer:
 
 ```yaml
-llm_response_cache_dir: 'data/llm-response-cache'   # empty (the default) is off
+llm_response_cache_dir: 'data/llm-response-cache'   # shipped unset, which is off
 ```
 
 or by environment, applied after the profile is resolved and so winning over it:
@@ -289,6 +289,9 @@ or by environment, applied after the profile is resolved and so winning over it:
 ```sh
 export SCIENCEBEAM_PARSER__LLM_RESPONSE_CACHE_DIR=data/llm-response-cache
 ```
+
+Setting it to nothing turns it off by either route: an empty environment value parses to null,
+which is what the shipped config already holds.
 
 Every LLM model shares that one directory. They cannot collide in it: an entry is keyed by the
 request as sent, which carries the prompt, the model id and the endpoint. There is deliberately no

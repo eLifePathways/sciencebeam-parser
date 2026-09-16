@@ -64,7 +64,7 @@ class LlmModelImpl(ModelImpl):
         self,
         config: LlmEngineConfig,
         client: Optional[LlmCompletionClient] = None,
-        response_cache_dir: str = ''
+        response_cache_dir: Optional[str] = None
     ):
         if config.response_shape not in SUPPORTED_RESPONSE_SHAPES:
             raise LlmConfigError(

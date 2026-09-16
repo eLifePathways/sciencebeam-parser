@@ -166,11 +166,17 @@ def get_download_dir(config: Union[dict, AppConfig]) -> str:
     )
 
 
-def get_llm_response_cache_dir(config: Union[dict, AppConfig]) -> str:
-    """Where the llm engine replays completions from, or empty for off.
+def get_llm_response_cache_dir(config: Union[dict, AppConfig]) -> Optional[str]:
+    """Where the llm engine replays completions from, or None for off.
 
     One directory for every llm model rather than a setting per model: it is
     storage rather than something that shapes an answer, and entries are keyed by
     the request, so two models cannot collide in it.
+
+    `None` rather than an empty string, because no path is what is meant and the
+    config already spells that as an unset key — as `pdfalto.path` does. An empty
+    `SCIENCEBEAM_PARSER__LLM_RESPONSE_CACHE_DIR` parses to `None` too, so turning
+    it off by environment and by config reach the same value.
     """
-    return os.path.expanduser(config.get('llm_response_cache_dir', '') or '')
+    value = config.get('llm_response_cache_dir')
+    return os.path.expanduser(value) if value else None

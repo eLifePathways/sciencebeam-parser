@@ -11,6 +11,7 @@ from sciencebeam_parser.config.config import (
     _resolve_sequence_model_profile,
     get_llm_response_cache_dir
 )
+from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 
 MINIMAL_PROFILE_CONFIG = {
@@ -319,23 +320,30 @@ def _env_vars_mock() -> Iterable[dict]:
 
 
 class TestGetLlmResponseCacheDir:
-    def test_should_be_empty_when_not_configured(self):
-        assert get_llm_response_cache_dir({}) == ''
+    def test_should_be_none_when_the_key_is_absent(self):
+        assert get_llm_response_cache_dir({}) is None
 
-    def test_should_treat_an_explicit_null_as_off(self):
-        # `SCIENCEBEAM_PARSER__LLM_RESPONSE_CACHE_DIR=` parses to None, which is
-        # how a run turns the cache off without editing the config.
-        assert get_llm_response_cache_dir({'llm_response_cache_dir': None}) == ''
+    def test_should_be_none_when_the_key_is_set_to_nothing(self):
+        # How the shipped config spells it, and what an empty
+        # `SCIENCEBEAM_PARSER__LLM_RESPONSE_CACHE_DIR` parses to, so turning it
+        # off by config and by environment reach the same value.
+        assert get_llm_response_cache_dir({'llm_response_cache_dir': None}) is None
 
     def test_should_expand_a_home_relative_path(self):
-        assert not get_llm_response_cache_dir(
-            {'llm_response_cache_dir': '~/cache'}
-        ).startswith('~')
+        expanded = get_llm_response_cache_dir({'llm_response_cache_dir': '~/cache'})
+        assert expanded and not expanded.startswith('~')
 
     def test_should_read_it_from_an_app_config(self, tmp_path: Path):
         config_path = tmp_path / 'config.yml'
         config_path.write_text(yaml.dump({'llm_response_cache_dir': '/tmp/llm'}))
         assert get_llm_response_cache_dir(AppConfig.load_yaml(str(config_path))) == '/tmp/llm'
+
+    def test_should_be_none_in_the_shipped_config(self):
+        # Requirement: enabling it is deliberate, since the entries hold
+        # document text.
+        assert get_llm_response_cache_dir(
+            AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
+        ) is None
 
 
 class TestAppConfig:

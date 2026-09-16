@@ -43,10 +43,11 @@ logging:
 download_dir: '~/.cache/sciencebeam-parser/downloads'
 
 # Where the llm engine replays completions from, for every llm model at once.
-# Empty is off, and it stays off outside development: the entries hold document
+# Unset is off, and it stays off outside development: the entries hold document
 # text, and a deployment parses documents that are all different. Not a path
 # under download_dir, which is public model artifacts with a different lifetime.
-llm_response_cache_dir: ''
+#   llm_response_cache_dir: data/llm-response-cache
+llm_response_cache_dir:
 
 pdfalto:
   # Defaults to the executable bundled with the `pdfalto` Python package
