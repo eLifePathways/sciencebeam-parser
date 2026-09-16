@@ -92,7 +92,10 @@ class LlmCompletionClient(Protocol):
 
 
 def get_request_body(
-    config: LlmEngineConfig, prompt: str, response_schema: Mapping[str, Any]
+    config: LlmEngineConfig,
+    prompt: str,
+    response_schema: Mapping[str, Any],
+    with_reasoning: bool = True
 ) -> Dict[str, Any]:
     """Every parameter that can change an answer, in the form it is sent.
 
@@ -115,7 +118,7 @@ def get_request_body(
         'provider': config.provider_routing,
         **config.extra_body,
     }
-    if config.reasoning == 'off':
+    if with_reasoning and config.reasoning == 'off':
         body['reasoning'] = {'enabled': False}
     return body
 
@@ -170,6 +173,14 @@ class LlmClient:
     ) -> Mapping[str, Any]:
         url = f'{self.config.endpoint.rstrip("/")}/chat/completions'
         body = get_request_body(self.config, prompt, response_schema)
+        # `reasoning: 'off'` asks for reasoning not to happen, and a model
+        # with no reasoning mode is already not doing any. The parameter
+        # still has to be supported by whoever serves the request, and
+        # `require_parameters` then leaves no eligible provider: every model
+        # without a reasoning mode returns 404 'No endpoints found'.
+        # Dropping the parameter for those models changes nothing about what
+        # they do, so the request is retried once without it.
+        dropped_reasoning = False
         last_error = ''
         retry_status: Optional[int] = None
         retry_after: Optional[float] = None
@@ -194,6 +205,24 @@ class LlmClient:
                 retry_after = get_retry_after_seconds(response.headers)
                 continue
             if response.status_code != 200:
+                if (
+                    response.status_code == 404
+                    and not dropped_reasoning
+                    and 'reasoning' in body
+                    and 'No endpoints found' in response.text
+                ):
+                    LOGGER.info(
+                        'llm %r: no endpoint accepts the reasoning parameter,'
+                        ' which a model without a reasoning mode has nothing'
+                        ' to disable; asking again without it',
+                        self.config.model
+                    )
+                    dropped_reasoning = True
+                    retry_status, retry_after = None, None
+                    body = get_request_body(
+                        self.config, prompt, response_schema, with_reasoning=False
+                    )
+                    continue
                 raise LlmRequestError(
                     f'http {response.status_code}: {response.text[:200]}'
                 )

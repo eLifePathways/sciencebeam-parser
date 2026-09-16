@@ -4,13 +4,16 @@ import pytest
 
 from sciencebeam_parser.models.llm.client import (
     MAX_RETRY_SECONDS,
+    LlmClient,
     LlmRequestError,
     LlmTruncatedResponseError,
     get_error_status_code,
+    get_request_body,
     get_response_content,
     get_retry_after_seconds,
     get_retry_delay
 )
+from sciencebeam_parser.models.llm.config import LlmEngineConfig
 
 
 def get_response(content: Any = '{"starts": [0]}', **choice_extra) -> Dict[str, Any]:
@@ -113,3 +116,89 @@ class TestGetRetryDelay:
                 get_retry_delay(attempt, 429, jitter=0.0)
                 <= get_retry_delay(attempt, 429, jitter=1.0)
             )
+
+
+def get_llm_config(**kwargs) -> LlmEngineConfig:
+    return LlmEngineConfig(
+        task='segmentation', model='example/model', prompt_version='v1', **kwargs
+    )
+
+
+class TestRequestBodyReasoning:
+    def test_should_ask_for_reasoning_to_be_disabled_when_configured(self):
+        body = get_request_body(get_llm_config(reasoning='off'), 'p', {})
+        assert body['reasoning'] == {'enabled': False}
+
+    def test_should_send_nothing_when_reasoning_is_not_configured(self):
+        body = get_request_body(get_llm_config(), 'p', {})
+        assert 'reasoning' not in body
+
+    def test_should_omit_it_when_asked_to(self):
+        body = get_request_body(
+            get_llm_config(reasoning='off'), 'p', {}, with_reasoning=False
+        )
+        assert 'reasoning' not in body
+
+
+class TestNoEndpointForTheReasoningParameter:
+    """A model with no reasoning mode has nothing to disable, but the parameter
+    still has to be supported by a provider, and `require_parameters` then
+    matches none of them."""
+
+    def _run(self, monkeypatch, responses):
+        sent = []
+
+        class FakeClient:
+            def __init__(self, *_, **__):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def post(self, _url, json=None, **_kwargs):  # noqa: A002
+                sent.append(json)
+                return responses[len(sent) - 1]
+
+        monkeypatch.setattr('sciencebeam_parser.models.llm.client.httpx.Client', FakeClient)
+        monkeypatch.setattr(
+            'sciencebeam_parser.models.llm.client.get_api_key', lambda: 'key'
+        )
+        monkeypatch.setattr('sciencebeam_parser.models.llm.client.time.sleep', lambda _: None)
+        client = LlmClient(get_llm_config(reasoning='off'))
+        return client.get_completion('prompt', {}), sent
+
+    def test_should_ask_again_without_the_parameter(self, monkeypatch):
+        ok = {'choices': [{'message': {'content': '{}'}}]}
+        responses = [
+            FakeNoEndpoint(),
+            type('R', (), {
+                'status_code': 200, 'text': '', 'headers': {}, 'json': lambda self: ok
+            })(),
+        ]
+        result, sent = self._run(monkeypatch, responses)
+        assert result == ok
+        assert 'reasoning' in sent[0]
+        assert 'reasoning' not in sent[1]
+
+    def test_should_raise_for_a_404_that_is_not_about_endpoints(self, monkeypatch):
+        other = type('R', (), {
+            'status_code': 404, 'text': 'model not found', 'headers': {},
+            'json': lambda self: {}
+        })()
+        with pytest.raises(LlmRequestError):
+            self._run(monkeypatch, [other])
+
+
+def FakeNoEndpoint():  # noqa: N802
+    return type('R', (), {
+        'status_code': 404,
+        'text': (
+            '{"error":{"message":"No endpoints found that can handle'
+            ' the requested parameters."}}'
+        ),
+        'headers': {},
+        'json': lambda self: {},
+    })()

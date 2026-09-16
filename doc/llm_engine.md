@@ -53,6 +53,14 @@ citation:
   reasoning: 'off'
 ```
 
+`reasoning: 'off'` is safe to set for any model. It sends a parameter asking for reasoning to be
+disabled, which a model with no reasoning mode has nothing to do with — and because routing uses
+`require_parameters`, no provider then matches and the request would fail with
+`404 No endpoints found`. The engine retries once without the parameter, so a model that never
+reasons behaves as if it had not been set. Models whose endpoints make reasoning mandatory are a
+different case and fail with `400 Reasoning is mandatory for this endpoint`; those cannot be used
+here, since the output budget goes on reasoning before an answer is emitted.
+
 `response_shape` is configuration rather than a fixed choice, because the best shape differs by
 model and by task and moves with each new checkpoint. Comparing shapes is therefore defining a
 second profile and running the benchmark, not building a second evaluation route.
