@@ -116,8 +116,7 @@ class TestCheckpointFromConfig:
 
 
 class TestPostWithRetry:
-    """The first real run lost 40 of 60 documents to an unfollowed redirect and
-    11 more to transient errors nobody asked again about."""
+    """A run lost 40 of 60 documents to an unfollowed redirect."""
 
     @staticmethod
     def _response(status, headers=None):
@@ -174,8 +173,7 @@ class TestPostWithRetry:
 
 
 class TestRolloutUsage:
-    """Recorded in the shape benchmarks/llm_usage.py already aggregates, so the
-    annotation model's spend lands in the summary like the engine's does."""
+    """Recorded in the shape benchmarks/llm_usage.py aggregates."""
 
     @staticmethod
     def _sections():
@@ -231,9 +229,7 @@ class TestRolloutUsage:
 
 
 class TestRunPredictLlmStoreUse:
-    """A CI run starts from an empty directory, so what the store holds has to be
-    fetched into it -- otherwise every run pays again for documents it already
-    has and is about to push over the top of."""
+    """A CI run starts empty, so the store has to be read before it is written."""
 
     def _config(self):
         return {
@@ -276,8 +272,7 @@ class TestRunPredictLlmStoreUse:
 
 
 class TestServedModel:
-    """A dispatch is always one command away from storing one model's output
-    under another's name, so what the service said is recorded with the run."""
+    """What the service said is recorded with the run."""
 
     def test_should_return_the_model_the_service_reports(self):
         response = MagicMock()

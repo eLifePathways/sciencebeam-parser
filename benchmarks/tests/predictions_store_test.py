@@ -260,10 +260,7 @@ class TestRepoStoreDoneIdsAreVariantAware:
 
 
 class TestRepoPredictionsStoreWithJatsPredictions:
-    """A JATS-producing tool round-trips like any other.
-
-    All three failed silently while the store looked only for `.tei.xml`.
-    """
+    """A JATS-producing tool round-trips like any other."""
 
     def _store(self, tmp_path: Path) -> RepoPredictionsStore:
         repo = tmp_path / "repo"
@@ -343,8 +340,7 @@ class TestRepoPredictionsStoreWithJatsPredictions:
 
 
 class TestRepoPredictionsStorePushRace:
-    """A generation run holds its checkout for hours while the benchmark writes
-    the same repo, so the push is usually behind by the time it happens."""
+    """A long run is usually behind by the time it pushes."""
 
     def _store(self, tmp_path: Path) -> RepoPredictionsStore:
         repo = tmp_path / "repo"

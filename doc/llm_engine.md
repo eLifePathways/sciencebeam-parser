@@ -4,6 +4,10 @@ A third sequence-model engine alongside `wapiti` and `delft`, serving the `refer
 `citation` models. It is **opt-in**: the shipped default profile stays `grobid_crf`, and a default
 install acquires no network dependency and no credential requirement.
 
+Not the same thing as the trained JATS annotation model, which is a whole-document
+pipeline benchmarked as its own tool rather than a model inside the parser — see
+[Benchmarks](benchmarks.md).
+
 ## Using it
 
 ```sh
