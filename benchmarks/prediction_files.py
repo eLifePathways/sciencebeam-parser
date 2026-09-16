@@ -1,11 +1,7 @@
 """What a prediction file is called, and how to find one.
 
-The extension says which schema it holds: `.tei.xml` from the GROBID-compatible
-tools, `.jats.xml` from an annotation model. Both score through the same field
-definitions, since sciencebeam-judge picks its mapping from the root element.
-
-One definition, so the store and the scorer cannot disagree about what a
-prediction is -- they did, silently, while the store looked only for TEI.
+`.tei.xml` from the GROBID-compatible tools, `.jats.xml` from an annotation
+model. Defined once, so the store and the scorer cannot disagree.
 """
 
 from __future__ import annotations
@@ -22,11 +18,7 @@ def is_prediction_file(name: str) -> bool:
 
 
 def record_id_from_name(name: str) -> str:
-    """The record id a prediction file is named for.
-
-    Removes the suffix rather than using `Path.stem`, which leaves the inner
-    extension behind, or replacing '.tei', which rewrites ids containing it.
-    """
+    """The record id a prediction file is named for."""
     for suffix in PREDICTION_SUFFIXES:
         if name.endswith(suffix):
             return name[: -len(suffix)]
@@ -38,10 +30,7 @@ def record_id_from_path(path: Path) -> str:
 
 
 def iter_prediction_files(directory: Path) -> Iterator[Path]:
-    """Every prediction in a directory, ordered by record id.
-
-    By id rather than filename, so mixed schemas still traverse in a stable order.
-    """
+    """Every prediction in a directory, ordered by record id."""
     if not directory.is_dir():
         return iter(())
     found = [path for path in directory.iterdir() if is_prediction_file(path.name)]

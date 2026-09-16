@@ -1,11 +1,7 @@
 """Predict with the trained JATS annotation model.
 
-The model never sees the PDF: the service converts it to markdown, then
-annotates it in three rollouts -- front, body, back -- each returning a complete
+Three rollouts per document -- front, body, back -- each returning a complete
 `<article>` with only its own section filled in. A prediction is those merged.
-
-Generation is separate from the benchmark run, which has no GPU: predictions are
-pushed to the store and read back like any baseline that does not generate.
 """
 
 from __future__ import annotations
@@ -113,9 +109,8 @@ def merge_section_documents(xml_by_section: Dict[str, str]) -> bytes:
 def served_model(endpoint: str, timeout: int = 60) -> Optional[str]:
     """What the service says it is serving, or None if it will not say.
 
-    Its label and the checkpoint name are not comparable -- `jats-tfull` against
-    a directory name -- so this cannot refuse a mismatch. It makes one visible
-    instead, at the start of the run and in the stored metadata.
+    Its label and the checkpoint name are not comparable, so this cannot refuse a
+    mismatch -- only make one visible.
     """
     try:
         response = httpx.get(f"{endpoint}{HEALTH_PATH}", timeout=timeout)
@@ -133,12 +128,7 @@ async def _post_with_retry(  # pylint: disable=too-many-arguments,too-many-posit
     max_attempts: int,
     **kwargs: Any,
 ) -> httpx.Response:
-    """POST, asking again on the failures that are worth asking again.
-
-    Honours Retry-After where the service sets one, and backs off exponentially
-    with jitter otherwise, so a busy service is not hammered in lockstep by every
-    document in flight.
-    """
+    """POST, asking again on the failures that are worth asking again."""
     last_error: Optional[Exception] = None
     for attempt in range(max_attempts):
         try:
@@ -207,8 +197,8 @@ async def _predict_one(  # pylint: disable=too-many-arguments,too-many-positiona
 ) -> Tuple[bytes, Dict[str, Any]]:
     """One document's JATS, or an exception.
 
-    A failed section fails the document: a partial article scores as one whose
-    references were not there, which a service error and a real result share.
+    A failed section fails the document: a partial article is indistinguishable
+    from a model that found nothing.
     """
     preprocessed = await _preprocess(client, endpoint, pdf_path, timeout, max_attempts)
     rollouts = await asyncio.gather(*[
@@ -227,13 +217,8 @@ def rollout_usage(
 ) -> Dict[str, Any]:
     """What a document cost, in the shape `llm_usage` aggregates.
 
-    A turn is one request to the model, so that is what `calls` counts. Tokens are
-    absent rather than zero: the service does not report them, and a document that
-    spent nothing is a different thing from one whose spend is unknown.
-
-    The per-section detail is kept beside the aggregate because the three rollouts
-    are not alike -- body is far the longest -- and an average over them hides the
-    one worth looking at.
+    A turn is one request, so that is what `calls` counts. Tokens are absent
+    rather than zero: the service does not report them, and unknown is not free.
     """
     return {
         "calls": sum(payload.get("n_turns") or 0 for payload in by_section.values()),

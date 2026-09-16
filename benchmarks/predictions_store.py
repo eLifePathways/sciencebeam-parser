@@ -176,9 +176,8 @@ class RepoPredictionsStore:
     def _push_rebasing(self, attempts: int = 3) -> None:
         """Push, rebasing onto whatever landed while this run was working.
 
-        A generation run holds its checkout for hours and the benchmark writes
-        the same repo, so by the time it pushes the clone is usually behind and
-        the push is rejected -- losing the whole run at its last step.
+        A long run is usually behind by the time it pushes, and a rejection
+        there loses the whole run.
         """
         for attempt in range(attempts):
             if self._git("push", check=False).returncode == 0:
