@@ -19,8 +19,8 @@ SCIENCEBEAM_PARSER_PORT = 8080
 PHOENIX_PORT = 6006
 OTEL_EXPORTER_OTLP_ENDPOINT = http://localhost:$(PHOENIX_PORT)
 
-# Seconds to wait for the parser API on startup. Cold starts re-download pdfalto
-# + GROBID lexicons, so allow several minutes.
+# Seconds to wait for the parser API on startup. Cold starts re-download
+# GROBID lexicons, so allow several minutes.
 API_WAIT_TIMEOUT ?= 300
 
 PDFALTO_CONVERT_API_URL = http://localhost:$(SCIENCEBEAM_PARSER_PORT)/api/pdfalto
