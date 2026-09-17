@@ -26,9 +26,14 @@ def get_content(*regions) -> str:
 
 
 def decode(content: str, line_texts=None, max_regions: int = 64):
-    return decode_regions_response(
+    labels, _ = decode_regions_response(
         content, line_texts if line_texts is not None else LINES, LABELS, max_regions
     )
+    return labels
+
+
+def decode_with_unclaimed(content: str, max_regions: int = 64):
+    return decode_regions_response(content, LINES, LABELS, max_regions)
 
 
 class TestSegmentationRegionNames:
@@ -148,22 +153,13 @@ class TestDecodeRegionsResponseRejects:
         with pytest.raises(LlmMalformedResponseError, match='before it starts'):
             decode(get_content((0, 3, 'front_matter'), (4, 2, 'body')))
 
-    def test_a_gap_between_regions(self):
-        # the dominant failure: a region left out, and the response says so
-        with pytest.raises(LlmMalformedResponseError, match='a gap between'):
-            decode(get_content((0, 1, 'front_matter'), (4, 5, 'references')))
-
     def test_an_overlap_between_regions(self):
-        with pytest.raises(LlmMalformedResponseError, match='an overlap between'):
+        with pytest.raises(LlmMalformedResponseError, match='overlaps the next'):
             decode(get_content((0, 3, 'front_matter'), (2, 5, 'body')))
 
-    def test_a_first_region_that_leaves_lines_unlabelled(self):
-        with pytest.raises(LlmMalformedResponseError, match='rather than 0'):
-            decode(get_content((1, 5, 'front_matter')))
-
-    def test_a_last_region_that_stops_short_of_the_document(self):
-        with pytest.raises(LlmMalformedResponseError, match='rather than 5'):
-            decode(get_content((0, 4, 'front_matter')))
+    def test_a_region_touching_the_next_one(self):
+        with pytest.raises(LlmMalformedResponseError, match='overlaps the next'):
+            decode(get_content((0, 3, 'front_matter'), (3, 5, 'body')))
 
     def test_a_label_outside_the_closed_set(self):
         with pytest.raises(LlmMalformedResponseError, match='is not one of'):
@@ -193,3 +189,41 @@ class TestDecodeRegionsResponseRejects:
         )
         with pytest.raises(LlmMalformedResponseError, match='exceeds max_regions'):
             decode(content, max_regions=3)
+
+
+class TestUnclaimedLines:
+    """A line no region claims is `<other>`, which the pipeline reads no field
+    from. That is how a running head or a page number leaves the output instead
+    of joining whichever region surrounds it.
+    """
+
+    def test_should_label_a_gap_as_other(self):
+        labels, unclaimed = decode_with_unclaimed(get_content(
+            (0, 1, 'front_matter'), (3, 5, 'body')
+        ))
+        assert labels == [
+            'B-<header>', 'I-<header>',
+            'B-<other>',
+            'B-<body>', 'I-<body>', 'I-<body>',
+        ]
+        assert unclaimed == 1
+
+    def test_should_label_lines_before_the_first_region_as_other(self):
+        labels, unclaimed = decode_with_unclaimed(get_content((2, 5, 'body')))
+        assert labels[:3] == ['B-<other>', 'I-<other>', 'B-<body>']
+        assert unclaimed == 2
+
+    def test_should_label_lines_after_the_last_region_as_other(self):
+        labels, unclaimed = decode_with_unclaimed(get_content((0, 3, 'body')))
+        assert labels[4:] == ['B-<other>', 'I-<other>']
+        assert unclaimed == 2
+
+    def test_should_report_no_unclaimed_lines_when_regions_tile_the_document(self):
+        _, unclaimed = decode_with_unclaimed(get_content(
+            (0, 1, 'front_matter'), (2, 5, 'body')
+        ))
+        assert unclaimed == 0
+
+    def test_should_still_label_every_line(self):
+        labels, _ = decode_with_unclaimed(get_content((1, 1, 'body'), (4, 4, 'references')))
+        assert len(labels) == len(LINES)

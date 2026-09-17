@@ -5,6 +5,9 @@ from typing import Any, List, Mapping, Sequence, Tuple
 
 LINE_START = 'LINESTART'
 
+# Predicted by the segmentation model, read by nothing downstream.
+OTHER_LABEL = '<other>'
+
 LABEL_ONLY_LINE = re.compile(r'^[\[(]?\d{1,3}[\])]?[.)]?$')
 
 WORD_SEPARATOR = re.compile(r'[^0-9A-Za-zÀ-ɏ]+')
@@ -61,11 +64,14 @@ def get_regions_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
     enforced again on decode, because a provider that ignores the schema would
     otherwise be trusted.
 
-    The end is redundant with the next region's start, and that is the point: a
-    model that drops a region has to contradict itself to hide it. The worst
-    document measured returned three regions where four were needed, and the
-    surviving one silently swallowed 172 lines because a region ran until the
-    next one started.
+    Asking where a region ends as well as where it starts lets a line belong to
+    no region at all, which is what running heads, footers and page numbers are:
+    a line to step over rather than a region to name. Those lines become
+    `<other>`, which the pipeline reads no field from.
+
+    The descriptions are part of the schema rather than only the prompt, so the
+    meaning of a value sits beside the value being generated. Whether a provider
+    shows them to the model depends on how it implements structured outputs.
     """
     return {
         'type': 'object',
@@ -74,14 +80,25 @@ def get_regions_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
         'properties': {
             'regions': {
                 'type': 'array',
+                'description': 'The regions of the article, in reading order.',
                 'items': {
                     'type': 'object',
                     'additionalProperties': False,
                     'required': ['start', 'end', 'label'],
                     'properties': {
-                        'start': {'type': 'integer'},
-                        'end': {'type': 'integer'},
-                        'label': {'type': 'string', 'enum': list(labels)},
+                        'start': {
+                            'type': 'integer',
+                            'description': 'Number of the first line of the region.',
+                        },
+                        'end': {
+                            'type': 'integer',
+                            'description': 'Number of the last line of the region.',
+                        },
+                        'label': {
+                            'type': 'string',
+                            'enum': list(labels),
+                            'description': 'The kind of content the region holds.',
+                        },
                     },
                 },
             },
@@ -363,52 +380,51 @@ def parse_regions(
                 f'region label {name!r} is not one of {sorted(allowed)}'
             )
         regions.append((start, end, name))
-    _check_regions_cover_every_line(regions, line_count)
+    _check_regions_do_not_overlap(regions)
     return regions
 
 
-def _check_regions_cover_every_line(
-    regions: Sequence[Tuple[int, int, str]], line_count: int
+def _check_regions_do_not_overlap(
+    regions: Sequence[Tuple[int, int, str]]
 ) -> None:
-    """Every line belongs to exactly one region, and the response says so twice.
+    """A line may belong to no region, but never to two.
 
-    Asking for an end as well as a start makes a dropped region visible: a model
-    that leaves one out has to either leave a gap here or claim the neighbouring
-    region covers lines it already said it ended before.
+    A gap is a claim the model is entitled to make — running heads, footers and
+    page numbers sit inside a region's span without belonging to it. An overlap
+    is not a claim about anything: it assigns one line to two kinds of content,
+    and there is no reading of it that the pipeline could honour.
     """
-    if regions[0][0] != 0:
-        raise LlmMalformedResponseError(
-            f'the first region starts at line {regions[0][0]} rather than 0,'
-            ' so the lines before it have no label'
-        )
-    for (_, end, _), (next_start, _, _) in zip(regions, regions[1:]):
-        if next_start != end + 1:
-            gap = 'a gap' if next_start > end + 1 else 'an overlap'
+    for (start, end, _), (next_start, _, _) in zip(regions, regions[1:]):
+        if next_start <= end:
             raise LlmMalformedResponseError(
-                f'{gap} between a region ending at line {end} and the next'
-                f' starting at line {next_start}'
+                f'a region covering lines {start}..{end} overlaps the next,'
+                f' which starts at line {next_start}'
             )
-    last_end = regions[-1][1]
-    if last_end != line_count - 1:
-        raise LlmMalformedResponseError(
-            f'the last region ends at line {last_end} rather than {line_count - 1},'
-            ' so the lines after it have no label'
-        )
+
+
+def _iter_run(label: str, length: int) -> List[str]:
+    return [f'B-{label}'] + [f'I-{label}'] * (length - 1)
 
 
 def iter_labels_for_regions(
     regions: Sequence[Tuple[int, int, str]], line_count: int
 ) -> List[str]:
+    """One label per line. Lines no region claims are `<other>`.
+
+    `<other>` is a label the model predicts and `processors/fulltext` reads no
+    field from, so a line left out of every region leaves the output rather than
+    joining whichever region happens to surround it.
+    """
     from sciencebeam_parser.models.llm.tasks import (  # noqa pylint: disable=import-outside-toplevel
         get_segmentation_label
     )
     labels: List[str] = []
     for start, end, name in regions:
-        label = get_segmentation_label(name)
-        labels.extend(
-            [f'B-<{label.strip("<>")}>']
-            + [f'I-<{label.strip("<>")}>'] * (end - start)
-        )
+        if start > len(labels):
+            labels.extend(_iter_run(OTHER_LABEL, start - len(labels)))
+        labels.extend(_iter_run(get_segmentation_label(name), end - start + 1))
+    if len(labels) < line_count:
+        labels.extend(_iter_run(OTHER_LABEL, line_count - len(labels)))
     if len(labels) != line_count:
         raise LlmMalformedResponseError(
             f'regions cover {len(labels)} lines rather than {line_count}'
@@ -416,20 +432,29 @@ def iter_labels_for_regions(
     return labels
 
 
+def count_unclaimed_lines(
+    regions: Sequence[Tuple[int, int, str]], line_count: int
+) -> int:
+    return line_count - sum(end - start + 1 for start, end, _ in regions)
+
+
 def decode_regions_response(
     content: str,
     line_texts: Sequence[str],
     region_names: Sequence[str],
     max_regions: int
-) -> List[str]:
-    """One label per line, covering every line, from a response of region spans."""
+) -> Tuple[List[str], int]:
+    """One label per line, and how many lines no region claimed."""
     regions = parse_regions(
         content,
         line_count=len(line_texts),
         region_names=region_names,
         max_regions=max_regions
     )
-    return iter_labels_for_regions(regions, len(line_texts))
+    return (
+        iter_labels_for_regions(regions, len(line_texts)),
+        count_unclaimed_lines(regions, len(line_texts))
+    )
 
 
 def decode_line_starts_response(

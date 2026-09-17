@@ -77,18 +77,27 @@ words a publisher would use rather than GROBID's, and the decoder maps them to t
 `processors/fulltext` consumes. The other seven labels the model predicts reach no scored field and
 are left out of the prompt.
 
-**The end is redundant with the next region's start, and that is the point.** A model that drops a
-region has to contradict itself to hide it: the worst document measured returned three regions where
-four were needed, and the surviving one silently swallowed 172 lines because a region simply ran
-until the next one began. Decode requires the spans to tile the document exactly — first start at
-line 0, each end one before the next start, last end at the final line — so a gap or an overlap is a
-rejected response rather than a wrong answer.
+**Asking where a region ends, not only where it starts, lets a line belong to nothing.** That is what
+running heads, footers and page numbers are: a line to step over rather than a region to name. They
+are 4.5% of lines but **533 of 618 region boundaries** on the measured corpus, so giving them a label
+of their own would take a response from about five regions to about fifty — and over-segmentation is
+what truncates one. A line no region claims becomes `<other>`, which the model predicts and
+`processors/fulltext` reads no field from, so it leaves the output rather than joining whichever
+region surrounds it. Turning `noise_filter_enabled` on would drop such lines before segmentation
+instead; it is off here, as for every other profile.
 
-Running heads, footers and page numbers get no label of their own. They are 4.5% of lines but **533
-of 618 region boundaries** on the measured corpus, so asking for them takes a response from about
-five regions to about fifty, which is what truncates one. The prompt says they belong to the region
-they sit inside. Turning `noise_filter_enabled` on would drop them before segmentation instead; it is
-off here, as for every other profile.
+Every line still carries a label, and the count of unclaimed lines is reported on the span and in the
+log. A few are the shape working. A large share is a different thing — a model that stopped reading
+part way leaves the rest unclaimed, which silently drops whole sections rather than mislabelling
+them — so `warn_unclaimed_line_share` (default 0.1) warns above it.
+
+An **overlap** is rejected rather than resolved: it assigns one line to two kinds of content, and
+there is no reading of it the pipeline could honour. So is a region ending before it starts, an index
+outside the document, a label outside the set, and any key that was not asked for.
+
+The schema carries a one-line `description` per property, so the meaning of a value sits beside the
+value being generated rather than only in the prompt. Whether a provider shows those to the model
+depends on how it implements structured outputs.
 
 The payload is an index and a label from a closed set, so no document text passes through the
 response. Decode re-checks what the schema already asks for, because a provider that ignores the

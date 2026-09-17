@@ -297,6 +297,30 @@ class LlmModelImpl(ModelImpl):
             raise LlmResponseError(message)
         LOGGER.warning('llm %s: %s', self.config.task, message)
 
+    def _check_unclaimed_lines(self, unclaimed: int, line_count: int) -> None:
+        """Lines no region claimed become `<other>` and leave the output.
+
+        A few are what the shape is for: running heads, footers and page numbers
+        are stepped over rather than named. A large share is a different thing —
+        a model that stopped reading part way leaves the rest unclaimed, and that
+        silently drops whole sections rather than mislabelling them.
+        """
+        if not unclaimed:
+            return
+        share = unclaimed / line_count
+        if share < self.config.warn_unclaimed_line_share:
+            LOGGER.info(
+                'llm %s: %d of %d line(s) belong to no region',
+                self.config.task, unclaimed, line_count
+            )
+            return
+        LOGGER.warning(
+            'llm %s: %d of %d line(s) (%.0f%%) belong to no region, which is more'
+            ' than running heads and page numbers account for; the response may'
+            ' stop short of the document',
+            self.config.task, unclaimed, line_count, 100 * share
+        )
+
     def _check_input_size(self, line_count: int, token_count: int) -> None:
         """A references region far larger than a reference list is a segmentation
         failure upstream, not something to extract from. Warn rather than raise by
@@ -364,14 +388,16 @@ class LlmModelImpl(ModelImpl):
                 self.config.record_trace_content
             )
             content = self._get_content(response_json, len(tokens))
-            labels = decode_regions_response(
+            labels, unclaimed = decode_regions_response(
                 content, line_texts, self.labels, self.config.max_regions
             )
+            span.set_attribute('sciencebeam.unclaimed_lines', unclaimed)
+            self._check_unclaimed_lines(unclaimed, len(line_texts))
         LOGGER.info(
-            'llm labelled %d lines as %d region(s)'
+            'llm labelled %d lines as %d region(s), %d line(s) unclaimed'
             ' (model=%r provider=%r trace=%s)',
             len(line_texts), sum(1 for label in labels if label.startswith('B-')),
-            self.config.model, response_json.get('provider'),
+            unclaimed, self.config.model, response_json.get('provider'),
             get_trace_id(span) or '-'
         )
         return list(zip(tokens, labels))
