@@ -13,20 +13,14 @@ and its label:
 - `references` — the bibliography, including its heading
 - `other` — running heads, footers and page numbers
 
-A region covers every line from its start to its end, and usually runs over several pages. An
-article has a handful of regions, one for each stretch of a single kind of content — a body of forty
-pages is one region, not forty. Start a new region where the kind of content changes, which may be
-in the middle of a page.
-
-For an article of {{last_line}} lines, an answer looks like this:
+A region covers every line from its start to its end. The shape of an answer, with numbers chosen
+only to show how regions meet:
 
 ```
 {"regions": [
-  {"start": 1, "end": 11, "label": "front_matter"},
-  {"start": 12, "end": 480, "label": "body"},
-  {"start": 481, "end": 486, "label": "acknowledgements"},
-  {"start": 487, "end": {{last_line}}, "label": "references"}
+  {"start": 1, "end": 3, "label": "front_matter"},
+  {"start": 4, "end": 9, "label": "body"}
 ]}
 ```
 
-Line 11 is the last line of the front matter and line 12 is the first line of the body.
+Line 3 is the last line of the front matter and line 4 is the first line of the body.
