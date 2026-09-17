@@ -927,18 +927,23 @@ def get_segmentation_model_impl(content: Optional[str] = None, **overrides):
 
 def get_regions_content(*regions) -> str:
     return json.dumps({
-        'regions': [{'start': start, 'label': label} for start, label in regions]
+        'regions': [
+            {'start': start, 'end': end, 'label': label}
+            for start, end, label in regions
+        ]
     })
 
 
 class TestLlmModelImplRegionsShape:
     def test_should_resolve_the_whole_line_text_column_by_name(self):
-        model_impl = get_segmentation_model_impl(get_regions_content((0, 'header')))
+        model_impl = get_segmentation_model_impl(get_regions_content((0, 3, 'front_matter')))
         assert model_impl.whole_line_text_index == WHOLE_LINE_TEXT_INDEX
 
     def test_should_label_every_row(self):
         model_impl = get_segmentation_model_impl(
-            get_regions_content((0, 'header'), (1, 'body'), (2, 'references'))
+            get_regions_content(
+                (0, 0, 'front_matter'), (1, 1, 'body'), (2, 3, 'references')
+            )
         )
         result = model_impl.predict_labels(
             [SEGMENTATION_TOKENS], [segmentation_feature_rows()]
@@ -951,25 +956,25 @@ class TestLlmModelImplRegionsShape:
         ]
 
     def test_should_prompt_with_the_line_text_rather_than_the_row_token(self):
-        model_impl = get_segmentation_model_impl(get_regions_content((0, 'header')))
+        model_impl = get_segmentation_model_impl(get_regions_content((0, 3, 'front_matter')))
         model_impl.predict_labels([SEGMENTATION_TOKENS], [segmentation_feature_rows()])
         prompt = model_impl.client.prompts[0]
         assert '0\tTitle of it' in prompt
         assert '3\t[1] Smith' in prompt
 
     def test_should_close_the_label_set_in_the_schema_it_sends(self):
-        model_impl = get_segmentation_model_impl(get_regions_content((0, 'header')))
+        model_impl = get_segmentation_model_impl(get_regions_content((0, 3, 'front_matter')))
         assert model_impl.labels == [
-            'header', 'body', 'acknowledgement', 'annex', 'references'
+            'front_matter', 'body', 'acknowledgements', 'appendix', 'references'
         ]
 
     def test_should_return_nothing_for_an_empty_document(self):
-        model_impl = get_segmentation_model_impl(get_regions_content((0, 'header')))
+        model_impl = get_segmentation_model_impl(get_regions_content((0, 3, 'front_matter')))
         assert model_impl.predict_labels([[]], [[]]) == [[]]
 
     def test_should_raise_when_the_document_exceeds_max_input_lines(self):
         model_impl = get_segmentation_model_impl(
-            get_regions_content((0, 'header')), max_input_lines=2
+            get_regions_content((0, 3, 'front_matter')), max_input_lines=2
         )
         with pytest.raises(LlmInputTooLargeError, match='may not label reliably'):
             model_impl.predict_labels(

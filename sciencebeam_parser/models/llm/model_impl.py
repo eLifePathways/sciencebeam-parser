@@ -29,7 +29,10 @@ from sciencebeam_parser.models.llm.decode import (
 )
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.prompt import get_prompt
-from sciencebeam_parser.models.llm.tasks import get_citation_labels, get_segmentation_labels
+from sciencebeam_parser.models.llm.tasks import (
+    get_citation_labels,
+    get_segmentation_region_names
+)
 from sciencebeam_parser.models.llm.telemetry import llm_span, set_response_attributes
 from sciencebeam_parser.models.llm.usage import record_llm_usage
 from sciencebeam_parser.models.llm.values import (
@@ -85,7 +88,7 @@ class LlmModelImpl(ModelImpl):
         if config.response_shape == VALUES_SHAPE:
             self.labels = get_citation_labels()
         elif config.response_shape == REGIONS_SHAPE:
-            self.labels = get_segmentation_labels()
+            self.labels = get_segmentation_region_names()
         else:
             self.labels = []
         self.line_status_index = (

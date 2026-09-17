@@ -54,12 +54,18 @@ EVIDENCE_RESPONSE_SCHEMA: Mapping[str, Any] = {
 
 
 def get_regions_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
-    """One entry per region: where it starts, and what it is.
+    """One entry per region: where it starts, where it ends, and what it is.
 
-    The payload is an index and a label from a closed set, so there is nothing a
-    model could invent that reaches the output. Every guarantee below is enforced
-    again on decode, because a provider that ignores the schema would otherwise
-    be trusted.
+    The payload is two indices and a label from a closed set, so there is nothing
+    a model could invent that reaches the output. Every guarantee below is
+    enforced again on decode, because a provider that ignores the schema would
+    otherwise be trusted.
+
+    The end is redundant with the next region's start, and that is the point: a
+    model that drops a region has to contradict itself to hide it. The worst
+    document measured returned three regions where four were needed, and the
+    surviving one silently swallowed 172 lines because a region ran until the
+    next one started.
     """
     return {
         'type': 'object',
@@ -71,9 +77,10 @@ def get_regions_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
                 'items': {
                     'type': 'object',
                     'additionalProperties': False,
-                    'required': ['start', 'label'],
+                    'required': ['start', 'end', 'label'],
                     'properties': {
                         'start': {'type': 'integer'},
+                        'end': {'type': 'integer'},
                         'label': {'type': 'string', 'enum': list(labels)},
                     },
                 },
@@ -302,12 +309,24 @@ def render_numbered_line_texts(line_texts: Sequence[str]) -> str:
     return '\n'.join(f'{number}\t{text}' for number, text in enumerate(line_texts))
 
 
+def _get_line_index(value: Any, field_name: str, line_count: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise LlmMalformedResponseError(
+            f'region {field_name} is not an integer: {value!r}'
+        )
+    if not 0 <= value < line_count:
+        raise LlmMalformedResponseError(
+            f'region {field_name} {value} out of range for {line_count} lines'
+        )
+    return value
+
+
 def parse_regions(
     content: str,
     line_count: int,
-    labels: Sequence[str],
+    region_names: Sequence[str],
     max_regions: int
-) -> List[Tuple[int, str]]:
+) -> List[Tuple[int, int, str]]:
     payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'regions' not in payload:
         raise LlmMalformedResponseError('response has no "regions"')
@@ -322,71 +341,95 @@ def parse_regions(
         raise LlmMalformedResponseError(
             f'{len(entries)} regions exceeds max_regions={max_regions}'
         )
-    allowed = set(labels)
-    regions: List[Tuple[int, str]] = []
+    allowed = set(region_names)
+    regions: List[Tuple[int, int, str]] = []
     for entry in entries:
         if not isinstance(entry, dict):
             raise LlmMalformedResponseError(f'region entry is malformed: {entry!r}')
-        unexpected = sorted(set(entry) - {'start', 'label'})
+        unexpected = sorted(set(entry) - {'start', 'end', 'label'})
         if unexpected:
             raise LlmMalformedResponseError(
                 f'region entry has unexpected key(s) {unexpected}: {entry!r}'
             )
-        start, label = entry.get('start'), entry.get('label')
-        if isinstance(start, bool) or not isinstance(start, int):
-            raise LlmMalformedResponseError(f'region start is not an integer: {start!r}')
-        if not 0 <= start < line_count:
+        start = _get_line_index(entry.get('start'), 'start', line_count)
+        end = _get_line_index(entry.get('end'), 'end', line_count)
+        name = entry.get('label')
+        if end < start:
             raise LlmMalformedResponseError(
-                f'region start {start} out of range for {line_count} lines'
+                f'region ends at line {end}, before it starts at {start}'
             )
-        if label not in allowed:
+        if not isinstance(name, str) or name not in allowed:
             raise LlmMalformedResponseError(
-                f'region label {label!r} is not one of {sorted(allowed)}'
+                f'region label {name!r} is not one of {sorted(allowed)}'
             )
-        regions.append((start, label))
-    starts = [start for start, _ in regions]
-    if starts != sorted(set(starts)):
-        raise LlmMalformedResponseError(f'region starts are not strictly ascending: {starts}')
-    if starts[0] != 0:
-        # Anything before the first region would have no label at all, and the
-        # pipeline reads regions rather than a default.
-        raise LlmMalformedResponseError(
-            f'the first region starts at line {starts[0]} rather than 0,'
-            ' so the lines before it have no label'
-        )
+        regions.append((start, end, name))
+    _check_regions_cover_every_line(regions, line_count)
     return regions
 
 
+def _check_regions_cover_every_line(
+    regions: Sequence[Tuple[int, int, str]], line_count: int
+) -> None:
+    """Every line belongs to exactly one region, and the response says so twice.
+
+    Asking for an end as well as a start makes a dropped region visible: a model
+    that leaves one out has to either leave a gap here or claim the neighbouring
+    region covers lines it already said it ended before.
+    """
+    if regions[0][0] != 0:
+        raise LlmMalformedResponseError(
+            f'the first region starts at line {regions[0][0]} rather than 0,'
+            ' so the lines before it have no label'
+        )
+    for (_, end, _), (next_start, _, _) in zip(regions, regions[1:]):
+        if next_start != end + 1:
+            gap = 'a gap' if next_start > end + 1 else 'an overlap'
+            raise LlmMalformedResponseError(
+                f'{gap} between a region ending at line {end} and the next'
+                f' starting at line {next_start}'
+            )
+    last_end = regions[-1][1]
+    if last_end != line_count - 1:
+        raise LlmMalformedResponseError(
+            f'the last region ends at line {last_end} rather than {line_count - 1},'
+            ' so the lines after it have no label'
+        )
+
+
 def iter_labels_for_regions(
-    regions: Sequence[Tuple[int, str]], line_count: int
+    regions: Sequence[Tuple[int, int, str]], line_count: int
 ) -> List[str]:
+    from sciencebeam_parser.models.llm.tasks import (  # noqa pylint: disable=import-outside-toplevel
+        get_segmentation_label
+    )
     labels: List[str] = []
-    index = -1
-    for line_number in range(line_count):
-        if index + 1 < len(regions) and regions[index + 1][0] == line_number:
-            index += 1
-            labels.append(f'B-<{regions[index][1]}>')
-            continue
-        labels.append(f'I-<{regions[index][1]}>')
+    for start, end, name in regions:
+        label = get_segmentation_label(name)
+        labels.extend(
+            [f'B-<{label.strip("<>")}>']
+            + [f'I-<{label.strip("<>")}>'] * (end - start)
+        )
+    if len(labels) != line_count:
+        raise LlmMalformedResponseError(
+            f'regions cover {len(labels)} lines rather than {line_count}'
+        )
     return labels
 
 
 def decode_regions_response(
     content: str,
     line_texts: Sequence[str],
-    labels: Sequence[str],
+    region_names: Sequence[str],
     max_regions: int
 ) -> List[str]:
-    """One label per line, covering every line, from a response of region starts."""
+    """One label per line, covering every line, from a response of region spans."""
     regions = parse_regions(
-        content, line_count=len(line_texts), labels=labels, max_regions=max_regions
+        content,
+        line_count=len(line_texts),
+        region_names=region_names,
+        max_regions=max_regions
     )
-    decoded = iter_labels_for_regions(regions, len(line_texts))
-    if len(decoded) != len(line_texts):
-        raise LlmMalformedResponseError(
-            f'produced {len(decoded)} labels for {len(line_texts)} lines'
-        )
-    return decoded
+    return iter_labels_for_regions(regions, len(line_texts))
 
 
 def decode_line_starts_response(

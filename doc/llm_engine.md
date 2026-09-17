@@ -71,10 +71,24 @@ Segmentation reads the whole document rather than a region an upstream model cho
 already lines, so the line text comes from the `whole_line_text` feature column rather than being
 rebuilt from token rows.
 
-The response is one entry per region — the line it starts on, and one of the five labels
-`processors/fulltext` consumes: `header`, `body`, `acknowledgement`, `annex`, `references`. Each
-region runs to the line before the next, and the last reaches the end, so every line carries a label.
-The other seven labels the model predicts reach no scored field and are left out of the prompt.
+The response is one entry per region: the line it starts on, the line it ends on, and one of five
+region names — `front_matter`, `body`, `acknowledgements`, `appendix`, `references`. Those are the
+words a publisher would use rather than GROBID's, and the decoder maps them to the five labels
+`processors/fulltext` consumes. The other seven labels the model predicts reach no scored field and
+are left out of the prompt.
+
+**The end is redundant with the next region's start, and that is the point.** A model that drops a
+region has to contradict itself to hide it: the worst document measured returned three regions where
+four were needed, and the surviving one silently swallowed 172 lines because a region simply ran
+until the next one began. Decode requires the spans to tile the document exactly — first start at
+line 0, each end one before the next start, last end at the final line — so a gap or an overlap is a
+rejected response rather than a wrong answer.
+
+Running heads, footers and page numbers get no label of their own. They are 4.5% of lines but **533
+of 618 region boundaries** on the measured corpus, so asking for them takes a response from about
+five regions to about fifty, which is what truncates one. The prompt says they belong to the region
+they sit inside. Turning `noise_filter_enabled` on would drop them before segmentation instead; it is
+off here, as for every other profile.
 
 The payload is an index and a label from a closed set, so no document text passes through the
 response. Decode re-checks what the schema already asks for, because a provider that ignores the

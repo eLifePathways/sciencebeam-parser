@@ -1,40 +1,47 @@
 from typing import List
 
 
-# The labels `processors/fulltext/processor.py` reads from the segmentation result:
-# `<header>`, `<body>`, `<acknowledgement>`, `<annex>` and `<references>`. The model
-# predicts twelve; the other seven reach no scored field, so asking for them spends
-# output on distinctions nothing downstream can use.
-CONSUMED_SEGMENTATION_LABELS = (
-    '<header>',
-    '<body>',
-    '<acknowledgement>',
-    '<annex>',
-    '<references>',
-)
+# What the prompt calls each region, and the label the pipeline reads it as.
+# `processors/fulltext/processor.py` consumes five of the model's twelve labels;
+# the other seven reach no scored field, so asking for them would spend output on
+# distinctions nothing downstream can use.
+#
+# The prompt's names are the ones a publisher would use rather than GROBID's.
+# `header` in particular means a page header to most readers and the article's
+# front matter here, and the model is the audience for the word.
+SEGMENTATION_LABEL_BY_REGION_NAME = {
+    'front_matter': '<header>',
+    'body': '<body>',
+    'acknowledgements': '<acknowledgement>',
+    'appendix': '<annex>',
+    'references': '<references>',
+}
 
 
-def get_segmentation_labels() -> List[str]:
-    """Checked against the model's own label map rather than only restated.
+def get_segmentation_region_names() -> List[str]:
+    """The names the prompt offers, checked against the labels they map to.
 
-    The five are a choice about what the pipeline consumes, so they are named
-    here; that they are still spelled the way the segmentation model spells them
-    is not a choice, and a rename there would otherwise reach the prompt as a
-    label the decoder then rejects.
+    Which five the pipeline consumes is a choice, so it is stated here; that they
+    are still spelled the way the segmentation model spells them is not, and a
+    rename there would otherwise reach the decoder as a label nothing reads.
     """
     from sciencebeam_parser.models.segmentation.training_data import (  # noqa pylint: disable=import-outside-toplevel
         TRAINING_XML_ELEMENT_PATH_BY_LABEL
     )
-    unknown = [
-        label for label in CONSUMED_SEGMENTATION_LABELS
+    unknown = sorted(
+        label for label in SEGMENTATION_LABEL_BY_REGION_NAME.values()
         if label not in TRAINING_XML_ELEMENT_PATH_BY_LABEL
-    ]
+    )
     if unknown:
         raise ValueError(
             f'segmentation model has no label(s) {unknown};'
             f' has: {sorted(TRAINING_XML_ELEMENT_PATH_BY_LABEL)}'
         )
-    return [label.strip('<>') for label in CONSUMED_SEGMENTATION_LABELS]
+    return list(SEGMENTATION_LABEL_BY_REGION_NAME)
+
+
+def get_segmentation_label(region_name: str) -> str:
+    return SEGMENTATION_LABEL_BY_REGION_NAME[region_name]
 
 
 def get_citation_labels() -> List[str]:
