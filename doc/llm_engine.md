@@ -21,13 +21,15 @@ default is asserted by test, so changing it there fails the build. Env keys use 
 same way — for example
 `SCIENCEBEAM_PARSER__SEQUENCE_MODEL_PROFILES__LLM_REFERENCE_SEGMENTER__CITATION__MODEL`.
 
-Three profiles, all extending `grobid_crf_0_9_0` so every other model stays on wapiti:
+Five profiles, all extending `grobid_crf_0_9_0` so every other model stays on wapiti:
 
 | profile | replaces |
 | --- | --- |
+| `llm_segmentation` | `segmentation` |
 | `llm_reference_segmenter` | `reference_segmenter` |
 | `llm_citation` | `citation` |
-| `llm_references` | both |
+| `llm_references` | the two reference models |
+| `llm_all` | all three |
 
 One per model matters for attribution: when a run fails, the per-model profiles say which model did
 it without having to read a stack trace.
@@ -51,7 +53,38 @@ citation:
   provider: 'siliconflow'
   prompt_version: 'values-v1'
   reasoning_enabled: false
+segmentation:
+  engine: 'llm'
+  task: 'segmentation'
+  response_shape: 'regions'        # where each region starts, and what it is
+  model: 'qwen/qwen3.5-9b'
+  provider: 'venice'
+  prompt_version: 'regions-v1'
+  reasoning_enabled: false
+  warn_input_lines: 2500           # a whole document, not a region
+  max_input_lines: 4000
 ```
+
+### The `regions` shape
+
+Segmentation reads the whole document rather than a region an upstream model chose, and its rows are
+already lines, so the line text comes from the `whole_line_text` feature column rather than being
+rebuilt from token rows.
+
+The response is one entry per region — the line it starts on, and one of the five labels
+`processors/fulltext` consumes: `header`, `body`, `acknowledgement`, `annex`, `references`. Each
+region runs to the line before the next, and the last reaches the end, so every line carries a label.
+The other seven labels the model predicts reach no scored field and are left out of the prompt.
+
+The payload is an index and a label from a closed set, so no document text passes through the
+response. Decode re-checks what the schema already asks for, because a provider that ignores the
+schema would otherwise be trusted: an index in range, strictly ascending starts, a first region at
+line 0, a label in the set, and no key that was not asked for. `max_regions` (default 64) rejects a
+runaway answer — over-segmentation is what truncates a response, and the gold maximum on the measured
+corpus is 16.
+
+A rejected response fails the document rather than falling back to the CRF: a fallback would make a
+benchmark column a blend of two models and hide how often the shape fails.
 
 ### Reasoning
 

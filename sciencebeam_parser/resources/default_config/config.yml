@@ -251,8 +251,28 @@ sequence_model_profiles:
       # provider answers with 429s.
       max_references_per_request: 10
       max_concurrent_requests: 4
+  llm_segmentation:
+    extends: grobid_crf_0_9_0
+    segmentation:
+      engine: 'llm'
+      task: 'segmentation'
+      response_shape: 'regions'
+      model: 'qwen/qwen3.5-9b'
+      provider: 'venice'
+      prompt_version: 'regions-v1'
+      reasoning_enabled: false
+      # A whole document rather than a region: median 743 lines and up to 1682 on
+      # the measured corpus, so the references-sized guards would warn on every
+      # document and say nothing.
+      warn_input_lines: 2500
+      max_input_lines: 4000
   llm_references:
     extends:
+      - llm_reference_segmenter
+      - llm_citation
+  llm_all:
+    extends:
+      - llm_segmentation
       - llm_reference_segmenter
       - llm_citation
 
@@ -291,6 +311,16 @@ profiles:
         noise_filter_enabled: false
   llm_citation:
     sequence_models: llm_citation
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  llm_segmentation:
+    sequence_models: llm_segmentation
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  llm_all:
+    sequence_models: llm_all
     processors:
       fulltext:
         noise_filter_enabled: false

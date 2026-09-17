@@ -892,3 +892,86 @@ class TestUsageAccumulation:
             accumulator = start_request_llm_usage()
             return accumulator.to_dict()
         assert contextvars.copy_context().run(request) is None
+
+
+SEGMENTATION_CONFIG = {
+    'task': 'segmentation',
+    'model': 'qwen/qwen3.5-9b',
+    'prompt_version': 'regions-v1',
+    'response_shape': 'regions',
+    'provider': 'venice',
+}
+
+SEGMENTATION_LINE_TEXTS = ['Title of it', 'Introduction', 'References', '[1] Smith']
+
+WHOLE_LINE_TEXT_INDEX = get_feature_column_index('segmentation', 'whole_line_text')
+
+
+def segmentation_feature_rows():
+    """Segmentation's rows are lines, so one row per line and the text is a column."""
+    return [
+        ['x'] * WHOLE_LINE_TEXT_INDEX + [line_text]
+        for line_text in SEGMENTATION_LINE_TEXTS
+    ]
+
+
+SEGMENTATION_TOKENS = ['Title', 'Introduction', 'References', '[1]']
+
+
+def get_segmentation_model_impl(content: Optional[str] = None, **overrides):
+    return LlmModelImpl(
+        LlmEngineConfig.from_model_config({**SEGMENTATION_CONFIG, **overrides}),
+        client=FakeClient(content=content)
+    )
+
+
+def get_regions_content(*regions) -> str:
+    return json.dumps({
+        'regions': [{'start': start, 'label': label} for start, label in regions]
+    })
+
+
+class TestLlmModelImplRegionsShape:
+    def test_should_resolve_the_whole_line_text_column_by_name(self):
+        model_impl = get_segmentation_model_impl(get_regions_content((0, 'header')))
+        assert model_impl.whole_line_text_index == WHOLE_LINE_TEXT_INDEX
+
+    def test_should_label_every_row(self):
+        model_impl = get_segmentation_model_impl(
+            get_regions_content((0, 'header'), (1, 'body'), (2, 'references'))
+        )
+        result = model_impl.predict_labels(
+            [SEGMENTATION_TOKENS], [segmentation_feature_rows()]
+        )
+        assert result[0] == [
+            ('Title', 'B-<header>'),
+            ('Introduction', 'B-<body>'),
+            ('References', 'B-<references>'),
+            ('[1]', 'I-<references>'),
+        ]
+
+    def test_should_prompt_with_the_line_text_rather_than_the_row_token(self):
+        model_impl = get_segmentation_model_impl(get_regions_content((0, 'header')))
+        model_impl.predict_labels([SEGMENTATION_TOKENS], [segmentation_feature_rows()])
+        prompt = model_impl.client.prompts[0]
+        assert '0\tTitle of it' in prompt
+        assert '3\t[1] Smith' in prompt
+
+    def test_should_close_the_label_set_in_the_schema_it_sends(self):
+        model_impl = get_segmentation_model_impl(get_regions_content((0, 'header')))
+        assert model_impl.labels == [
+            'header', 'body', 'acknowledgement', 'annex', 'references'
+        ]
+
+    def test_should_return_nothing_for_an_empty_document(self):
+        model_impl = get_segmentation_model_impl(get_regions_content((0, 'header')))
+        assert model_impl.predict_labels([[]], [[]]) == [[]]
+
+    def test_should_raise_when_the_document_exceeds_max_input_lines(self):
+        model_impl = get_segmentation_model_impl(
+            get_regions_content((0, 'header')), max_input_lines=2
+        )
+        with pytest.raises(LlmInputTooLargeError, match='may not label reliably'):
+            model_impl.predict_labels(
+                [SEGMENTATION_TOKENS], [segmentation_feature_rows()]
+            )

@@ -21,12 +21,15 @@ from sciencebeam_parser.models.llm.decode import (
     LlmResponseError,
     decode_evidence_response,
     decode_line_starts_response,
+    decode_regions_response,
     get_line_numbers,
+    get_regions_response_schema,
+    render_numbered_line_texts,
     render_numbered_lines
 )
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.prompt import get_prompt
-from sciencebeam_parser.models.llm.tasks import get_citation_labels
+from sciencebeam_parser.models.llm.tasks import get_citation_labels, get_segmentation_labels
 from sciencebeam_parser.models.llm.telemetry import llm_span, set_response_attributes
 from sciencebeam_parser.models.llm.usage import record_llm_usage
 from sciencebeam_parser.models.llm.values import (
@@ -41,14 +44,16 @@ from sciencebeam_parser.utils.telemetry import get_trace_id
 LOGGER = logging.getLogger(__name__)
 
 LINE_STATUS_FEATURE_NAME = 'line_status'
+WHOLE_LINE_TEXT_FEATURE_NAME = 'whole_line_text'
 
 LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
 VALUES_SHAPE = 'values'
+REGIONS_SHAPE = 'regions'
 
 LINE_BASED_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE)
 
-SUPPORTED_RESPONSE_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE, VALUES_SHAPE)
+SUPPORTED_RESPONSE_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE, VALUES_SHAPE, REGIONS_SHAPE)
 
 
 def _get_content_or_none(response_json) -> Optional[str]:
@@ -77,12 +82,21 @@ class LlmModelImpl(ModelImpl):
             self.client = CachingLlmClient(
                 config, self.client, get_response_cache(response_cache_dir)
             )
-        self.labels = (
-            get_citation_labels() if config.response_shape == VALUES_SHAPE else []
-        )
+        if config.response_shape == VALUES_SHAPE:
+            self.labels = get_citation_labels()
+        elif config.response_shape == REGIONS_SHAPE:
+            self.labels = get_segmentation_labels()
+        else:
+            self.labels = []
         self.line_status_index = (
             get_feature_column_index(config.task, LINE_STATUS_FEATURE_NAME)
             if config.response_shape in LINE_BASED_SHAPES else -1
+        )
+        # Segmentation's rows are already lines, so the line text is a feature
+        # column rather than something to rebuild from token rows.
+        self.whole_line_text_index = (
+            get_feature_column_index(config.task, WHOLE_LINE_TEXT_FEATURE_NAME)
+            if config.response_shape == REGIONS_SHAPE else -1
         )
 
     def __repr__(self) -> str:
@@ -106,6 +120,11 @@ class LlmModelImpl(ModelImpl):
             )
         if self.config.response_shape == VALUES_SHAPE:
             return self._predict_labels_in_batches(texts)
+        if self.config.response_shape == REGIONS_SHAPE:
+            return [
+                self._predict_regions_for_document(sequence_texts, sequence_features)
+                for sequence_texts, sequence_features in zip(texts, features)
+            ]
         return [
             self._predict_labels_for_sequence(sequence_texts, sequence_features)
             for sequence_texts, sequence_features in zip(texts, features)
@@ -280,21 +299,79 @@ class LlmModelImpl(ModelImpl):
         failure upstream, not something to extract from. Warn rather than raise by
         default: raising would fail exactly the documents where the CRF engine
         produces poor output, which flatters a comparison rather than informing it.
+
+        A whole document is legitimately thousands of lines, so a shape that takes
+        one says so rather than reading the size as a symptom.
         """
+        if self.config.response_shape == REGIONS_SHAPE:
+            suffix = '; a document this long may not label reliably in one call'
+        else:
+            suffix = (
+                '; a references region this large is usually a mislabelled'
+                ' segmentation region rather than a reference list, so check'
+                ' whether the segmentation model labelled the right region'
+            )
         if self.config.max_input_lines and line_count > self.config.max_input_lines:
             raise LlmInputTooLargeError(
                 f'{line_count} lines ({token_count} tokens) exceeds'
-                f' max_input_lines={self.config.max_input_lines};'
-                ' a references region this large is usually a mislabelled'
-                ' segmentation region rather than a reference list'
+                f' max_input_lines={self.config.max_input_lines}{suffix}'
             )
         if self.config.warn_input_lines and line_count > self.config.warn_input_lines:
             LOGGER.warning(
-                'llm %s input is %d lines (%d tokens), which is larger than a'
-                ' reference list usually is; check whether the segmentation model'
-                ' labelled the right region',
-                self.config.task, line_count, token_count
+                'llm %s input is %d lines (%d tokens)%s',
+                self.config.task, line_count, token_count, suffix
             )
+
+    def _predict_regions_for_document(
+        self,
+        tokens: List[str],
+        feature_rows: List[List[str]]
+    ) -> List[Tuple[str, str]]:
+        if not tokens:
+            return []
+        line_texts = [row[self.whole_line_text_index] for row in feature_rows]
+        self._check_input_size(len(line_texts), len(tokens))
+        prompt = get_prompt(
+            self.config.task,
+            self.config.prompt_version,
+            render_numbered_line_texts(line_texts)
+        )
+        schema = get_regions_response_schema(self.labels)
+        return self._retrying_on_malformed(
+            f'{len(line_texts)}-line',
+            lambda attempt: self._label_document_once(
+                prompt, schema, tokens, line_texts, (attempt,)
+            )
+        )
+
+    def _label_document_once(
+        self,
+        prompt: str,
+        schema,
+        tokens: List[str],
+        line_texts: List[str],
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
+    ) -> List[Tuple[str, str]]:
+        with llm_span(self.config, prompt, self.config.record_trace_content) as span:
+            response_json = self.client.get_completion(prompt, schema, attempt)
+            record_llm_usage(self.config.task, response_json)
+            span.set_attribute('sciencebeam.input_lines', len(line_texts))
+            set_response_attributes(
+                span, response_json, _get_content_or_none(response_json),
+                self.config.record_trace_content
+            )
+            content = self._get_content(response_json, len(tokens))
+            labels = decode_regions_response(
+                content, line_texts, self.labels, self.config.max_regions
+            )
+        LOGGER.info(
+            'llm labelled %d lines as %d region(s)'
+            ' (model=%r provider=%r trace=%s)',
+            len(line_texts), sum(1 for label in labels if label.startswith('B-')),
+            self.config.model, response_json.get('provider'),
+            get_trace_id(span) or '-'
+        )
+        return list(zip(tokens, labels))
 
     def _predict_labels_for_sequence(
         self,

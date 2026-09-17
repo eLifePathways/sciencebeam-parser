@@ -28,6 +28,7 @@ class LlmEngineConfig:
     record_trace_content: bool = True
     warn_input_lines: int = 300
     max_input_lines: int = 0
+    max_regions: int = 64
     max_references_per_request: int = 10
     max_missing_reference_retries: int = 1
     max_malformed_response_retries: int = 1
