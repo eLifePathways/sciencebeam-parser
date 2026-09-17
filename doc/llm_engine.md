@@ -103,9 +103,9 @@ string was sent, silently ignored and not rejected, on this provider and model a
 reduces failures here rather than making a class of them impossible, which is why decode re-checks
 everything the schema asks for.
 
-Two prompt versions exist so that question can be measured rather than argued. `regions-v1` states
-the task in prose. `regions-v2` adds a compact picture of the answer, carrying the one thing neither
-the prose nor the enum states — this document's own line range:
+Prompt versions exist so that question can be measured rather than argued. `regions-v1` states the
+task in prose. `regions-v2` adds a compact picture of the answer, carrying the one thing neither the
+prose nor the enum states — this document's own line range:
 
 ```text
 {"regions": [
@@ -114,10 +114,20 @@ the prose nor the enum states — this document's own line range:
 ]}
 ```
 
-Line numbers are 0-based, and the template's `{{last_line}}` is substituted per document. That
-substitution is token replacement rather than `str.format`, since the template contains braces of its
-own. The range matters: a model was caught indexing every line one off, so a range stated as `1..n`
-would induce the failure it is meant to prevent.
+Line numbers start at 1, and the template's `{{last_line}}` is substituted per document — token
+replacement rather than `str.format`, since the template contains braces of its own. A model was
+caught answering 124, 197 and 549 where the 0-based answers were 123, 196 and 548, so numbering from
+1 agrees with how it reads a document rather than correcting it afterwards.
+
+`regions-v4` adds the one thing a model cannot read off the text: `[outside the text area]` on lines
+that fall outside the page's main area or repeat across pages. On the measured corpus that flags 95%
+of running heads, footers and page numbers and 2% of everything else. It is behind `mark_furniture`
+and the `llm_segmentation_furniture` profile.
+
+**Page and block boundaries are deliberately not marked.** A version that marked them, with bold and
+italic, scored 0.048 below the plain prompt and was worst on four of six corpora. The mechanism is
+visible in one document: offered a page break, the model ended the front matter there, and on a
+preprint whose first page is a status banner that cut the title, authors and abstract out of it.
 
 The payload is an index and a label from a closed set, so no document text passes through the
 response. Decode re-checks what the schema already asks for, because a provider that ignores the

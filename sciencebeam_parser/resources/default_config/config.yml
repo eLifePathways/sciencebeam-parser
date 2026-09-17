@@ -266,11 +266,11 @@ sequence_model_profiles:
       # document and say nothing.
       warn_input_lines: 2500
       max_input_lines: 4000
-  llm_segmentation_layout:
+  llm_segmentation_furniture:
     extends: llm_segmentation
     segmentation:
-      prompt_version: 'regions-v3'
-      render_layout: true
+      prompt_version: 'regions-v4'
+      mark_furniture: true
   llm_references:
     extends:
       - llm_reference_segmenter
@@ -332,8 +332,8 @@ profiles:
     processors:
       fulltext:
         noise_filter_enabled: true
-  llm_segmentation_layout:
-    sequence_models: llm_segmentation_layout
+  llm_segmentation_furniture:
+    sequence_models: llm_segmentation_furniture
     processors:
       fulltext:
         noise_filter_enabled: false

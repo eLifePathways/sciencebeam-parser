@@ -8,8 +8,6 @@ LINE_START = 'LINESTART'
 # Predicted by the segmentation model, read by nothing downstream.
 OTHER_LABEL = '<other>'
 
-BLOCK_START = 'BLOCKSTART'
-PAGE_START = 'PAGESTART'
 
 LABEL_ONLY_LINE = re.compile(r'^[\[(]?\d{1,3}[\])]?[.)]?$')
 
@@ -338,31 +336,28 @@ def render_numbered_line_texts(line_texts: Sequence[str]) -> str:
     )
 
 
-def render_layout_lines(
+def render_lines_with_furniture_hint(
     line_texts: Sequence[str],
-    block_statuses: Sequence[str],
-    page_statuses: Sequence[str],
-    bold_flags: Sequence[str],
-    italic_flags: Sequence[str]
+    main_area_flags: Sequence[str],
+    repetitive_flags: Sequence[str]
 ) -> str:
-    """The same numbered lines, with the page and block structure a reader sees.
+    """The same numbered lines, with a note on the ones that sit outside the text.
 
-    Markers carry no line number of their own, so every index still refers to the
-    same content line whether they are rendered or not.
+    This is the part a model cannot see: whether a line falls outside the page's
+    main area, or repeats across pages. On the measured corpus `is_main_area`
+    alone flags 95% of running heads, footers and page numbers and 2% of
+    everything else, which is the difference between the text a model reads and
+    the geometry a CRF is given.
+
+    Page and block boundaries are deliberately not marked. Offered those, a model
+    ended the front matter at the first page break, which on a preprint whose
+    first page is a status banner cut the title, authors and abstract out of it.
     """
     parts: List[str] = []
-    page = 1
     for index, text in enumerate(line_texts):
-        if index and page_statuses[index] == PAGE_START:
-            page += 1
-            parts.append(f'--- page {page} ---')
-        elif index and block_statuses[index] == BLOCK_START:
-            parts.append('')
-        if bold_flags[index] == '1':
-            text = f'**{text}**'
-        if italic_flags[index] == '1':
-            text = f'*{text}*'
-        parts.append(f'{index + 1}\t{text}')
+        outside = main_area_flags[index] != '1' or repetitive_flags[index] == '1'
+        marker = '[outside the text area] ' if outside else ''
+        parts.append(f'{index + 1}\t{marker}{text}')
     return '\n'.join(parts)
 
 
@@ -384,7 +379,7 @@ def parse_regions(
     line_count: int,
     region_names: Sequence[str],
     max_regions: int
-) -> List[Tuple[int, int, str]]:
+) -> Tuple[List[Tuple[int, int, str]], int]:
     payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'regions' not in payload:
         raise LlmMalformedResponseError('response has no "regions"')
@@ -393,12 +388,6 @@ def parse_regions(
         raise LlmMalformedResponseError('"regions" is not a list')
     if not entries:
         raise LlmMalformedResponseError('"regions" is empty, so no line has a label')
-    if len(entries) > max_regions:
-        # Over-segmentation is what truncates a response: one pilot answer ran to
-        # 204 regions on a 604-line document and was cut off mid-json.
-        raise LlmMalformedResponseError(
-            f'{len(entries)} regions exceeds max_regions={max_regions}'
-        )
     allowed = set(region_names)
     regions: List[Tuple[int, int, str]] = []
     for entry in entries:
@@ -422,8 +411,17 @@ def parse_regions(
                 f'region label {name!r} is not one of {sorted(allowed)}'
             )
         regions.append((start, end, name))
+    regions, touching = resolve_touching_regions(regions)
     _check_regions_do_not_overlap(regions)
-    return merge_adjacent_regions(regions)
+    merged = merge_adjacent_regions(regions)
+    # Counted after merging: a model that subdivides continuous text spends
+    # output on it, but an answer that collapses to a handful of regions is
+    # usable, and discarding it loses the document over a formatting habit.
+    if len(merged) > max_regions:
+        raise LlmMalformedResponseError(
+            f'{len(merged)} regions exceeds max_regions={max_regions}'
+        )
+    return merged, touching
 
 
 def merge_adjacent_regions(
@@ -443,6 +441,32 @@ def merge_adjacent_regions(
             continue
         merged.append((start, end, name))
     return merged
+
+
+def resolve_touching_regions(
+    regions: Sequence[Tuple[int, int, str]]
+) -> Tuple[List[Tuple[int, int, str]], int]:
+    """A region whose end is the next one's start meant that end exclusively.
+
+    Models chain regions — `79..107` then `107..126` — reading the end as where
+    the next begins. Where that is what a pair says, the earlier region is taken
+    to end a line sooner, which is the only reading under which both statements
+    are true. Anything overlapping by more than one line is a genuine
+    contradiction and is left to fail.
+
+    Returns the resolved regions and how many pairs needed it, so a prompt that
+    provokes this can be told apart from one that does not.
+    """
+    resolved = list(regions)
+    touching = 0
+    for index in range(len(resolved) - 1):
+        start, end, name = resolved[index]
+        next_start = resolved[index + 1][0]
+        if next_start != end or next_start <= start:
+            continue
+        resolved[index] = (start, end - 1, name)
+        touching += 1
+    return resolved, touching
 
 
 def _check_regions_do_not_overlap(
@@ -504,9 +528,11 @@ def decode_regions_response(
     line_texts: Sequence[str],
     region_names: Sequence[str],
     max_regions: int
-) -> Tuple[List[str], int]:
-    """One label per line, and how many lines no region claimed."""
-    regions = parse_regions(
+) -> Tuple[List[str], int, int]:
+    """One label per line, how many lines no region claimed, and how many region
+    pairs stated an end the next region's start contradicted.
+    """
+    regions, touching = parse_regions(
         content,
         line_count=len(line_texts),
         region_names=region_names,
@@ -514,7 +540,8 @@ def decode_regions_response(
     )
     return (
         iter_labels_for_regions(regions, len(line_texts)),
-        count_unclaimed_lines(regions, len(line_texts))
+        count_unclaimed_lines(regions, len(line_texts)),
+        touching
     )
 
 

@@ -1,7 +1,6 @@
 The lines below are one scientific article, in reading order. Each line is prefixed with its line
-number and a tab. `--- page n ---` marks where a new page begins, a blank line where a new block
-begins, and `**bold**` and `*italic*` mark how the line is set. Those markers carry no line number
-of their own.
+number and a tab. `[outside the text area]` marks a line that falls outside the page's main text
+area or repeats across pages, which is where running heads, footers and page numbers sit.
 
 Split the article into regions. For each region, give the line it starts on, the line it ends on,
 and its label:

@@ -24,7 +24,7 @@ from sciencebeam_parser.models.llm.decode import (
     decode_regions_response,
     get_line_numbers,
     get_regions_response_schema,
-    render_layout_lines,
+    render_lines_with_furniture_hint,
     render_numbered_line_texts,
     render_numbered_lines
 )
@@ -49,7 +49,7 @@ LOGGER = logging.getLogger(__name__)
 
 LINE_STATUS_FEATURE_NAME = 'line_status'
 WHOLE_LINE_TEXT_FEATURE_NAME = 'whole_line_text'
-LAYOUT_FEATURE_NAMES = ('block_status', 'page_status', 'is_bold', 'is_italic')
+FURNITURE_FEATURE_NAMES = ('is_main_area', 'is_repetitive_pattern')
 
 LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
@@ -103,9 +103,10 @@ class LlmModelImpl(ModelImpl):
             get_feature_column_index(config.task, WHOLE_LINE_TEXT_FEATURE_NAME)
             if config.response_shape == REGIONS_SHAPE else -1
         )
-        self.layout_indexes = (
-            [get_feature_column_index(config.task, name) for name in LAYOUT_FEATURE_NAMES]
-            if config.response_shape == REGIONS_SHAPE and config.render_layout else []
+        self.furniture_indexes = (
+            [get_feature_column_index(config.task, name)
+             for name in FURNITURE_FEATURE_NAMES]
+            if config.response_shape == REGIONS_SHAPE and config.mark_furniture else []
         )
 
     def __repr__(self) -> str:
@@ -364,11 +365,13 @@ class LlmModelImpl(ModelImpl):
             return []
         line_texts = [row[self.whole_line_text_index] for row in feature_rows]
         self._check_input_size(len(line_texts), len(tokens))
-        if self.layout_indexes:
-            block, page, bold, italic = (
-                [row[index] for row in feature_rows] for index in self.layout_indexes
+        if self.furniture_indexes:
+            main_area, repetitive = (
+                [row[index] for row in feature_rows] for index in self.furniture_indexes
             )
-            rendered = render_layout_lines(line_texts, block, page, bold, italic)
+            rendered = render_lines_with_furniture_hint(
+                line_texts, main_area, repetitive
+            )
         else:
             rendered = render_numbered_line_texts(line_texts)
         prompt = get_prompt(
@@ -402,10 +405,17 @@ class LlmModelImpl(ModelImpl):
                 self.config.record_trace_content
             )
             content = self._get_content(response_json, len(tokens))
-            labels, unclaimed = decode_regions_response(
+            labels, unclaimed, touching = decode_regions_response(
                 content, line_texts, self.labels, self.config.max_regions
             )
             span.set_attribute('sciencebeam.unclaimed_lines', unclaimed)
+            span.set_attribute('sciencebeam.touching_regions', touching)
+            if touching:
+                LOGGER.info(
+                    'llm %s: %d region pair(s) ended where the next began,'
+                    ' read as ending a line sooner',
+                    self.config.task, touching
+                )
             self._check_unclaimed_lines(unclaimed, len(line_texts))
         LOGGER.info(
             'llm labelled %d lines as %d region(s), %d line(s) unclaimed'

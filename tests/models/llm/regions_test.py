@@ -3,7 +3,7 @@ import json
 import pytest
 
 from sciencebeam_parser.models.llm.decode import (
-    render_layout_lines,
+    render_lines_with_furniture_hint,
     LlmMalformedResponseError,
     decode_regions_response,
     get_regions_response_schema,
@@ -28,14 +28,22 @@ def get_content(*regions) -> str:
 
 
 def decode(content: str, line_texts=None, max_regions: int = 64):
-    labels, _ = decode_regions_response(
+    labels, _, _ = decode_regions_response(
         content, line_texts if line_texts is not None else LINES, LABELS, max_regions
     )
     return labels
 
 
 def decode_with_unclaimed(content: str, max_regions: int = 64):
-    return decode_regions_response(content, LINES, LABELS, max_regions)
+    labels, unclaimed, _ = decode_regions_response(
+        content, LINES, LABELS, max_regions)
+    return labels, unclaimed
+
+
+def decode_with_touching(content: str, max_regions: int = 64):
+    labels, _, touching = decode_regions_response(
+        content, LINES, LABELS, max_regions)
+    return labels, touching
 
 
 class TestSegmentationRegionNames:
@@ -158,13 +166,13 @@ class TestDecodeRegionsResponseRejects:
         with pytest.raises(LlmMalformedResponseError, match='before it starts'):
             decode(get_content((0, 3, 'front_matter'), (4, 2, 'body')))
 
-    def test_an_overlap_between_regions(self):
+    def test_an_overlap_of_more_than_one_line(self):
         with pytest.raises(LlmMalformedResponseError, match='overlaps the next'):
             decode(get_content((0, 3, 'front_matter'), (2, 5, 'body')))
 
-    def test_a_region_touching_the_next_one(self):
+    def test_an_overlap_that_would_empty_the_earlier_region(self):
         with pytest.raises(LlmMalformedResponseError, match='overlaps the next'):
-            decode(get_content((0, 3, 'front_matter'), (3, 5, 'body')))
+            decode(get_content((0, 0, 'front_matter'), (0, 5, 'body')))
 
     def test_a_label_outside_the_closed_set(self):
         with pytest.raises(LlmMalformedResponseError, match='is not one of'):
@@ -191,16 +199,6 @@ class TestDecodeRegionsResponseRejects:
     def test_an_entry_that_is_not_an_object(self):
         with pytest.raises(LlmMalformedResponseError, match='malformed'):
             decode(json.dumps({'regions': [[1, 6, 'front_matter']]}))
-
-    def test_more_regions_than_the_bound_allows(self):
-        # counted as answered, before merging: the bound is about what a model
-        # generated, since that is what runs it out of output
-        content = get_content(*[
-            (index, index, 'body' if index % 2 else 'references')
-            for index in range(len(LINES))
-        ])
-        with pytest.raises(LlmMalformedResponseError, match='exceeds max_regions'):
-            decode(content, max_regions=3)
 
 
 class TestUnclaimedLines:
@@ -276,23 +274,25 @@ class TestMergeAdjacentRegions:
         ]
 
 
-class TestRenderLayoutLines:
-    def test_should_mark_pages_blocks_and_emphasis_without_numbering_them(self):
-        rendered = render_layout_lines(
-            ['Title', 'Author', 'Intro', 'text'],
-            ['BLOCKSTART', 'BLOCKSTART', 'BLOCKIN', 'BLOCKIN'],
-            ['PAGESTART', 'PAGEIN', 'PAGESTART', 'PAGEIN'],
-            ['1', '0', '0', '0'],
-            ['0', '1', '0', '0'],
-        )
-        assert rendered == '\n'.join([
-            '1\t**Title**',
-            '',
-            '2\t*Author*',
-            '--- page 2 ---',
-            '3\tIntro',
-            '4\ttext',
-        ])
+class TestRenderLinesWithFurnitureHint:
+    """`is_main_area` alone flags 95% of running heads, footers and page numbers
+    on the measured corpus, and 2% of everything else.
+    """
+
+    def test_should_mark_a_line_outside_the_text_area(self):
+        assert render_lines_with_furniture_hint(
+            ['Title', 'page 2'], ['1', '0'], ['0', '0']
+        ) == '1\tTitle\n2\t[outside the text area] page 2'
+
+    def test_should_mark_a_line_that_repeats_across_pages(self):
+        assert render_lines_with_furniture_hint(
+            ['Title', 'Journal of Things'], ['1', '1'], ['0', '1']
+        ) == '1\tTitle\n2\t[outside the text area] Journal of Things'
+
+    def test_should_leave_body_lines_alone(self):
+        assert render_lines_with_furniture_hint(
+            ['a', 'b'], ['1', '1'], ['0', '0']
+        ) == '1\ta\n2\tb'
 
 
 class TestOtherRegion:
@@ -315,3 +315,58 @@ class TestOtherRegion:
             (0, 1, 'front_matter'), (2, 2, 'other'), (3, 5, 'body')
         ))
         assert unclaimed == 0
+
+
+class TestTouchingRegions:
+    """Models chain regions -- 79..107 then 107..126 -- reading the end as where
+    the next begins. Both statements are true only if the earlier region ends a
+    line sooner, so that is how it is read.
+    """
+
+    def test_should_read_a_touching_pair_as_ending_a_line_sooner(self):
+        labels, touching = decode_with_touching(get_content(
+            (0, 2, 'front_matter'), (2, 5, 'body')
+        ))
+        assert labels == [
+            'B-<header>', 'I-<header>',
+            'B-<body>', 'I-<body>', 'I-<body>', 'I-<body>',
+        ]
+        assert touching == 1
+
+    def test_should_resolve_a_whole_chain(self):
+        labels, touching = decode_with_touching(get_content(
+            (0, 2, 'front_matter'), (2, 4, 'body'), (4, 5, 'references')
+        ))
+        assert labels == [
+            'B-<header>', 'I-<header>',
+            'B-<body>', 'I-<body>',
+            'B-<references>', 'I-<references>',
+        ]
+        assert touching == 2
+
+    def test_should_report_none_when_regions_already_meet_cleanly(self):
+        _, touching = decode_with_touching(get_content(
+            (0, 1, 'front_matter'), (2, 5, 'body')
+        ))
+        assert touching == 0
+
+
+class TestRegionBoundAfterMerging:
+    """The bound is about the answer, not the formatting habit that produced it:
+    a response that subdivides continuous text but collapses to a few regions is
+    usable, and discarding it loses the document.
+    """
+
+    def test_should_count_merged_regions_against_the_bound(self):
+        content = get_content(*[(index, index, 'body') for index in range(len(LINES))])
+        assert decode(content, max_regions=2) == (
+            ['B-<body>'] + ['I-<body>'] * (len(LINES) - 1)
+        )
+
+    def test_should_still_reject_more_distinct_regions_than_allowed(self):
+        content = get_content(*[
+            (index, index, 'body' if index % 2 else 'references')
+            for index in range(len(LINES))
+        ])
+        with pytest.raises(LlmMalformedResponseError, match='exceeds max_regions'):
+            decode(content, max_regions=3)
