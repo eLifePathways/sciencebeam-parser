@@ -329,12 +329,21 @@ def iter_labels_for_line_starts(
     return labels
 
 
-def render_numbered_line_texts(line_texts: Sequence[str]) -> str:
+def render_numbered_line_texts(
+    line_texts: Sequence[str], max_line_chars: int = 0
+) -> str:
     """Numbered from 1, which is how a model reads a document anyway: one was
     caught answering 124, 197 and 549 where the 0-based answer was 123, 196, 548.
+
+    `max_line_chars` cuts each line to its first characters. These are lines off
+    a page rather than paragraphs — median 82 characters, 96 at the ninetieth
+    percentile — so a cut at 80 saves 9% and one at 60 saves 28%. What a region
+    is can usually be told from the start of a line; what it costs to read is
+    mostly the number of lines.
     """
     return '\n'.join(
-        f'{number}\t{text}' for number, text in enumerate(line_texts, start=1)
+        f'{number}\t{text[:max_line_chars] if max_line_chars else text}'
+        for number, text in enumerate(line_texts, start=1)
     )
 
 

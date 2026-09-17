@@ -357,3 +357,13 @@ class TestRenderLinesWithBlockBreaks:
         assert render_lines_with_block_breaks(
             ['Title'], ['BLOCKSTART']
         ) == '1\tTitle'
+
+
+class TestMaxLineChars:
+    def test_should_keep_the_whole_line_by_default(self):
+        assert render_numbered_line_texts(['a much longer line']) == '1\ta much longer line'
+
+    def test_should_cut_each_line_to_its_first_characters(self):
+        assert render_numbered_line_texts(
+            ['abcdefghij', 'short'], max_line_chars=4
+        ) == '1\tabcd\n2\tshor'

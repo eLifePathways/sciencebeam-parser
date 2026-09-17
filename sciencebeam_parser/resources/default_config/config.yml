@@ -276,6 +276,13 @@ sequence_model_profiles:
     segmentation:
       prompt_version: 'regions-v5'
       mark_blocks: true
+  # Lines off a page rather than paragraphs: median 82 characters, so a cut at
+  # 60 drops 28% of the input and keeps the start of every line, which is where
+  # what a region is can usually be read.
+  llm_segmentation_short_lines:
+    extends: llm_segmentation
+    segmentation:
+      max_line_chars: 60
   llm_references:
     extends:
       - llm_reference_segmenter
@@ -344,6 +351,11 @@ profiles:
         noise_filter_enabled: false
   llm_segmentation_blocks:
     sequence_models: llm_segmentation_blocks
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  llm_segmentation_short_lines:
+    sequence_models: llm_segmentation_short_lines
     processors:
       fulltext:
         noise_filter_enabled: false

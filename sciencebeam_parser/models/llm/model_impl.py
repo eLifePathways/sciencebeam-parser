@@ -379,7 +379,9 @@ class LlmModelImpl(ModelImpl):
                 line_texts, [row[self.block_status_index] for row in feature_rows]
             )
         else:
-            rendered = render_numbered_line_texts(line_texts)
+            rendered = render_numbered_line_texts(
+                line_texts, self.config.max_line_chars
+            )
         prompt = get_prompt(
             self.config.task,
             self.config.prompt_version,
