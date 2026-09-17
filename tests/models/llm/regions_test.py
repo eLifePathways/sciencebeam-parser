@@ -3,6 +3,7 @@ import json
 import pytest
 
 from sciencebeam_parser.models.llm.decode import (
+    render_lines_with_block_breaks,
     render_lines_with_furniture_hint,
     LlmMalformedResponseError,
     decode_regions_response,
@@ -338,3 +339,21 @@ class TestTouchingRegions:
             (0, 1, 'front_matter'), (2, 5, 'body')
         ))
         assert touching == 0
+
+
+class TestRenderLinesWithBlockBreaks:
+    """One layout signal, not three: page rules, block breaks and emphasis each
+    left the front-matter boundary where the plain rendering put it, and together
+    moved it to a third of the document.
+    """
+
+    def test_should_separate_blocks_with_an_unnumbered_blank_line(self):
+        assert render_lines_with_block_breaks(
+            ['Title', 'Author', 'Intro'],
+            ['BLOCKSTART', 'BLOCKIN', 'BLOCKSTART'],
+        ) == '1\tTitle\n2\tAuthor\n\n3\tIntro'
+
+    def test_should_not_open_with_a_blank_line(self):
+        assert render_lines_with_block_breaks(
+            ['Title'], ['BLOCKSTART']
+        ) == '1\tTitle'

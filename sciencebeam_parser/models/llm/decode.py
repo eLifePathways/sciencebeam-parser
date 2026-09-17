@@ -5,6 +5,8 @@ from typing import Any, List, Mapping, Sequence, Tuple
 
 LINE_START = 'LINESTART'
 
+BLOCK_START = 'BLOCKSTART'
+
 # Predicted by the segmentation model, read by nothing downstream.
 OTHER_LABEL = '<other>'
 
@@ -334,6 +336,28 @@ def render_numbered_line_texts(line_texts: Sequence[str]) -> str:
     return '\n'.join(
         f'{number}\t{text}' for number, text in enumerate(line_texts, start=1)
     )
+
+
+def render_lines_with_block_breaks(
+    line_texts: Sequence[str],
+    block_statuses: Sequence[str]
+) -> str:
+    """The same numbered lines, with a blank line where a block begins.
+
+    A blank line is how a document already separates its blocks, so it carries
+    the structure without asserting anything about it. The blank lines are not
+    numbered, so every index still refers to the same content line.
+
+    One signal, deliberately. Page rules, block breaks and emphasis each left the
+    front-matter boundary where the plain rendering put it; together they moved
+    it to a third of the document.
+    """
+    parts: List[str] = []
+    for index, text in enumerate(line_texts):
+        if index and block_statuses[index] == BLOCK_START:
+            parts.append('')
+        parts.append(f'{index + 1}\t{text}')
+    return '\n'.join(parts)
 
 
 def render_lines_with_furniture_hint(

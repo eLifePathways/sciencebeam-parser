@@ -271,6 +271,11 @@ sequence_model_profiles:
     segmentation:
       prompt_version: 'regions-v4'
       mark_furniture: true
+  llm_segmentation_blocks:
+    extends: llm_segmentation
+    segmentation:
+      prompt_version: 'regions-v5'
+      mark_blocks: true
   llm_references:
     extends:
       - llm_reference_segmenter
@@ -334,6 +339,11 @@ profiles:
         noise_filter_enabled: true
   llm_segmentation_furniture:
     sequence_models: llm_segmentation_furniture
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  llm_segmentation_blocks:
+    sequence_models: llm_segmentation_blocks
     processors:
       fulltext:
         noise_filter_enabled: false

@@ -24,6 +24,7 @@ from sciencebeam_parser.models.llm.decode import (
     decode_regions_response,
     get_line_numbers,
     get_regions_response_schema,
+    render_lines_with_block_breaks,
     render_lines_with_furniture_hint,
     render_numbered_line_texts,
     render_numbered_lines
@@ -50,6 +51,7 @@ LOGGER = logging.getLogger(__name__)
 LINE_STATUS_FEATURE_NAME = 'line_status'
 WHOLE_LINE_TEXT_FEATURE_NAME = 'whole_line_text'
 MAIN_AREA_FEATURE_NAME = 'is_main_area'
+BLOCK_STATUS_FEATURE_NAME = 'block_status'
 
 LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
@@ -106,6 +108,10 @@ class LlmModelImpl(ModelImpl):
         self.furniture_index = (
             get_feature_column_index(config.task, MAIN_AREA_FEATURE_NAME)
             if config.response_shape == REGIONS_SHAPE and config.mark_furniture else -1
+        )
+        self.block_status_index = (
+            get_feature_column_index(config.task, BLOCK_STATUS_FEATURE_NAME)
+            if config.response_shape == REGIONS_SHAPE and config.mark_blocks else -1
         )
 
     def __repr__(self) -> str:
@@ -367,6 +373,10 @@ class LlmModelImpl(ModelImpl):
         if self.furniture_index >= 0:
             rendered = render_lines_with_furniture_hint(
                 line_texts, [row[self.furniture_index] for row in feature_rows]
+            )
+        elif self.block_status_index >= 0:
+            rendered = render_lines_with_block_breaks(
+                line_texts, [row[self.block_status_index] for row in feature_rows]
             )
         else:
             rendered = render_numbered_line_texts(line_texts)
