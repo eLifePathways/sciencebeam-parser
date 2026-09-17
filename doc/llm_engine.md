@@ -97,7 +97,27 @@ outside the document, a label outside the set, and any key that was not asked fo
 
 The schema carries a one-line `description` per property, so the meaning of a value sits beside the
 value being generated rather than only in the prompt. Whether a provider shows those to the model
-depends on how it implements structured outputs.
+depends on how it implements structured outputs, and it is not safe to assume: `maxLength` on a
+string was sent, silently ignored and not rejected, on this provider and model at `temperature: 0`
+([spec 004](../.project-notes/specs/004-llm-assisted-reference-extraction.md)). Constrained decoding
+reduces failures here rather than making a class of them impossible, which is why decode re-checks
+everything the schema asks for.
+
+Two prompt versions exist so that question can be measured rather than argued. `regions-v1` states
+the task in prose. `regions-v2` adds a compact picture of the answer, carrying the one thing neither
+the prose nor the enum states — this document's own line range:
+
+```text
+{"regions": [
+  {"start": <0..742>, "end": <0..742>,
+   "label": <front_matter|body|acknowledgements|appendix|references>}
+]}
+```
+
+Line numbers are 0-based, and the template's `{{last_line}}` is substituted per document. That
+substitution is token replacement rather than `str.format`, since the template contains braces of its
+own. The range matters: a model was caught indexing every line one off, so a range stated as `1..n`
+would induce the failure it is meant to prevent.
 
 The payload is an index and a label from a closed set, so no document text passes through the
 response. Decode re-checks what the schema already asks for, because a provider that ignores the

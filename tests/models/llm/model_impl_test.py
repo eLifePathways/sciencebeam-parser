@@ -980,3 +980,21 @@ class TestLlmModelImplRegionsShape:
             model_impl.predict_labels(
                 [SEGMENTATION_TOKENS], [segmentation_feature_rows()]
             )
+
+
+class TestRegionsPromptVersions:
+    def test_should_state_the_documents_own_line_range_in_v2(self):
+        model_impl = get_segmentation_model_impl(
+            get_regions_content((0, 3, 'front_matter')), prompt_version='regions-v2'
+        )
+        model_impl.predict_labels([SEGMENTATION_TOKENS], [segmentation_feature_rows()])
+        prompt = model_impl.client.prompts[0]
+        assert '<0..3>' in prompt
+        assert '{{last_line}}' not in prompt
+
+    def test_should_leave_the_shape_block_out_of_v1(self):
+        model_impl = get_segmentation_model_impl(
+            get_regions_content((0, 3, 'front_matter'))
+        )
+        model_impl.predict_labels([SEGMENTATION_TOKENS], [segmentation_feature_rows()])
+        assert '"regions"' not in model_impl.client.prompts[0]

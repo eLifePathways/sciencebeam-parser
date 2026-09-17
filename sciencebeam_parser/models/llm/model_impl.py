@@ -361,7 +361,8 @@ class LlmModelImpl(ModelImpl):
         prompt = get_prompt(
             self.config.task,
             self.config.prompt_version,
-            render_numbered_line_texts(line_texts)
+            render_numbered_line_texts(line_texts),
+            {'last_line': str(len(line_texts) - 1)}
         )
         schema = get_regions_response_schema(self.labels)
         return self._retrying_on_malformed(
