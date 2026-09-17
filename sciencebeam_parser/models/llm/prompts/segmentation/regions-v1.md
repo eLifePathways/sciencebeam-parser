@@ -9,9 +9,7 @@ and its label:
 - `acknowledgements` — funding, thanks and contribution statements
 - `appendix` — appendices and supplementary material
 - `references` — the bibliography, including its heading
+- `other` — running heads, footers and page numbers
 
 Regions follow one another in reading order, and a label may appear more than once where the
 document returns to that kind of content.
-
-Leave out any line that belongs to none of them — a running head, a footer, a page number. A region
-ends on the line before such a line and the next region starts after it.

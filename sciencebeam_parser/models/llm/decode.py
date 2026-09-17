@@ -8,6 +8,9 @@ LINE_START = 'LINESTART'
 # Predicted by the segmentation model, read by nothing downstream.
 OTHER_LABEL = '<other>'
 
+BLOCK_START = 'BLOCKSTART'
+PAGE_START = 'PAGESTART'
+
 LABEL_ONLY_LINE = re.compile(r'^[\[(]?\d{1,3}[\])]?[.)]?$')
 
 WORD_SEPARATOR = re.compile(r'[^0-9A-Za-zÀ-ɏ]+')
@@ -81,6 +84,11 @@ def get_regions_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
             'regions': {
                 'type': 'array',
                 'description': 'The regions of the article, in reading order.',
+                # `maxItems` binds on the shipped provider and is deliberately
+                # not set: it closes the array mid-document, so a model that
+                # over-segments loses its whole tail to `<other>` without a word.
+                # The count is checked on decode instead, where exceeding it
+                # rejects the response rather than quietly truncating it.
                 'items': {
                     'type': 'object',
                     'additionalProperties': False,
@@ -322,20 +330,53 @@ def iter_labels_for_line_starts(
 
 
 def render_numbered_line_texts(line_texts: Sequence[str]) -> str:
-    """Segmentation's rows are already lines, so the number is the row index."""
-    return '\n'.join(f'{number}\t{text}' for number, text in enumerate(line_texts))
+    """Numbered from 1, which is how a model reads a document anyway: one was
+    caught answering 124, 197 and 549 where the 0-based answer was 123, 196, 548.
+    """
+    return '\n'.join(
+        f'{number}\t{text}' for number, text in enumerate(line_texts, start=1)
+    )
+
+
+def render_layout_lines(
+    line_texts: Sequence[str],
+    block_statuses: Sequence[str],
+    page_statuses: Sequence[str],
+    bold_flags: Sequence[str],
+    italic_flags: Sequence[str]
+) -> str:
+    """The same numbered lines, with the page and block structure a reader sees.
+
+    Markers carry no line number of their own, so every index still refers to the
+    same content line whether they are rendered or not.
+    """
+    parts: List[str] = []
+    page = 1
+    for index, text in enumerate(line_texts):
+        if index and page_statuses[index] == PAGE_START:
+            page += 1
+            parts.append(f'--- page {page} ---')
+        elif index and block_statuses[index] == BLOCK_START:
+            parts.append('')
+        if bold_flags[index] == '1':
+            text = f'**{text}**'
+        if italic_flags[index] == '1':
+            text = f'*{text}*'
+        parts.append(f'{index + 1}\t{text}')
+    return '\n'.join(parts)
 
 
 def _get_line_index(value: Any, field_name: str, line_count: int) -> int:
+    """Lines are numbered from 1 in the prompt and indexed from 0 here."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise LlmMalformedResponseError(
             f'region {field_name} is not an integer: {value!r}'
         )
-    if not 0 <= value < line_count:
+    if not 1 <= value <= line_count:
         raise LlmMalformedResponseError(
             f'region {field_name} {value} out of range for {line_count} lines'
         )
-    return value
+    return value - 1
 
 
 def parse_regions(
@@ -370,6 +411,7 @@ def parse_regions(
             )
         start = _get_line_index(entry.get('start'), 'start', line_count)
         end = _get_line_index(entry.get('end'), 'end', line_count)
+        # numbered from 1 in the prompt, 0-based everywhere inside
         name = entry.get('label')
         if end < start:
             raise LlmMalformedResponseError(
@@ -381,7 +423,26 @@ def parse_regions(
             )
         regions.append((start, end, name))
     _check_regions_do_not_overlap(regions)
-    return regions
+    return merge_adjacent_regions(regions)
+
+
+def merge_adjacent_regions(
+    regions: Sequence[Tuple[int, int, str]]
+) -> List[Tuple[int, int, str]]:
+    """Two touching regions of the same kind are one region.
+
+    A model asked for regions will subdivide continuous text anyway — one
+    measured answer split a body into 62 consecutive `body` regions and ran out
+    of room before reaching the bibliography. Merging costs nothing and makes the
+    region count mean what the bound is about.
+    """
+    merged: List[Tuple[int, int, str]] = []
+    for start, end, name in regions:
+        if merged and merged[-1][2] == name and merged[-1][1] + 1 == start:
+            merged[-1] = (merged[-1][0], end, name)
+            continue
+        merged.append((start, end, name))
+    return merged
 
 
 def _check_regions_do_not_overlap(

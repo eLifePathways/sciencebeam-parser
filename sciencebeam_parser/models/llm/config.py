@@ -29,6 +29,7 @@ class LlmEngineConfig:
     warn_input_lines: int = 300
     max_input_lines: int = 0
     max_regions: int = 64
+    render_layout: bool = False
     warn_unclaimed_line_share: float = 0.1
     max_references_per_request: int = 10
     max_missing_reference_retries: int = 1

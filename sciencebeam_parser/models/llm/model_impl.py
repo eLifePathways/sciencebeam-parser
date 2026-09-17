@@ -24,6 +24,7 @@ from sciencebeam_parser.models.llm.decode import (
     decode_regions_response,
     get_line_numbers,
     get_regions_response_schema,
+    render_layout_lines,
     render_numbered_line_texts,
     render_numbered_lines
 )
@@ -48,6 +49,7 @@ LOGGER = logging.getLogger(__name__)
 
 LINE_STATUS_FEATURE_NAME = 'line_status'
 WHOLE_LINE_TEXT_FEATURE_NAME = 'whole_line_text'
+LAYOUT_FEATURE_NAMES = ('block_status', 'page_status', 'is_bold', 'is_italic')
 
 LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
@@ -100,6 +102,10 @@ class LlmModelImpl(ModelImpl):
         self.whole_line_text_index = (
             get_feature_column_index(config.task, WHOLE_LINE_TEXT_FEATURE_NAME)
             if config.response_shape == REGIONS_SHAPE else -1
+        )
+        self.layout_indexes = (
+            [get_feature_column_index(config.task, name) for name in LAYOUT_FEATURE_NAMES]
+            if config.response_shape == REGIONS_SHAPE and config.render_layout else []
         )
 
     def __repr__(self) -> str:
@@ -358,11 +364,18 @@ class LlmModelImpl(ModelImpl):
             return []
         line_texts = [row[self.whole_line_text_index] for row in feature_rows]
         self._check_input_size(len(line_texts), len(tokens))
+        if self.layout_indexes:
+            block, page, bold, italic = (
+                [row[index] for row in feature_rows] for index in self.layout_indexes
+            )
+            rendered = render_layout_lines(line_texts, block, page, bold, italic)
+        else:
+            rendered = render_numbered_line_texts(line_texts)
         prompt = get_prompt(
             self.config.task,
             self.config.prompt_version,
-            render_numbered_line_texts(line_texts),
-            {'last_line': str(len(line_texts) - 1)}
+            rendered,
+            {'last_line': str(len(line_texts))}
         )
         schema = get_regions_response_schema(self.labels)
         return self._retrying_on_malformed(

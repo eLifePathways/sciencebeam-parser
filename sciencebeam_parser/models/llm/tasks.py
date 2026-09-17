@@ -2,28 +2,31 @@ from typing import List
 
 
 # What the prompt calls each region, and the label the pipeline reads it as.
-# `processors/fulltext/processor.py` consumes five of the model's twelve labels;
-# the other seven reach no scored field, so asking for them would spend output on
-# distinctions nothing downstream can use.
+# Five are the labels `processors/fulltext/processor.py` consumes; the sixth is
+# where everything it does not consume goes.
 #
-# The prompt's names are the ones a publisher would use rather than GROBID's.
-# `header` in particular means a page header to most readers and the article's
-# front matter here, and the model is the audience for the word.
+# The names are the ones a publisher would use rather than GROBID's: `header`
+# means a page header to most readers and the article's front matter here, and
+# the model is the audience for the word.
 SEGMENTATION_LABEL_BY_REGION_NAME = {
     'front_matter': '<header>',
     'body': '<body>',
     'acknowledgements': '<acknowledgement>',
     'appendix': '<annex>',
     'references': '<references>',
+    # Offered so furniture can be named rather than stepped over: asking a model
+    # to leave lines out is a negation, and it reads whichever region surrounds
+    # them as the answer. Nothing downstream reads `<other>`.
+    'other': '<other>',
 }
 
 
 def get_segmentation_region_names() -> List[str]:
     """The names the prompt offers, checked against the labels they map to.
 
-    Which five the pipeline consumes is a choice, so it is stated here; that they
-    are still spelled the way the segmentation model spells them is not, and a
-    rename there would otherwise reach the decoder as a label nothing reads.
+    Which labels the pipeline consumes is a choice, so it is stated here; that
+    they are still spelled the way the segmentation model spells them is not, and
+    a rename there would otherwise reach the decoder as a label nothing reads.
     """
     from sciencebeam_parser.models.segmentation.training_data import (  # noqa pylint: disable=import-outside-toplevel
         TRAINING_XML_ELEMENT_PATH_BY_LABEL

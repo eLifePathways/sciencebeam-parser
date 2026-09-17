@@ -3,6 +3,7 @@ import json
 import pytest
 
 from sciencebeam_parser.models.llm.decode import (
+    render_layout_lines,
     LlmMalformedResponseError,
     decode_regions_response,
     get_regions_response_schema,
@@ -17,9 +18,10 @@ LINES = ['Title', 'Abstract', 'Introduction', 'Method', 'References', '[1] Smith
 
 
 def get_content(*regions) -> str:
+    """Regions are given 1-based, as the prompt numbers them."""
     return json.dumps({
         'regions': [
-            {'start': start, 'end': end, 'label': label}
+            {'start': start + 1, 'end': end + 1, 'label': label}
             for start, end, label in regions
         ]
     })
@@ -39,13 +41,14 @@ def decode_with_unclaimed(content: str, max_regions: int = 64):
 class TestSegmentationRegionNames:
     def test_should_offer_the_names_a_publisher_would_use(self):
         assert LABELS == [
-            'front_matter', 'body', 'acknowledgements', 'appendix', 'references'
+            'front_matter', 'body', 'acknowledgements', 'appendix', 'references',
+            'other',
         ]
 
 
 class TestRenderNumberedLineTexts:
-    def test_should_number_from_zero_with_a_tab(self):
-        assert render_numbered_line_texts(['a', 'b']) == '0\ta\n1\tb'
+    def test_should_number_from_one_with_a_tab(self):
+        assert render_numbered_line_texts(['a', 'b']) == '1\ta\n2\tb'
 
 
 class TestRegionsResponseSchema:
@@ -97,11 +100,11 @@ class TestDecodeRegionsResponse:
         ))
         assert labels[:3] == ['B-<header>', 'B-<body>', 'B-<header>']
 
-    def test_should_accept_a_region_per_line(self):
+    def test_should_collapse_a_region_per_line_into_one(self):
         labels = decode(get_content(
             *[(index, index, 'body') for index in range(len(LINES))]
         ))
-        assert labels == ['B-<body>'] * len(LINES)
+        assert labels == ['B-<body>'] + ['I-<body>'] * (len(LINES) - 1)
 
 
 class TestDecodeRegionsResponseRejects:
@@ -133,20 +136,22 @@ class TestDecodeRegionsResponseRejects:
         with pytest.raises(LlmMalformedResponseError, match='out of range'):
             decode(get_content((0, 99, 'front_matter')))
 
-    def test_a_negative_start(self):
+    def test_a_start_below_one(self):
         with pytest.raises(LlmMalformedResponseError, match='out of range'):
-            decode(get_content((-1, 5, 'front_matter')))
+            decode(json.dumps({'regions': [
+                {'start': 0, 'end': 6, 'label': 'front_matter'}
+            ]}))
 
     def test_a_start_that_is_not_an_integer(self):
         with pytest.raises(LlmMalformedResponseError, match='not an integer'):
             decode(json.dumps({'regions': [
-                {'start': '0', 'end': 5, 'label': 'front_matter'}
+                {'start': '1', 'end': 6, 'label': 'front_matter'}
             ]}))
 
     def test_a_boolean_start(self):
         with pytest.raises(LlmMalformedResponseError, match='not an integer'):
             decode(json.dumps({'regions': [
-                {'start': True, 'end': 5, 'label': 'front_matter'}
+                {'start': True, 'end': 6, 'label': 'front_matter'}
             ]}))
 
     def test_a_region_that_ends_before_it_starts(self):
@@ -169,24 +174,31 @@ class TestDecodeRegionsResponseRejects:
         with pytest.raises(LlmMalformedResponseError, match='is not one of'):
             decode(get_content((0, 5, 'header')))
 
+    def test_a_label_the_pipeline_predicts_but_the_prompt_does_not_offer(self):
+        with pytest.raises(LlmMalformedResponseError, match='is not one of'):
+            decode(get_content((0, 5, 'footnote')))
+
     def test_a_missing_label(self):
         with pytest.raises(LlmMalformedResponseError, match='is not one of'):
-            decode(json.dumps({'regions': [{'start': 0, 'end': 5}]}))
+            decode(json.dumps({'regions': [{'start': 1, 'end': 6}]}))
 
     def test_an_entry_carrying_document_text(self):
         with pytest.raises(LlmMalformedResponseError, match='unexpected key'):
             decode(json.dumps({'regions': [
-                {'start': 0, 'end': 5, 'label': 'front_matter', 'text': 'Title'}
+                {'start': 1, 'end': 6, 'label': 'front_matter', 'text': 'Title'}
             ]}))
 
     def test_an_entry_that_is_not_an_object(self):
         with pytest.raises(LlmMalformedResponseError, match='malformed'):
-            decode(json.dumps({'regions': [[0, 5, 'front_matter']]}))
+            decode(json.dumps({'regions': [[1, 6, 'front_matter']]}))
 
     def test_more_regions_than_the_bound_allows(self):
-        content = get_content(
-            *[(index, index, 'body') for index in range(len(LINES))]
-        )
+        # counted as answered, before merging: the bound is about what a model
+        # generated, since that is what runs it out of output
+        content = get_content(*[
+            (index, index, 'body' if index % 2 else 'references')
+            for index in range(len(LINES))
+        ])
         with pytest.raises(LlmMalformedResponseError, match='exceeds max_regions'):
             decode(content, max_regions=3)
 
@@ -227,3 +239,79 @@ class TestUnclaimedLines:
     def test_should_still_label_every_line(self):
         labels, _ = decode_with_unclaimed(get_content((1, 1, 'body'), (4, 4, 'references')))
         assert len(labels) == len(LINES)
+
+
+class TestRegionsSchemaBound:
+    """`maxItems` binds on the shipped provider, so the bound is expressed where
+    it can prevent an answer rather than only reject one.
+    """
+
+    def test_should_not_cap_the_array_in_the_schema(self):
+        # maxItems binds here, and closing the array mid-document loses the tail
+        # silently; the count is checked on decode instead
+        assert 'maxItems' not in get_regions_response_schema(LABELS)['properties']['regions']
+
+
+class TestMergeAdjacentRegions:
+    """A model asked for regions subdivides continuous text: one measured answer
+    split a body into 62 consecutive `body` regions and ran out of room before
+    reaching the bibliography.
+    """
+
+    def test_should_merge_touching_regions_of_the_same_kind(self):
+        labels = decode(get_content(
+            (0, 1, 'body'), (2, 3, 'body'), (4, 5, 'body')
+        ))
+        assert labels == ['B-<body>'] + ['I-<body>'] * 5
+
+    def test_should_keep_regions_of_different_kinds_apart(self):
+        labels = decode(get_content((0, 2, 'body'), (3, 5, 'references')))
+        assert labels[3] == 'B-<references>'
+
+    def test_should_keep_same_kind_regions_that_a_gap_separates(self):
+        labels = decode(get_content((0, 1, 'body'), (3, 5, 'body')))
+        assert labels == [
+            'B-<body>', 'I-<body>', 'B-<other>',
+            'B-<body>', 'I-<body>', 'I-<body>',
+        ]
+
+
+class TestRenderLayoutLines:
+    def test_should_mark_pages_blocks_and_emphasis_without_numbering_them(self):
+        rendered = render_layout_lines(
+            ['Title', 'Author', 'Intro', 'text'],
+            ['BLOCKSTART', 'BLOCKSTART', 'BLOCKIN', 'BLOCKIN'],
+            ['PAGESTART', 'PAGEIN', 'PAGESTART', 'PAGEIN'],
+            ['1', '0', '0', '0'],
+            ['0', '1', '0', '0'],
+        )
+        assert rendered == '\n'.join([
+            '1\t**Title**',
+            '',
+            '2\t*Author*',
+            '--- page 2 ---',
+            '3\tIntro',
+            '4\ttext',
+        ])
+
+
+class TestOtherRegion:
+    """`other` is offered so furniture can be named rather than skipped: asking a
+    model to leave lines out is a negation, and it read the surrounding region as
+    the answer instead.
+    """
+
+    def test_should_map_other_to_the_label_nothing_reads(self):
+        labels = decode(get_content(
+            (0, 1, 'front_matter'), (2, 2, 'other'), (3, 5, 'body')
+        ))
+        assert labels == [
+            'B-<header>', 'I-<header>', 'B-<other>',
+            'B-<body>', 'I-<body>', 'I-<body>',
+        ]
+
+    def test_should_report_a_named_other_region_as_claimed(self):
+        _, unclaimed = decode_with_unclaimed(get_content(
+            (0, 1, 'front_matter'), (2, 2, 'other'), (3, 5, 'body')
+        ))
+        assert unclaimed == 0

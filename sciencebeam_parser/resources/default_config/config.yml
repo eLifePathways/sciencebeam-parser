@@ -266,6 +266,11 @@ sequence_model_profiles:
       # document and say nothing.
       warn_input_lines: 2500
       max_input_lines: 4000
+  llm_segmentation_layout:
+    extends: llm_segmentation
+    segmentation:
+      prompt_version: 'regions-v3'
+      render_layout: true
   llm_references:
     extends:
       - llm_reference_segmenter
@@ -316,6 +321,19 @@ profiles:
         noise_filter_enabled: false
   llm_segmentation:
     sequence_models: llm_segmentation
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  # The filter drops repeating running heads and feet before segmentation, which
+  # is the furniture the regions shape otherwise has to step over one line at a
+  # time. Measurement scaffolding: the other profiles all run with it off.
+  llm_segmentation_noise_filter_on:
+    sequence_models: llm_segmentation
+    processors:
+      fulltext:
+        noise_filter_enabled: true
+  llm_segmentation_layout:
+    sequence_models: llm_segmentation_layout
     processors:
       fulltext:
         noise_filter_enabled: false
