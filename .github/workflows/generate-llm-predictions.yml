@@ -36,7 +36,7 @@ on:
       concurrency:
         description: 'Documents in flight; each holds 3 calls open'
         required: false
-        default: '2'
+        default: '6'
         type: string
 
 jobs:
@@ -88,7 +88,7 @@ jobs:
             --out benchmarks/runs/llm \
             --endpoint "${{ inputs.endpoint || 'https://elifepathways--jats-orchestrator-web.modal.run' }}" \
             ${CHECKPOINT_ARG} \
-            --concurrency "${{ inputs.concurrency || '2' }}" \
+            --concurrency "${{ inputs.concurrency || '6' }}" \
             --push-to sciencebeam-eval-predictions
 
       # A document that failed is recorded rather than raised, so the run can
