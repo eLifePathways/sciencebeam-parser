@@ -120,9 +120,10 @@ caught answering 124, 197 and 549 where the 0-based answers were 123, 196 and 54
 1 agrees with how it reads a document rather than correcting it afterwards.
 
 `regions-v4` adds the one thing a model cannot read off the text: `[outside the text area]` on lines
-that fall outside the page's main area or repeat across pages. On the measured corpus that flags 95%
-of running heads, footers and page numbers and 2% of everything else. It is behind `mark_furniture`
-and the `llm_segmentation_furniture` profile.
+outside the page's main area. On the measured corpus that flags 95% of running heads, footers and
+page numbers and 2% of everything else. `is_repetitive_pattern` is not used with it — it raises
+recall by one point and false positives from 168 to 183, and what it adds are repeated section
+headings, which are body. Behind `mark_furniture` and the `llm_segmentation_furniture` profile.
 
 **Page and block boundaries are deliberately not marked.** A version that marked them, with bold and
 italic, scored 0.048 below the plain prompt and was worst on four of six corpora. The mechanism is
@@ -132,9 +133,12 @@ preprint whose first page is a status banner that cut the title, authors and abs
 The payload is an index and a label from a closed set, so no document text passes through the
 response. Decode re-checks what the schema already asks for, because a provider that ignores the
 schema would otherwise be trusted: an index in range, strictly ascending starts, a first region at
-line 0, a label in the set, and no key that was not asked for. `max_regions` (default 64) rejects a
-runaway answer — over-segmentation is what truncates a response, and the gold maximum on the measured
-corpus is 16.
+line 0, a label in the set, and no key that was not asked for.
+
+There is deliberately **no bound on the number of regions**. One looks prudent and is not: once
+furniture is named `other`, a fully correct answer needs 41 to 58 regions on eight of ten measured
+documents, because the running head interrupts the body on every page. A bound low enough to catch a
+runaway is low enough to reject a correct answer on a long document.
 
 A rejected response fails the document rather than falling back to the CRF: a fallback would make a
 benchmark column a blend of two models and hide how often the shape fails.

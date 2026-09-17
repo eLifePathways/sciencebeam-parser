@@ -49,7 +49,7 @@ LOGGER = logging.getLogger(__name__)
 
 LINE_STATUS_FEATURE_NAME = 'line_status'
 WHOLE_LINE_TEXT_FEATURE_NAME = 'whole_line_text'
-FURNITURE_FEATURE_NAMES = ('is_main_area', 'is_repetitive_pattern')
+MAIN_AREA_FEATURE_NAME = 'is_main_area'
 
 LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
@@ -103,10 +103,9 @@ class LlmModelImpl(ModelImpl):
             get_feature_column_index(config.task, WHOLE_LINE_TEXT_FEATURE_NAME)
             if config.response_shape == REGIONS_SHAPE else -1
         )
-        self.furniture_indexes = (
-            [get_feature_column_index(config.task, name)
-             for name in FURNITURE_FEATURE_NAMES]
-            if config.response_shape == REGIONS_SHAPE and config.mark_furniture else []
+        self.furniture_index = (
+            get_feature_column_index(config.task, MAIN_AREA_FEATURE_NAME)
+            if config.response_shape == REGIONS_SHAPE and config.mark_furniture else -1
         )
 
     def __repr__(self) -> str:
@@ -365,12 +364,9 @@ class LlmModelImpl(ModelImpl):
             return []
         line_texts = [row[self.whole_line_text_index] for row in feature_rows]
         self._check_input_size(len(line_texts), len(tokens))
-        if self.furniture_indexes:
-            main_area, repetitive = (
-                [row[index] for row in feature_rows] for index in self.furniture_indexes
-            )
+        if self.furniture_index >= 0:
             rendered = render_lines_with_furniture_hint(
-                line_texts, main_area, repetitive
+                line_texts, [row[self.furniture_index] for row in feature_rows]
             )
         else:
             rendered = render_numbered_line_texts(line_texts)
@@ -406,7 +402,7 @@ class LlmModelImpl(ModelImpl):
             )
             content = self._get_content(response_json, len(tokens))
             labels, unclaimed, touching = decode_regions_response(
-                content, line_texts, self.labels, self.config.max_regions
+                content, line_texts, self.labels
             )
             span.set_attribute('sciencebeam.unclaimed_lines', unclaimed)
             span.set_attribute('sciencebeam.touching_regions', touching)

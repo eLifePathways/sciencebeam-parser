@@ -27,22 +27,20 @@ def get_content(*regions) -> str:
     })
 
 
-def decode(content: str, line_texts=None, max_regions: int = 64):
+def decode(content: str, line_texts=None):
     labels, _, _ = decode_regions_response(
-        content, line_texts if line_texts is not None else LINES, LABELS, max_regions
+        content, line_texts if line_texts is not None else LINES, LABELS
     )
     return labels
 
 
-def decode_with_unclaimed(content: str, max_regions: int = 64):
-    labels, unclaimed, _ = decode_regions_response(
-        content, LINES, LABELS, max_regions)
+def decode_with_unclaimed(content: str):
+    labels, unclaimed, _ = decode_regions_response(content, LINES, LABELS)
     return labels, unclaimed
 
 
-def decode_with_touching(content: str, max_regions: int = 64):
-    labels, _, touching = decode_regions_response(
-        content, LINES, LABELS, max_regions)
+def decode_with_touching(content: str):
+    labels, _, touching = decode_regions_response(content, LINES, LABELS)
     return labels, touching
 
 
@@ -239,17 +237,6 @@ class TestUnclaimedLines:
         assert len(labels) == len(LINES)
 
 
-class TestRegionsSchemaBound:
-    """`maxItems` binds on the shipped provider, so the bound is expressed where
-    it can prevent an answer rather than only reject one.
-    """
-
-    def test_should_not_cap_the_array_in_the_schema(self):
-        # maxItems binds here, and closing the array mid-document loses the tail
-        # silently; the count is checked on decode instead
-        assert 'maxItems' not in get_regions_response_schema(LABELS)['properties']['regions']
-
-
 class TestMergeAdjacentRegions:
     """A model asked for regions subdivides continuous text: one measured answer
     split a body into 62 consecutive `body` regions and ran out of room before
@@ -281,17 +268,19 @@ class TestRenderLinesWithFurnitureHint:
 
     def test_should_mark_a_line_outside_the_text_area(self):
         assert render_lines_with_furniture_hint(
-            ['Title', 'page 2'], ['1', '0'], ['0', '0']
+            ['Title', 'page 2'], ['1', '0']
         ) == '1\tTitle\n2\t[outside the text area] page 2'
 
-    def test_should_mark_a_line_that_repeats_across_pages(self):
+    def test_should_leave_a_repeated_heading_in_the_text_area_alone(self):
+        # is_repetitive_pattern is not used: over the corpus it adds 1 point of
+        # recall and 15 false positives, and those are repeated section headings
         assert render_lines_with_furniture_hint(
-            ['Title', 'Journal of Things'], ['1', '1'], ['0', '1']
-        ) == '1\tTitle\n2\t[outside the text area] Journal of Things'
+            ['Title', 'Ambiente Fisico'], ['1', '1']
+        ) == '1\tTitle\n2\tAmbiente Fisico'
 
     def test_should_leave_body_lines_alone(self):
         assert render_lines_with_furniture_hint(
-            ['a', 'b'], ['1', '1'], ['0', '0']
+            ['a', 'b'], ['1', '1']
         ) == '1\ta\n2\tb'
 
 
@@ -349,24 +338,3 @@ class TestTouchingRegions:
             (0, 1, 'front_matter'), (2, 5, 'body')
         ))
         assert touching == 0
-
-
-class TestRegionBoundAfterMerging:
-    """The bound is about the answer, not the formatting habit that produced it:
-    a response that subdivides continuous text but collapses to a few regions is
-    usable, and discarding it loses the document.
-    """
-
-    def test_should_count_merged_regions_against_the_bound(self):
-        content = get_content(*[(index, index, 'body') for index in range(len(LINES))])
-        assert decode(content, max_regions=2) == (
-            ['B-<body>'] + ['I-<body>'] * (len(LINES) - 1)
-        )
-
-    def test_should_still_reject_more_distinct_regions_than_allowed(self):
-        content = get_content(*[
-            (index, index, 'body' if index % 2 else 'references')
-            for index in range(len(LINES))
-        ])
-        with pytest.raises(LlmMalformedResponseError, match='exceeds max_regions'):
-            decode(content, max_regions=3)

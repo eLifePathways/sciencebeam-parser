@@ -28,7 +28,6 @@ class LlmEngineConfig:
     record_trace_content: bool = True
     warn_input_lines: int = 300
     max_input_lines: int = 0
-    max_regions: int = 64
     mark_furniture: bool = False
     warn_unclaimed_line_share: float = 0.1
     max_references_per_request: int = 10

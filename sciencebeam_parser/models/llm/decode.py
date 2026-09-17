@@ -338,16 +338,18 @@ def render_numbered_line_texts(line_texts: Sequence[str]) -> str:
 
 def render_lines_with_furniture_hint(
     line_texts: Sequence[str],
-    main_area_flags: Sequence[str],
-    repetitive_flags: Sequence[str]
+    main_area_flags: Sequence[str]
 ) -> str:
     """The same numbered lines, with a note on the ones that sit outside the text.
 
     This is the part a model cannot see: whether a line falls outside the page's
-    main area, or repeats across pages. On the measured corpus `is_main_area`
-    alone flags 95% of running heads, footers and page numbers and 2% of
-    everything else, which is the difference between the text a model reads and
-    the geometry a CRF is given.
+    main area. On the measured corpus that flags 95% of running heads, footers
+    and page numbers and 2% of everything else, which is the difference between
+    the text a model reads and the geometry a CRF is given.
+
+    `is_repetitive_pattern` is deliberately not added to it: over the same corpus
+    it raises recall from 95% to 96% and false positives from 168 to 183, and
+    what it adds are repeated section headings, which are body.
 
     Page and block boundaries are deliberately not marked. Offered those, a model
     ended the front matter at the first page break, which on a preprint whose
@@ -355,7 +357,7 @@ def render_lines_with_furniture_hint(
     """
     parts: List[str] = []
     for index, text in enumerate(line_texts):
-        outside = main_area_flags[index] != '1' or repetitive_flags[index] == '1'
+        outside = main_area_flags[index] != '1'
         marker = '[outside the text area] ' if outside else ''
         parts.append(f'{index + 1}\t{marker}{text}')
     return '\n'.join(parts)
@@ -377,8 +379,7 @@ def _get_line_index(value: Any, field_name: str, line_count: int) -> int:
 def parse_regions(
     content: str,
     line_count: int,
-    region_names: Sequence[str],
-    max_regions: int
+    region_names: Sequence[str]
 ) -> Tuple[List[Tuple[int, int, str]], int]:
     payload = get_json_payload(content)
     if not isinstance(payload, dict) or 'regions' not in payload:
@@ -413,15 +414,7 @@ def parse_regions(
         regions.append((start, end, name))
     regions, touching = resolve_touching_regions(regions)
     _check_regions_do_not_overlap(regions)
-    merged = merge_adjacent_regions(regions)
-    # Counted after merging: a model that subdivides continuous text spends
-    # output on it, but an answer that collapses to a handful of regions is
-    # usable, and discarding it loses the document over a formatting habit.
-    if len(merged) > max_regions:
-        raise LlmMalformedResponseError(
-            f'{len(merged)} regions exceeds max_regions={max_regions}'
-        )
-    return merged, touching
+    return merge_adjacent_regions(regions), touching
 
 
 def merge_adjacent_regions(
@@ -526,17 +519,13 @@ def count_unclaimed_lines(
 def decode_regions_response(
     content: str,
     line_texts: Sequence[str],
-    region_names: Sequence[str],
-    max_regions: int
+    region_names: Sequence[str]
 ) -> Tuple[List[str], int, int]:
     """One label per line, how many lines no region claimed, and how many region
     pairs stated an end the next region's start contradicted.
     """
     regions, touching = parse_regions(
-        content,
-        line_count=len(line_texts),
-        region_names=region_names,
-        max_regions=max_regions
+        content, line_count=len(line_texts), region_names=region_names
     )
     return (
         iter_labels_for_regions(regions, len(line_texts)),
