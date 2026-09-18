@@ -59,12 +59,6 @@ def _corpus_f1_getter(corpus: str) -> Callable[[dict, str, str], Optional[float]
     return lambda s, f, m: _get_f1(s, corpus, f, m)
 
 
-USAGE_HEADERS = (
-    "Variant", "Docs with usage", "Calls", "Input tokens", "Output tokens",
-    "Output/doc", "Peak call", "Credits", "Credits/doc",
-)
-
-
 def _fmt_count(value: Optional[float]) -> str:
     return f"{round(value):,}" if value else "—"
 
@@ -81,39 +75,53 @@ def _all_calls(usage: Optional[Dict[str, Any]]) -> int:
     return (usage.get("calls") or 0) + ((usage.get("replayed") or {}).get("calls") or 0)
 
 
-def _usage_row(label: str, usage: Optional[Dict[str, Any]]) -> str:
-    if not usage or not _all_calls(usage):
-        attempted = (usage or {}).get("n_attempted") or 0
-        docs = f"0 / {attempted}" if attempted else "—"
-        return f"| {label} | {docs} | " + " | ".join(["—"] * 7) + " |"
+def _usage_bullets(usage: Dict[str, Any]) -> List[str]:
+    """Calls, tokens, credits and tasks, a line each.
+
+    Absent figures are left out rather than dashed: most of a line would
+    otherwise be dashes for a backend that reports only calls.
+    """
     recorded = usage.get("n_with_usage") or 0
-    cost = usage.get("cost_credits")
-    cells = [
-        f"{recorded} / {usage.get('n_attempted') or 0}",
-        _fmt_count(_all_calls(usage)),
-        _fmt_count(usage.get("input_tokens")),
-        _fmt_count(usage.get("output_tokens")),
-        _fmt_count((usage.get("output_tokens") or 0) / recorded if recorded else None),
-        _fmt_count(usage.get("peak_output_tokens")),
-        _fmt_credits(cost),
-        _fmt_credits(cost / recorded if cost is not None and recorded else None, 5),
+    attempted = usage.get("n_attempted") or 0
+    bullets = [
+        f"{_all_calls(usage):,} calls"
+        + (f" over {recorded} of {attempted} docs" if recorded else "")
     ]
-    return f"| {label} | " + " | ".join(cells) + " |"
+
+    tokens = [
+        f"{usage[key]:,} tokens {name}"
+        for key, name in (("input_tokens", "in"), ("output_tokens", "out"))
+        if usage.get(key)
+    ]
+    if tokens:
+        bullets.append(", ".join(tokens))
+    if usage.get("cost_credits") is not None:
+        bullets.append(f"{usage['cost_credits']:.4f} credits")
+
+    by_task = usage.get("by_task") or {}
+    if len(by_task) > 1:
+        for task, entry in sorted(by_task.items()):
+            line = f"{task}: {entry.get('calls', 0):,} calls"
+            if entry.get("output_tokens"):
+                line += f", {entry['output_tokens']:,} tokens out"
+            bullets.append(line)
+    return bullets
 
 
-def _render_by_task_lines(labeled_usage: List[Tuple[str, Optional[dict]]]) -> List[str]:
-    """Which model spent it, where more than one task ran."""
-    lines = []
+def _render_usage_lines(labeled_usage: List[Tuple[str, Optional[dict]]]) -> List[str]:
+    """A block per variant that spent something.
+
+    Only those: a row per variant made most of the old table dashes, since the
+    CRF tools spend nothing.
+    """
+    lines: List[str] = []
     for label, usage in labeled_usage:
-        by_task = (usage or {}).get("by_task") or {}
-        if len(by_task) < 2:
+        if not usage or not _all_calls(usage):
             continue
-        parts = [
-            f"{task}: {entry.get('calls', 0)} calls,"
-            f" {_fmt_count(entry.get('output_tokens'))} output tokens"
-            for task, entry in by_task.items()
-        ]
-        lines.append(f"> **{label}** by task — " + "; ".join(parts))
+        if lines:
+            lines.append("")
+        lines.append(f"**{label}**")
+        lines += [f"* {bullet}" for bullet in _usage_bullets(usage)]
     return lines
 
 
@@ -158,7 +166,7 @@ def _replayed_note(labeled_usage: List[Tuple[str, Optional[dict]]]) -> str:
     )
 
 
-def _render_usage_table(
+def _render_usage_section(
     labeled_summaries: List[Tuple[str, dict]],
     corpora: List[str],
     note: str,
@@ -170,14 +178,10 @@ def _render_usage_table(
     ]
     if not any(_all_calls(usage) for _, usage in labeled_usage):
         return []
-    by_task_lines = _render_by_task_lines(labeled_usage)
     return [
         note + _cached_input_note(labeled_usage) + _replayed_note(labeled_usage),
         "",
-        "| " + " | ".join(USAGE_HEADERS) + " |",
-        "|" + "|".join(["---"] * len(USAGE_HEADERS)) + "|",
-        *[_usage_row(label, usage) for label, usage in labeled_usage],
-        *(["", *by_task_lines] if by_task_lines else []),
+        *_render_usage_lines(labeled_usage),
     ]
 
 
@@ -266,7 +270,7 @@ def _render_corpus_section(
         labeled_summaries, field_names, field_measures, field_scoring_types,
         _corpus_f1_getter(corpus),
     ))
-    usage_lines = _render_usage_table(
+    usage_lines = _render_usage_section(
         labeled_summaries, [corpus],
         "**LLM usage**, over every document attempted in this corpus.",
     )
@@ -337,7 +341,7 @@ def _render_comparison_report(
         ))
         lines.append("")
 
-    usage_lines = _render_usage_table(
+    usage_lines = _render_usage_section(
         labeled_summaries, corpora,
         "### LLM usage\n\nWhat producing these predictions spent, over every document"
         " attempted — deliberately a wider set than the scores above, since an errored"
