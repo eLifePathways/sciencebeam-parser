@@ -555,12 +555,7 @@ def create_models_router(
     fulltext_models = sciencebeam_parser.fulltext_models
     app_features_context = sciencebeam_parser.app_features_context
     fulltext_processor_config = sciencebeam_parser.fulltext_processor_config
-    noise_filter_config = LayoutNoiseFilterConfig(
-        enabled=fulltext_processor_config.noise_filter_enabled,
-        repetition_fraction=fulltext_processor_config.noise_filter_repetition_fraction,
-        preserve_first_page_head=fulltext_processor_config.noise_filter_preserve_first_page_head,
-        preserve_first_page_foot=fulltext_processor_config.noise_filter_preserve_first_page_foot,
-    )
+    noise_filter_config = fulltext_processor_config.get_layout_noise_filter_config()
 
     router.include_router(
         ModelResponseRouterFactory(

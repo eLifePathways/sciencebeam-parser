@@ -34,16 +34,33 @@ def normalize_text(text: str) -> str:
     return _WHITESPACE_RE.sub(' ', text).strip().casefold()
 
 
+# A running head is usually the article's short title or the journal's name, so it
+# matches the JATS while still being furniture. Text found only here decides nothing.
+TITLE_TAGS = frozenset({
+    'article-title', 'alt-title', 'subtitle', 'trans-title',
+    'journal-title', 'journal-subtitle', 'abbrev-journal-title',
+})
+
+
 class JatsTextIndex:
     """The concatenated text of one JATS document, normalised for substring lookup."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, title_text: str = ''):
         self.text = text
+        self.title_text = title_text
 
     @staticmethod
     def from_file(jats_filename: str) -> 'JatsTextIndex':
         root = etree.parse(jats_filename).getroot()
-        return JatsTextIndex(normalize_text(' '.join(root.itertext())))
+        title_texts = [
+            ' '.join(element.itertext())
+            for element in root.iter()
+            if etree.QName(element).localname in TITLE_TAGS
+        ]
+        return JatsTextIndex(
+            normalize_text(' '.join(root.itertext())),
+            normalize_text(' '.join(title_texts))
+        )
 
     def contains(self, text: str) -> Optional[bool]:
         """True if the text is in the JATS, False if not, None if it cannot be looked up."""
@@ -53,7 +70,9 @@ class JatsTextIndex:
             needle = needle[:-1].rsplit(' ', 1)[0].strip()
         if len(needle) < MIN_LOOKUP_LENGTH:
             return None
-        return needle in self.text
+        if needle not in self.text:
+            return False
+        return None if needle in self.title_text else True
 
 
 def find_jats_for_pdf(pdf_filename: str, jats_filenames: dict) -> Optional[str]:

@@ -48,3 +48,38 @@ class TestIndexJatsFilenamesByStem:
     def test_should_strip_a_plain_xml_suffix(self):
         result = index_jats_filenames_by_stem(['a/b/PPR459390.xml'])
         assert result == {'PPR459390': 'a/b/PPR459390.xml'}
+
+
+class TestJatsTextIndexTitles:
+    def test_should_be_inconclusive_for_text_found_only_in_the_title(self):
+        index = JatsTextIndex(
+            normalize_text(f'{LONG_ENOUGH} and some body text'),
+            normalize_text(LONG_ENOUGH)
+        )
+        assert index.contains(LONG_ENOUGH) is None
+
+    def test_should_still_flag_text_found_outside_the_title(self):
+        index = JatsTextIndex(
+            normalize_text(f'{LONG_ENOUGH} and some body text'),
+            normalize_text('a different title')
+        )
+        assert index.contains(LONG_ENOUGH) is True
+
+    def test_should_read_the_article_title_from_the_file(self, tmp_path):
+        jats_path = tmp_path / 'doc.jats.xml'
+        jats_path.write_text(
+            '<article><front><title-group>'
+            f'<article-title>{LONG_ENOUGH}</article-title>'
+            '</title-group></front>'
+            f'<body><p>{LONG_ENOUGH}</p></body></article>',
+            encoding='utf-8'
+        )
+        assert JatsTextIndex.from_file(str(jats_path)).contains(LONG_ENOUGH) is None
+
+    def test_should_not_treat_a_section_heading_as_a_title(self, tmp_path):
+        jats_path = tmp_path / 'doc.jats.xml'
+        jats_path.write_text(
+            f'<article><body><sec><title>{LONG_ENOUGH}</title></sec></body></article>',
+            encoding='utf-8'
+        )
+        assert JatsTextIndex.from_file(str(jats_path)).contains(LONG_ENOUGH) is True

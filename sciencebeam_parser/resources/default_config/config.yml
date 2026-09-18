@@ -95,8 +95,14 @@ processors:
   fulltext:
     noise_filter_enabled: true
     noise_filter_repetition_fraction: 0.5
+    noise_filter_position_consistency_fraction: 0.8
+    noise_filter_max_position_stddev: 0.05
+    noise_filter_max_height_ratio: 2.0
     noise_filter_preserve_first_page_head: false
     noise_filter_preserve_first_page_foot: false
+    noise_filter_outside_main_area: false
+    noise_filter_min_repeating_pattern_length: 3
+    noise_filter_max_letterless_length: 12
     merge_raw_authors: false
     use_cv_model: false
     cv_render_dpi: 100

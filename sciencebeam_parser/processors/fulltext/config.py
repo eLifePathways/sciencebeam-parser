@@ -1,6 +1,7 @@
 from typing import NamedTuple, Set
 
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.document.layout_noise_filter import LayoutNoiseFilterConfig
 
 from sciencebeam_parser.processors.document_page_image import (
     DEFAULT_PDF_RENDER_DPI
@@ -52,13 +53,33 @@ class FullTextProcessorConfig(NamedTuple):
     max_graphic_distance: float = DEFAULT_MAX_GRAPHIC_DISTANCE
     noise_filter_enabled: bool = False
     noise_filter_repetition_fraction: float = 0.5
+    noise_filter_position_consistency_fraction: float = 0.8
+    noise_filter_max_position_stddev: float = 0.05
+    noise_filter_max_height_ratio: float = 2.0
     noise_filter_preserve_first_page_head: bool = False
     noise_filter_preserve_first_page_foot: bool = False
+    noise_filter_outside_main_area: bool = False
+    noise_filter_min_repeating_pattern_length: int = 3
+    noise_filter_max_letterless_length: int = 12
 
     @staticmethod
     def from_app_config(app_config: AppConfig) -> 'FullTextProcessorConfig':
         return FullTextProcessorConfig()._replace(
             **app_config.get('processors', {}).get('fulltext', {})
+        )
+
+    def get_layout_noise_filter_config(self) -> LayoutNoiseFilterConfig:
+        return LayoutNoiseFilterConfig(
+            enabled=self.noise_filter_enabled,
+            repetition_fraction=self.noise_filter_repetition_fraction,
+            position_consistency_fraction=self.noise_filter_position_consistency_fraction,
+            max_position_stddev=self.noise_filter_max_position_stddev,
+            max_height_ratio=self.noise_filter_max_height_ratio,
+            preserve_first_page_head=self.noise_filter_preserve_first_page_head,
+            preserve_first_page_foot=self.noise_filter_preserve_first_page_foot,
+            filter_outside_main_area=self.noise_filter_outside_main_area,
+            min_repeating_pattern_length=self.noise_filter_min_repeating_pattern_length,
+            max_letterless_length=self.noise_filter_max_letterless_length,
         )
 
     def get_for_requested_field_names(

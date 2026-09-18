@@ -55,7 +55,6 @@ from sciencebeam_parser.document.semantic_document import (
 from sciencebeam_parser.document.tei_document import TeiDocument, get_tei_for_semantic_document
 from sciencebeam_parser.document.layout_document import LayoutDocument
 from sciencebeam_parser.document.layout_noise_filter import (
-    LayoutNoiseFilterConfig,
     get_noise_blocks,
     remove_noise_blocks,
 )
@@ -237,12 +236,7 @@ class FullTextProcessor:
         )
         noise_blocks = get_noise_blocks(
             layout_document,
-            LayoutNoiseFilterConfig(
-                enabled=self.config.noise_filter_enabled,
-                repetition_fraction=self.config.noise_filter_repetition_fraction,
-                preserve_first_page_head=self.config.noise_filter_preserve_first_page_head,
-                preserve_first_page_foot=self.config.noise_filter_preserve_first_page_foot,
-            )
+            self.config.get_layout_noise_filter_config()
         )
         segmentation_input = remove_noise_blocks(layout_document, noise_blocks)
         segmentation_label_result = self.segmentation_model.get_label_layout_document_result(
