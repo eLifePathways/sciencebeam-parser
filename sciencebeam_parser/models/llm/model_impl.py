@@ -14,6 +14,7 @@ from sciencebeam_parser.models.llm.client import (
 )
 from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
 from sciencebeam_parser.models.llm.decode import (
+    count_unclaimed_lines,
     EVIDENCE_RESPONSE_SCHEMA,
     LINES_RESPONSE_SCHEMA,
     LlmInputTooLargeError,
@@ -21,12 +22,23 @@ from sciencebeam_parser.models.llm.decode import (
     LlmResponseError,
     decode_evidence_response,
     decode_line_starts_response,
+    clip_regions_to_core,
+    decode_regions,
     get_line_numbers,
+    get_line_windows,
+    widen_window,
+    get_regions_response_schema,
+    iter_labels_for_regions,
+    merge_adjacent_regions,
+    render_numbered_line_texts,
     render_numbered_lines
 )
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.prompt import get_prompt
-from sciencebeam_parser.models.llm.tasks import get_citation_labels
+from sciencebeam_parser.models.llm.tasks import (
+    get_citation_labels,
+    get_segmentation_region_names
+)
 from sciencebeam_parser.models.llm.telemetry import llm_span, set_response_attributes
 from sciencebeam_parser.models.llm.usage import record_llm_usage
 from sciencebeam_parser.models.llm.values import (
@@ -41,14 +53,17 @@ from sciencebeam_parser.utils.telemetry import get_trace_id
 LOGGER = logging.getLogger(__name__)
 
 LINE_STATUS_FEATURE_NAME = 'line_status'
+WHOLE_LINE_TEXT_FEATURE_NAME = 'whole_line_text'
 
 LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
 VALUES_SHAPE = 'values'
+REGIONS_SHAPE = 'regions'
+OTHER_REGION_NAME = 'other'
 
 LINE_BASED_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE)
 
-SUPPORTED_RESPONSE_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE, VALUES_SHAPE)
+SUPPORTED_RESPONSE_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE, VALUES_SHAPE, REGIONS_SHAPE)
 
 
 def _get_content_or_none(response_json) -> Optional[str]:
@@ -77,12 +92,21 @@ class LlmModelImpl(ModelImpl):
             self.client = CachingLlmClient(
                 config, self.client, get_response_cache(response_cache_dir)
             )
-        self.labels = (
-            get_citation_labels() if config.response_shape == VALUES_SHAPE else []
-        )
+        if config.response_shape == VALUES_SHAPE:
+            self.labels = get_citation_labels()
+        elif config.response_shape == REGIONS_SHAPE:
+            self.labels = get_segmentation_region_names()
+        else:
+            self.labels = []
         self.line_status_index = (
             get_feature_column_index(config.task, LINE_STATUS_FEATURE_NAME)
             if config.response_shape in LINE_BASED_SHAPES else -1
+        )
+        # Segmentation's rows are already lines, so the line text is a feature
+        # column rather than something to rebuild from token rows.
+        self.whole_line_text_index = (
+            get_feature_column_index(config.task, WHOLE_LINE_TEXT_FEATURE_NAME)
+            if config.response_shape == REGIONS_SHAPE else -1
         )
 
     def __repr__(self) -> str:
@@ -106,6 +130,11 @@ class LlmModelImpl(ModelImpl):
             )
         if self.config.response_shape == VALUES_SHAPE:
             return self._predict_labels_in_batches(texts)
+        if self.config.response_shape == REGIONS_SHAPE:
+            return [
+                self._predict_regions_for_document(sequence_texts, sequence_features)
+                for sequence_texts, sequence_features in zip(texts, features)
+            ]
         return [
             self._predict_labels_for_sequence(sequence_texts, sequence_features)
             for sequence_texts, sequence_features in zip(texts, features)
@@ -275,26 +304,190 @@ class LlmModelImpl(ModelImpl):
             raise LlmResponseError(message)
         LOGGER.warning('llm %s: %s', self.config.task, message)
 
+    def _check_unclaimed_lines(self, unclaimed: int, line_count: int) -> None:
+        """Lines no region claimed become `<other>` and leave the output.
+
+        A few are what the shape is for: running heads, footers and page numbers
+        are stepped over rather than named. A large share is a different thing —
+        a model that stopped reading part way leaves the rest unclaimed, and that
+        silently drops whole sections rather than mislabelling them.
+        """
+        if not unclaimed:
+            return
+        share = unclaimed / line_count
+        if share < self.config.warn_unclaimed_line_share:
+            LOGGER.info(
+                'llm %s: %d of %d line(s) belong to no region',
+                self.config.task, unclaimed, line_count
+            )
+            return
+        LOGGER.warning(
+            'llm %s: %d of %d line(s) (%.0f%%) belong to no region, which is more'
+            ' than running heads and page numbers account for; the response may'
+            ' stop short of the document',
+            self.config.task, unclaimed, line_count, 100 * share
+        )
+
     def _check_input_size(self, line_count: int, token_count: int) -> None:
         """A references region far larger than a reference list is a segmentation
         failure upstream, not something to extract from. Warn rather than raise by
         default: raising would fail exactly the documents where the CRF engine
         produces poor output, which flatters a comparison rather than informing it.
+
+        A whole document is legitimately thousands of lines, so a shape that takes
+        one says so rather than reading the size as a symptom.
         """
+        if self.config.response_shape == REGIONS_SHAPE:
+            suffix = '; a document this long may not label reliably in one call'
+        else:
+            suffix = (
+                '; a references region this large is usually a mislabelled'
+                ' segmentation region rather than a reference list, so check'
+                ' whether the segmentation model labelled the right region'
+            )
         if self.config.max_input_lines and line_count > self.config.max_input_lines:
             raise LlmInputTooLargeError(
                 f'{line_count} lines ({token_count} tokens) exceeds'
-                f' max_input_lines={self.config.max_input_lines};'
-                ' a references region this large is usually a mislabelled'
-                ' segmentation region rather than a reference list'
+                f' max_input_lines={self.config.max_input_lines}{suffix}'
             )
         if self.config.warn_input_lines and line_count > self.config.warn_input_lines:
             LOGGER.warning(
-                'llm %s input is %d lines (%d tokens), which is larger than a'
-                ' reference list usually is; check whether the segmentation model'
-                ' labelled the right region',
-                self.config.task, line_count, token_count
+                'llm %s input is %d lines (%d tokens)%s',
+                self.config.task, line_count, token_count, suffix
             )
+
+    def _predict_regions_for_document(
+        self,
+        tokens: List[str],
+        feature_rows: List[List[str]]
+    ) -> List[Tuple[str, str]]:
+        if not tokens:
+            return []
+        line_texts = self._get_line_texts(feature_rows)
+        self._check_input_size(len(line_texts), len(tokens))
+        windows = get_line_windows(
+            len(line_texts), self.config.window_lines, self.config.window_overlap
+        )
+        if len(windows) > 1:
+            LOGGER.info(
+                'llm %s: %d lines over %d window(s) of %d',
+                self.config.task, len(line_texts), len(windows),
+                self.config.window_lines
+            )
+        regions, touching = self._predict_regions_over_windows(line_texts, windows)
+        merged = merge_adjacent_regions(regions)
+        labels = iter_labels_for_regions(merged, len(line_texts))
+        unclaimed = count_unclaimed_lines(merged, len(line_texts))
+        self._check_unclaimed_lines(unclaimed, len(line_texts))
+        LOGGER.info(
+            'llm labelled %d lines as %d region(s), %d line(s) unclaimed,'
+            ' %d touching pair(s) (model=%r)',
+            len(line_texts), len(merged), unclaimed, touching, self.config.model
+        )
+        return list(zip(tokens, labels))
+
+    def _predict_regions_over_windows(
+        self, line_texts: List[str], windows: List
+    ) -> Tuple[List[Tuple[int, int, str]], int]:
+        def run(window):
+            # One window must not cost the document. A core whose window fails
+            # is carried by whatever ran before it, which is what a document
+            # mostly does anyway -- regions are long and few. The count is
+            # reported rather than absorbed, because a run where this fires
+            # often is not measuring the model.
+            try:
+                return self._retrying_on_malformed(
+                    f'{window.core_end - window.core_start}-line window',
+                    lambda attempt: self._regions_for_window(
+                        line_texts, window, (attempt,)
+                    )
+                )
+            except (LlmResponseError, LlmTruncatedResponseError) as exc:
+                # Asking again with the same input is known to buy nothing --
+                # a rejected response reproduces exactly. Asking with more
+                # context either side does not: the answer is stable for a
+                # given input and turns on a line of it, so a wider window is
+                # a different question rather than the same one repeated.
+                wider = widen_window(window, len(line_texts), self.config.window_overlap)
+                if wider != window:
+                    try:
+                        return self._retrying_on_malformed(
+                            f'{window.core_end - window.core_start}-line window, wider',
+                            lambda attempt: self._regions_for_window(
+                                line_texts, wider, (attempt,)
+                            )
+                        )
+                    except (LlmResponseError, LlmTruncatedResponseError):
+                        pass
+                LOGGER.warning(
+                    'llm %s: window covering lines %d..%d failed (%s);'
+                    ' carrying the region before it',
+                    self.config.task, window.core_start, window.core_end,
+                    type(exc).__name__
+                )
+                return None, 0
+
+        workers = max(1, min(self.config.max_concurrent_requests, len(windows)))
+        if workers == 1 or len(windows) == 1:
+            per_window = [run(window) for window in windows]
+        else:
+            # A window is independent of the others, so the wall-clock is the
+            # slowest rather than their sum. Each runs in a copy of the calling
+            # context, for the parent span and the usage accumulator, as the
+            # citation batches do.
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                per_window = list(pool.map(
+                    lambda context, window: context.run(run, window),
+                    [copy_context() for _ in windows],
+                    windows
+                ))
+        regions: List[Tuple[int, int, str]] = []
+        touching = failed = 0
+        for window, (window_regions, window_touching) in zip(windows, per_window):
+            if window_regions is None:
+                failed += 1
+                name = regions[-1][2] if regions else OTHER_REGION_NAME
+                regions.append((window.core_start, window.core_end - 1, name))
+                continue
+            regions.extend(window_regions)
+            touching += window_touching
+        if failed:
+            LOGGER.warning(
+                'llm %s: %d of %d window(s) failed and were carried',
+                self.config.task, failed, len(windows)
+            )
+        return regions, touching
+
+    def _regions_for_window(
+        self,
+        line_texts: List[str],
+        window,
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
+    ) -> Tuple[List[Tuple[int, int, str]], int]:
+        window_texts = line_texts[window.context_start:window.context_end]
+        prompt = get_prompt(
+            self.config.task,
+            self.config.prompt_version,
+            render_numbered_line_texts(window_texts, self.config.max_line_chars)
+        )
+        with llm_span(self.config, prompt, self.config.record_trace_content) as span:
+            response_json = self.client.get_completion(
+                prompt, get_regions_response_schema(self.labels), attempt
+            )
+            record_llm_usage(self.config.task, response_json)
+            span.set_attribute('sciencebeam.input_lines', len(window_texts))
+            set_response_attributes(
+                span, response_json, _get_content_or_none(response_json),
+                self.config.record_trace_content
+            )
+            content = self._get_content(response_json, len(window_texts))
+            regions, touching = decode_regions(
+                content, len(window_texts), self.labels
+            )
+        return clip_regions_to_core(regions, window), touching
+
+    def _get_line_texts(self, feature_rows: List[List[str]]) -> List[str]:
+        return [row[self.whole_line_text_index] for row in feature_rows]
 
     def _predict_labels_for_sequence(
         self,

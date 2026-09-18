@@ -28,6 +28,10 @@ class LlmEngineConfig:
     record_trace_content: bool = True
     warn_input_lines: int = 300
     max_input_lines: int = 0
+    max_line_chars: int = 0
+    window_lines: int = 0
+    window_overlap: int = 40
+    warn_unclaimed_line_share: float = 0.1
     max_references_per_request: int = 10
     max_missing_reference_retries: int = 1
     max_malformed_response_retries: int = 1
