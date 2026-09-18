@@ -371,3 +371,26 @@ class TestClipRegionsToCore:
     def test_should_cut_a_region_back_to_the_core(self):
         window = get_line_windows(1000, 400, 40)[1]
         assert clip_regions_to_core([(0, 100, 'body')], window) == [(400, 460, 'body')]
+
+
+class TestEndOneOffTheEnd:
+    """A region running to the end of the input is the common case, and windowing
+    makes it the case for every window but the last.
+    """
+
+    def test_should_read_an_end_one_past_the_last_line_as_the_last_line(self):
+        assert decode(json.dumps({'regions': [
+            {'start': 1, 'end': len(LINES) + 1, 'label': 'body'}
+        ]})) == ['B-<body>'] + ['I-<body>'] * (len(LINES) - 1)
+
+    def test_should_still_reject_an_end_further_out(self):
+        with pytest.raises(LlmMalformedResponseError, match='out of range'):
+            decode(json.dumps({'regions': [
+                {'start': 1, 'end': len(LINES) + 2, 'label': 'body'}
+            ]}))
+
+    def test_should_still_reject_a_start_past_the_last_line(self):
+        with pytest.raises(LlmMalformedResponseError, match='out of range'):
+            decode(json.dumps({'regions': [
+                {'start': len(LINES) + 1, 'end': len(LINES) + 1, 'label': 'body'}
+            ]}))

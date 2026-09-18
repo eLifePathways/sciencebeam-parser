@@ -26,6 +26,7 @@ from sciencebeam_parser.models.llm.decode import (
     decode_regions,
     get_line_numbers,
     get_line_windows,
+    widen_window,
     get_regions_response_schema,
     iter_labels_for_regions,
     merge_adjacent_regions,
@@ -58,6 +59,7 @@ LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
 VALUES_SHAPE = 'values'
 REGIONS_SHAPE = 'regions'
+OTHER_REGION_NAME = 'other'
 
 LINE_BASED_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE)
 
@@ -388,12 +390,42 @@ class LlmModelImpl(ModelImpl):
         self, line_texts: List[str], windows: List
     ) -> Tuple[List[Tuple[int, int, str]], int]:
         def run(window):
-            return self._retrying_on_malformed(
-                f'{window.core_end - window.core_start}-line window',
-                lambda attempt: self._regions_for_window(
-                    line_texts, window, (attempt,)
+            # One window must not cost the document. A core whose window fails
+            # is carried by whatever ran before it, which is what a document
+            # mostly does anyway -- regions are long and few. The count is
+            # reported rather than absorbed, because a run where this fires
+            # often is not measuring the model.
+            try:
+                return self._retrying_on_malformed(
+                    f'{window.core_end - window.core_start}-line window',
+                    lambda attempt: self._regions_for_window(
+                        line_texts, window, (attempt,)
+                    )
                 )
-            )
+            except (LlmResponseError, LlmTruncatedResponseError) as exc:
+                # Asking again with the same input is known to buy nothing --
+                # a rejected response reproduces exactly. Asking with more
+                # context either side does not: the answer is stable for a
+                # given input and turns on a line of it, so a wider window is
+                # a different question rather than the same one repeated.
+                wider = widen_window(window, len(line_texts), self.config.window_overlap)
+                if wider != window:
+                    try:
+                        return self._retrying_on_malformed(
+                            f'{window.core_end - window.core_start}-line window, wider',
+                            lambda attempt: self._regions_for_window(
+                                line_texts, wider, (attempt,)
+                            )
+                        )
+                    except (LlmResponseError, LlmTruncatedResponseError):
+                        pass
+                LOGGER.warning(
+                    'llm %s: window covering lines %d..%d failed (%s);'
+                    ' carrying the region before it',
+                    self.config.task, window.core_start, window.core_end,
+                    type(exc).__name__
+                )
+                return None, 0
 
         workers = max(1, min(self.config.max_concurrent_requests, len(windows)))
         if workers == 1 or len(windows) == 1:
@@ -410,10 +442,20 @@ class LlmModelImpl(ModelImpl):
                     windows
                 ))
         regions: List[Tuple[int, int, str]] = []
-        touching = 0
-        for window_regions, window_touching in per_window:
+        touching = failed = 0
+        for window, (window_regions, window_touching) in zip(windows, per_window):
+            if window_regions is None:
+                failed += 1
+                name = regions[-1][2] if regions else OTHER_REGION_NAME
+                regions.append((window.core_start, window.core_end - 1, name))
+                continue
             regions.extend(window_regions)
             touching += window_touching
+        if failed:
+            LOGGER.warning(
+                'llm %s: %d of %d window(s) failed and were carried',
+                self.config.task, failed, len(windows)
+            )
         return regions, touching
 
     def _regions_for_window(

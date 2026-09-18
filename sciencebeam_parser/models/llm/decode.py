@@ -346,11 +346,20 @@ def render_numbered_line_texts(
 
 
 def _get_line_index(value: Any, field_name: str, line_count: int) -> int:
-    """Lines are numbered from 1 in the prompt and indexed from 0 here."""
+    """Lines are numbered from 1 in the prompt and indexed from 0 here.
+
+    An end one past the last line is read as the last line. A region running to
+    the end of the input is the common case, and a model that overshoots it by
+    one has said where the region stops in the only way that is not a
+    contradiction. Anything further out is a claim about a line that was never
+    sent.
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         raise LlmMalformedResponseError(
             f'region {field_name} is not an integer: {value!r}'
         )
+    if field_name == 'end' and value == line_count + 1:
+        return line_count - 1
     if not 1 <= value <= line_count:
         raise LlmMalformedResponseError(
             f'region {field_name} {value} out of range for {line_count} lines'
@@ -524,6 +533,21 @@ def get_line_windows(line_count: int, size: int, overlap: int) -> List[LineWindo
             core_end
         ))
     return windows
+
+
+def widen_window(window: LineWindow, line_count: int, overlap: int) -> LineWindow:
+    """The same core, asked with more of the document around it.
+
+    The answer is stable for a given input and turns on a single line of it, so
+    repeating a failed request unchanged returns the same failure, while asking
+    with a wider context is a different question about the same core.
+    """
+    return LineWindow(
+        max(0, window.context_start - overlap),
+        min(line_count, window.context_end + overlap),
+        window.core_start,
+        window.core_end
+    )
 
 
 def decode_regions(
