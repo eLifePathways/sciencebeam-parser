@@ -57,9 +57,8 @@ segmentation:
   engine: 'llm'
   task: 'segmentation'
   response_shape: 'regions'        # where each region starts, and what it is
-  model: 'qwen/qwen3.5-9b'
-  provider: 'venice'
-  prompt_version: 'regions-v1'
+  model: 'z-ai/glm-4.7-flash'      # chosen by measurement; see below
+  prompt_version: 'regions-v9'
   reasoning_enabled: false
   warn_input_lines: 2500           # a whole document, not a region
   max_input_lines: 4000

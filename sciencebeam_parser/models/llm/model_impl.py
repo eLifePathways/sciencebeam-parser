@@ -468,8 +468,7 @@ class LlmModelImpl(ModelImpl):
         prompt = get_prompt(
             self.config.task,
             self.config.prompt_version,
-            render_numbered_line_texts(window_texts, self.config.max_line_chars),
-            {'last_line': str(len(window_texts))}
+            render_numbered_line_texts(window_texts, self.config.max_line_chars)
         )
         with llm_span(self.config, prompt, self.config.record_trace_content) as span:
             response_json = self.client.get_completion(
