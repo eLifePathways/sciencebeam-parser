@@ -266,16 +266,6 @@ sequence_model_profiles:
       # document and say nothing.
       warn_input_lines: 2500
       max_input_lines: 4000
-  llm_segmentation_furniture:
-    extends: llm_segmentation
-    segmentation:
-      prompt_version: 'regions-v4'
-      mark_furniture: true
-  llm_segmentation_blocks:
-    extends: llm_segmentation
-    segmentation:
-      prompt_version: 'regions-v5'
-      mark_blocks: true
   # Lines off a page rather than paragraphs: median 82 characters, so a cut at
   # 60 drops 28% of the input and keeps the start of every line, which is where
   # what a region is can usually be read.
@@ -283,6 +273,14 @@ sequence_model_profiles:
     extends: llm_segmentation
     segmentation:
       max_line_chars: 60
+  # A document near the model's decision boundary re-rolls when anything about
+  # its input changes, and a smaller input is what recovered one that failed
+  # whole. Cores tile the document; the overlap is context that emits nothing.
+  llm_segmentation_windowed:
+    extends: llm_segmentation
+    segmentation:
+      window_lines: 400
+      window_overlap: 40
   llm_references:
     extends:
       - llm_reference_segmenter
@@ -344,18 +342,13 @@ profiles:
     processors:
       fulltext:
         noise_filter_enabled: true
-  llm_segmentation_furniture:
-    sequence_models: llm_segmentation_furniture
-    processors:
-      fulltext:
-        noise_filter_enabled: false
-  llm_segmentation_blocks:
-    sequence_models: llm_segmentation_blocks
-    processors:
-      fulltext:
-        noise_filter_enabled: false
   llm_segmentation_short_lines:
     sequence_models: llm_segmentation_short_lines
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  llm_segmentation_windowed:
+    sequence_models: llm_segmentation_windowed
     processors:
       fulltext:
         noise_filter_enabled: false

@@ -1,11 +1,9 @@
 import json
 import re
-from typing import Any, List, Mapping, Sequence, Tuple
+from typing import Any, List, Mapping, NamedTuple, Sequence, Tuple
 
 
 LINE_START = 'LINESTART'
-
-BLOCK_START = 'BLOCKSTART'
 
 # Predicted by the segmentation model, read by nothing downstream.
 OTHER_LABEL = '<other>'
@@ -347,55 +345,6 @@ def render_numbered_line_texts(
     )
 
 
-def render_lines_with_block_breaks(
-    line_texts: Sequence[str],
-    block_statuses: Sequence[str]
-) -> str:
-    """The same numbered lines, with a blank line where a block begins.
-
-    A blank line is how a document already separates its blocks, so it carries
-    the structure without asserting anything about it. The blank lines are not
-    numbered, so every index still refers to the same content line.
-
-    One signal, deliberately. Page rules, block breaks and emphasis each left the
-    front-matter boundary where the plain rendering put it; together they moved
-    it to a third of the document.
-    """
-    parts: List[str] = []
-    for index, text in enumerate(line_texts):
-        if index and block_statuses[index] == BLOCK_START:
-            parts.append('')
-        parts.append(f'{index + 1}\t{text}')
-    return '\n'.join(parts)
-
-
-def render_lines_with_furniture_hint(
-    line_texts: Sequence[str],
-    main_area_flags: Sequence[str]
-) -> str:
-    """The same numbered lines, with a note on the ones that sit outside the text.
-
-    This is the part a model cannot see: whether a line falls outside the page's
-    main area. On the measured corpus that flags 95% of running heads, footers
-    and page numbers and 2% of everything else, which is the difference between
-    the text a model reads and the geometry a CRF is given.
-
-    `is_repetitive_pattern` is deliberately not added to it: over the same corpus
-    it raises recall from 95% to 96% and false positives from 168 to 183, and
-    what it adds are repeated section headings, which are body.
-
-    Page and block boundaries are deliberately not marked. Offered those, a model
-    ended the front matter at the first page break, which on a preprint whose
-    first page is a status banner cut the title, authors and abstract out of it.
-    """
-    parts: List[str] = []
-    for index, text in enumerate(line_texts):
-        outside = main_area_flags[index] != '1'
-        marker = '[outside the text area] ' if outside else ''
-        parts.append(f'{index + 1}\t{marker}{text}')
-    return '\n'.join(parts)
-
-
 def _get_line_index(value: Any, field_name: str, line_count: int) -> int:
     """Lines are numbered from 1 in the prompt and indexed from 0 here."""
     if isinstance(value, bool) or not isinstance(value, int):
@@ -549,6 +498,58 @@ def count_unclaimed_lines(
     return line_count - sum(end - start + 1 for start, end, _ in regions)
 
 
+class LineWindow(NamedTuple):
+    """`core` is the part a window answers for; the rest is context.
+
+    Cores tile the document exactly, so no line is answered for twice and there
+    is nothing to reconcile where two windows meet. The context either side is
+    what stops a region boundary being decided with nothing before or after it.
+    """
+    context_start: int
+    context_end: int
+    core_start: int
+    core_end: int
+
+
+def get_line_windows(line_count: int, size: int, overlap: int) -> List[LineWindow]:
+    if not size or line_count <= size:
+        return [LineWindow(0, line_count, 0, line_count)]
+    windows: List[LineWindow] = []
+    for core_start in range(0, line_count, size):
+        core_end = min(core_start + size, line_count)
+        windows.append(LineWindow(
+            max(0, core_start - overlap),
+            min(line_count, core_end + overlap),
+            core_start,
+            core_end
+        ))
+    return windows
+
+
+def decode_regions(
+    content: str,
+    line_count: int,
+    region_names: Sequence[str]
+) -> Tuple[List[Tuple[int, int, str]], int]:
+    """Regions in the coordinates of whatever was sent, and touching pairs."""
+    return parse_regions(
+        content, line_count=line_count, region_names=region_names
+    )
+
+
+def clip_regions_to_core(
+    regions: Sequence[Tuple[int, int, str]], window: LineWindow
+) -> List[Tuple[int, int, str]]:
+    """Window coordinates to document coordinates, keeping only the core."""
+    clipped: List[Tuple[int, int, str]] = []
+    for start, end, name in regions:
+        doc_start = max(start + window.context_start, window.core_start)
+        doc_end = min(end + window.context_start, window.core_end - 1)
+        if doc_start <= doc_end:
+            clipped.append((doc_start, doc_end, name))
+    return clipped
+
+
 def decode_regions_response(
     content: str,
     line_texts: Sequence[str],
@@ -557,9 +558,7 @@ def decode_regions_response(
     """One label per line, how many lines no region claimed, and how many region
     pairs stated an end the next region's start contradicted.
     """
-    regions, touching = parse_regions(
-        content, line_count=len(line_texts), region_names=region_names
-    )
+    regions, touching = decode_regions(content, len(line_texts), region_names)
     return (
         iter_labels_for_regions(regions, len(line_texts)),
         count_unclaimed_lines(regions, len(line_texts)),

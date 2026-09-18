@@ -3,8 +3,8 @@ import json
 import pytest
 
 from sciencebeam_parser.models.llm.decode import (
-    render_lines_with_block_breaks,
-    render_lines_with_furniture_hint,
+    clip_regions_to_core,
+    get_line_windows,
     LlmMalformedResponseError,
     decode_regions_response,
     get_regions_response_schema,
@@ -262,29 +262,6 @@ class TestMergeAdjacentRegions:
         ]
 
 
-class TestRenderLinesWithFurnitureHint:
-    """`is_main_area` alone flags 95% of running heads, footers and page numbers
-    on the measured corpus, and 2% of everything else.
-    """
-
-    def test_should_mark_a_line_outside_the_text_area(self):
-        assert render_lines_with_furniture_hint(
-            ['Title', 'page 2'], ['1', '0']
-        ) == '1\tTitle\n2\t[outside the text area] page 2'
-
-    def test_should_leave_a_repeated_heading_in_the_text_area_alone(self):
-        # is_repetitive_pattern is not used: over the corpus it adds 1 point of
-        # recall and 15 false positives, and those are repeated section headings
-        assert render_lines_with_furniture_hint(
-            ['Title', 'Ambiente Fisico'], ['1', '1']
-        ) == '1\tTitle\n2\tAmbiente Fisico'
-
-    def test_should_leave_body_lines_alone(self):
-        assert render_lines_with_furniture_hint(
-            ['a', 'b'], ['1', '1']
-        ) == '1\ta\n2\tb'
-
-
 class TestOtherRegion:
     """`other` is offered so furniture can be named rather than skipped: asking a
     model to leave lines out is a negation, and it read the surrounding region as
@@ -341,24 +318,6 @@ class TestTouchingRegions:
         assert touching == 0
 
 
-class TestRenderLinesWithBlockBreaks:
-    """One layout signal, not three: page rules, block breaks and emphasis each
-    left the front-matter boundary where the plain rendering put it, and together
-    moved it to a third of the document.
-    """
-
-    def test_should_separate_blocks_with_an_unnumbered_blank_line(self):
-        assert render_lines_with_block_breaks(
-            ['Title', 'Author', 'Intro'],
-            ['BLOCKSTART', 'BLOCKIN', 'BLOCKSTART'],
-        ) == '1\tTitle\n2\tAuthor\n\n3\tIntro'
-
-    def test_should_not_open_with_a_blank_line(self):
-        assert render_lines_with_block_breaks(
-            ['Title'], ['BLOCKSTART']
-        ) == '1\tTitle'
-
-
 class TestMaxLineChars:
     def test_should_keep_the_whole_line_by_default(self):
         assert render_numbered_line_texts(['a much longer line']) == '1\ta much longer line'
@@ -367,3 +326,48 @@ class TestMaxLineChars:
         assert render_numbered_line_texts(
             ['abcdefghij', 'short'], max_line_chars=4
         ) == '1\tabcd\n2\tshor'
+
+
+class TestLineWindows:
+    """Cores tile the document, so no line is answered for twice and there is
+    nothing to reconcile where two windows meet. The overlap is context.
+    """
+
+    def test_should_be_one_window_when_the_document_fits(self):
+        assert get_line_windows(100, 400, 40) == [(0, 100, 0, 100)]
+
+    def test_should_be_one_window_when_windowing_is_off(self):
+        assert get_line_windows(5000, 0, 40) == [(0, 5000, 0, 5000)]
+
+    def test_should_tile_the_document_with_cores(self):
+        windows = get_line_windows(1000, 400, 40)
+        assert [(w.core_start, w.core_end) for w in windows] == [
+            (0, 400), (400, 800), (800, 1000)
+        ]
+
+    def test_should_give_each_core_context_either_side(self):
+        windows = get_line_windows(1000, 400, 40)
+        assert [(w.context_start, w.context_end) for w in windows] == [
+            (0, 440), (360, 840), (760, 1000)
+        ]
+
+    def test_should_leave_no_line_uncovered(self):
+        covered = [
+            line for w in get_line_windows(937, 400, 40)
+            for line in range(w.core_start, w.core_end)
+        ]
+        assert covered == list(range(937))
+
+
+class TestClipRegionsToCore:
+    def test_should_move_window_coordinates_into_the_document(self):
+        window = get_line_windows(1000, 400, 40)[1]      # context 360..840
+        assert clip_regions_to_core([(50, 100, 'body')], window) == [(410, 460, 'body')]
+
+    def test_should_drop_a_region_that_lies_wholly_in_the_context(self):
+        window = get_line_windows(1000, 400, 40)[1]
+        assert not clip_regions_to_core([(0, 20, 'body')], window)
+
+    def test_should_cut_a_region_back_to_the_core(self):
+        window = get_line_windows(1000, 400, 40)[1]
+        assert clip_regions_to_core([(0, 100, 'body')], window) == [(400, 460, 'body')]

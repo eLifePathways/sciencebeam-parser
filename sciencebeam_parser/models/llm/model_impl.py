@@ -14,6 +14,7 @@ from sciencebeam_parser.models.llm.client import (
 )
 from sciencebeam_parser.models.llm.config import LlmConfigError, LlmEngineConfig
 from sciencebeam_parser.models.llm.decode import (
+    count_unclaimed_lines,
     EVIDENCE_RESPONSE_SCHEMA,
     LINES_RESPONSE_SCHEMA,
     LlmInputTooLargeError,
@@ -21,11 +22,13 @@ from sciencebeam_parser.models.llm.decode import (
     LlmResponseError,
     decode_evidence_response,
     decode_line_starts_response,
-    decode_regions_response,
+    clip_regions_to_core,
+    decode_regions,
     get_line_numbers,
+    get_line_windows,
     get_regions_response_schema,
-    render_lines_with_block_breaks,
-    render_lines_with_furniture_hint,
+    iter_labels_for_regions,
+    merge_adjacent_regions,
     render_numbered_line_texts,
     render_numbered_lines
 )
@@ -50,8 +53,6 @@ LOGGER = logging.getLogger(__name__)
 
 LINE_STATUS_FEATURE_NAME = 'line_status'
 WHOLE_LINE_TEXT_FEATURE_NAME = 'whole_line_text'
-MAIN_AREA_FEATURE_NAME = 'is_main_area'
-BLOCK_STATUS_FEATURE_NAME = 'block_status'
 
 LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
@@ -104,14 +105,6 @@ class LlmModelImpl(ModelImpl):
         self.whole_line_text_index = (
             get_feature_column_index(config.task, WHOLE_LINE_TEXT_FEATURE_NAME)
             if config.response_shape == REGIONS_SHAPE else -1
-        )
-        self.furniture_index = (
-            get_feature_column_index(config.task, MAIN_AREA_FEATURE_NAME)
-            if config.response_shape == REGIONS_SHAPE and config.mark_furniture else -1
-        )
-        self.block_status_index = (
-            get_feature_column_index(config.task, BLOCK_STATUS_FEATURE_NAME)
-            if config.response_shape == REGIONS_SHAPE and config.mark_blocks else -1
         )
 
     def __repr__(self) -> str:
@@ -368,71 +361,92 @@ class LlmModelImpl(ModelImpl):
     ) -> List[Tuple[str, str]]:
         if not tokens:
             return []
-        line_texts = [row[self.whole_line_text_index] for row in feature_rows]
+        line_texts = self._get_line_texts(feature_rows)
         self._check_input_size(len(line_texts), len(tokens))
-        if self.furniture_index >= 0:
-            rendered = render_lines_with_furniture_hint(
-                line_texts, [row[self.furniture_index] for row in feature_rows]
+        windows = get_line_windows(
+            len(line_texts), self.config.window_lines, self.config.window_overlap
+        )
+        if len(windows) > 1:
+            LOGGER.info(
+                'llm %s: %d lines over %d window(s) of %d',
+                self.config.task, len(line_texts), len(windows),
+                self.config.window_lines
             )
-        elif self.block_status_index >= 0:
-            rendered = render_lines_with_block_breaks(
-                line_texts, [row[self.block_status_index] for row in feature_rows]
+        regions, touching = self._predict_regions_over_windows(line_texts, windows)
+        merged = merge_adjacent_regions(regions)
+        labels = iter_labels_for_regions(merged, len(line_texts))
+        unclaimed = count_unclaimed_lines(merged, len(line_texts))
+        self._check_unclaimed_lines(unclaimed, len(line_texts))
+        LOGGER.info(
+            'llm labelled %d lines as %d region(s), %d line(s) unclaimed,'
+            ' %d touching pair(s) (model=%r)',
+            len(line_texts), len(merged), unclaimed, touching, self.config.model
+        )
+        return list(zip(tokens, labels))
+
+    def _predict_regions_over_windows(
+        self, line_texts: List[str], windows: List
+    ) -> Tuple[List[Tuple[int, int, str]], int]:
+        def run(window):
+            return self._retrying_on_malformed(
+                f'{window.core_end - window.core_start}-line window',
+                lambda attempt: self._regions_for_window(
+                    line_texts, window, (attempt,)
+                )
             )
+
+        workers = max(1, min(self.config.max_concurrent_requests, len(windows)))
+        if workers == 1 or len(windows) == 1:
+            per_window = [run(window) for window in windows]
         else:
-            rendered = render_numbered_line_texts(
-                line_texts, self.config.max_line_chars
-            )
+            # A window is independent of the others, so the wall-clock is the
+            # slowest rather than their sum. Each runs in a copy of the calling
+            # context, for the parent span and the usage accumulator, as the
+            # citation batches do.
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                per_window = list(pool.map(
+                    lambda context, window: context.run(run, window),
+                    [copy_context() for _ in windows],
+                    windows
+                ))
+        regions: List[Tuple[int, int, str]] = []
+        touching = 0
+        for window_regions, window_touching in per_window:
+            regions.extend(window_regions)
+            touching += window_touching
+        return regions, touching
+
+    def _regions_for_window(
+        self,
+        line_texts: List[str],
+        window,
+        attempt: Tuple[int, ...] = FIRST_ATTEMPT
+    ) -> Tuple[List[Tuple[int, int, str]], int]:
+        window_texts = line_texts[window.context_start:window.context_end]
         prompt = get_prompt(
             self.config.task,
             self.config.prompt_version,
-            rendered,
-            {'last_line': str(len(line_texts))}
+            render_numbered_line_texts(window_texts, self.config.max_line_chars),
+            {'last_line': str(len(window_texts))}
         )
-        schema = get_regions_response_schema(self.labels)
-        return self._retrying_on_malformed(
-            f'{len(line_texts)}-line',
-            lambda attempt: self._label_document_once(
-                prompt, schema, tokens, line_texts, (attempt,)
-            )
-        )
-
-    def _label_document_once(
-        self,
-        prompt: str,
-        schema,
-        tokens: List[str],
-        line_texts: List[str],
-        attempt: Tuple[int, ...] = FIRST_ATTEMPT
-    ) -> List[Tuple[str, str]]:
         with llm_span(self.config, prompt, self.config.record_trace_content) as span:
-            response_json = self.client.get_completion(prompt, schema, attempt)
+            response_json = self.client.get_completion(
+                prompt, get_regions_response_schema(self.labels), attempt
+            )
             record_llm_usage(self.config.task, response_json)
-            span.set_attribute('sciencebeam.input_lines', len(line_texts))
+            span.set_attribute('sciencebeam.input_lines', len(window_texts))
             set_response_attributes(
                 span, response_json, _get_content_or_none(response_json),
                 self.config.record_trace_content
             )
-            content = self._get_content(response_json, len(tokens))
-            labels, unclaimed, touching = decode_regions_response(
-                content, line_texts, self.labels
+            content = self._get_content(response_json, len(window_texts))
+            regions, touching = decode_regions(
+                content, len(window_texts), self.labels
             )
-            span.set_attribute('sciencebeam.unclaimed_lines', unclaimed)
-            span.set_attribute('sciencebeam.touching_regions', touching)
-            if touching:
-                LOGGER.info(
-                    'llm %s: %d region pair(s) ended where the next began,'
-                    ' read as ending a line sooner',
-                    self.config.task, touching
-                )
-            self._check_unclaimed_lines(unclaimed, len(line_texts))
-        LOGGER.info(
-            'llm labelled %d lines as %d region(s), %d line(s) unclaimed'
-            ' (model=%r provider=%r trace=%s)',
-            len(line_texts), sum(1 for label in labels if label.startswith('B-')),
-            unclaimed, self.config.model, response_json.get('provider'),
-            get_trace_id(span) or '-'
-        )
-        return list(zip(tokens, labels))
+        return clip_regions_to_core(regions, window), touching
+
+    def _get_line_texts(self, feature_rows: List[List[str]]) -> List[str]:
+        return [row[self.whole_line_text_index] for row in feature_rows]
 
     def _predict_labels_for_sequence(
         self,
