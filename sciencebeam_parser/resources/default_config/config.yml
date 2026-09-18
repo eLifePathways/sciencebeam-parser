@@ -269,6 +269,38 @@ sequence_model_profiles:
   # Lines off a page rather than paragraphs: median 82 characters, so a cut at
   # 60 drops 28% of the input and keeps the start of every line, which is where
   # what a region is can usually be read.
+  # Measured on the failure that separates the segmentation model from the CRF:
+  # a bibliography the model has already delimited correctly, and then labels
+  # `body`. Over ten biorxiv documents glm labels 10 of 10 right, deepseek 9,
+  # and the 9b in the base profile 8.
+  llm_segmentation_glm:
+    extends: llm_segmentation
+    segmentation:
+      model: 'z-ai/glm-4.7-flash'
+      provider: null
+  # The gold records an acknowledgement section on 21 of 60 documents and the
+  # prompt's earlier wording, "funding, thanks and contribution statements", had
+  # the model finding one on 29 of 58: a funding statement inside the body
+  # satisfies it. Naming a section rather than a kind of sentence is the
+  # difference, and it says nothing about what the heading is called.
+  llm_segmentation_glm_ack:
+    extends: llm_segmentation_glm
+    segmentation:
+      prompt_version: 'regions-v8'
+  # A running head left inside the bibliography becomes a reference of its own,
+  # and `reference_title` is scored position by position, so one of them near the
+  # top of a long list costs every entry below it. glm is +0.017 on lists under
+  # 20 references and -0.184 on lists of 50 or more, which is where the pages --
+  # and the running heads -- are.
+  llm_segmentation_glm_furniture:
+    extends: llm_segmentation_glm
+    segmentation:
+      prompt_version: 'regions-v9'
+  llm_segmentation_deepseek:
+    extends: llm_segmentation
+    segmentation:
+      model: 'deepseek/deepseek-v4-flash-0731'
+      provider: null
   llm_segmentation_short_lines:
     extends: llm_segmentation
     segmentation:
@@ -342,6 +374,26 @@ profiles:
     processors:
       fulltext:
         noise_filter_enabled: true
+  llm_segmentation_glm:
+    sequence_models: llm_segmentation_glm
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  llm_segmentation_glm_ack:
+    sequence_models: llm_segmentation_glm_ack
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  llm_segmentation_glm_furniture:
+    sequence_models: llm_segmentation_glm_furniture
+    processors:
+      fulltext:
+        noise_filter_enabled: false
+  llm_segmentation_deepseek:
+    sequence_models: llm_segmentation_deepseek
+    processors:
+      fulltext:
+        noise_filter_enabled: false
   llm_segmentation_short_lines:
     sequence_models: llm_segmentation_short_lines
     processors:
