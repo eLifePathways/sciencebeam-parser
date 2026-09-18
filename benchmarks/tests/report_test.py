@@ -407,12 +407,10 @@ class TestRenderUsageSection:
             self._labeled(llm_usage={"biorxiv": _usage()})
         )
         assert "LLM usage" in report
-        usage_row = next(
-            line for line in report.splitlines() if line.startswith("| llm (values)")
-        )
-        assert "10 / 10" in usage_row
-        assert "800" in usage_row
-        assert "0.0032" in usage_row
+        assert "**llm (values)**" in report
+        assert "over 10 of 10 docs" in report
+        assert "800 tokens in, 400 tokens out" in report
+        assert "* 0.0032 credits" in report
 
     def test_should_state_that_it_covers_every_document_attempted(self):
         report = _render_comparison_report(
@@ -441,14 +439,11 @@ class TestRenderUsageSection:
         )
         assert "replayed" not in report
 
-    def test_should_count_replayed_calls_in_the_calls_column(self):
+    def test_should_count_replayed_calls_in_the_calls_total(self):
         report = _render_comparison_report(self._labeled(llm_usage={
             "biorxiv": {**_usage(calls=2), "replayed": _usage(calls=8, cost=0.5)},
         }))
-        usage_row = next(
-            line for line in report.splitlines() if line.startswith("| llm (values)")
-        )
-        assert "| 10 |" in usage_row
+        assert "* 10 calls" in report
 
     def test_should_still_render_a_run_answered_entirely_from_the_cache(self):
         report = _render_comparison_report(self._labeled(llm_usage={
@@ -460,36 +455,29 @@ class TestRenderUsageSection:
         assert "LLM usage" in report
         assert "8 were replayed" in report
 
-    def test_should_show_a_variant_without_usage_as_absent(self):
+    def test_should_leave_out_a_variant_that_spent_nothing(self):
+        # The CRF tools would otherwise be a row of dashes in every report.
         report = _render_comparison_report(
             self._labeled(llm_usage={"biorxiv": _usage()})
         )
-        crf_row = next(
-            line for line in report.splitlines() if line.startswith("| crf (default)")
-        )
-        assert "—" in crf_row
-        assert "0.0032" not in crf_row
+        bullets = [line for line in report.splitlines() if line.startswith("**")]
+        assert "**llm (values)**" in bullets
+        assert "**crf (default)**" not in bullets
 
-    def test_should_show_cost_as_absent_when_the_backend_stated_none(self):
+    def test_should_omit_cost_when_the_backend_stated_none(self):
         report = _render_comparison_report(
             self._labeled(llm_usage={"biorxiv": _usage(cost=None)})
         )
-        usage_row = next(
-            line for line in report.splitlines() if line.startswith("| llm (values)")
-        )
-        assert "800" in usage_row
-        assert usage_row.rstrip().endswith("— | — |")
+        assert "800 tokens in, 400 tokens out" in report
+        assert "credits" not in report
 
     def test_should_show_partly_recorded_usage_as_a_fraction(self):
         report = _render_comparison_report(
             self._labeled(llm_usage={"biorxiv": _usage(n_attempted=10, n_with_usage=4)})
         )
-        usage_row = next(
-            line for line in report.splitlines() if line.startswith("| llm (values)")
-        )
-        assert "4 / 10" in usage_row
+        assert "over 4 of 10 docs" in report
 
-    def test_should_render_a_usage_table_per_corpus(self):
+    def test_should_render_usage_per_corpus(self):
         corpora = ["biorxiv", "ore"]
         report = _render_comparison_report(self._labeled(
             llm_usage={
@@ -508,12 +496,8 @@ class TestRenderUsageSection:
             },
             corpora=["biorxiv", "ore"],
         ))
-        overall_row = next(
-            line for line in report.splitlines()
-            if line.startswith("| llm (values)")
-        )
-        assert "15 / 15" in overall_row
-        assert "| 10 |" in overall_row
+        assert "over 15 of 15 docs" in report
+        assert "* 10 calls" in report
 
     def test_should_name_the_tasks_when_more_than_one_ran(self):
         report = _render_comparison_report(self._labeled(llm_usage={
@@ -522,14 +506,14 @@ class TestRenderUsageSection:
                 "reference_segmenter": {"calls": 2, "output_tokens": 100},
             })
         }))
-        assert "by task — citation: 6 calls" in report
-        assert "reference_segmenter: 2 calls" in report
+        assert "* citation: 6 calls" in report
+        assert "* reference_segmenter: 2 calls" in report
 
     def test_should_not_name_a_single_task(self):
         report = _render_comparison_report(self._labeled(llm_usage={
             "biorxiv": _usage(by_task={"citation": {"calls": 8, "output_tokens": 400}})
         }))
-        assert "by task" not in report
+        assert "* citation:" not in report
 
 
 class TestCachedInputNote:
