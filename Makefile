@@ -609,6 +609,13 @@ ANALYZE_CONCURRENCY ?=
 ANALYZE_OUT ?= $(SHOW_RUN_A)/field-analysis/$(ANALYZE_FIELD)/$(SHOW_METHOD)
 GOLD_FAILURE_OUT ?= $(SHOW_RUN_A)/gold-failure-analysis/$(ANALYZE_FIELD)/$(SHOW_METHOD)
 
+# What the layout noise filter removes. Thresholds are passed through ARGS, e.g.
+#   make dev-analyze-noise-filter ARGS="--repetition-fraction 0.3"
+NOISE_SOURCE_PATH ?= benchmarks/data/$(BENCHMARK_SPLIT)/*/*.pdf
+NOISE_SOURCE_XML_PATH ?= benchmarks/data/$(BENCHMARK_SPLIT)/*/*.jats.xml
+NOISE_LIMIT ?=
+NOISE_FILTER_OUT ?= .temp/noise-filter/$(BENCHMARK_SPLIT)
+
 dev-analyze-gold-failures: .require-ANALYZE_FIELD
 	$(PYTHON) -m benchmarks.analyze_gold_failures \
 		--field $(ANALYZE_FIELD) \
@@ -638,6 +645,16 @@ dev-analyze-field-regressions: .require-ANALYZE_FIELD
 		$(if $(ANALYZE_LIMIT),--limit $(ANALYZE_LIMIT),) \
 		$(if $(ANALYZE_CONCURRENCY),--concurrency $(ANALYZE_CONCURRENCY),)
 	@echo "Report written to $(ANALYZE_OUT)/report.md"
+
+
+dev-analyze-noise-filter:
+	$(PYTHON) -m benchmarks.analyze_noise_filter \
+		--source-path '$(NOISE_SOURCE_PATH)' \
+		--source-xml-path '$(NOISE_SOURCE_XML_PATH)' \
+		--out $(NOISE_FILTER_OUT) \
+		$(if $(NOISE_LIMIT),--limit $(NOISE_LIMIT),) \
+		$(ARGS)
+	@echo "Report written to $(NOISE_FILTER_OUT)/report.md"
 
 
 ci-lint:
