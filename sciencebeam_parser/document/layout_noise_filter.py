@@ -35,7 +35,7 @@ class _BlockOccurrence(NamedTuple):
     block: LayoutBlock
 
 
-@dataclass
+@dataclass(frozen=True)
 class LayoutNoiseFilterConfig:
     enabled: bool = False
     repetition_fraction: float = 0.5
@@ -57,7 +57,7 @@ class LayoutNoiseFilterConfig:
     # across pages as a letters-only pattern, or carries no letters at all.
     # Reaches furniture the repetition rule cannot group, such as a `Page 3 of 13`
     # footer or a bare page number, whose text differs on every page.
-    filter_outside_main_area: bool = False
+    outside_main_area: bool = False
     # Shortest letters-only pattern that may count as repeating. `Page 3 of 13`
     # reduces to `pageof`, so GROBID's own limit of 8 is too long here.
     min_repeating_pattern_length: int = 3
@@ -352,7 +352,7 @@ def get_noise_blocks(
     if len(layout_document.pages) < 2:
         return []
     noise_blocks = list(_get_repeating_text_noise_blocks(layout_document, config))
-    if config.filter_outside_main_area:
+    if config.outside_main_area:
         already_tagged: Set[int] = {id(item.block) for item in noise_blocks}
         noise_blocks.extend(
             item

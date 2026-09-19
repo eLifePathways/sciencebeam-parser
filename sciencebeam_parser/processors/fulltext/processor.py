@@ -265,7 +265,7 @@ class FullTextProcessor:
             layout_document,
             context=context
         )
-        noise_filter_config = self.config.get_layout_noise_filter_config()
+        noise_filter_config = self.config.noise_filter
         noise_blocks = get_noise_blocks(layout_document, noise_filter_config)
         segmentation_label_result = self._get_segmentation_label_result(
             layout_document,

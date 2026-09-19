@@ -62,8 +62,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                        default=defaults.preserve_first_page_head)
     group.add_argument('--preserve-first-page-foot', action='store_true',
                        default=defaults.preserve_first_page_foot)
-    group.add_argument('--filter-outside-main-area', action='store_true',
-                       default=defaults.filter_outside_main_area,
+    group.add_argument('--outside-main-area', action='store_true',
+                       default=defaults.outside_main_area,
                        help='Also filter outside the page main area on a repeating pattern '
                             'or a line carrying no letters')
     group.add_argument('--min-repeating-pattern-length', type=int,
@@ -82,7 +82,7 @@ def get_noise_filter_config(args: argparse.Namespace) -> LayoutNoiseFilterConfig
         max_height_ratio=args.max_height_ratio,
         preserve_first_page_head=args.preserve_first_page_head,
         preserve_first_page_foot=args.preserve_first_page_foot,
-        filter_outside_main_area=args.filter_outside_main_area,
+        outside_main_area=args.outside_main_area,
         min_repeating_pattern_length=args.min_repeating_pattern_length,
         max_letterless_length=args.max_letterless_length
     )

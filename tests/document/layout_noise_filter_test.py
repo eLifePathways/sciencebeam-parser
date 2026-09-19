@@ -238,7 +238,7 @@ class TestRemoveNoiseBlocks:
 
 
 OUTSIDE_MAIN_AREA_CONFIG = LayoutNoiseFilterConfig(
-    enabled=True, repetition_fraction=0.5, filter_outside_main_area=True
+    enabled=True, repetition_fraction=0.5, outside_main_area=True
 )
 
 
@@ -353,7 +353,7 @@ class TestGetNoiseBlocksOutsideMainArea:
             )
         )
         result = get_noise_blocks(doc, LayoutNoiseFilterConfig(
-            enabled=True, filter_outside_main_area=True, preserve_first_page_foot=True
+            enabled=True, outside_main_area=True, preserve_first_page_foot=True
         ))
         assert len(result) == 3
 

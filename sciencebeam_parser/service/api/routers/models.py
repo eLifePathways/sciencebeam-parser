@@ -555,7 +555,7 @@ def create_models_router(
     fulltext_models = sciencebeam_parser.fulltext_models
     app_features_context = sciencebeam_parser.app_features_context
     fulltext_processor_config = sciencebeam_parser.fulltext_processor_config
-    noise_filter_config = fulltext_processor_config.get_layout_noise_filter_config()
+    noise_filter_config = fulltext_processor_config.noise_filter
 
     router.include_router(
         ModelResponseRouterFactory(
