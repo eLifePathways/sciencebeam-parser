@@ -19,6 +19,14 @@ LOGGER = logging.getLogger(__name__)
 # block a running head or foot rather than a margin note
 _EDGE_ZONE_FRACTION = 0.25
 
+# Take the blocks out of the document before segmentation sees it. Every surviving
+# block's features then describe a page the block no longer sits on.
+NOISE_ACTION_DROP = 'drop'
+# Leave the document whole and overrule the label segmentation gives these blocks,
+# so the features and the sequence are the ones the model was trained on.
+NOISE_ACTION_RELABEL = 'relabel'
+NOISE_ACTIONS = (NOISE_ACTION_DROP, NOISE_ACTION_RELABEL)
+
 
 class _BlockOccurrence(NamedTuple):
     page_index: int
@@ -55,6 +63,8 @@ class LayoutNoiseFilterConfig:
     min_repeating_pattern_length: int = 3
     # Longest text carrying no letters that counts as furniture on position alone
     max_letterless_length: int = 12
+    # What to do with a block the filter finds: one of NOISE_ACTIONS
+    action: str = NOISE_ACTION_DROP
 
 
 @dataclass

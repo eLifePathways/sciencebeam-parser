@@ -103,6 +103,7 @@ processors:
     noise_filter_outside_main_area: false
     noise_filter_min_repeating_pattern_length: 3
     noise_filter_max_letterless_length: 12
+    noise_filter_action: 'drop'
     merge_raw_authors: false
     use_cv_model: false
     cv_render_dpi: 100

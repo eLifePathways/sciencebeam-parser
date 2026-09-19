@@ -1,6 +1,10 @@
 import pytest
 
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.document.layout_noise_filter import (
+    NOISE_ACTION_DROP,
+    LayoutNoiseFilterConfig,
+)
 from sciencebeam_parser.processors.fulltext.config import (
     FullTextProcessorConfig,
     RequestFieldNames
@@ -82,3 +86,39 @@ class TestFullTextProcessorConfig:
         assert not config.extract_back_sections
         assert not config.extract_references
         assert not config.extract_graphic_bounding_boxes
+
+
+class TestGetLayoutNoiseFilterConfig:
+    def test_should_carry_every_setting_across(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {
+                'noise_filter_enabled': True,
+                'noise_filter_repetition_fraction': 0.3,
+                'noise_filter_position_consistency_fraction': 0.7,
+                'noise_filter_max_position_stddev': 0.02,
+                'noise_filter_max_height_ratio': 3.0,
+                'noise_filter_preserve_first_page_head': True,
+                'noise_filter_preserve_first_page_foot': True,
+                'noise_filter_outside_main_area': True,
+                'noise_filter_min_repeating_pattern_length': 5,
+                'noise_filter_max_letterless_length': 8,
+                'noise_filter_action': 'relabel',
+            }}
+        })).get_layout_noise_filter_config()
+        assert config == LayoutNoiseFilterConfig(
+            enabled=True,
+            repetition_fraction=0.3,
+            position_consistency_fraction=0.7,
+            max_position_stddev=0.02,
+            max_height_ratio=3.0,
+            preserve_first_page_head=True,
+            preserve_first_page_foot=True,
+            filter_outside_main_area=True,
+            min_repeating_pattern_length=5,
+            max_letterless_length=8,
+            action='relabel'
+        )
+
+    def test_should_default_to_dropping(self):
+        config = FullTextProcessorConfig().get_layout_noise_filter_config()
+        assert config.action == NOISE_ACTION_DROP

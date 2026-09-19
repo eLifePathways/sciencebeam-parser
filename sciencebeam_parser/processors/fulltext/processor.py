@@ -14,7 +14,11 @@ from typing import (
 )
 
 from sciencebeam_parser.models.data import AppFeaturesContext, DEFAULT_APP_FEATURES_CONTEXT
-from sciencebeam_parser.models.model import LayoutDocumentLabelResult, Model
+from sciencebeam_parser.models.model import (
+    LayoutDocumentLabelResult,
+    Model,
+    get_layout_document_label_result_with_relabelled_lines,
+)
 from sciencebeam_parser.cv_models.cv_model import ComputerVisionModel
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
 from sciencebeam_parser.utils.misc import iter_ids
@@ -55,6 +59,9 @@ from sciencebeam_parser.document.semantic_document import (
 from sciencebeam_parser.document.tei_document import TeiDocument, get_tei_for_semantic_document
 from sciencebeam_parser.document.layout_document import LayoutDocument
 from sciencebeam_parser.document.layout_noise_filter import (
+    NOISE_ACTION_RELABEL,
+    LayoutNoiseFilterConfig,
+    TaggedNoiseBlock,
     get_noise_blocks,
     remove_noise_blocks,
 )
@@ -98,6 +105,10 @@ from sciencebeam_parser.processors.fulltext.config import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+# The segmentation label given to a filtered block under NOISE_ACTION_RELABEL.
+# No region the processor asks for uses it, so the block reaches no field.
+NOISE_SEGMENTATION_LABEL = '<page>'
 
 
 def _is_initial(s: str) -> bool:
@@ -223,6 +234,26 @@ class FullTextProcessor:
     def citation_model(self) -> CitationModel:
         return self.fulltext_models.citation_model
 
+    def _get_segmentation_label_result(
+        self,
+        layout_document: LayoutDocument,
+        noise_blocks: Sequence[TaggedNoiseBlock],
+        noise_filter_config: LayoutNoiseFilterConfig
+    ) -> LayoutDocumentLabelResult:
+        if noise_filter_config.action == NOISE_ACTION_RELABEL:
+            return get_layout_document_label_result_with_relabelled_lines(
+                self.segmentation_model.get_label_layout_document_result(
+                    layout_document,
+                    app_features_context=self.app_features_context
+                ),
+                [line for noise_block in noise_blocks for line in noise_block.block.lines],
+                NOISE_SEGMENTATION_LABEL
+            )
+        return self.segmentation_model.get_label_layout_document_result(
+            remove_noise_blocks(layout_document, noise_blocks),
+            app_features_context=self.app_features_context
+        )
+
     def get_semantic_document_for_layout_document(
         self,
         layout_document: LayoutDocument,
@@ -234,14 +265,12 @@ class FullTextProcessor:
             layout_document,
             context=context
         )
-        noise_blocks = get_noise_blocks(
+        noise_filter_config = self.config.get_layout_noise_filter_config()
+        noise_blocks = get_noise_blocks(layout_document, noise_filter_config)
+        segmentation_label_result = self._get_segmentation_label_result(
             layout_document,
-            self.config.get_layout_noise_filter_config()
-        )
-        segmentation_input = remove_noise_blocks(layout_document, noise_blocks)
-        segmentation_label_result = self.segmentation_model.get_label_layout_document_result(
-            segmentation_input,
-            app_features_context=self.app_features_context
+            noise_blocks=noise_blocks,
+            noise_filter_config=noise_filter_config
         )
         header_layout_document = segmentation_label_result.get_filtered_document_by_label(
             '<header>'

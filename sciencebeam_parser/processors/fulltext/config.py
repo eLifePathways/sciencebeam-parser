@@ -1,7 +1,10 @@
 from typing import NamedTuple, Set
 
 from sciencebeam_parser.config.config import AppConfig
-from sciencebeam_parser.document.layout_noise_filter import LayoutNoiseFilterConfig
+from sciencebeam_parser.document.layout_noise_filter import (
+    NOISE_ACTION_DROP,
+    LayoutNoiseFilterConfig,
+)
 
 from sciencebeam_parser.processors.document_page_image import (
     DEFAULT_PDF_RENDER_DPI
@@ -61,6 +64,7 @@ class FullTextProcessorConfig(NamedTuple):
     noise_filter_outside_main_area: bool = False
     noise_filter_min_repeating_pattern_length: int = 3
     noise_filter_max_letterless_length: int = 12
+    noise_filter_action: str = NOISE_ACTION_DROP
 
     @staticmethod
     def from_app_config(app_config: AppConfig) -> 'FullTextProcessorConfig':
@@ -80,6 +84,7 @@ class FullTextProcessorConfig(NamedTuple):
             filter_outside_main_area=self.noise_filter_outside_main_area,
             min_repeating_pattern_length=self.noise_filter_min_repeating_pattern_length,
             max_letterless_length=self.noise_filter_max_letterless_length,
+            action=self.noise_filter_action,
         )
 
     def get_for_requested_field_names(
