@@ -199,6 +199,12 @@ scoring:
     title:
       methods: [exact, levenshtein, edit_sim]
     abstract:
+      # A document can have more than one abstract: a second language in
+      # <trans-abstract> (scielo_br, scielo_preprints-jats) or several <abstract>
+      # elements (scielo_mx, ore plain-language summaries). Each is matched on its
+      # own, in any order, since the language order of the PDF and of the XML differ.
+      # Scoring <trans-abstract> needs a sciencebeam-judge whose JATS mapping reads it.
+      type: partial_ulist
       methods: [levenshtein, edit_sim]
     author_full_names:
       type: partial_ulist
