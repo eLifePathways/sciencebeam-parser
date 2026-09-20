@@ -5,12 +5,18 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
+import yaml
+from sciencebeam_judge.parsing.xml import parse_xml_mapping
+from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
+from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
+
 from benchmarks.score import (
     _build_field_measures,
     _build_field_scoring_types,
     _doc_scores_to_dict,
     _match_to_prf,
     _render_report,
+    _score_pair,
     run_score,
 )
 
@@ -91,6 +97,37 @@ class TestBuildFieldScoringTypes:
             ["abstract"], "string", {"title": {"type": "ulist"}}
         )
         assert result == {"abstract": "string"}
+
+
+class TestEvalConfigAbstractScoring:
+    def _jats(self, *abstracts: str) -> bytes:
+        return (
+            "<article><front><article-meta>"
+            + "".join(f"<abstract><p>{a}</p></abstract>" for a in abstracts)
+            + "</article-meta></front></article>"
+        ).encode("utf-8")
+
+    def test_should_match_abstracts_of_two_languages_in_any_order(self):
+        config = yaml.safe_load(Path("benchmarks/eval.yml").read_text(encoding="utf-8"))
+        per_field = config["scoring"]["per_field"]
+        scoring_types = _build_field_scoring_types(
+            ["abstract"], config["scoring"]["default_type"], per_field
+        )
+        assert scoring_types == {"abstract": "partial_ulist"}
+        register_functions()
+        scores = _score_pair(
+            self._jats("Resumen del articulo.", "Abstract of the article."),
+            self._jats("Abstract of the article.", "Resumen del articulo."),
+            ["abstract"],
+            ["levenshtein"],
+            parse_xml_mapping(DEFAULT_XML_MAPPING_PATH),
+            scoring_types_by_field_map={f: [t] for f, t in scoring_types.items()},
+        )
+        assert len(scores) == 1
+        match_score = scores[0]["match_score"]
+        assert match_score["true_positive"] == 2
+        assert match_score["false_positive"] == 0
+        assert match_score["false_negative"] == 0
 
 
 class TestDocScoresToDict:
