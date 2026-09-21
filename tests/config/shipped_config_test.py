@@ -1,10 +1,14 @@
+import os
 from pathlib import Path
 from typing import Dict
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
 
+from sciencebeam_parser.app.profiles import ProfileRegistry
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.processors.fulltext.models import SEQUENCE_MODEL_CLASS_BY_NAME
 
 
 CONFIG_PATH = (
@@ -71,4 +75,76 @@ class TestShippedCombinedProfiles:
         assert (
             get_resolved_models(profile_name)[model_name]
             != get_resolved_models(SHARED_BASE_PROFILE)[model_name]
+        )
+
+
+class TestShippedProfilesOnlyChangeWhatIsPerRequest:
+    def test_should_only_set_keys_a_profile_may_set(self):
+        AppConfig(get_shipped_config()).validate_profiles()
+
+    def test_should_declare_no_extra_selectable_profiles(self):
+        """What production serves is unchanged by adding a per-request parameter."""
+        assert get_shipped_config()['selectable_profiles'] == []
+
+
+class TestShippedProfilesShareTheirModels:
+    """What holding more than one shipped profile costs.
+
+    The `wapiti_*` and `llm_*` profiles extend `grobid_crf_0_9_0` and change one
+    or two models of ten, so a process serving several of them holds one
+    instance per distinct configuration rather than ten per profile.
+    """
+
+    @pytest.fixture(name='registry')
+    def _registry(self, monkeypatch: pytest.MonkeyPatch) -> ProfileRegistry:
+        for name in list(os.environ):
+            if name.startswith('SCIENCEBEAM_PARSER__'):
+                monkeypatch.delenv(name)
+        base_config = AppConfig(get_shipped_config())
+        return ProfileRegistry(
+            base_config=base_config,
+            app_context=MagicMock(name='app_context'),
+            default_profile_name=SHARED_BASE_PROFILE,
+            selectable_profile_names=base_config.get_profile_names(),
+            max_models=1000
+        )
+
+    def test_should_hold_one_extra_model_per_model_a_profile_changes(
+        self, registry: ProfileRegistry
+    ):
+        registry.get_bundle('wapiti_refseg_scielo_preprints_ore')
+        registry.get_bundle('wapiti_citation_scielo_preprints_ore')
+        assert registry.model_cache.get_loaded_model_count() == len(
+            SEQUENCE_MODEL_CLASS_BY_NAME
+        ) + 2
+
+    def test_should_share_the_models_two_profiles_agree_on(
+        self, registry: ProfileRegistry
+    ):
+        refseg = registry.get_bundle('wapiti_refseg_scielo_preprints_ore')
+        citation = registry.get_bundle('wapiti_citation_scielo_preprints_ore')
+        assert (
+            refseg.fulltext_models.segmentation_model
+            is citation.fulltext_models.segmentation_model
+        )
+        assert (
+            refseg.fulltext_models.reference_segmenter_model
+            is not citation.fulltext_models.reference_segmenter_model
+        )
+
+    def test_should_hold_every_shipped_profile_for_less_than_three_unshared_ones(
+        self, registry: ProfileRegistry
+    ):
+        for profile_name in AppConfig(get_shipped_config()).get_profile_names():
+            registry.get_bundle(profile_name)
+        assert registry.model_cache.get_loaded_model_count() < 3 * len(
+            SEQUENCE_MODEL_CLASS_BY_NAME
+        )
+
+    def test_should_attribute_two_profiles_to_different_digests(
+        self, registry: ProfileRegistry
+    ):
+        assert (
+            registry.get_bundle('wapiti_refseg_scielo_preprints_ore').models_digest
+            != registry.get_bundle('wapiti_citation_scielo_preprints_ore').models_digest
         )

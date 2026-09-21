@@ -20,9 +20,9 @@ from sciencebeam_parser.app.parser import (
     ScienceBeamParserSessionSource,
     normalize_layout_document
 )
+from sciencebeam_parser.app.profiles import ProfileBundle
 from sciencebeam_parser.document.layout_document import LayoutDocument
 from sciencebeam_parser.document.layout_noise_filter import (
-    LayoutNoiseFilterConfig,
     get_noise_blocks,
     remove_noise_blocks,
 )
@@ -40,10 +40,10 @@ from sciencebeam_parser.document.semantic_document import (
 )
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 from sciencebeam_parser.external.pdfalto.wrapper import PdfAltoWrapper
-from sciencebeam_parser.models.citation.model import CitationModel
 from sciencebeam_parser.models.data import AppFeaturesContext, DocumentFeaturesContext
 from sciencebeam_parser.models.model import Model
 from sciencebeam_parser.service.api.dependencies import (
+    get_profile_bundle,
     get_sciencebeam_parser_session_source_dependency_factory
 )
 from sciencebeam_parser.utils.telemetry import span
@@ -67,26 +67,39 @@ VALID_MODEL_OUTPUT_FORMATS = [
 
 
 class ModelResponseRouterFactory:
+    """One route per sequence model, over whichever profile the request names.
+
+    Holds the model's name rather than the model: which instance that names is
+    a property of the request, and a router built around one profile's instances
+    would answer every request with the deployment's models whatever was asked
+    for.
+    """
+
     def __init__(
         self,
         name: str,
-        model: Model,
+        sequence_model_name: str,
         pdfalto_wrapper: PdfAltoWrapper,
         app_features_context: AppFeaturesContext,
-        model_name: str = 'dummy',
-        noise_filter_config: Optional[LayoutNoiseFilterConfig] = None
+        model_name: str = 'dummy'
     ):
         self.name = name
-        self.model = model
+        self.sequence_model_name = sequence_model_name
         self.pdfalto_wrapper = pdfalto_wrapper
         self.app_features_context = app_features_context
         self.model_name = model_name
-        self.noise_filter_config = noise_filter_config
+
+    def get_model(self, profile_bundle: ProfileBundle) -> Model:
+        return profile_bundle.fulltext_models.get_sequence_model_by_name(
+            self.sequence_model_name
+        )
 
     def _register_feature_names_route(self, router: APIRouter) -> None:
         @router.get('/feature-names')
-        def get_feature_names() -> dict:
-            data_generator = self.model.get_data_generator(
+        def get_feature_names(
+            profile_bundle: Annotated[ProfileBundle, Depends(get_profile_bundle)]
+        ) -> dict:
+            data_generator = self.get_model(profile_bundle).get_data_generator(
                 DocumentFeaturesContext(
                     app_features_context=self.app_features_context
                 )
@@ -105,6 +118,7 @@ class ModelResponseRouterFactory:
                     get_sciencebeam_parser_session_source_dependency_factory()
                 )
             ],
+            profile_bundle: Annotated[ProfileBundle, Depends(get_profile_bundle)],
             output_format: Annotated[
                 str,
                 Query(json_schema_extra={
@@ -115,20 +129,27 @@ class ModelResponseRouterFactory:
             LOGGER.info('model_name: %r', self.model_name)
             return self.handle_post(
                 source=source,
-                output_format=output_format
+                output_format=output_format,
+                profile_bundle=profile_bundle
             )
         return router
 
-    def _apply_noise_filter(self, layout_document: LayoutDocument) -> LayoutDocument:
-        if not self.noise_filter_config or not self.noise_filter_config.enabled:
+    def _apply_noise_filter(
+        self,
+        layout_document: LayoutDocument,
+        profile_bundle: ProfileBundle
+    ) -> LayoutDocument:
+        noise_filter_config = profile_bundle.fulltext_processor_config.noise_filter
+        if not noise_filter_config.enabled:
             return layout_document
-        noise_blocks = get_noise_blocks(layout_document, self.noise_filter_config)
+        noise_blocks = get_noise_blocks(layout_document, noise_filter_config)
         return remove_noise_blocks(layout_document, noise_blocks)
 
     def iter_filter_layout_document(
         self,
         layout_document: LayoutDocument,
-        filter_params: dict  # pylint: disable=unused-argument
+        filter_params: dict,  # pylint: disable=unused-argument
+        profile_bundle: ProfileBundle  # pylint: disable=unused-argument
     ) -> Iterable[LayoutDocument]:
         return [layout_document]
 
@@ -136,6 +157,7 @@ class ModelResponseRouterFactory:
         self,
         source: ScienceBeamParserSessionSource,
         output_format: str,
+        profile_bundle: ProfileBundle,
         filter_params: Optional[dict] = None
     ):
         # The same span name as the full pipeline, so one query finds every
@@ -146,15 +168,18 @@ class ModelResponseRouterFactory:
             'sciencebeam.document.source_media_type': source.source_media_type,
             'sciencebeam.model.name': self.model_name,
             'sciencebeam.model.output_format': output_format,
+            'sciencebeam.profile.name': profile_bundle.name,
         }, tracer_name=__name__):
-            return self._handle_post(source, output_format, filter_params)
+            return self._handle_post(source, output_format, profile_bundle, filter_params)
 
     def _handle_post(  # pylint: disable=too-many-locals
         self,
         source: ScienceBeamParserSessionSource,
         output_format: str,
+        profile_bundle: ProfileBundle,
         filter_params: Optional[dict] = None
     ):
+        model = self.get_model(profile_bundle)
         with TemporaryDirectory(suffix='-request') as temp_dir:
             temp_path = Path(temp_dir)
             pdf_path = source.source_path
@@ -173,11 +198,13 @@ class ModelResponseRouterFactory:
             root = etree.fromstring(xml_content)
             layout_document_iterable = self.iter_filter_layout_document(
                 self._apply_noise_filter(
-                    normalize_layout_document(parse_alto_root(root))
+                    normalize_layout_document(parse_alto_root(root)),
+                    profile_bundle
                 ),
-                filter_params=(filter_params or {})
+                filter_params=(filter_params or {}),
+                profile_bundle=profile_bundle
             )
-            data_generator = self.model.get_data_generator(
+            data_generator = model.get_data_generator(
                 DocumentFeaturesContext(
                     app_features_context=self.app_features_context
                 )
@@ -194,7 +221,7 @@ class ModelResponseRouterFactory:
                 if not len(texts):  # pylint: disable=len-as-condition
                     tag_result = []
                 else:
-                    tag_result = self.model.predict_labels(
+                    tag_result = model.predict_labels(
                         texts=texts.tolist(), features=features.tolist(),
                         output_format=None
                     )
@@ -222,12 +249,10 @@ class SegmentedModelRouterFactory(ModelResponseRouterFactory):
     def __init__(
         self,
         *args,
-        segmentation_model: Model,
         segmentation_labels: Sequence[str],
         **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.segmentation_model = segmentation_model
         self.segmentation_labels = segmentation_labels
 
     def create_router(self) -> APIRouter:
@@ -242,6 +267,7 @@ class SegmentedModelRouterFactory(ModelResponseRouterFactory):
                     get_sciencebeam_parser_session_source_dependency_factory()
                 )
             ],
+            profile_bundle: Annotated[ProfileBundle, Depends(get_profile_bundle)],
             output_format: Annotated[
                 str,
                 Query(json_schema_extra={
@@ -254,6 +280,7 @@ class SegmentedModelRouterFactory(ModelResponseRouterFactory):
             return self.handle_post(
                 source=source,
                 output_format=output_format,
+                profile_bundle=profile_bundle,
                 filter_params={
                     'no_use_segmentation': no_use_segmentation
                 }
@@ -263,11 +290,12 @@ class SegmentedModelRouterFactory(ModelResponseRouterFactory):
     def iter_filter_layout_document_by_segmentation_labels(
         self,
         layout_document: LayoutDocument,
-        segmentation_labels: Sequence[str]
+        segmentation_labels: Sequence[str],
+        profile_bundle: ProfileBundle
     ) -> Iterable[LayoutDocument]:
-        assert self.segmentation_model is not None
+        segmentation_model = profile_bundle.fulltext_models.segmentation_model
         segmentation_label_result = (
-            self.segmentation_model.get_label_layout_document_result(
+            segmentation_model.get_label_layout_document_result(
                 layout_document,
                 app_features_context=self.app_features_context
             )
@@ -288,11 +316,13 @@ class SegmentedModelRouterFactory(ModelResponseRouterFactory):
     def filter_layout_document_by_segmentation_label(
         self,
         layout_document: LayoutDocument,
-        segmentation_label: str
+        segmentation_label: str,
+        profile_bundle: ProfileBundle
     ) -> LayoutDocument:
         for filtered_layout_document in self.iter_filter_layout_document_by_segmentation_labels(
             layout_document,
-            segmentation_labels=[segmentation_label]
+            segmentation_labels=[segmentation_label],
+            profile_bundle=profile_bundle
         ):
             return filtered_layout_document
         return LayoutDocument(pages=[])
@@ -300,50 +330,45 @@ class SegmentedModelRouterFactory(ModelResponseRouterFactory):
     def iter_filter_layout_document(
         self,
         layout_document: LayoutDocument,
-        filter_params: dict
+        filter_params: dict,
+        profile_bundle: ProfileBundle
     ) -> Iterable[LayoutDocument]:
         if filter_params['no_use_segmentation']:
             return [layout_document]
         return self.iter_filter_layout_document_by_segmentation_labels(
-            layout_document, segmentation_labels=self.segmentation_labels
+            layout_document,
+            segmentation_labels=self.segmentation_labels,
+            profile_bundle=profile_bundle
         )
 
 
 class NameHeaderModelRouterFactory(SegmentedModelRouterFactory):
-    def __init__(
-        self,
-        *args,
-        header_model: Model,
-        merge_raw_authors: bool,
-        **kwargs
-    ):
-        super().__init__(*args, **kwargs)
-        self.header_model = header_model
-        self.merge_raw_authors = merge_raw_authors
-
     def iter_filter_layout_document(
         self,
         layout_document: LayoutDocument,
-        filter_params: dict
+        filter_params: dict,
+        profile_bundle: ProfileBundle
     ) -> Iterable[LayoutDocument]:
+        header_model = profile_bundle.fulltext_models.header_model
+        merge_raw_authors = profile_bundle.fulltext_processor_config.merge_raw_authors
         header_layout_document = self.filter_layout_document_by_segmentation_label(
-            layout_document, '<header>'
+            layout_document, '<header>', profile_bundle
         )
-        labeled_layout_tokens = self.header_model.predict_labels_for_layout_document(
+        labeled_layout_tokens = header_model.predict_labels_for_layout_document(
             header_layout_document,
             app_features_context=self.app_features_context
         )
         LOGGER.debug('labeled_layout_tokens: %r', labeled_layout_tokens)
         semantic_raw_authors_list = list(
             SemanticMixedContentWrapper(list(
-                self.header_model.iter_semantic_content_for_labeled_layout_tokens(
+                header_model.iter_semantic_content_for_labeled_layout_tokens(
                     labeled_layout_tokens
                 )
             )).iter_by_type(SemanticRawAuthors)
         )
         LOGGER.info('semantic_raw_authors_list count: %d', len(semantic_raw_authors_list))
-        LOGGER.info('merge_raw_authors: %s', self.merge_raw_authors)
-        if self.merge_raw_authors:
+        LOGGER.info('merge_raw_authors: %s', merge_raw_authors)
+        if merge_raw_authors:
             return [
                 LayoutDocument.for_blocks([
                     block
@@ -360,26 +385,24 @@ class NameHeaderModelRouterFactory(SegmentedModelRouterFactory):
 
 
 class AffiliationAddressModelRouterFactory(SegmentedModelRouterFactory):
-    def __init__(self, *args, header_model: Model, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.header_model = header_model
-
     def iter_filter_layout_document(
         self,
         layout_document: LayoutDocument,
-        filter_params: dict
+        filter_params: dict,
+        profile_bundle: ProfileBundle
     ) -> Iterable[LayoutDocument]:
+        header_model = profile_bundle.fulltext_models.header_model
         header_layout_document = self.filter_layout_document_by_segmentation_label(
-            layout_document, '<header>'
+            layout_document, '<header>', profile_bundle
         )
-        labeled_layout_tokens = self.header_model.predict_labels_for_layout_document(
+        labeled_layout_tokens = header_model.predict_labels_for_layout_document(
             header_layout_document,
             app_features_context=self.app_features_context
         )
         LOGGER.debug('labeled_layout_tokens: %r', labeled_layout_tokens)
         semantic_raw_aff_address_list = list(
             SemanticMixedContentWrapper(list(
-                self.header_model.iter_semantic_content_for_labeled_layout_tokens(
+                header_model.iter_semantic_content_for_labeled_layout_tokens(
                     labeled_layout_tokens
                 )
             )).iter_by_type(SemanticRawAffiliationAddress)
@@ -394,28 +417,25 @@ class AffiliationAddressModelRouterFactory(SegmentedModelRouterFactory):
 
 
 class CitationModelRouterFactory(SegmentedModelRouterFactory):
-    model: CitationModel
-
-    def __init__(self, *args, reference_segmenter_model: Model, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.reference_segmenter_model = reference_segmenter_model
-
     def iter_filter_layout_document(
         self,
         layout_document: LayoutDocument,
-        filter_params: dict
+        filter_params: dict,
+        profile_bundle: ProfileBundle
     ) -> Iterable[LayoutDocument]:
+        reference_segmenter_model = profile_bundle.fulltext_models.reference_segmenter_model
+        citation_model = profile_bundle.fulltext_models.citation_model
         references_layout_document = self.filter_layout_document_by_segmentation_label(
-            layout_document, '<references>'
+            layout_document, '<references>', profile_bundle
         )
-        labeled_layout_tokens = self.reference_segmenter_model.predict_labels_for_layout_document(
+        labeled_layout_tokens = reference_segmenter_model.predict_labels_for_layout_document(
             references_layout_document,
             app_features_context=self.app_features_context
         )
         LOGGER.debug('labeled_layout_tokens: %r', labeled_layout_tokens)
         semantic_raw_references = list(
             SemanticMixedContentWrapper(list(
-                self.reference_segmenter_model.iter_semantic_content_for_labeled_layout_tokens(
+                reference_segmenter_model.iter_semantic_content_for_labeled_layout_tokens(
                     labeled_layout_tokens
                 )
             )).iter_by_type(SemanticRawReference)
@@ -427,37 +447,29 @@ class CitationModelRouterFactory(SegmentedModelRouterFactory):
             ).remove_empty_blocks()
             for semantic_raw_reference in semantic_raw_references
         ]
-        return self.model.retokenize_layout_documents(docs)
+        return citation_model.retokenize_layout_documents(docs)
 
 
 class NameCitationModelRouterFactory(SegmentedModelRouterFactory):
-    def __init__(
-        self,
-        *args,
-        reference_segmenter_model: Model,
-        citation_model: Model,
-        **kwargs
-    ):
-        super().__init__(*args, **kwargs)
-        self.reference_segmenter_model = reference_segmenter_model
-        self.citation_model = citation_model
-
     def iter_filter_layout_document(
         self,
         layout_document: LayoutDocument,
-        filter_params: dict
+        filter_params: dict,
+        profile_bundle: ProfileBundle
     ) -> Iterable[LayoutDocument]:
+        reference_segmenter_model = profile_bundle.fulltext_models.reference_segmenter_model
+        citation_model = profile_bundle.fulltext_models.citation_model
         references_layout_document = self.filter_layout_document_by_segmentation_label(
-            layout_document, '<references>'
+            layout_document, '<references>', profile_bundle
         )
-        labeled_layout_tokens = self.reference_segmenter_model.predict_labels_for_layout_document(
+        labeled_layout_tokens = reference_segmenter_model.predict_labels_for_layout_document(
             references_layout_document,
             app_features_context=self.app_features_context
         )
         LOGGER.debug('labeled_layout_tokens: %r', labeled_layout_tokens)
         semantic_raw_references = list(
             SemanticMixedContentWrapper(list(
-                self.reference_segmenter_model.iter_semantic_content_for_labeled_layout_tokens(
+                reference_segmenter_model.iter_semantic_content_for_labeled_layout_tokens(
                     labeled_layout_tokens
                 )
             )).iter_by_type(SemanticRawReference)
@@ -470,7 +482,7 @@ class NameCitationModelRouterFactory(SegmentedModelRouterFactory):
             for semantic_raw_reference in semantic_raw_references
         ]
         citation_labeled_layout_tokens_list = (
-            self.citation_model.predict_labels_for_layout_documents(
+            citation_model.predict_labels_for_layout_documents(
                 raw_reference_documents,
                 app_features_context=self.app_features_context
             )
@@ -479,7 +491,7 @@ class NameCitationModelRouterFactory(SegmentedModelRouterFactory):
             raw_author
             for citation_labeled_layout_tokens in citation_labeled_layout_tokens_list
             for ref in (
-                self.citation_model.iter_semantic_content_for_labeled_layout_tokens(
+                citation_model.iter_semantic_content_for_labeled_layout_tokens(
                     citation_labeled_layout_tokens
                 )
             )
@@ -496,24 +508,24 @@ class FullTextChildModelRouterFactory(SegmentedModelRouterFactory):
     def __init__(
         self,
         *args,
-        fulltext_model: Model,
         semantic_type: Type[T_SemanticContentWrapper],
         **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.fulltext_model = fulltext_model
         self.semantic_type = semantic_type
 
     def iter_filter_layout_document(
         self,
         layout_document: LayoutDocument,
-        filter_params: dict
+        filter_params: dict,
+        profile_bundle: ProfileBundle
     ) -> Iterable[LayoutDocument]:
+        fulltext_model = profile_bundle.fulltext_models.fulltext_model
         fulltext_layout_documents = list(self.iter_filter_layout_document_by_segmentation_labels(
-            layout_document, self.segmentation_labels
+            layout_document, self.segmentation_labels, profile_bundle
         ))
         fulltext_labeled_layout_tokens_list = (
-            self.fulltext_model.predict_labels_for_layout_documents(
+            fulltext_model.predict_labels_for_layout_documents(
                 fulltext_layout_documents,
                 app_features_context=self.app_features_context
             )
@@ -523,7 +535,7 @@ class FullTextChildModelRouterFactory(SegmentedModelRouterFactory):
             semantic_content
             for fulltext_labeled_layout_tokens in fulltext_labeled_layout_tokens_list
             for semantic_content in iter_by_semantic_type_recursively(
-                self.fulltext_model.iter_semantic_content_for_labeled_layout_tokens(
+                fulltext_model.iter_semantic_content_for_labeled_layout_tokens(
                     fulltext_labeled_layout_tokens
                 ),
                 self.semantic_type
@@ -552,18 +564,14 @@ def create_models_router(
     router = APIRouter(tags=['models'])
 
     pdfalto_wrapper = sciencebeam_parser.pdfalto_wrapper
-    fulltext_models = sciencebeam_parser.fulltext_models
     app_features_context = sciencebeam_parser.app_features_context
-    fulltext_processor_config = sciencebeam_parser.fulltext_processor_config
-    noise_filter_config = fulltext_processor_config.noise_filter
 
     router.include_router(
         ModelResponseRouterFactory(
             'Segmentation',
-            model=fulltext_models.segmentation_model,
+            sequence_model_name='segmentation',
             pdfalto_wrapper=pdfalto_wrapper,
-            app_features_context=app_features_context,
-            noise_filter_config=noise_filter_config
+            app_features_context=app_features_context
         ).create_router(),
         prefix='/models/segmentation'
     )
@@ -571,12 +579,10 @@ def create_models_router(
     router.include_router(
         SegmentedModelRouterFactory(
             'Header',
-            model=fulltext_models.header_model,
+            sequence_model_name='header',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=['<header>'],
-            noise_filter_config=noise_filter_config
+            segmentation_labels=['<header>']
         ).create_router(),
         prefix='/models/header'
     )
@@ -584,14 +590,10 @@ def create_models_router(
     router.include_router(
         NameHeaderModelRouterFactory(
             'Name Header',
-            model=fulltext_models.name_header_model,
+            sequence_model_name='name_header',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=['<header>'],
-            header_model=fulltext_models.header_model,
-            merge_raw_authors=fulltext_processor_config.merge_raw_authors,
-            noise_filter_config=noise_filter_config
+            segmentation_labels=['<header>']
         ).create_router(),
         prefix='/models/name-header'
     )
@@ -599,13 +601,10 @@ def create_models_router(
     router.include_router(
         AffiliationAddressModelRouterFactory(
             'Affiliation Address',
-            model=fulltext_models.affiliation_address_model,
+            sequence_model_name='affiliation_address',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=['<header>'],
-            header_model=fulltext_models.header_model,
-            noise_filter_config=noise_filter_config
+            segmentation_labels=['<header>']
         ).create_router(),
         prefix='/models/affiliation-address'
     )
@@ -615,12 +614,10 @@ def create_models_router(
     router.include_router(
         SegmentedModelRouterFactory(
             'FullText',
-            model=fulltext_models.fulltext_model,
+            sequence_model_name='fulltext',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=fulltext_segmentation_labels,
-            noise_filter_config=noise_filter_config
+            segmentation_labels=fulltext_segmentation_labels
         ).create_router(),
         prefix='/models/fulltext'
     )
@@ -628,13 +625,10 @@ def create_models_router(
     router.include_router(
         FigureModelRouterFactory(
             'Figure',
-            model=fulltext_models.figure_model,
+            sequence_model_name='figure',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=fulltext_segmentation_labels,
-            fulltext_model=fulltext_models.fulltext_model,
-            noise_filter_config=noise_filter_config
+            segmentation_labels=fulltext_segmentation_labels
         ).create_router(),
         prefix='/models/figure'
     )
@@ -642,13 +636,10 @@ def create_models_router(
     router.include_router(
         TableModelRouterFactory(
             'Table',
-            model=fulltext_models.table_model,
+            sequence_model_name='table',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=fulltext_segmentation_labels,
-            fulltext_model=fulltext_models.fulltext_model,
-            noise_filter_config=noise_filter_config
+            segmentation_labels=fulltext_segmentation_labels
         ).create_router(),
         prefix='/models/table'
     )
@@ -656,12 +647,10 @@ def create_models_router(
     router.include_router(
         SegmentedModelRouterFactory(
             'Reference Segmenter',
-            model=fulltext_models.reference_segmenter_model,
+            sequence_model_name='reference_segmenter',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=['<references>'],
-            noise_filter_config=noise_filter_config
+            segmentation_labels=['<references>']
         ).create_router(),
         prefix='/models/reference-segmenter'
     )
@@ -669,13 +658,10 @@ def create_models_router(
     router.include_router(
         CitationModelRouterFactory(
             'Citation (Reference)',
-            model=fulltext_models.citation_model,
+            sequence_model_name='citation',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=['<references>'],
-            reference_segmenter_model=fulltext_models.reference_segmenter_model,
-            noise_filter_config=noise_filter_config
+            segmentation_labels=['<references>']
         ).create_router(),
         prefix='/models/citation'
     )
@@ -683,14 +669,10 @@ def create_models_router(
     router.include_router(
         NameCitationModelRouterFactory(
             'Name Citaton',
-            model=fulltext_models.name_citation_model,
+            sequence_model_name='name_citation',
             pdfalto_wrapper=pdfalto_wrapper,
             app_features_context=app_features_context,
-            segmentation_model=fulltext_models.segmentation_model,
-            segmentation_labels=['<references>'],
-            reference_segmenter_model=fulltext_models.reference_segmenter_model,
-            citation_model=fulltext_models.citation_model,
-            noise_filter_config=noise_filter_config
+            segmentation_labels=['<references>']
         ).create_router(),
         prefix='/models/name-citation'
     )

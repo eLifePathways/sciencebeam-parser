@@ -7,6 +7,8 @@ import yaml
 
 from sciencebeam_parser.config.config import (
     AppConfig,
+    InvalidProfileError,
+    UnknownProfileError,
     _deep_merge,
     _resolve_sequence_model_profile,
     get_llm_response_cache_dir
@@ -311,6 +313,57 @@ class TestAppConfigResolveProfile:
         config = AppConfig(props)
         assert config.get_active_profile_name() is None
 
+    def test_raises_unknown_profile_error_on_unknown_profile(self):
+        config = self._make_config()
+        with pytest.raises(UnknownProfileError):
+            config.resolve_profile('nonexistent')
+
+
+class TestAppConfigValidateProfiles:
+    """A profile may only change what a request is served, not how it is served.
+
+    Everything outside `PROFILE_OVERLAY_KEYS` is built once and shared, and
+    nothing about those objects is keyed on the configuration they came from, so
+    a profile able to set one would be served the deployment's value with no
+    test able to see the difference.
+    """
+
+    def test_accepts_a_profile_that_only_names_models(self):
+        config = AppConfig(MINIMAL_PROFILE_CONFIG)
+        assert config.validate_profiles() is config
+
+    def test_accepts_processors(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profiles': {'a': {'processors': {'fulltext': {'use_cv_model': True}}}}
+        })
+        assert config.validate_profiles() is config
+
+    def test_rejects_a_profile_setting_shared_configuration(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profiles': {'a': {'lookup': {'country': {}}}}
+        })
+        with pytest.raises(InvalidProfileError) as exc_info:
+            config.validate_profiles()
+        assert "'a'" in str(exc_info.value)
+        assert 'lookup' in str(exc_info.value)
+
+    def test_names_every_key_it_rejects(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profiles': {'a': {'download_dir': '/tmp', 'llm_response_cache_dir': '/tmp'}}
+        })
+        with pytest.raises(InvalidProfileError) as exc_info:
+            config.validate_profiles()
+        assert 'download_dir' in str(exc_info.value)
+        assert 'llm_response_cache_dir' in str(exc_info.value)
+
+    def test_get_profile_names_lists_what_the_config_declares(self):
+        assert AppConfig(MINIMAL_PROFILE_CONFIG).get_profile_names() == [
+            'profile_a', 'profile_b', 'profile_b_extended', 'profile_with_extra'
+        ]
+
 
 @pytest.fixture(name='env_vars_mock')
 def _env_vars_mock() -> Iterable[dict]:
@@ -413,3 +466,14 @@ class TestAppConfig:
         config = AppConfig.load_yaml(str(config_path))
         config = config.apply_environment_variables()
         assert config.props['key1'] is False
+
+
+class TestAppConfigValidateProfileNames:
+    def test_should_reject_a_profile_named_like_the_all_keyword(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profiles': {'all': {'sequence_models': 'profile_a'}}
+        })
+        with pytest.raises(InvalidProfileError) as exc_info:
+            config.validate_profiles()
+        assert 'selectable_profiles' in str(exc_info.value)
