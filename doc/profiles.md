@@ -25,6 +25,14 @@ departure from the API being mimicked: no GROBID client sends it, and a route
 that ignored it would make a comparison read as a null result rather than as a
 mistake.
 
+`/pdfalto` takes the parameter and reports the profile that served it, but
+nothing a profile currently sets reaches that route: converting a PDF to ALTO
+uses the pdfalto wrapper and the page range, neither of which a profile may
+change. It is uniform rather than special-cased so that the day `pdfalto`
+settings become part of a profile, the route already asks for one — and so that
+`?profile=` never means one thing on one route and another elsewhere. Naming a
+profile there does resolve it, which counts towards `max_loaded_models`.
+
 ## What a deployment will serve
 
 Only the deployment's own profile is selectable unless the config says
