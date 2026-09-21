@@ -77,6 +77,9 @@ def _sciencebeam_parser_mock() -> MagicMock:
         name='sciencebeam_parser_mock'
     )
     mock.profile_registry.get_bundle.return_value = get_profile_bundle_mock()
+    mock.profile_registry.get_available_profile_names.return_value = [
+        PROFILE_NAME_1, 'profile2'
+    ]
     return mock
 
 
@@ -824,3 +827,29 @@ class TestProfileAttributionHeader:
             reported = list(pool.map(post, [PROFILE_NAME_1, PROFILE_NAME_2]))
 
         assert sorted(reported) == [PROFILE_NAME_1, PROFILE_NAME_2]
+
+
+class TestSelectableProfilesInTheSchema:
+    def test_should_name_every_selectable_profile_on_every_route(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        """So the docs offer the choice rather than a free text box."""
+        schema = create_api_app(sciencebeam_parser=sciencebeam_parser_mock).openapi()
+        enums = [
+            sub_schema['enum']
+            for operations in schema['paths'].values()
+            for operation in operations.values()
+            for parameter in operation.get('parameters', [])
+            if parameter['name'] == 'profile'
+            for sub_schema in parameter['schema'].get(
+                'anyOf', [parameter['schema']]
+            )
+            if sub_schema.get('type') == 'string'
+        ]
+        assert enums
+        assert all(enum == [PROFILE_NAME_1, PROFILE_NAME_2] for enum in enums)
+
+    def test_should_still_serve_the_documentation(
+        self, test_client: TestClient
+    ):
+        assert test_client.get('/openapi.json').status_code == 200

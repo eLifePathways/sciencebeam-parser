@@ -361,3 +361,49 @@ class TestGetSelectableProfileNames:
 
     def test_should_return_nothing_without_a_default_profile(self):
         assert get_selectable_profile_names(AppConfig(BASE_CONFIG_PROPS), None) == []
+
+
+class TestSelectableProfilesFromEnvironment:
+    def test_should_accept_a_list(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv('SCIENCEBEAM_PARSER__SELECTABLE_PROFILES', '[b, c]')
+        config = AppConfig(BASE_CONFIG_PROPS).apply_environment_variables()
+        assert get_selectable_profile_names(config, 'a') == ['a', 'b', 'c']
+
+    def test_should_accept_every_profile(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv('SCIENCEBEAM_PARSER__SELECTABLE_PROFILES', 'all')
+        config = AppConfig(BASE_CONFIG_PROPS).apply_environment_variables()
+        assert get_selectable_profile_names(config, 'a') == ['a', 'b', 'c']
+
+    def test_should_serve_a_profile_named_by_environment(
+        self,
+        base_config: AppConfig,
+        model_factory: RecordingModelFactory,  # noqa pylint: disable=unused-argument
+        monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv('SCIENCEBEAM_PARSER__SELECTABLE_PROFILES', '[c]')
+        config = base_config.apply_environment_variables()
+        registry = create_registry(
+            base_config,
+            selectable_profile_names=get_selectable_profile_names(config, 'a')
+        )
+        assert registry.get_bundle('c').name == 'c'
+        with pytest.raises(ProfileNotSelectableError):
+            registry.get_bundle('b')
+
+
+class TestSelectableAllProfiles:
+    def test_should_mean_every_declared_profile(self):
+        config = AppConfig({**BASE_CONFIG_PROPS, 'selectable_profiles': 'all'})
+        assert get_selectable_profile_names(config, 'a') == ['a', 'b', 'c']
+
+    def test_should_mean_every_declared_profile_in_a_list(self):
+        config = AppConfig({**BASE_CONFIG_PROPS, 'selectable_profiles': ['all']})
+        assert get_selectable_profile_names(config, 'a') == ['a', 'b', 'c']
+
+    def test_should_still_include_the_default_profile(self):
+        config = AppConfig({
+            **BASE_CONFIG_PROPS,
+            'profiles': {'a': {'sequence_models': 'a'}},
+            'selectable_profiles': 'all'
+        })
+        assert get_selectable_profile_names(config, 'a') == ['a']

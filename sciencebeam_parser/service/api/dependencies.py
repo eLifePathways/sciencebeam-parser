@@ -113,17 +113,45 @@ def get_profile_registry(request: Request) -> ProfileRegistry:
     return request.app.state.sciencebeam_parser.profile_registry
 
 
+PROFILE_PARAMETER_NAME = 'profile'
+
 PROFILE_QUERY_DESCRIPTION = (
     'Name of the profile to serve this request with, from those the deployment '
     'declares selectable. Defaults to the deployment\'s own profile.'
 )
 
 
+def add_profile_names_to_openapi_schema(
+    schema: dict,
+    profile_names: Sequence[str]
+) -> dict:
+    """Name the selectable profiles in the schema, so the docs offer a choice.
+
+    Done over the finished schema rather than at each `Query`, because what is
+    selectable is a property of the deployment and the parameter is declared
+    once for every route that takes it.
+    """
+    for operations in schema.get('paths', {}).values():
+        for operation in operations.values():
+            for parameter in operation.get('parameters', []):
+                if (
+                    parameter.get('name') != PROFILE_PARAMETER_NAME
+                    or parameter.get('in') != 'query'
+                ):
+                    continue
+                parameter_schema = parameter.get('schema', {})
+                for sub_schema in parameter_schema.get('anyOf', [parameter_schema]):
+                    if sub_schema.get('type') == 'string':
+                        sub_schema['enum'] = list(profile_names)
+    return schema
+
+
 def get_profile_bundle(
     *,
     profile_registry: Annotated[ProfileRegistry, Depends(get_profile_registry)],
     profile: Annotated[
-        Optional[str], Query(description=PROFILE_QUERY_DESCRIPTION)
+        Optional[str],
+        Query(alias=PROFILE_PARAMETER_NAME, description=PROFILE_QUERY_DESCRIPTION)
     ] = None
 ) -> ProfileBundle:
     """Which models and processor config serve this request.

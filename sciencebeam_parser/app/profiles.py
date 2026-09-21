@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Dict, List, NamedTuple, Optional, Sequence, Set, Tuple, Type, cast
 
 from sciencebeam_parser.app.context import AppContext
-from sciencebeam_parser.config.config import AppConfig, UnknownProfileError
+from sciencebeam_parser.config.config import (
+    ALL_PROFILES,
+    AppConfig,
+    UnknownProfileError
+)
 from sciencebeam_parser.models.model import Model
 from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.processors.fulltext.models import (
@@ -152,14 +156,20 @@ def get_selectable_profile_names(
 
     The default is the conservative one: adding a per-request parameter does not
     change what one process may be asked to hold until a deployment opts in.
+    `all` opts in to every profile the config declares, which `max_loaded_models`
+    still bounds.
     """
     configured = config.get('selectable_profiles') or []
     if isinstance(configured, str):
         configured = [configured]
-    names = {
-        config.get_active_profile_name(name)
-        for name in configured
-    }
+    names: Set[Optional[str]]
+    if ALL_PROFILES in configured:
+        names = set(config.get_profile_names())
+    else:
+        names = {
+            config.get_active_profile_name(name)
+            for name in configured
+        }
     names.discard(None)
     if default_profile_name:
         names.add(default_profile_name)

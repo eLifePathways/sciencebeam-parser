@@ -21,6 +21,12 @@ DEFAULT_DOWNLOAD_DIR = 'data/download'
 PROFILE_OVERLAY_KEYS = frozenset({'sequence_models', 'models', 'processors'})
 
 
+# What `selectable_profiles` says to mean every declared profile. A word rather
+# than `*`, which is an alias indicator in YAML and so cannot be passed through
+# `SCIENCEBEAM_PARSER__SELECTABLE_PROFILES`.
+ALL_PROFILES = 'all'
+
+
 class UnknownProfileError(ValueError):
     """A name that is not a profile. Raised for a request, so it carries the list."""
 
@@ -173,7 +179,13 @@ class AppConfig:
         return sorted(self.props.get('profiles', {}))
 
     def validate_profiles(self) -> 'AppConfig':
-        for name, profile in sorted(self.props.get('profiles', {}).items()):
+        profiles = self.props.get('profiles', {})
+        if ALL_PROFILES in profiles:
+            raise InvalidProfileError(
+                f'A profile may not be named {ALL_PROFILES!r}: that is what '
+                '`selectable_profiles` says to mean every profile'
+            )
+        for name, profile in sorted(profiles.items()):
             invalid_keys = sorted(set(profile) - PROFILE_OVERLAY_KEYS)
             if invalid_keys:
                 raise InvalidProfileError(

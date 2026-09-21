@@ -466,3 +466,14 @@ class TestAppConfig:
         config = AppConfig.load_yaml(str(config_path))
         config = config.apply_environment_variables()
         assert config.props['key1'] is False
+
+
+class TestAppConfigValidateProfileNames:
+    def test_should_reject_a_profile_named_like_the_all_keyword(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profiles': {'all': {'sequence_models': 'profile_a'}}
+        })
+        with pytest.raises(InvalidProfileError) as exc_info:
+            config.validate_profiles()
+        assert 'selectable_profiles' in str(exc_info.value)

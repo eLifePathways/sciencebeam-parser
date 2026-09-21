@@ -42,8 +42,21 @@ or by environment, which takes a YAML list:
 export SCIENCEBEAM_PARSER__SELECTABLE_PROFILES='[wapiti_scielo_preprints_ore, llm_references]'
 ```
 
+`all` means every profile the config declares, which is the convenient setting
+for a benchmark sweep or an experiment:
+
+```bash
+export SCIENCEBEAM_PARSER__SELECTABLE_PROFILES=all
+```
+
+`max_loaded_models` still bounds what `all` may load, so it opts in to choosing
+between the profiles rather than to unbounded memory. No profile may be named
+`all`; the config fails to start if one is.
+
 Naming a profile that is not selectable, or that does not exist, is a `400`
-listing what is available.
+listing what is available. The selectable names are also listed in the OpenAPI
+schema, so `/api/docs` offers them as a choice on every route that takes the
+parameter.
 
 Profiles overlap — the `wapiti_*` profiles differ from their base by one model
 of ten — and a model is shared by every profile whose configuration for it is
