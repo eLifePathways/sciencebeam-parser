@@ -230,12 +230,12 @@ sequence_model_profiles:
   delft_refseg_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     reference_segmenter:
-      path: 'gs://sciencebeam-v2-models/delft/reference-segmenter/models/2026-09-18_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore/reference-segmenter'
+      path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/dd39a9d6246b94a4e5861cf548921a7a3f1ba0ca/reference-segmenter/delft/2026-09-18_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore'
       engine: 'delft'
   delft_citation_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     citation:
-      path: 'gs://sciencebeam-v2-models/delft/citation/models/2026-09-18_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore/citation'
+      path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/dd39a9d6246b94a4e5861cf548921a7a3f1ba0ca/citation/delft/2026-09-18_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore'
       engine: 'delft'
   delft_scielo_preprints_ore:
     extends:
