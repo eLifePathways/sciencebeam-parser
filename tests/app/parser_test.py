@@ -12,7 +12,9 @@ import pytest
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.document.layout_document import LayoutGraphic
 from sciencebeam_parser.document.semantic_document import SemanticDocument, SemanticGraphic
+from sciencebeam_parser.document.tei.attribution import DocumentAttribution
 from sciencebeam_parser.document.tei.document import TeiDocument
+from sciencebeam_parser.document.tei_document import get_tei_for_semantic_document
 from sciencebeam_parser.utils.media_types import MediaTypes
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
@@ -548,3 +550,62 @@ class TestScienceBeamParser:
             full_text_processor_kwargs = full_text_processor_class_mock.call_args[1]
             full_text_processor_config = full_text_processor_kwargs['config']
             assert full_text_processor_config.extract_graphic_assets is True
+
+
+ATTRIBUTION_1 = DocumentAttribution(
+    version='1.2.3',
+    profile_digest='digest1',
+    profile_name='profile1'
+)
+
+
+class TestScienceBeamParserSessionDocumentAttribution:
+    def test_should_default_to_the_deployment_profile(
+        self, sciencebeam_parser: ScienceBeamParser
+    ):
+        with sciencebeam_parser.get_new_session() as session:
+            assert session.document_attribution == (
+                sciencebeam_parser.default_profile_bundle.get_document_attribution()
+            )
+            assert session.document_attribution.profile_name
+
+    def test_should_pass_the_requested_attribution_to_the_tei(
+        self,
+        sciencebeam_parser: ScienceBeamParser,
+        get_tei_for_semantic_document_mock: MagicMock,
+        request_temp_path: Path
+    ):
+        (request_temp_path / TEMP_ALTO_XML_FILENAME).write_bytes(XML_CONTENT_1)
+        with sciencebeam_parser.get_new_session(
+            document_attribution=ATTRIBUTION_1
+        ) as session:
+            session.get_source(
+                str(request_temp_path / 'test.pdf'), MediaTypes.PDF
+            ).get_local_file_for_response_media_type(MediaTypes.TEI_XML)
+        assert get_tei_for_semantic_document_mock.call_args[1]['attribution'] == (
+            ATTRIBUTION_1
+        )
+
+    def test_should_carry_the_attribution_into_the_asset_zip(
+        self,
+        sciencebeam_parser: ScienceBeamParser,
+        get_tei_for_semantic_document_mock: MagicMock,
+        full_text_processor_mock: MagicMock,
+        request_temp_path: Path
+    ):
+        (request_temp_path / TEMP_ALTO_XML_FILENAME).write_bytes(XML_CONTENT_1)
+        full_text_processor_mock.get_semantic_document_for_layout_document.return_value = (
+            SemanticDocument()
+        )
+        get_tei_for_semantic_document_mock.side_effect = get_tei_for_semantic_document
+        with sciencebeam_parser.get_new_session(
+            document_attribution=ATTRIBUTION_1
+        ) as session:
+            result_file = session.get_source(
+                str(request_temp_path / 'test.pdf'), MediaTypes.PDF
+            ).get_local_file_for_response_media_type(MediaTypes.TEI_ZIP)
+        with ZipFile(result_file, 'r') as zip_file:
+            tei_xml_data = zip_file.read('tei.xml')
+        tei_xml_text = tei_xml_data.decode('utf-8')
+        assert ATTRIBUTION_1.profile_digest in tei_xml_text
+        assert str(ATTRIBUTION_1.profile_name) in tei_xml_text

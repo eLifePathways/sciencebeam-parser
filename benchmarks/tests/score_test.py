@@ -5,7 +5,12 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
+from sciencebeam_judge.parsing.xml import parse_xml_mapping
+from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
+from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
+
 from benchmarks.score import (
+    _score_pair,
     _build_field_measures,
     _build_field_scoring_types,
     _doc_scores_to_dict,
@@ -420,3 +425,105 @@ class TestRunScoreLlmUsage:
             {"corpus": "biorxiv", "record_id": "doc1", "status": "ok"},
         ])
         assert "llm_usage" not in summary
+
+
+GOLD_JATS_1 = b"""<article>
+  <front>
+    <article-meta>
+      <title-group><article-title>The title</article-title></title-group>
+      <contrib-group>
+        <contrib contrib-type="person">
+          <name><surname>Smith</surname><given-names>Jo</given-names></name>
+        </contrib>
+      </contrib-group>
+      <aff>Institute 1</aff>
+      <abstract><p>The abstract</p></abstract>
+      <kwd-group><kwd>keyword 1</kwd></kwd-group>
+    </article-meta>
+  </front>
+  <body><sec><title>Introduction</title><p>Body text</p></sec></body>
+  <back>
+    <ack><p>Thanks</p></ack>
+    <ref-list><ref><element-citation>
+      <article-title>Reference title</article-title>
+      <pub-id pub-id-type="doi">10.1234/doi1</pub-id>
+    </element-citation></ref></ref-list>
+  </back>
+</article>"""
+
+PREDICTED_TEI_1 = """<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader>
+    <fileDesc>
+      <titleStmt><title level="a" type="main">The title</title></titleStmt>
+      <sourceDesc><biblStruct><analytic>
+        <author>
+          <persName><forename type="first">Jo</forename><surname>Smith</surname></persName>
+          <affiliation key="aff0">
+            <note type="raw_affiliation">Institute 1</note>
+            <orgName type="institution">Institute 1</orgName>
+          </affiliation>
+        </author>
+      </analytic></biblStruct></sourceDesc>
+    </fileDesc>
+    {encoding_desc}
+    <profileDesc>
+      <abstract><p>The abstract</p></abstract>
+      <textClass><keywords><term>keyword 1</term></keywords></textClass>
+    </profileDesc>
+  </teiHeader>
+  <text>
+    <body><div><head>Introduction</head><p>Body text</p></div></body>
+    <back>
+      <div type="acknowledgement"><div><p>Thanks</p></div></div>
+      <div type="references"><listBibl><biblStruct>
+        <note type="raw_reference">Reference title</note>
+        <analytic>
+          <title level="a">Reference title</title>
+          <idno type="DOI">10.1234/doi1</idno>
+        </analytic>
+      </biblStruct></listBibl></div>
+    </back>
+  </text>
+</TEI>"""
+
+ENCODING_DESC_1 = """<encodingDesc>
+      <appInfo>
+        <application ident="sciencebeam-parser" version="1.2.3">
+          <label type="profile">profile1</label>
+          <label type="profile-digest">digest1</label>
+        </application>
+      </appInfo>
+    </encodingDesc>"""
+
+
+class TestAttributionIsNotScored:
+    """The attribution element must sit where no scored field's xpath looks."""
+
+    def test_should_score_a_prediction_the_same_with_and_without_attribution(self):
+        register_functions()
+        xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+        field_names = [
+            "title", "abstract", "author_full_names", "affiliation_text", "keywords",
+            "body_section_titles", "acknowledgement", "first_reference_text",
+            "reference_title", "reference_doi",
+        ]
+        measures = ["exact", "levenshtein", "edit_sim"]
+        without = _score_pair(
+            GOLD_JATS_1,
+            PREDICTED_TEI_1.format(encoding_desc="").encode("utf-8"),
+            field_names, measures, xml_mapping,
+        )
+        with_attribution = _score_pair(
+            GOLD_JATS_1,
+            PREDICTED_TEI_1.format(encoding_desc=ENCODING_DESC_1).encode("utf-8"),
+            field_names, measures, xml_mapping,
+        )
+        assert with_attribution == without
+        # A prediction the mapping read nothing out of would pass the comparison
+        # above without saying anything about where the element sits.
+        assert {score["field_name"] for score in without} == set(field_names)
+        assert all(
+            score["match_score"]["actual_something"]
+            for score in without
+            if score["scoring_method"] == "exact"
+        )

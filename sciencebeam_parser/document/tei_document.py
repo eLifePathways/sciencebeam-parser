@@ -20,6 +20,9 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticTable,
     SemanticTitle
 )
+from sciencebeam_parser.document.tei.attribution import (
+    DocumentAttribution
+)
 from sciencebeam_parser.document.tei.common import (
     TeiElementBuilder
 )
@@ -44,9 +47,10 @@ from sciencebeam_parser.document.tei.references import (
 LOGGER = logging.getLogger(__name__)
 
 
-def get_tei_for_semantic_document(  # pylint: disable=too-many-branches, too-many-statements
+def get_tei_for_semantic_document(  # noqa pylint: disable=too-many-branches, too-many-statements, too-many-locals
     semantic_document: SemanticDocument,
-    context: Optional[TeiElementFactoryContext] = None
+    context: Optional[TeiElementFactoryContext] = None,
+    attribution: Optional[DocumentAttribution] = None
 ) -> TeiDocument:
     if context is None:
         context = DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
@@ -163,6 +167,9 @@ def get_tei_for_semantic_document(  # pylint: disable=too-many-branches, too-man
         TeiElementBuilder(tei_document.get_back_annex_element()).extend(
             context.get_tei_child_elements_for_semantic_content(semantic_figure)
         )
+    # Last, so that the ordered insert has the header it has to sit inside.
+    if attribution is not None:
+        tei_document.set_attribution(attribution)
     stop_watch_recorder.stop()
     LOGGER.info('generating tei document done, took: %s', stop_watch_recorder)
     return tei_document

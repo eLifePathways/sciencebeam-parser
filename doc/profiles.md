@@ -98,7 +98,40 @@ Two response headers say what answered a request:
 The digest is there because the name alone is not enough to identify what ran:
 environment variables are applied after the profile is resolved and so win over
 it, which means two deployments can answer the same profile name with different
-models.
+models. A deployment whose config names no profile sends the digest alone.
+
+## Which profile a converted document says produced it
+
+Every converted document carries the same two values, plus the parser version,
+so a saved file stays attributable without the response it came from.
+
+The TEI records them where GROBID records its own, in
+`teiHeader/encodingDesc/appInfo/application`:
+
+```xml
+<encodingDesc>
+  <appInfo>
+    <application ident="sciencebeam-parser" version="1.2.3">
+      <label type="profile">wapiti_grobid_only</label>
+      <label type="profile-digest">a1b2c3d4e5f6</label>
+    </application>
+  </appInfo>
+</encodingDesc>
+```
+
+The JATS carries the same values as `custom-meta` entries in
+`article-meta/custom-meta-group`, under the names
+`sciencebeam-parser-version`, `sciencebeam-parser-profile` and
+`sciencebeam-parser-profile-digest`. They are read from the TEI during the
+transform, so the two outputs cannot disagree. The asset zip's `tei.xml` is the
+same serialization and carries them too.
+
+There is no timestamp: two conversions of the same document, under the same
+profile and the same build, produce byte-identical output. A configuration that
+names no profile records the digest and the version without a profile name.
+
+The `/api/models/*` routes and `/api/pdfalto` return training data, tagged
+sequences and ALTO rather than a converted document, and carry no attribution.
 
 ## See also
 

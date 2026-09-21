@@ -122,16 +122,39 @@
         <xsl:apply-templates select="tei:profileDesc/tei:abstract"/>
       </abstract>
 
-      <xsl:if test="$output_parameters = 'true'">
+      <!-- JATS allows one custom-meta-group, so attribution and the parameters
+           share it. The attribution is read from the TEI rather than passed in,
+           so the two outputs cannot disagree about what produced them. -->
+      <xsl:if test="tei:encodingDesc/tei:appInfo/tei:application or $output_parameters = 'true'">
         <custom-meta-group>
-          <custom-meta>
-            <meta-name>xslt-param-acknowledgement_target</meta-name>
-            <meta-value><xsl:value-of select="$acknowledgement_target"/></meta-value>
-          </custom-meta>
-          <custom-meta>
-            <meta-name>xslt-param-annex_target</meta-name>
-            <meta-value><xsl:value-of select="$annex_target"/></meta-value>
-          </custom-meta>
+          <xsl:for-each select="tei:encodingDesc/tei:appInfo/tei:application">
+            <custom-meta>
+              <meta-name>sciencebeam-parser-version</meta-name>
+              <meta-value><xsl:value-of select="@version"/></meta-value>
+            </custom-meta>
+            <xsl:for-each select="tei:label[@type='profile']">
+              <custom-meta>
+                <meta-name>sciencebeam-parser-profile</meta-name>
+                <meta-value><xsl:value-of select="."/></meta-value>
+              </custom-meta>
+            </xsl:for-each>
+            <xsl:for-each select="tei:label[@type='profile-digest']">
+              <custom-meta>
+                <meta-name>sciencebeam-parser-profile-digest</meta-name>
+                <meta-value><xsl:value-of select="."/></meta-value>
+              </custom-meta>
+            </xsl:for-each>
+          </xsl:for-each>
+          <xsl:if test="$output_parameters = 'true'">
+            <custom-meta>
+              <meta-name>xslt-param-acknowledgement_target</meta-name>
+              <meta-value><xsl:value-of select="$acknowledgement_target"/></meta-value>
+            </custom-meta>
+            <custom-meta>
+              <meta-name>xslt-param-annex_target</meta-name>
+              <meta-value><xsl:value-of select="$annex_target"/></meta-value>
+            </custom-meta>
+          </xsl:if>
         </custom-meta-group>
       </xsl:if>
     </article-meta>

@@ -3,15 +3,25 @@ from typing import List, Optional
 from lxml import etree
 
 from sciencebeam_parser.document.layout_document import LayoutBlock
+from sciencebeam_parser.document.tei.attribution import (
+    DocumentAttribution,
+    get_tei_application_element
+)
 from sciencebeam_parser.document.tei.common import (
     TEI_E,
     TeiElementWrapper,
     extend_element,
+    get_or_create_element_after,
     get_or_create_element_at,
     get_tei_xpath_text_content_list,
     iter_layout_block_tei_children,
     tei_xpath
 )
+
+
+# TEI orders `teiHeader` as fileDesc, encodingDesc, profileDesc, revisionDesc,
+# and GROBID writes its own application element in the same place.
+TEI_HEADER_TAGS_BEFORE_ENCODING_DESC = ['fileDesc']
 
 
 class TeiAuthor(TeiElementWrapper):
@@ -57,7 +67,7 @@ class TeiSection(TeiElementWrapper):
         return TeiSectionParagraph(TEI_E('p'))
 
 
-class TeiDocument(TeiElementWrapper):
+class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
     def __init__(self, root: Optional[etree.ElementBase] = None):
         if root is None:
             self.root = TEI_E('TEI')
@@ -96,6 +106,16 @@ class TeiDocument(TeiElementWrapper):
         self.set_child_element_at(
             ['teiHeader', 'fileDesc', 'titleStmt'],
             title_elem
+        )
+
+    def set_attribution(self, attribution: DocumentAttribution):
+        encoding_desc = get_or_create_element_after(
+            self.get_or_create_element_at(['teiHeader']),
+            'encodingDesc',
+            TEI_HEADER_TAGS_BEFORE_ENCODING_DESC
+        )
+        get_or_create_element_at(encoding_desc, ['appInfo']).append(
+            get_tei_application_element(attribution)
         )
 
     def get_abstract(self) -> str:
