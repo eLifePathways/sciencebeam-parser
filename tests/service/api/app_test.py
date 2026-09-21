@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 from pathlib import Path
+from typing import Optional
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
@@ -62,7 +63,7 @@ def _request_temp_path(tmp_path: Path) -> Path:
 PROFILE_NAME_1 = 'profile1'
 
 
-def get_profile_bundle_mock(name: str = PROFILE_NAME_1) -> ProfileBundle:
+def get_profile_bundle_mock(name: Optional[str] = PROFILE_NAME_1) -> ProfileBundle:
     return ProfileBundle(
         name=name,
         fulltext_models=MagicMock(name='fulltext_models'),
@@ -709,6 +710,24 @@ class TestProfileSelection:
         _, session_kwargs = sciencebeam_parser_mock.get_new_session.call_args
         assert session_kwargs['fulltext_models'] is bundle.fulltext_models
 
+    @pytest.mark.parametrize('path', DOCUMENT_ROUTE_PATHS)
+    def test_should_attribute_the_document_to_the_requested_profile(
+        self,
+        test_client: TestClient,
+        sciencebeam_parser_mock: MagicMock,
+        ok_response_mock: MagicMock,  # noqa pylint: disable=unused-argument
+        path: str
+    ):
+        bundle = get_profile_bundle_mock(PROFILE_NAME_2)
+        sciencebeam_parser_mock.profile_registry.get_bundle.return_value = bundle
+        assert post_document(
+            test_client, path, params={'profile': PROFILE_NAME_2}
+        ).status_code == 200
+        _, session_kwargs = sciencebeam_parser_mock.get_new_session.call_args
+        attribution = session_kwargs['document_attribution']
+        assert attribution.profile_name == PROFILE_NAME_2
+        assert attribution.profile_digest == bundle.models_digest
+
     def test_should_declare_the_parameter_on_every_route_that_serves_a_document(
         self, sciencebeam_parser_mock: MagicMock
     ):
@@ -795,6 +814,20 @@ class TestProfileAttributionHeader:
         response = test_client.get('/isalive')
         assert response.status_code == 200
         assert PROFILE_HEADER_NAME not in response.headers
+        assert PROFILE_DIGEST_HEADER_NAME not in response.headers
+
+    def test_should_say_what_a_deployment_without_a_named_profile_served(
+        self,
+        test_client: TestClient,
+        sciencebeam_parser_mock: MagicMock,
+        ok_response_mock: MagicMock  # noqa pylint: disable=unused-argument
+    ):
+        bundle = get_profile_bundle_mock(name=None)
+        sciencebeam_parser_mock.profile_registry.get_bundle.return_value = bundle
+        response = post_document(test_client, '/processFulltextDocument')
+        assert response.status_code == 200
+        assert PROFILE_HEADER_NAME not in response.headers
+        assert response.headers[PROFILE_DIGEST_HEADER_NAME] == bundle.models_digest
 
     def test_should_keep_concurrent_requests_apart(
         self,

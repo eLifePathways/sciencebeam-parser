@@ -11,6 +11,9 @@ from lxml import etree
 from lxml.builder import ElementMaker
 
 from sciencebeam_parser.utils.xml import get_text_content
+from sciencebeam_parser.document.semantic_document import SemanticDocument
+from sciencebeam_parser.document.tei.attribution import DocumentAttribution
+from sciencebeam_parser.document.tei_document import get_tei_for_semantic_document
 from sciencebeam_parser.transformers.xslt import XsltTransformerWrapper
 from sciencebeam_parser.resources.xslt import XSLT_DIR
 
@@ -29,6 +32,10 @@ XML_ID = '{%s}id' % XML_NS
 VALUE_1 = 'value 1'
 VALUE_2 = 'value 2'
 VALUE_3 = 'value 3'
+
+VERSION_1 = 'version 1'
+PROFILE_NAME_1 = 'profile 1'
+PROFILE_DIGEST_1 = 'digest 1'
 
 FIRST_NAME_1 = 'first name 1'
 LAST_NAME_1 = 'last name 1'
@@ -114,7 +121,8 @@ def _tei(
     authors: Optional[List[etree.ElementBase]] = None,
     body: Optional[etree.ElementBase] = None,
     back: Optional[etree.ElementBase] = None,
-    references: Optional[List[etree.ElementBase]] = None
+    references: Optional[List[etree.ElementBase]] = None,
+    application: Optional[etree.ElementBase] = None
 ) -> etree.ElementBase:
     if authors is None:
         authors = []
@@ -146,12 +154,26 @@ def _tei(
             biblStruct
         )
     )
+    teiHeader = TEI_E.teiHeader(fileDesc)
+    if application is not None:
+        teiHeader.append(TEI_E.encodingDesc(TEI_E.appInfo(application)))
     return TEI_E.TEI(
-        TEI_E.teiHeader(
-            fileDesc
-        ),
+        teiHeader,
         tei_text
     )
+
+
+def _application(
+    version: str = VERSION_1,
+    profile_name: Optional[str] = PROFILE_NAME_1,
+    profile_digest: Optional[str] = PROFILE_DIGEST_1
+) -> etree.ElementBase:
+    application = TEI_E.application(ident='sciencebeam-parser', version=version)
+    if profile_name is not None:
+        application.append(TEI_E.label(profile_name, type='profile'))
+    if profile_digest is not None:
+        application.append(TEI_E.label(profile_digest, type='profile-digest'))
+    return application
 
 
 def _author(forenames=None, surname=LAST_NAME_1, email=EMAIL_1, affiliation=None):
@@ -275,7 +297,75 @@ def _get_text(xml, xpath: str):
         return str(item)
 
 
+def _get_custom_meta_value_by_name(jats) -> dict:
+    return {
+        get_text_content(_get_item(custom_meta, 'meta-name')):
+            get_text_content(_get_item(custom_meta, 'meta-value'))
+        for custom_meta in _xpath(
+            jats, 'front/article-meta/custom-meta-group/custom-meta'
+        )
+    }
+
+
 class TestTeiToJatsXslt:
+    class TestAttribution:
+        def test_should_translate_version_profile_and_digest(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(application=_application())
+            ))
+            assert _get_custom_meta_value_by_name(jats) == {
+                'sciencebeam-parser-version': VERSION_1,
+                'sciencebeam-parser-profile': PROFILE_NAME_1,
+                'sciencebeam-parser-profile-digest': PROFILE_DIGEST_1
+            }
+
+        def test_should_translate_digest_without_profile_name(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(application=_application(profile_name=None))
+            ))
+            assert _get_custom_meta_value_by_name(jats) == {
+                'sciencebeam-parser-version': VERSION_1,
+                'sciencebeam-parser-profile-digest': PROFILE_DIGEST_1
+            }
+
+        def test_should_share_one_custom_meta_group_with_the_parameters(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(application=_application()),
+                {'output_parameters': 'true'}
+            ))
+            assert len(_xpath(jats, 'front/article-meta/custom-meta-group')) == 1
+            assert set(_get_custom_meta_value_by_name(jats)) == {
+                'sciencebeam-parser-version',
+                'sciencebeam-parser-profile',
+                'sciencebeam-parser-profile-digest',
+                'xslt-param-acknowledgement_target',
+                'xslt-param-annex_target'
+            }
+
+        def test_should_not_add_empty_custom_meta_group_without_application(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei()))
+            assert _xpath(jats, 'front/article-meta/custom-meta-group') == []
+
+        def test_should_agree_with_the_tei_the_parser_produced(self, tei_to_jats_xslt_fn):
+            attribution = DocumentAttribution(
+                version=VERSION_1,
+                profile_digest=PROFILE_DIGEST_1,
+                profile_name=PROFILE_NAME_1
+            )
+            tei_document = get_tei_for_semantic_document(
+                SemanticDocument(), attribution=attribution
+            )
+            jats = etree.fromstring(tei_to_jats_xslt_fn(tei_document.root))
+            assert _get_custom_meta_value_by_name(jats) == {
+                'sciencebeam-parser-version': attribution.version,
+                'sciencebeam-parser-profile': attribution.profile_name,
+                'sciencebeam-parser-profile-digest': attribution.profile_digest
+            }
+
     class TestJournalTitle:
         def test_should_translate_journal_title(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(

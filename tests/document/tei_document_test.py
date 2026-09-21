@@ -41,6 +41,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticTextContentWrapper,
     SemanticTitle
 )
+from sciencebeam_parser.document.tei.attribution import DocumentAttribution
 from sciencebeam_parser.document.tei_document import (
     get_tei_for_semantic_document
 )
@@ -548,3 +549,49 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
         assert tei_document.get_xpath_text_content_list(
             f'{graphics_xpath}/@url'
         ) == ['image1.svg']
+
+
+ATTRIBUTION_1 = DocumentAttribution(
+    version='1.2.3',
+    profile_digest='digest1',
+    profile_name='profile1'
+)
+
+
+class TestGetTeiForSemanticDocumentAttribution:
+    def _get_semantic_document(self) -> SemanticDocument:
+        semantic_document = SemanticDocument()
+        semantic_document.front.add_content(
+            SemanticTitle(layout_block=LayoutBlock.for_text(TOKEN_1))
+        )
+        semantic_document.front.add_content(
+            SemanticAbstract(layout_block=LayoutBlock.for_text(TOKEN_2))
+        )
+        return semantic_document
+
+    def test_should_not_add_attribution_when_not_given(self):
+        tei_document = get_tei_for_semantic_document(self._get_semantic_document())
+        assert not tei_document.xpath('//tei:encodingDesc')
+
+    def test_should_name_the_profile_that_served_it(self):
+        tei_document = get_tei_for_semantic_document(
+            self._get_semantic_document(), attribution=ATTRIBUTION_1
+        )
+        assert tei_document.get_xpath_text_content_list(
+            '//tei:encodingDesc/tei:appInfo/tei:application/tei:label[@type="profile"]'
+        ) == [ATTRIBUTION_1.profile_name]
+        assert tei_document.get_xpath_text_content_list(
+            '//tei:encodingDesc/tei:appInfo/tei:application'
+            '/tei:label[@type="profile-digest"]'
+        ) == [ATTRIBUTION_1.profile_digest]
+
+    def test_should_produce_byte_identical_output_for_two_runs(self):
+        serialized = [
+            etree.tostring(
+                get_tei_for_semantic_document(
+                    self._get_semantic_document(), attribution=ATTRIBUTION_1
+                ).root
+            )
+            for _ in range(2)
+        ]
+        assert serialized[0] == serialized[1]

@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Union
 
 from lxml import etree
 from lxml.builder import ElementMaker
@@ -48,6 +48,30 @@ def get_or_create_element_at(parent: etree.ElementBase, path: List[str]) -> etre
         )
         parent.append(child)
     return get_or_create_element_at(child, path[1:])
+
+
+def get_or_create_element_after(
+    parent: etree.ElementBase,
+    tag: str,
+    preceding_tags: Sequence[str]
+) -> etree.ElementBase:
+    """Create a child after the last of the children it must follow.
+
+    `get_or_create_element_at` appends, which holds while every child is created
+    in schema order. `encodingDesc` is not: it is written once the rest of the
+    header is built, by which point `profileDesc` may already be there.
+    """
+    child = parent.find(TEI_NS_PREFIX + tag)
+    if child is not None:
+        return child
+    child = TEI_E(tag)
+    preceding = {TEI_NS_PREFIX + preceding_tag for preceding_tag in preceding_tags}
+    index = 0
+    for position, existing_child in enumerate(parent):
+        if existing_child.tag in preceding:
+            index = position + 1
+    parent.insert(index, child)
+    return child
 
 
 def tei_xpath(parent: etree.ElementBase, xpath: str) -> List[etree.ElementBase]:
