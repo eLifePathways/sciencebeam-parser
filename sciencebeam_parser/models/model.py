@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -169,6 +170,33 @@ class LayoutDocumentLabelResult:
                         result_page.blocks.append(result_block)
                     result_block.lines.append(accepted_line)
         return layout_document
+
+
+def get_layout_document_label_result_with_relabelled_lines(
+    layout_document_label_result: LayoutDocumentLabelResult,
+    layout_lines: Iterable[LayoutLine],
+    label: str
+) -> LayoutDocumentLabelResult:
+    """Replace the label of the given lines, leaving every other label as the model set it."""
+    line_ids = {id(layout_line) for layout_line in layout_lines}
+    if not line_ids:
+        return layout_document_label_result
+    relabelled: List[LayoutModelLabel] = []
+    previous_is_relabelled = False
+    for layout_model_label in layout_document_label_result.layout_model_label_list:
+        if id(layout_model_label.layout_line) not in line_ids:
+            relabelled.append(layout_model_label)
+            previous_is_relabelled = False
+            continue
+        relabelled.append(dataclasses.replace(
+            layout_model_label,
+            label=label if previous_is_relabelled else 'I-' + label
+        ))
+        previous_is_relabelled = True
+    return LayoutDocumentLabelResult(
+        layout_document=layout_document_label_result.layout_document,
+        layout_model_label_iterable=relabelled
+    )
 
 
 def iter_entity_layout_blocks_for_labeled_layout_tokens(

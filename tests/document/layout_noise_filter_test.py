@@ -235,3 +235,131 @@ class TestRemoveNoiseBlocks:
         assert len(result.pages) == 2
         assert len(result.pages[0].blocks) == 1
         assert len(result.pages[1].blocks) == 1
+
+
+OUTSIDE_MAIN_AREA_CONFIG = LayoutNoiseFilterConfig(
+    enabled=True, repetition_fraction=0.5, outside_main_area=True
+)
+
+
+def _small_block(
+    text: str, y: float, page_number: int, x: float = 10, width: float = 30
+) -> LayoutBlock:
+    """A block too small to define the page main area, as furniture usually is."""
+    token = LayoutToken(
+        text=text,
+        coordinates=LayoutPageCoordinates(
+            x=x, y=y, width=width, height=10, page_number=page_number
+        )
+    )
+    return LayoutBlock(lines=[LayoutLine(tokens=[token])])
+
+
+def _doc_with_extra_block_per_page(get_block, page_count: int = 4) -> LayoutDocument:
+    return _doc(*[
+        _page_with_body([get_block(page_number)], page_number=page_number)
+        for page_number in range(1, page_count + 1)
+    ])
+
+
+class TestGetNoiseBlocksOutsideMainArea:
+    def test_filters_a_footer_whose_text_changes_on_every_page(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                f'Page {page_number} of 4', y=950, page_number=page_number
+            )
+        )
+        result = get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)
+        assert len(result) == 4
+        assert {nb.note_type for nb in result} == {'running-foot'}
+
+    def test_leaves_that_footer_when_the_rule_is_off(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                f'Page {page_number} of 4', y=950, page_number=page_number
+            )
+        )
+        assert not get_noise_blocks(doc, ENABLED_CONFIG)
+
+    def test_filters_a_bare_page_number_outside_the_main_area(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                str(page_number), y=950, page_number=page_number
+            )
+        )
+        result = get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)
+        assert len(result) == 4
+
+    def test_keeps_a_bare_number_inside_the_main_area(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                str(page_number), y=400, page_number=page_number
+            )
+        )
+        assert not get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)
+
+    def test_keeps_unique_text_outside_the_main_area(self):
+        words = ['alpha', 'beta', 'gamma', 'delta']
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                f'a note about {words[page_number - 1]}', y=950,
+                page_number=page_number, width=200
+            )
+        )
+        assert not get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)
+
+    def test_treats_text_differing_only_in_digits_as_repeating(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                f'a note about {page_number}', y=950, page_number=page_number, width=200
+            )
+        )
+        assert len(get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)) == 4
+
+    def test_names_a_side_margin_number_a_marginnote(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                str(page_number), y=450, page_number=page_number, x=500
+            )
+        )
+        result = get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)
+        assert len(result) == 4
+        assert {nb.note_type for nb in result} == {'marginnote'}
+
+    def test_filters_a_repeating_head_pattern_that_carries_a_page_number(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                f'Journal of Something {page_number}', y=10,
+                page_number=page_number, width=200
+            )
+        )
+        result = get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)
+        assert len(result) == 4
+        assert {nb.note_type for nb in result} == {'running-head'}
+
+    def test_reports_a_block_both_rules_find_once(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block('Journal Name', y=10, page_number=page_number)
+        )
+        repeating_only = get_noise_blocks(doc, ENABLED_CONFIG)
+        both = get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)
+        assert len(repeating_only) == 4
+        assert len(both) == 4
+
+    def test_preserves_a_first_page_foot_when_asked(self):
+        doc = _doc_with_extra_block_per_page(
+            lambda page_number: _small_block(
+                str(page_number), y=950, page_number=page_number
+            )
+        )
+        result = get_noise_blocks(doc, LayoutNoiseFilterConfig(
+            enabled=True, outside_main_area=True, preserve_first_page_foot=True
+        ))
+        assert len(result) == 3
+
+    def test_keeps_everything_when_no_main_area_can_be_computed(self):
+        doc = _doc(
+            _page([_small_block('1', y=950, page_number=1)], page_number=1),
+            _page([_small_block('2', y=950, page_number=2)], page_number=2),
+        )
+        assert not get_noise_blocks(doc, OUTSIDE_MAIN_AREA_CONFIG)

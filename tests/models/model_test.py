@@ -17,6 +17,7 @@ from sciencebeam_parser.models.model import (
     LayoutDocumentLabelResult,
     LayoutModelLabel,
     Model,
+    get_layout_document_label_result_with_relabelled_lines,
     iter_entity_values_predicted_labels
 )
 from sciencebeam_parser.models.model_impl import ModelImpl
@@ -232,3 +233,60 @@ class TestModel:
         mock_model.preload()
         model_impl_factory.assert_called()
         model_impl.preload_mock.assert_called()
+
+
+class TestGetLayoutDocumentLabelResultWithRelabelledLines:
+    def _label_result(self, labels_and_lines):
+        return LayoutDocumentLabelResult(
+            layout_document=LayoutDocument(pages=[]),
+            layout_model_label_iterable=[
+                LayoutModelLabel(label=label, label_token_text='', layout_line=line)
+                for label, line in labels_and_lines
+            ]
+        )
+
+    def test_should_return_the_same_result_without_lines(self):
+        result = self._label_result([('I-<body>', LayoutLine(tokens=[]))])
+        assert get_layout_document_label_result_with_relabelled_lines(
+            result, [], '<page>'
+        ) is result
+
+    def test_should_relabel_only_the_given_line(self):
+        keep, noise = LayoutLine(tokens=[]), LayoutLine(tokens=[])
+        result = get_layout_document_label_result_with_relabelled_lines(
+            self._label_result([('I-<body>', keep), ('<body>', noise)]), [noise], '<page>'
+        )
+        assert [item.label for item in result.layout_model_label_list] == [
+            'I-<body>', 'I-<page>'
+        ]
+
+    def test_should_continue_a_run_of_relabelled_lines(self):
+        first, second = LayoutLine(tokens=[]), LayoutLine(tokens=[])
+        result = get_layout_document_label_result_with_relabelled_lines(
+            self._label_result([('I-<body>', first), ('<body>', second)]),
+            [first, second], '<page>'
+        )
+        assert [item.label for item in result.layout_model_label_list] == [
+            'I-<page>', '<page>'
+        ]
+
+    def test_should_start_a_new_run_after_a_kept_line(self):
+        first, keep, second = LayoutLine(tokens=[]), LayoutLine(tokens=[]), LayoutLine(tokens=[])
+        result = get_layout_document_label_result_with_relabelled_lines(
+            self._label_result([
+                ('I-<body>', first), ('<body>', keep), ('<body>', second)
+            ]),
+            [first, second], '<page>'
+        )
+        assert [item.label for item in result.layout_model_label_list] == [
+            'I-<page>', '<body>', 'I-<page>'
+        ]
+
+    def test_should_make_the_relabelled_line_unreachable_by_its_old_label(self):
+        keep, noise = LayoutLine(tokens=[]), LayoutLine(tokens=[])
+        result = get_layout_document_label_result_with_relabelled_lines(
+            self._label_result([('I-<references>', keep), ('<references>', noise)]),
+            [noise], '<page>'
+        )
+        references = result.get_layout_document_labels_by_labels(['<references>'])
+        assert [item.layout_line for item in references] == [keep]

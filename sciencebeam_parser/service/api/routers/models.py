@@ -23,7 +23,6 @@ from sciencebeam_parser.app.parser import (
 from sciencebeam_parser.app.profiles import ProfileBundle
 from sciencebeam_parser.document.layout_document import LayoutDocument
 from sciencebeam_parser.document.layout_noise_filter import (
-    LayoutNoiseFilterConfig,
     get_noise_blocks,
     remove_noise_blocks,
 )
@@ -43,7 +42,6 @@ from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 from sciencebeam_parser.external.pdfalto.wrapper import PdfAltoWrapper
 from sciencebeam_parser.models.data import AppFeaturesContext, DocumentFeaturesContext
 from sciencebeam_parser.models.model import Model
-from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.service.api.dependencies import (
     get_profile_bundle,
     get_sciencebeam_parser_session_source_dependency_factory
@@ -66,17 +64,6 @@ VALID_MODEL_OUTPUT_FORMATS = [
     TagOutputFormats.DATA,
     TagOutputFormats.XML
 ]
-
-
-def get_noise_filter_config(
-    fulltext_processor_config: FullTextProcessorConfig
-) -> LayoutNoiseFilterConfig:
-    return LayoutNoiseFilterConfig(
-        enabled=fulltext_processor_config.noise_filter_enabled,
-        repetition_fraction=fulltext_processor_config.noise_filter_repetition_fraction,
-        preserve_first_page_head=fulltext_processor_config.noise_filter_preserve_first_page_head,
-        preserve_first_page_foot=fulltext_processor_config.noise_filter_preserve_first_page_foot,
-    )
 
 
 class ModelResponseRouterFactory:
@@ -152,9 +139,7 @@ class ModelResponseRouterFactory:
         layout_document: LayoutDocument,
         profile_bundle: ProfileBundle
     ) -> LayoutDocument:
-        noise_filter_config = get_noise_filter_config(
-            profile_bundle.fulltext_processor_config
-        )
+        noise_filter_config = profile_bundle.fulltext_processor_config.noise_filter
         if not noise_filter_config.enabled:
             return layout_document
         noise_blocks = get_noise_blocks(layout_document, noise_filter_config)

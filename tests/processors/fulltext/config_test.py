@@ -1,6 +1,10 @@
 import pytest
 
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.document.layout_noise_filter import (
+    NOISE_ACTION_RELABEL,
+    LayoutNoiseFilterConfig,
+)
 from sciencebeam_parser.processors.fulltext.config import (
     FullTextProcessorConfig,
     RequestFieldNames
@@ -82,3 +86,36 @@ class TestFullTextProcessorConfig:
         assert not config.extract_back_sections
         assert not config.extract_references
         assert not config.extract_graphic_bounding_boxes
+
+
+class TestNoiseFilterConfig:
+    def test_should_default_to_the_dataclass_defaults(self):
+        assert FullTextProcessorConfig().noise_filter == LayoutNoiseFilterConfig()
+
+    def test_should_override_only_the_given_settings(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {'noise_filter': {
+                'enabled': True,
+                'outside_main_area': True,
+                'action': NOISE_ACTION_RELABEL,
+            }}}
+        }))
+        assert config.noise_filter == LayoutNoiseFilterConfig(
+            enabled=True, outside_main_area=True, action=NOISE_ACTION_RELABEL
+        )
+
+    def test_should_keep_the_other_fulltext_settings(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {
+                'merge_raw_authors': True,
+                'noise_filter': {'enabled': True},
+            }}
+        }))
+        assert config.merge_raw_authors is True
+        assert config.noise_filter.enabled is True
+
+    def test_should_leave_the_default_when_no_noise_filter_is_given(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {'merge_raw_authors': True}}
+        }))
+        assert config.noise_filter == LayoutNoiseFilterConfig()
