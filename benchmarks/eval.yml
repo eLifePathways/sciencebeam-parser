@@ -221,9 +221,11 @@ baselines:
     version: main
     profile: grobid_crf
     generate: false
-  # Not deployed yet: a run finds no stored predictions and skips it.
+  # TEST BRANCH -- DO NOT MERGE. Points at the mid-training checkpoint, which has
+  # stored predictions, so the report shows the column. Its scores describe
+  # neither the model nor the approach.
   - tool: jats-agentic-annotation
-    version: qwen3.5-9b-rl-v13e-s50
+    version: qwen3.5-9b-teacher-distill-v1
     profile: default
     generate: false
   # Mid-training checkpoint, kept for reference; its scores describe neither the
