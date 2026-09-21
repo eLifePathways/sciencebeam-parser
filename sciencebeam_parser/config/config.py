@@ -13,6 +13,28 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_DOWNLOAD_DIR = 'data/download'
 
 
+# What a profile is allowed to overlay. Everything outside this set is built once
+# and shared by every profile, and nothing about those objects is keyed on the
+# configuration they were built from -- so a profile setting `lookup` or
+# `llm_response_cache_dir` would be served the deployment's value alongside its
+# own models, with nothing able to observe the mismatch.
+PROFILE_OVERLAY_KEYS = frozenset({'sequence_models', 'models', 'processors'})
+
+
+# What `selectable_profiles` says to mean every declared profile. A word rather
+# than `*`, which is an alias indicator in YAML and so cannot be passed through
+# `SCIENCEBEAM_PARSER__SELECTABLE_PROFILES`.
+ALL_PROFILES = 'all'
+
+
+class UnknownProfileError(ValueError):
+    """A name that is not a profile. Raised for a request, so it carries the list."""
+
+
+class InvalidProfileError(ValueError):
+    """A profile the process must not serve, found before it serves anything."""
+
+
 def parse_env_value(value: str) -> Union[str, int]:
     return yaml.safe_load(value)
 
@@ -123,7 +145,7 @@ class AppConfig:
         if resolved not in profiles:
             available = sorted(profiles)
             suffix = f' (alias for {resolved!r})' if resolved != name else ''
-            raise ValueError(
+            raise UnknownProfileError(
                 f'Unknown profile {name!r}{suffix}. Available: {available}'
             )
 
@@ -152,6 +174,25 @@ class AppConfig:
             return None
         aliases = self.props.get('profile_aliases', {})
         return aliases.get(name, name)
+
+    def get_profile_names(self) -> List[str]:
+        return sorted(self.props.get('profiles', {}))
+
+    def validate_profiles(self) -> 'AppConfig':
+        profiles = self.props.get('profiles', {})
+        if ALL_PROFILES in profiles:
+            raise InvalidProfileError(
+                f'A profile may not be named {ALL_PROFILES!r}: that is what '
+                '`selectable_profiles` says to mean every profile'
+            )
+        for name, profile in sorted(profiles.items()):
+            invalid_keys = sorted(set(profile) - PROFILE_OVERLAY_KEYS)
+            if invalid_keys:
+                raise InvalidProfileError(
+                    f'Profile {name!r} may not set {invalid_keys}. '
+                    f'A profile may only set {sorted(PROFILE_OVERLAY_KEYS)}'
+                )
+        return self
 
     def get(self, key: str, default_value: Optional[Any] = None):
         return self.props.get(key, default_value)

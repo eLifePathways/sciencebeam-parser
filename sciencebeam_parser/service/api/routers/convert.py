@@ -8,11 +8,13 @@ from sciencebeam_parser.app.parser import (
     ScienceBeamParserSession,
     ScienceBeamParserSessionSource
 )
+from sciencebeam_parser.app.profiles import ProfileBundle
 from sciencebeam_parser.service.api.dependencies import (
     ScienceBeamParserSessionDependencyFactory,
     ScienceBeamParserSessionSourceDependencyFactory,
     assert_and_get_first_accept_matching_media_type_factory,
     get_media_data_wrapper,
+    get_profile_bundle,
     get_sciencebeam_parser,
     get_session_source_for_data_wrapper
 )
@@ -35,6 +37,7 @@ def get_convert_sciencebeam_parser_session_dependency_factory(
     def get_session(
         *,
         sciencebeam_parser: Annotated[ScienceBeamParser, Depends(get_sciencebeam_parser)],
+        profile_bundle: Annotated[ProfileBundle, Depends(get_profile_bundle)],
         first_page: Optional[int] = None,
         last_page: Optional[int] = None,
         includes: Annotated[
@@ -45,12 +48,13 @@ def get_convert_sciencebeam_parser_session_dependency_factory(
         includes_list = parse_comma_separated_value(includes or '')
         LOGGER.info('includes_list: %r', includes_list)
         fulltext_processor_config = (
-            sciencebeam_parser
+            profile_bundle
             .fulltext_processor_config
             .get_for_requested_field_names(set(includes_list))
         )
         with sciencebeam_parser.get_new_session(
-            fulltext_processor_config=fulltext_processor_config
+            fulltext_processor_config=fulltext_processor_config,
+            fulltext_models=profile_bundle.fulltext_models
         ) as session:
             session.document_request_parameters.first_page = first_page
             session.document_request_parameters.last_page = last_page

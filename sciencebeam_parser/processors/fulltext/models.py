@@ -4,10 +4,13 @@ from dataclasses import dataclass
 from typing import (
     Any,
     Iterable,
+    Mapping,
     Optional,
     Type,
     TypeVar
 )
+
+from typing_extensions import Protocol
 
 from sciencebeam_parser.app.context import AppContext
 from sciencebeam_parser.config.config import AppConfig
@@ -74,22 +77,56 @@ class FullTextModels:
 T_Model = TypeVar('T_Model', bound=Model)
 
 
-def load_model(
-    app_config: AppConfig,
+# The class each `models:` entry is built as. `load_models` below is the reader
+# of record; this map lets a caller know what a configuration costs before
+# building any of it, and `models_test.py` holds the two in agreement.
+SEQUENCE_MODEL_CLASS_BY_NAME: Mapping[str, Type[Model]] = {
+    'segmentation': SegmentationModel,
+    'header': HeaderModel,
+    'name_header': NameModel,
+    'name_citation': NameModel,
+    'affiliation_address': AffiliationAddressModel,
+    'fulltext': FullTextModel,
+    'figure': FigureModel,
+    'table': TableModel,
+    'reference_segmenter': ReferenceSegmenterModel,
+    'citation': CitationModel
+}
+
+
+class SequenceModelFactory(Protocol):
+    def __call__(self, model_config: dict, model_class: Type[T_Model]) -> T_Model:
+        pass
+
+
+def create_model_for_config(
+    model_config: dict,
     app_context: AppContext,
-    model_name: str,
     model_class: Type[T_Model]
 ) -> T_Model:
-    models_config = app_config['models']
-    model_config = models_config[model_name]
-    model = model_class(
+    return model_class(
         get_model_impl_factory_for_config(
             model_config,
             app_context=app_context
         ),
         model_config=model_config
     )
-    return model
+
+
+def load_model(
+    app_config: AppConfig,
+    app_context: AppContext,
+    model_name: str,
+    model_class: Type[T_Model],
+    model_factory: Optional[SequenceModelFactory] = None
+) -> T_Model:
+    models_config = app_config['models']
+    model_config = models_config[model_name]
+    if model_factory is not None:
+        return model_factory(model_config, model_class)
+    return create_model_for_config(
+        model_config, app_context=app_context, model_class=model_class
+    )
 
 
 def get_cv_model_for_app_config(
@@ -115,57 +152,29 @@ def get_ocr_model_for_app_config(
 def load_models(
     app_config: AppConfig,
     app_context: AppContext,
-    fulltext_processor_config: FullTextProcessorConfig
+    fulltext_processor_config: FullTextProcessorConfig,
+    model_factory: Optional[SequenceModelFactory] = None
 ) -> FullTextModels:
-    segmentation_model = load_model(
-        app_config, app_context, 'segmentation', SegmentationModel
-    )
-    header_model = load_model(
-        app_config, app_context, 'header', HeaderModel
-    )
-    name_header_model = load_model(
-        app_config, app_context, 'name_header', NameModel
-    )
-    name_citation_model = load_model(
-        app_config, app_context, 'name_citation', NameModel
-    )
-    affiliation_address_model = load_model(
-        app_config, app_context, 'affiliation_address', AffiliationAddressModel
-    )
-    fulltext_model = load_model(
-        app_config, app_context, 'fulltext', FullTextModel
-    )
-    figure_model = load_model(
-        app_config, app_context, 'figure', FigureModel
-    )
-    table_model = load_model(
-        app_config, app_context, 'table', TableModel
-    )
-    reference_segmenter_model = load_model(
-        app_config, app_context, 'reference_segmenter', ReferenceSegmenterModel
-    )
-    citation_model = load_model(
-        app_config, app_context, 'citation', CitationModel
-    )
-    cv_model = get_cv_model_for_app_config(
-        app_config,
-        enabled=fulltext_processor_config.use_cv_model
-    )
-    ocr_model = get_ocr_model_for_app_config(
-        app_config,
-        enabled=fulltext_processor_config.use_ocr_model
-    )
+    def _load(model_name: str, model_class: Type[T_Model]) -> T_Model:
+        return load_model(app_config, app_context, model_name, model_class, model_factory)
+
     return FullTextModels(
-        segmentation_model=segmentation_model,
-        header_model=header_model,
-        name_header_model=name_header_model,
-        name_citation_model=name_citation_model,
-        affiliation_address_model=affiliation_address_model,
-        fulltext_model=fulltext_model,
-        figure_model=figure_model,
-        table_model=table_model,
-        reference_segmenter_model=reference_segmenter_model,
-        citation_model=citation_model,
-        cv_model=cv_model,
-        ocr_model=ocr_model
+        segmentation_model=_load('segmentation', SegmentationModel),
+        header_model=_load('header', HeaderModel),
+        name_header_model=_load('name_header', NameModel),
+        name_citation_model=_load('name_citation', NameModel),
+        affiliation_address_model=_load('affiliation_address', AffiliationAddressModel),
+        fulltext_model=_load('fulltext', FullTextModel),
+        figure_model=_load('figure', FigureModel),
+        table_model=_load('table', TableModel),
+        reference_segmenter_model=_load('reference_segmenter', ReferenceSegmenterModel),
+        citation_model=_load('citation', CitationModel),
+        cv_model=get_cv_model_for_app_config(
+            app_config,
+            enabled=fulltext_processor_config.use_cv_model
+        ),
+        ocr_model=get_ocr_model_for_app_config(
+            app_config,
+            enabled=fulltext_processor_config.use_ocr_model
+        )
     )
