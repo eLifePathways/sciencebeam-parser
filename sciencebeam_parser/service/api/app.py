@@ -5,7 +5,6 @@ from fastapi import (
     Request,
     Response
 )
-from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 
@@ -48,22 +47,6 @@ def create_api_app(
     app.include_router(create_models_router(
         sciencebeam_parser=sciencebeam_parser
     ))
-
-    def openapi_naming_selectable_profiles() -> dict:
-        if not app.openapi_schema:
-            app.openapi_schema = add_profile_names_to_openapi_schema(
-                get_openapi(
-                    title=app.title,
-                    version=app.version,
-                    openapi_version=app.openapi_version,
-                    description=app.description,
-                    routes=app.routes
-                ),
-                sciencebeam_parser.profile_registry.get_available_profile_names()
-            )
-        return app.openapi_schema
-
-    app.openapi = openapi_naming_selectable_profiles  # type: ignore[method-assign]
 
     def with_request_headers(response: Response) -> Response:
         header_value = get_request_llm_usage_header_value()
@@ -112,5 +95,13 @@ def create_api_app(
         return {
             'links': {}
         }
+
+    # Built here, with every route registered, rather than on the first request
+    # for it: `app.openapi()` caches into `openapi_schema`, and what a deployment
+    # will serve is settled by the time it has a parser.
+    app.openapi_schema = add_profile_names_to_openapi_schema(
+        app.openapi(),
+        sciencebeam_parser.profile_registry.get_available_profile_names()
+    )
 
     return app
