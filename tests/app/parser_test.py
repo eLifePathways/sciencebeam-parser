@@ -17,6 +17,7 @@ from sciencebeam_parser.utils.media_types import MediaTypes
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 from sciencebeam_parser.app import parser as parser_module
+from sciencebeam_parser.app import profiles as profiles_module
 from sciencebeam_parser.app.parser import (
     TEMP_ALTO_XML_FILENAME,
     ScienceBeamParser,
@@ -78,7 +79,7 @@ def _fulltextprocessor_mock(full_text_processor_class_mock: MagicMock) -> MagicM
 
 @pytest.fixture(name='load_models_mock', autouse=True)
 def _load_models_mock() -> Iterator[MagicMock]:
-    with patch.object(parser_module, 'load_models') as mock:
+    with patch.object(profiles_module, 'load_models') as mock:
         yield mock
 
 

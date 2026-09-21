@@ -14,7 +14,12 @@ from sciencebeam_trainer_delft.sequence_labelling.tag_formatter import (
     iter_format_tag_result
 )
 
-from sciencebeam_parser.models.data import DEFAULT_APP_FEATURES_CONTEXT
+from sciencebeam_parser.app.profiles import ProfileBundle
+from sciencebeam_parser.models.data import (
+    DEFAULT_APP_FEATURES_CONTEXT,
+    DocumentFeaturesContext
+)
+from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.service.api.routers.models import (
     ModelResponseRouterFactory,
     create_models_router
@@ -30,19 +35,35 @@ def _mock_fulltext_models() -> MockFullTextModels:
     return MockFullTextModels()
 
 
+@pytest.fixture(name='profile_bundle')
+def _profile_bundle(mock_fulltext_models: MockFullTextModels) -> ProfileBundle:
+    return ProfileBundle(
+        name='profile1',
+        fulltext_models=mock_fulltext_models,
+        fulltext_processor_config=FullTextProcessorConfig(),
+        models_digest='profile1-digest'
+    )
+
+
+@pytest.fixture(name='sciencebeam_parser_mock')
+def _sciencebeam_parser_mock(profile_bundle: ProfileBundle) -> MagicMock:
+    mock = MagicMock(name='sciencebeam_parser')
+    mock.app_features_context = DEFAULT_APP_FEATURES_CONTEXT
+    mock.profile_registry.get_bundle.return_value = profile_bundle
+    return mock
+
+
 @pytest.fixture(name='test_client')
-def _test_client(mock_fulltext_models: MockFullTextModels) -> TestClient:
-    sciencebeam_parser_mock = MagicMock(name='sciencebeam_parser')
-    sciencebeam_parser_mock.fulltext_models = mock_fulltext_models
-    sciencebeam_parser_mock.app_features_context = DEFAULT_APP_FEATURES_CONTEXT
+def _test_client(sciencebeam_parser_mock: MagicMock) -> TestClient:
     app = FastAPI()
+    app.state.sciencebeam_parser = sciencebeam_parser_mock
     app.include_router(create_models_router(sciencebeam_parser_mock))
     return TestClient(app)
 
 
 class TestHandlePostSpan:
     def test_should_name_the_document_and_the_model(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, profile_bundle: ProfileBundle
     ):
         """This endpoint does not go through the parser's own document span.
 
@@ -61,7 +82,7 @@ class TestHandlePostSpan:
         )
         factory = ModelResponseRouterFactory(
             name='citation',
-            model=MagicMock(name='model'),
+            sequence_model_name='citation',
             pdfalto_wrapper=MagicMock(name='pdfalto_wrapper'),
             app_features_context=DEFAULT_APP_FEATURES_CONTEXT,
             model_name='citation'
@@ -73,7 +94,9 @@ class TestHandlePostSpan:
         source.source_name = 'the-uploaded-name.pdf'
         source.source_media_type = 'application/pdf'
 
-        assert factory.handle_post(source, 'json') == 'the response'
+        assert factory.handle_post(
+            source, 'json', profile_bundle
+        ) == 'the response'
         assert recorded == [(
             'process_document',
             {
@@ -81,6 +104,7 @@ class TestHandlePostSpan:
                 'sciencebeam.document.source_media_type': 'application/pdf',
                 'sciencebeam.model.name': 'citation',
                 'sciencebeam.model.output_format': 'json',
+                'sciencebeam.profile.name': 'profile1',
             }
         )]
 
@@ -147,3 +171,44 @@ class TestRaggedTagResultFormatting:
                 features=features,
                 model_name='citation'
             ))
+
+
+class TestModelsRouterProfile:
+    def test_should_serve_the_deployment_profile_when_nothing_is_named(
+        self, test_client: TestClient, sciencebeam_parser_mock: MagicMock
+    ):
+        response = test_client.get('/models/segmentation/feature-names')
+        assert response.status_code == 200
+        sciencebeam_parser_mock.profile_registry.get_bundle.assert_called_with(None)
+
+    def test_should_honour_the_named_profile(
+        self, test_client: TestClient, sciencebeam_parser_mock: MagicMock
+    ):
+        response = test_client.get(
+            '/models/segmentation/feature-names', params={'profile': 'profile2'}
+        )
+        assert response.status_code == 200
+        sciencebeam_parser_mock.profile_registry.get_bundle.assert_called_with('profile2')
+
+    def test_should_read_the_model_from_the_requested_bundle(
+        self, test_client: TestClient, sciencebeam_parser_mock: MagicMock
+    ):
+        """The router holds a name; which instance it names is per request."""
+        other_models = MockFullTextModels()
+        sciencebeam_parser_mock.profile_registry.get_bundle.return_value = ProfileBundle(
+            name='profile2',
+            fulltext_models=other_models,
+            fulltext_processor_config=FullTextProcessorConfig(),
+            models_digest='profile2-digest'
+        )
+        response = test_client.get(
+            '/models/header/feature-names', params={'profile': 'profile2'}
+        )
+        assert response.status_code == 200
+        assert response.json()['feature_names'] == (
+            other_models.header_model.get_data_generator(
+                DocumentFeaturesContext(
+                    app_features_context=DEFAULT_APP_FEATURES_CONTEXT
+                )
+            ).feature_names
+        )

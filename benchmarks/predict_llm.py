@@ -39,7 +39,7 @@ HEALTH_PATH = "/health"
 # One section of a five-line document took 232s, so this is not the parser's scale.
 DEFAULT_TIMEOUT_SECONDS = 1800
 # Documents in flight. Each one holds three calls open, so this multiplies.
-DEFAULT_CONCURRENCY = 2
+DEFAULT_CONCURRENCY = 6
 
 # Attempts per call. Modal answers a cold or busy container with a 303 back to
 # the same url, and a loaded one with 408 or 500; both are worth asking again.

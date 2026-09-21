@@ -20,9 +20,21 @@ from sciencebeam_parser.utils.media_types import MediaTypes
 LOGGER = logging.getLogger(__name__)
 
 
-def create_grobid_router(
+def get_for_references(
     fulltext_processor_config: FullTextProcessorConfig
-) -> APIRouter:
+) -> FullTextProcessorConfig:
+    return fulltext_processor_config.get_for_requested_field_names({
+        RequestFieldNames.REFERENCES
+    })
+
+
+def create_grobid_router() -> APIRouter:
+    """GROBID's API, plus the `profile` parameter every other route takes.
+
+    A deliberate departure from the API being mimicked: no GROBID client sends
+    the parameter, and the benchmark drives these routes rather than `/convert`,
+    so leaving them out would leave out what a per-request profile is for.
+    """
     router = APIRouter(tags=['grobid'])
 
     @router.post(
@@ -38,7 +50,7 @@ def create_grobid_router(
             ScienceBeamParserSessionSource,
             Depends(
                 get_sciencebeam_parser_session_source_dependency_factory(
-                    fulltext_processor_config=fulltext_processor_config.get_for_header_document()
+                    FullTextProcessorConfig.get_for_header_document
                 )
             )
         ],
@@ -68,9 +80,7 @@ def create_grobid_router(
         source: Annotated[
             ScienceBeamParserSessionSource,
             Depends(
-                get_sciencebeam_parser_session_source_dependency_factory(
-                    fulltext_processor_config=fulltext_processor_config
-                )
+                get_sciencebeam_parser_session_source_dependency_factory()
             )
         ],
         response_media_type: Annotated[
@@ -100,12 +110,7 @@ def create_grobid_router(
             ScienceBeamParserSessionSource,
             Depends(
                 get_sciencebeam_parser_session_source_dependency_factory(
-                    fulltext_processor_config=(
-                        fulltext_processor_config
-                        .get_for_requested_field_names({
-                            RequestFieldNames.REFERENCES
-                        })
-                    )
+                    get_for_references
                 )
             )
         ],
@@ -135,9 +140,7 @@ def create_grobid_router(
         source: Annotated[
             ScienceBeamParserSessionSource,
             Depends(
-                get_sciencebeam_parser_session_source_dependency_factory(
-                    fulltext_processor_config=fulltext_processor_config
-                )
+                get_sciencebeam_parser_session_source_dependency_factory()
             )
         ],
         response_media_type: Annotated[

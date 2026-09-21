@@ -93,10 +93,23 @@ lookup:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/places/location.txt
 processors:
   fulltext:
-    noise_filter_enabled: true
-    noise_filter_repetition_fraction: 0.5
-    noise_filter_preserve_first_page_head: false
-    noise_filter_preserve_first_page_foot: false
+    noise_filter:
+      enabled: true
+      repetition_fraction: 0.5
+      position_consistency_fraction: 0.8
+      max_position_stddev: 0.05
+      max_height_ratio: 2.0
+      preserve_first_page_head: false
+      preserve_first_page_foot: false
+      outside_main_area: false
+      min_repeating_pattern_length: 3
+      max_letterless_length: 12
+      # Follows the segmentation engine, so it belongs in the profile wherever that
+      # engine is not a CRF. `drop` takes the blocks out before segmentation, which
+      # a CRF gains from and a model reading text does not; `relabel` leaves the
+      # document whole and overrules the label it gives them, which is all an LLM
+      # can use and costs a CRF the documents its features shift on.
+      action: 'drop'
     merge_raw_authors: false
     use_cv_model: false
     cv_render_dpi: 100
@@ -287,57 +300,80 @@ profiles:
     sequence_models: grobid_crf_0_9_0
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   wapiti_grobid_only:
     sequence_models: wapiti_grobid_only
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   wapiti_refseg_scielo_preprints_ore:
     sequence_models: wapiti_refseg_scielo_preprints_ore
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   wapiti_citation_scielo_preprints_ore:
     sequence_models: wapiti_citation_scielo_preprints_ore
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   wapiti_scielo_preprints_ore:
     sequence_models: wapiti_scielo_preprints_ore
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   llm_reference_segmenter:
     sequence_models: llm_reference_segmenter
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   llm_citation:
     sequence_models: llm_citation
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   llm_segmentation:
     sequence_models: llm_segmentation
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   llm_all:
     sequence_models: llm_all
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
   llm_references:
     sequence_models: llm_references
     processors:
       fulltext:
-        noise_filter_enabled: false
+        noise_filter:
+          enabled: false
 
 profile_aliases:
   grobid_crf: grobid_crf_0_9_0
 
 profile: grobid_crf
+
+# Which profiles a request may name with `?profile=`, beside `profile` above,
+# which is always selectable and is what a request naming nothing gets. Empty by
+# default: a process holds only what it was started for until a deployment says
+# it may hold more. `all` means every profile declared above, still bounded by
+# `max_loaded_models`.
+selectable_profiles: []
+
+# How many distinct sequence models one process will hold across every profile
+# it has served. Counted in models rather than profiles because profiles overlap:
+# the wapiti ones differ from their base by one model of ten. Over this, a
+# request for a profile not already resolved is refused rather than loaded.
+max_loaded_models: 40
 
 cv_models:
   default:
