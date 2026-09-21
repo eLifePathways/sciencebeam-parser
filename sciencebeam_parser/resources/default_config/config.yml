@@ -355,7 +355,9 @@ profiles:
     processors:
       fulltext:
         noise_filter:
-          enabled: false
+          enabled: true
+          outside_main_area: true
+          action: 'relabel'
   llm_references:
     sequence_models: llm_references
     processors:
