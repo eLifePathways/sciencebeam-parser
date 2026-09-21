@@ -15,8 +15,18 @@ from sciencebeam_parser.app.parser import (
     UnsupportedRequestMediaTypeScienceBeamParserError,
     UnsupportedResponseMediaTypeScienceBeamParserError
 )
-from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.app.profiles import (
+    PROFILE_DIGEST_HEADER_NAME,
+    PROFILE_HEADER_NAME,
+    ProfileBundle
+)
+from sciencebeam_parser.app.profiles import (
+    ProfileNotSelectableError,
+    TooManyLoadedModelsError
+)
+from sciencebeam_parser.config.config import AppConfig, UnknownProfileError
 from sciencebeam_parser.models.llm.decode import LlmResponseError
+from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.models.llm.usage import USAGE_HEADER_NAME, record_llm_usage
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 from sciencebeam_parser.service.api.app import create_api_app
@@ -49,11 +59,24 @@ def _request_temp_path(tmp_path: Path) -> Path:
     return request_temp_path
 
 
+PROFILE_NAME_1 = 'profile1'
+
+
+def get_profile_bundle_mock(name: str = PROFILE_NAME_1) -> ProfileBundle:
+    return ProfileBundle(
+        name=name,
+        fulltext_models=MagicMock(name='fulltext_models'),
+        fulltext_processor_config=FullTextProcessorConfig(),
+        models_digest=f'{name}-digest'
+    )
+
+
 @pytest.fixture(name='sciencebeam_parser_mock')
 def _sciencebeam_parser_mock() -> MagicMock:
     mock = MagicMock(
         name='sciencebeam_parser_mock'
     )
+    mock.profile_registry.get_bundle.return_value = get_profile_bundle_mock()
     return mock
 
 
@@ -606,3 +629,198 @@ class TestLlmUsageHeader:
             reported = list(pool.map(post, range(2)))
 
         assert sorted(reported) == [1, 3]
+
+
+DOCUMENT_ROUTE_PATHS = [
+    '/pdfalto',
+    '/convert',
+    '/processHeaderDocument',
+    '/processFulltextDocument',
+    '/processReferences',
+    '/processFulltextAssetDocument',
+]
+
+PROFILE_NAME_2 = 'profile2'
+
+
+@pytest.fixture(name='ok_response_mock')
+def _ok_response_mock(
+    get_local_file_for_response_media_type_mock: MagicMock,
+    request_temp_path: Path
+) -> MagicMock:
+    output_path = request_temp_path / 'result.xml'
+    output_path.write_bytes(TEI_XML_CONTENT_1)
+    get_local_file_for_response_media_type_mock.return_value = str(output_path)
+    return get_local_file_for_response_media_type_mock
+
+
+def post_document(
+    test_client: TestClient, path: str, **kwargs
+) -> httpx.Response:
+    return test_client.post(path, files={
+        'input': (PDF_FILENAME_1, BytesIO(PDF_CONTENT_1), 'application/pdf')
+    }, **kwargs)
+
+
+class TestProfileSelection:
+    @pytest.mark.parametrize('path', DOCUMENT_ROUTE_PATHS)
+    def test_should_serve_the_deployment_profile_when_nothing_is_named(
+        self,
+        test_client: TestClient,
+        sciencebeam_parser_mock: MagicMock,
+        ok_response_mock: MagicMock,  # noqa pylint: disable=unused-argument
+        path: str
+    ):
+        assert post_document(test_client, path).status_code == 200
+        sciencebeam_parser_mock.profile_registry.get_bundle.assert_called_with(None)
+
+    @pytest.mark.parametrize('path', DOCUMENT_ROUTE_PATHS)
+    def test_should_honour_the_named_profile_on_every_document_route(
+        self,
+        test_client: TestClient,
+        sciencebeam_parser_mock: MagicMock,
+        ok_response_mock: MagicMock,  # noqa pylint: disable=unused-argument
+        path: str
+    ):
+        response = post_document(
+            test_client, path, params={'profile': PROFILE_NAME_2}
+        )
+        assert response.status_code == 200
+        sciencebeam_parser_mock.profile_registry.get_bundle.assert_called_with(
+            PROFILE_NAME_2
+        )
+
+    @pytest.mark.parametrize('path', DOCUMENT_ROUTE_PATHS)
+    def test_should_serve_the_requested_profiles_models(
+        self,
+        test_client: TestClient,
+        sciencebeam_parser_mock: MagicMock,
+        ok_response_mock: MagicMock,  # noqa pylint: disable=unused-argument
+        path: str
+    ):
+        bundle = get_profile_bundle_mock(PROFILE_NAME_2)
+        sciencebeam_parser_mock.profile_registry.get_bundle.return_value = bundle
+        assert post_document(
+            test_client, path, params={'profile': PROFILE_NAME_2}
+        ).status_code == 200
+        _, session_kwargs = sciencebeam_parser_mock.get_new_session.call_args
+        assert session_kwargs['fulltext_models'] is bundle.fulltext_models
+
+    def test_should_declare_the_parameter_on_every_route_that_serves_a_document(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        """A route quietly ignoring it would read as a null result, not a mistake."""
+        schema = create_api_app(sciencebeam_parser=sciencebeam_parser_mock).openapi()
+        without_profile = sorted(
+            f'{method.upper()} {path}'
+            for path, operations in schema['paths'].items()
+            for method, operation in operations.items()
+            if method == 'post'
+            and 'profile' not in {
+                parameter['name'] for parameter in operation.get('parameters', [])
+            }
+        )
+        assert without_profile == []
+
+
+class TestProfileRefusal:
+    def test_should_reject_an_unknown_profile_with_what_is_available(
+        self, test_client: TestClient, sciencebeam_parser_mock: MagicMock
+    ):
+        sciencebeam_parser_mock.profile_registry.get_bundle.side_effect = (
+            UnknownProfileError("Unknown profile 'nope'. Available: ['profile1']")
+        )
+        response = post_document(
+            test_client, '/processFulltextDocument', params={'profile': 'nope'}
+        )
+        assert response.status_code == 400
+        assert 'profile1' in response.json()['detail']
+
+    def test_should_reject_a_profile_the_deployment_does_not_serve(
+        self, test_client: TestClient, sciencebeam_parser_mock: MagicMock
+    ):
+        sciencebeam_parser_mock.profile_registry.get_bundle.side_effect = (
+            ProfileNotSelectableError("Profile 'other' is not selectable.")
+        )
+        response = post_document(
+            test_client, '/processFulltextDocument', params={'profile': 'other'}
+        )
+        assert response.status_code == 400
+        assert 'not selectable' in response.json()['detail']
+
+    def test_should_refuse_rather_than_load_past_the_limit(
+        self, test_client: TestClient, sciencebeam_parser_mock: MagicMock
+    ):
+        sciencebeam_parser_mock.profile_registry.get_bundle.side_effect = (
+            TooManyLoadedModelsError('40 models are loaded')
+        )
+        response = post_document(
+            test_client, '/processFulltextDocument', params={'profile': 'other'}
+        )
+        assert response.status_code == 503
+        assert '40 models are loaded' in response.json()['detail']
+
+
+class TestProfileAttributionHeader:
+    def test_should_say_which_profile_served_the_request(
+        self,
+        test_client: TestClient,
+        ok_response_mock: MagicMock  # noqa pylint: disable=unused-argument
+    ):
+        response = post_document(test_client, '/processFulltextDocument')
+        assert response.status_code == 200
+        assert response.headers[PROFILE_HEADER_NAME] == PROFILE_NAME_1
+        assert response.headers[PROFILE_DIGEST_HEADER_NAME] == f'{PROFILE_NAME_1}-digest'
+
+    def test_should_say_which_profile_a_failed_request_was_served_by(
+        self,
+        sciencebeam_parser_mock: MagicMock,
+        get_local_file_for_response_media_type_mock: MagicMock
+    ):
+        get_local_file_for_response_media_type_mock.side_effect = RuntimeError('failed')
+        client = TestClient(
+            create_api_app(sciencebeam_parser=sciencebeam_parser_mock),
+            raise_server_exceptions=False
+        )
+        response = post_document(client, '/processFulltextDocument')
+        assert response.status_code == 500
+        assert response.headers[PROFILE_HEADER_NAME] == PROFILE_NAME_1
+
+    def test_should_not_add_a_header_to_a_request_no_profile_served(
+        self, test_client: TestClient
+    ):
+        response = test_client.get('/isalive')
+        assert response.status_code == 200
+        assert PROFILE_HEADER_NAME not in response.headers
+
+    def test_should_keep_concurrent_requests_apart(
+        self,
+        sciencebeam_parser_mock: MagicMock,
+        ok_response_mock: MagicMock,  # noqa pylint: disable=unused-argument
+        test_client: TestClient
+    ):
+        bundle_by_name = {
+            PROFILE_NAME_1: get_profile_bundle_mock(PROFILE_NAME_1),
+            PROFILE_NAME_2: get_profile_bundle_mock(PROFILE_NAME_2),
+        }
+        barrier = threading.Barrier(2, timeout=5)
+
+        def get_bundle(name):
+            bundle = bundle_by_name[name]
+            # Both requests have resolved before either responds, so a shared
+            # holder would attribute both to whichever resolved last.
+            barrier.wait()
+            return bundle
+        sciencebeam_parser_mock.profile_registry.get_bundle.side_effect = get_bundle
+
+        def post(name: str) -> str:
+            response = post_document(
+                test_client, '/processFulltextDocument', params={'profile': name}
+            )
+            assert response.status_code == 200
+            return response.headers[PROFILE_HEADER_NAME]
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            reported = list(pool.map(post, [PROFILE_NAME_1, PROFILE_NAME_2]))
+
+        assert sorted(reported) == [PROFILE_NAME_1, PROFILE_NAME_2]

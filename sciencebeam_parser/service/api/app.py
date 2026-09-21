@@ -12,6 +12,10 @@ from sciencebeam_parser.app.parser import (
     ScienceBeamParser,
     UnsupportedRequestMediaTypeScienceBeamParserError
 )
+from sciencebeam_parser.app.profiles import (
+    get_request_profile_headers,
+    start_request_profile
+)
 from sciencebeam_parser.models.llm.usage import (
     USAGE_HEADER_NAME,
     get_request_llm_usage_header_value,
@@ -35,30 +39,31 @@ def create_api_app(
 
     app.include_router(create_status_router())
     app.include_router(create_convert_router())
-    app.include_router(create_grobid_router(
-        fulltext_processor_config=sciencebeam_parser.fulltext_processor_config
-    ))
+    app.include_router(create_grobid_router())
     app.include_router(create_low_level_router())
     app.include_router(create_models_router(
         sciencebeam_parser=sciencebeam_parser
     ))
 
-    def with_llm_usage_header(response: Response) -> Response:
+    def with_request_headers(response: Response) -> Response:
         header_value = get_request_llm_usage_header_value()
         if header_value is not None:
             response.headers[USAGE_HEADER_NAME] = header_value
+        for name, value in get_request_profile_headers().items():
+            response.headers[name] = value
         return response
 
     @app.middleware('http')
-    async def add_llm_usage_header(request: Request, call_next):
-        """What the request spent, beside the body rather than in it.
+    async def add_request_headers(request: Request, call_next):
+        """What served the request and what it spent, beside the body.
 
-        The accumulator is created here, in the request's own task, so that the
-        exception handler below can still read it: a document that failed has
-        already paid for the responses it got.
+        Both are created here, in the request's own task, so that the exception
+        handler below can still read them: a document that failed has already
+        paid for the responses it got, and was still served by a profile.
         """
         start_request_llm_usage()
-        return with_llm_usage_header(await call_next(request))
+        start_request_profile()
+        return with_request_headers(await call_next(request))
 
     @app.exception_handler(Exception)
     async def log_unhandled_exceptions(
@@ -66,7 +71,7 @@ def create_api_app(
         exc: Exception  # pylint: disable=unused-argument
     ):
         LOGGER.exception("Unhandled exception on %s %s", request.method, request.url)
-        return with_llm_usage_header(JSONResponse(
+        return with_request_headers(JSONResponse(
             status_code=500,
             content={"detail": "Internal Server Error"},
         ))

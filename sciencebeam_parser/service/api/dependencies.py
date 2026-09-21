@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Iterator, Optional, Protocol, Sequence
+from typing import Annotated, Callable, Iterator, Optional, Protocol, Sequence
 
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from fastapi import (
@@ -7,6 +7,7 @@ from fastapi import (
     File,
     HTTPException,
     Header,
+    Query,
     Request,
     UploadFile,
     status
@@ -18,6 +19,15 @@ from sciencebeam_parser.app.parser import (
     ScienceBeamParserSession,
     ScienceBeamParserSessionSource
 )
+from sciencebeam_parser.app.profiles import (
+    ProfileBundle,
+    ProfileNotSelectableError,
+    ProfileRegistry,
+    TooManyLoadedModelsError,
+    record_request_profile
+)
+from sciencebeam_parser.config.config import UnknownProfileError
+from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.utils.data_wrapper import (
     MediaDataWrapper,
     get_data_wrapper_with_improved_media_type_or_filename
@@ -99,16 +109,76 @@ def get_sciencebeam_parser(request: Request) -> ScienceBeamParser:
     return request.app.state.sciencebeam_parser
 
 
+def get_profile_registry(request: Request) -> ProfileRegistry:
+    return request.app.state.sciencebeam_parser.profile_registry
+
+
+PROFILE_QUERY_DESCRIPTION = (
+    'Name of the profile to serve this request with, from those the deployment '
+    'declares selectable. Defaults to the deployment\'s own profile.'
+)
+
+
+def get_profile_bundle(
+    *,
+    profile_registry: Annotated[ProfileRegistry, Depends(get_profile_registry)],
+    profile: Annotated[
+        Optional[str], Query(description=PROFILE_QUERY_DESCRIPTION)
+    ] = None
+) -> ProfileBundle:
+    """Which models and processor config serve this request.
+
+    One dependency for every route that serves a document, rather than a
+    parameter each route remembers to declare: a route that quietly ignored it
+    would make a comparison read as a null result rather than as a mistake.
+    """
+    try:
+        bundle = profile_registry.get_bundle(profile)
+    except (UnknownProfileError, ProfileNotSelectableError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except TooManyLoadedModelsError as exc:
+        # Not the request's fault, and it may succeed later: what this process
+        # already holds is what refused it.
+        LOGGER.warning('refusing profile %r: %s', profile, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    record_request_profile(bundle)
+    return bundle
+
+
+GetFullTextProcessorConfig = Callable[[FullTextProcessorConfig], FullTextProcessorConfig]
+
+
 def get_sciencebeam_parser_session_dependency_factory(
+    get_fulltext_processor_config: Optional[GetFullTextProcessorConfig] = None,
     **session_kwargs,
 ) -> ScienceBeamParserSessionDependencyFactory:
+    """A session over the requested profile, narrowed by what the route asks for.
+
+    The route contributes a narrowing rather than a processor config, because the
+    config it narrows arrives with the profile and is no longer known when the
+    router is built.
+    """
     def get_session(
         *,
         sciencebeam_parser: Annotated[ScienceBeamParser, Depends(get_sciencebeam_parser)],
+        profile_bundle: Annotated[ProfileBundle, Depends(get_profile_bundle)],
         first_page: Optional[int] = None,
         last_page: Optional[int] = None
     ) -> Iterator[ScienceBeamParserSession]:
-        with sciencebeam_parser.get_new_session(**session_kwargs) as session:
+        fulltext_processor_config = profile_bundle.fulltext_processor_config
+        if get_fulltext_processor_config is not None:
+            fulltext_processor_config = get_fulltext_processor_config(
+                fulltext_processor_config
+            )
+        with sciencebeam_parser.get_new_session(
+            fulltext_processor_config=fulltext_processor_config,
+            fulltext_models=profile_bundle.fulltext_models,
+            **session_kwargs
+        ) as session:
             session.document_request_parameters.first_page = first_page
             session.document_request_parameters.last_page = last_page
             yield session
@@ -144,6 +214,7 @@ def get_session_source_for_data_wrapper(
 
 
 def get_sciencebeam_parser_session_source_dependency_factory(
+    get_fulltext_processor_config: Optional[GetFullTextProcessorConfig] = None,
     **session_kwargs,
 ) -> ScienceBeamParserSessionSourceDependencyFactory:
     def get_source(
@@ -151,7 +222,9 @@ def get_sciencebeam_parser_session_source_dependency_factory(
         session: Annotated[
             ScienceBeamParserSession,
             Depends(
-                get_sciencebeam_parser_session_dependency_factory(**session_kwargs)
+                get_sciencebeam_parser_session_dependency_factory(
+                    get_fulltext_processor_config, **session_kwargs
+                )
             )
         ],
         data_wrapper: Annotated[MediaDataWrapper, Depends(get_media_data_wrapper)],

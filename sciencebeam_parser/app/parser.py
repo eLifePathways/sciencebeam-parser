@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
-from typing import List, Optional, Set
+from typing import List, Optional, Sequence, Set
 from zipfile import ZipFile
 
 from lxml import etree
@@ -13,6 +13,12 @@ from lxml import etree
 from sciencebeam_trainer_delft.utils.download_manager import DownloadManager
 
 from sciencebeam_parser.app.context import AppContext
+from sciencebeam_parser.app.profiles import (
+    DEFAULT_MAX_LOADED_MODELS,
+    ProfileBundle,
+    ProfileRegistry,
+    get_selectable_profile_names
+)
 from sciencebeam_parser.config.config import AppConfig, get_download_dir
 from sciencebeam_parser.external.pdfalto.wrapper import (
     PdfAltoWrapper,
@@ -44,8 +50,7 @@ from sciencebeam_parser.utils.tokenizer import get_tokenized_tokens
 from sciencebeam_parser.processors.fulltext.api import (
     FullTextProcessor,
     FullTextProcessorConfig,
-    FullTextProcessorDocumentContext,
-    load_models
+    FullTextProcessorDocumentContext
 )
 
 
@@ -231,7 +236,22 @@ class UnsupportedResponseMediaTypeScienceBeamParserError(BadRequestScienceBeamPa
 
 
 class ScienceBeamBaseParser:
-    def __init__(self, config: AppConfig):
+    """The part of parsing a document that no profile changes, plus a way to ask.
+
+    Everything built here is built once and shared by every profile, which is
+    what `AppConfig.validate_profiles` makes safe: none of it is keyed on the
+    configuration it came from, so a profile able to change it would be served
+    silently from the wrong one. What a profile does decide -- the models and the
+    processor config -- comes from `profile_registry` instead.
+    """
+
+    def __init__(
+        self,
+        config: AppConfig,
+        base_config: Optional[AppConfig] = None,
+        default_profile_name: Optional[str] = None,
+        selectable_profile_names: Optional[Sequence[str]] = None
+    ):
         self.config = config
         self.download_manager = DownloadManager(
             download_dir=get_download_dir(config)
@@ -253,14 +273,33 @@ class ScienceBeamBaseParser:
                 download_manager=self.download_manager
             )
         )
-        self.fulltext_processor_config = FullTextProcessorConfig.from_app_config(app_config=config)
-        self.fulltext_models = load_models(
-            config,
+        if base_config is None:
+            base_config = config
+        base_config.validate_profiles()
+        if default_profile_name is None:
+            default_profile_name = config.get_active_profile_name()
+        if selectable_profile_names is None:
+            selectable_profile_names = get_selectable_profile_names(
+                config, default_profile_name
+            )
+        self.profile_registry = ProfileRegistry(
+            base_config=base_config,
             app_context=self.app_context,
-            fulltext_processor_config=self.fulltext_processor_config
+            default_profile_name=default_profile_name,
+            selectable_profile_names=selectable_profile_names,
+            max_models=config.get('max_loaded_models', DEFAULT_MAX_LOADED_MODELS)
         )
+        LOGGER.info(
+            'default profile: %r, selectable: %r',
+            default_profile_name, self.profile_registry.get_available_profile_names()
+        )
+        # Built here rather than on first use, so a `models:` the process cannot
+        # serve is a failure to start rather than a failure to answer.
+        default_bundle = self.profile_registry.get_default_bundle()
         if config.get('preload_on_startup'):
-            self.fulltext_models.preload()
+            # The bundle a request for the default profile is served, rather than a
+            # copy of it -- otherwise the first request reloads what this warmed.
+            default_bundle.preload()
         self.app_features_context = load_app_features_context(
             config,
             download_manager=self.download_manager
@@ -276,6 +315,18 @@ class ScienceBeamBaseParser:
             **config.get('doc_to_pdf', {}).get('listener', {})
         )
 
+    @property
+    def default_profile_bundle(self) -> ProfileBundle:
+        return self.profile_registry.get_default_bundle()
+
+    @property
+    def fulltext_models(self) -> FullTextModels:
+        return self.default_profile_bundle.fulltext_models
+
+    @property
+    def fulltext_processor_config(self) -> FullTextProcessorConfig:
+        return self.default_profile_bundle.fulltext_processor_config
+
 
 class ScienceBeamParserBaseSession:
     def __init__(
@@ -283,6 +334,7 @@ class ScienceBeamParserBaseSession:
         parser: 'ScienceBeamParser',
         temp_dir: Optional[str] = None,
         fulltext_processor_config: Optional[FullTextProcessorConfig] = None,
+        fulltext_models: Optional[FullTextModels] = None,
         document_request_parameters: Optional[DocumentRequestParameters] = None
     ):
         self.parser = parser
@@ -291,6 +343,11 @@ class ScienceBeamParserBaseSession:
         if fulltext_processor_config is None:
             fulltext_processor_config = parser.fulltext_processor_config
         self.fulltext_processor_config = fulltext_processor_config
+        # Which models serve this document, beside the processor config the two
+        # arrive together in a profile bundle.
+        if fulltext_models is None:
+            fulltext_models = parser.fulltext_models
+        self.fulltext_models = fulltext_models
         if document_request_parameters is None:
             document_request_parameters = DocumentRequestParameters()
         self.document_request_parameters = document_request_parameters
@@ -423,7 +480,7 @@ class ScienceBeamParserSessionParsedLayoutDocument(_ScienceBeamParserSessionDeri
 
     @property
     def fulltext_models(self) -> FullTextModels:
-        return self.parser.fulltext_models
+        return self.session.fulltext_models
 
     @property
     def app_features_context(self) -> AppFeaturesContext:
@@ -632,8 +689,11 @@ class ScienceBeamParserSession(ScienceBeamParserBaseSession):
 
 class ScienceBeamParser(ScienceBeamBaseParser):
     @staticmethod
-    def from_config(config: AppConfig) -> 'ScienceBeamParser':
-        return ScienceBeamParser(config)
+    def from_config(
+        config: AppConfig,
+        base_config: Optional[AppConfig] = None
+    ) -> 'ScienceBeamParser':
+        return ScienceBeamParser(config, base_config=base_config)
 
     def get_new_session(self, **kwargs) -> ScienceBeamParserSession:
         return ScienceBeamParserSession(self, **kwargs)

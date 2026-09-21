@@ -305,6 +305,18 @@ profile_aliases:
 
 profile: grobid_crf
 
+# Which profiles a request may name with `?profile=`, beside `profile` above,
+# which is always selectable and is what a request naming nothing gets. Empty by
+# default: a process holds only what it was started for until a deployment says
+# it may hold more.
+selectable_profiles: []
+
+# How many distinct sequence models one process will hold across every profile
+# it has served. Counted in models rather than profiles because profiles overlap:
+# the wapiti ones differ from their base by one model of ten. Over this, a
+# request for a profile not already resolved is refused rather than loaded.
+max_loaded_models: 40
+
 cv_models:
   default:
     path: 'lp://efficientdet/PubLayNet'
