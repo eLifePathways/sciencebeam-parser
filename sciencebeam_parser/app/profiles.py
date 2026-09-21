@@ -6,12 +6,14 @@ import threading
 from dataclasses import dataclass
 from typing import Dict, List, NamedTuple, Optional, Sequence, Set, Tuple, Type, cast
 
+from sciencebeam_parser import __version__
 from sciencebeam_parser.app.context import AppContext
 from sciencebeam_parser.config.config import (
     ALL_PROFILES,
     AppConfig,
     UnknownProfileError
 )
+from sciencebeam_parser.document.tei.attribution import DocumentAttribution
 from sciencebeam_parser.models.model import Model
 from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.processors.fulltext.models import (
@@ -146,6 +148,18 @@ class ProfileBundle(NamedTuple):
 
     def preload(self) -> None:
         self.fulltext_models.preload()
+
+    def get_document_attribution(self) -> DocumentAttribution:
+        """The same values the headers carry, for the document to carry too.
+
+        Read from the bundle rather than recomputed, so the two surfaces cannot
+        disagree about what served a request.
+        """
+        return DocumentAttribution(
+            version=__version__,
+            profile_digest=self.models_digest,
+            profile_name=self.name
+        )
 
 
 def get_selectable_profile_names(
@@ -320,12 +334,16 @@ def get_request_profile_headers() -> Dict[str, str]:
 
     The digest is there because the name on its own can mislead: an environment
     override wins over the requested profile, so two deployments can answer the
-    same profile name with different models.
+    same profile name with different models. It is also there when the name is
+    not, so that a deployment without a `profile:` key answers with the same
+    fact its documents carry.
     """
     request_profile = REQUEST_PROFILE.get()
-    if request_profile is None or request_profile.name is None:
+    if request_profile is None:
         return {}
-    headers = {PROFILE_HEADER_NAME: request_profile.name}
+    headers = {}
+    if request_profile.name:
+        headers[PROFILE_HEADER_NAME] = request_profile.name
     if request_profile.digest:
         headers[PROFILE_DIGEST_HEADER_NAME] = request_profile.digest
     return headers

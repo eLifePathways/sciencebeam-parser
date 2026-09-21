@@ -205,6 +205,7 @@ def get_sciencebeam_parser_session_dependency_factory(
         with sciencebeam_parser.get_new_session(
             fulltext_processor_config=fulltext_processor_config,
             fulltext_models=profile_bundle.fulltext_models,
+            document_attribution=profile_bundle.get_document_attribution(),
             **session_kwargs
         ) as session:
             session.document_request_parameters.first_page = first_page

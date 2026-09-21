@@ -34,6 +34,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticDocument,
     SemanticGraphic
 )
+from sciencebeam_parser.document.tei.attribution import DocumentAttribution
 from sciencebeam_parser.document.tei_document import get_tei_for_semantic_document
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
 from sciencebeam_parser.resources.xslt import TEI_TO_JATS_XSLT_FILE
@@ -327,6 +328,10 @@ class ScienceBeamBaseParser:
     def fulltext_processor_config(self) -> FullTextProcessorConfig:
         return self.default_profile_bundle.fulltext_processor_config
 
+    @property
+    def document_attribution(self) -> DocumentAttribution:
+        return self.default_profile_bundle.get_document_attribution()
+
 
 class ScienceBeamParserBaseSession:
     def __init__(
@@ -335,6 +340,7 @@ class ScienceBeamParserBaseSession:
         temp_dir: Optional[str] = None,
         fulltext_processor_config: Optional[FullTextProcessorConfig] = None,
         fulltext_models: Optional[FullTextModels] = None,
+        document_attribution: Optional[DocumentAttribution] = None,
         document_request_parameters: Optional[DocumentRequestParameters] = None
     ):
         self.parser = parser
@@ -348,6 +354,12 @@ class ScienceBeamParserBaseSession:
         if fulltext_models is None:
             fulltext_models = parser.fulltext_models
         self.fulltext_models = fulltext_models
+        # Carried rather than read from the request context: the document is
+        # built in a worker thread with its own copy of that context, and a
+        # library caller has no request at all.
+        if document_attribution is None:
+            document_attribution = parser.document_attribution
+        self.document_attribution = document_attribution
         if document_request_parameters is None:
             document_request_parameters = DocumentRequestParameters()
         self.document_request_parameters = document_request_parameters
@@ -445,7 +457,8 @@ class ScienceBeamParserSessionParsedSemanticDocument(_ScienceBeamParserSessionDe
         if response_media_type not in self.get_supported_response_media_type():
             raise UnsupportedResponseMediaTypeScienceBeamParserError()
         tei_document = get_tei_for_semantic_document(
-            self.semantic_document
+            self.semantic_document,
+            attribution=self.session.document_attribution
         )
         xml_root = tei_document.root
         relative_xml_filename = 'tei.xml'
