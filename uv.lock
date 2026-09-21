@@ -475,7 +475,7 @@ wheels = [
 
 [[package]]
 name = "delft"
-version = "1.0.1"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
@@ -498,9 +498,9 @@ dependencies = [
     { name = "truecase" },
     { name = "unidecode" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/48/a609e68a2e8e02b1e1d975922f01d4706e59d81352d9e81f2ab3378801b4/delft-1.0.1.tar.gz", hash = "sha256:0eb0d71541875bea02b659503cc6f6842ff62862f39de06ba9c01532049432fe", size = 150021, upload-time = "2026-07-31T09:23:17.984Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/6c/ba60bf44bc5a04a8f07073f063311843f636b767b19139fa14239ea59985/delft-1.1.0.tar.gz", hash = "sha256:08866172703ccce429cc597ecfa66312d909d7a67dde9516216782a24d694c32", size = 165680, upload-time = "2026-08-28T07:19:33.307Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/fe/ae143daea543828a181b83037b8207ca2169f5b865ab3a6ca9e8e3b30d71/delft-1.0.1-py3-none-any.whl", hash = "sha256:9bc9b632da066d034e7dcc739aa4981905dba293fd34ffde2a27a634423064db", size = 180984, upload-time = "2026-07-31T09:23:16.564Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/50/121b0e62758d697f2ccafcbe81a408dce06c59b3011f2947f57f824699ae/delft-1.1.0-py3-none-any.whl", hash = "sha256:5fe1b073831918da590e4fbb74d8a514c84f000c61028865846cade56d1d1695", size = 198455, upload-time = "2026-08-28T07:19:31.89Z" },
 ]
 
 [[package]]
@@ -3500,7 +3500,7 @@ requires-dist = [
     { name = "pdfalto", specifier = "==0.6.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sciencebeam-judge", specifier = ">=0.0.26" },
-    { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=1.0.1" },
+    { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=1.0.3" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "extra == 'cpu'", specifier = ">=0.26.0", index = "https://download.pytorch.org/whl/cpu" },
 ]
@@ -3527,7 +3527,7 @@ ocr = [{ name = "tesserocr", specifier = "==2.5.2" }]
 
 [[package]]
 name = "sciencebeam-trainer-delft"
-version = "1.0.1"
+version = "1.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
@@ -3539,9 +3539,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/11/bd5750fe4505759bd742c544431e491fa0c2f0ba7f77c753c211922c9e06/sciencebeam_trainer_delft-1.0.1.tar.gz", hash = "sha256:57e7271fd99af1dd31cabda461af7a1a566c446751d590da98cdc27914ce3cfa", size = 123683, upload-time = "2026-08-18T07:39:27.248Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/27/980e0deef048be94649700b3ac6c5849738f2719a7fa2800af6fbf8505e6/sciencebeam_trainer_delft-1.0.3.tar.gz", hash = "sha256:70094e42fedeeed03de4c30e1053e7f7c8da8778aaa7bd42b5ede43eef9a8c2e", size = 134670, upload-time = "2026-09-18T17:16:22.929Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/11/3860f33a85e9143d082eb51514b76474310ea8501f7d2e67b2036b4b5518/sciencebeam_trainer_delft-1.0.1-py3-none-any.whl", hash = "sha256:e76b1ec098f71e641e429661d2ed9dfc091f54008fc4374beaaf3f02e83745db", size = 127578, upload-time = "2026-08-18T07:39:26.098Z" },
+    { url = "https://files.pythonhosted.org/packages/99/40/9e1cc821c2c89cd1dad2dcd3359908aee4ef7cff44b4df759b565b2d1609/sciencebeam_trainer_delft-1.0.3-py3-none-any.whl", hash = "sha256:1de29255d233f5c48cf76bdbf530b022f5621671a8954dc3a4a2318d88c13994", size = 139131, upload-time = "2026-09-18T17:16:21.941Z" },
 ]
 
 [package.optional-dependencies]
