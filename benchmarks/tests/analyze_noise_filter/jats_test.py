@@ -31,9 +31,9 @@ class TestJatsTextIndex:
         index = JatsTextIndex(normalize_text('Table 12 shows the result'))
         assert index.contains('12') is None
 
-    def test_should_be_inconclusive_for_a_short_running_head(self):
+    def test_should_not_flag_a_running_head_absent_from_the_jats(self):
         index = JatsTextIndex(normalize_text('anything'))
-        assert index.contains('Page 12 of 15') is None
+        assert index.contains('Page 12 of 15') is False
 
     def test_should_drop_a_word_broken_by_a_line_ending_hyphen(self):
         index = JatsTextIndex(normalize_text(f'{LONG_ENOUGH} January'))
@@ -83,3 +83,21 @@ class TestJatsTextIndexTitles:
             encoding='utf-8'
         )
         assert JatsTextIndex.from_file(str(jats_path)).contains(LONG_ENOUGH) is True
+
+
+class TestJatsTextIndexShortRunningHeads:
+    def test_should_look_up_three_words_below_the_length_floor(self):
+        index = JatsTextIndex(normalize_text('by Carlos Barba Solano, who wrote it'))
+        assert index.contains('CARLOS BARBA SOLANO') is True
+
+    def test_should_strip_a_trailing_page_number_first(self):
+        index = JatsTextIndex(normalize_text('by Carlos Barba Solano, who wrote it'))
+        assert index.contains('CARLOS BARBA SOLANO 133') is True
+
+    def test_should_stay_inconclusive_below_both_floors(self):
+        index = JatsTextIndex(normalize_text('by Marc Thouvenot, who wrote it'))
+        assert index.contains('marc thouvenot') is None
+
+    def test_should_still_be_inconclusive_for_a_bare_page_number(self):
+        index = JatsTextIndex(normalize_text('anything at all here'))
+        assert index.contains('133') is None

@@ -17,12 +17,15 @@ from lxml import etree
 
 LOGGER = logging.getLogger(__name__)
 
-# Below this many characters a normalised text is not looked up: a bare page number
-# occurs in almost any article, and reporting that as content would be an invented
-# alarm rather than a missed one.
+# A normalised text is looked up when it is this long, or when it carries at least
+# MIN_LOOKUP_WORDS words. Below both, a match says nothing: a bare page number occurs
+# in almost any article, and reporting that as content would be an invented alarm.
+# The word path is what reaches a running head carrying an author's name.
 MIN_LOOKUP_LENGTH = 24
+MIN_LOOKUP_WORDS = 3
 
 _WHITESPACE_RE = re.compile(r'\s+')
+_TRAILING_NUMBER_RE = re.compile(r'[\s|]*\d+[\s|]*$')
 _DASHES = '‐‑‒–—―−'
 
 
@@ -68,7 +71,9 @@ class JatsTextIndex:
         if needle.endswith('-'):
             # A line broken mid-word carries a partial word the JATS never contains.
             needle = needle[:-1].rsplit(' ', 1)[0].strip()
-        if len(needle) < MIN_LOOKUP_LENGTH:
+        # A running head often appends the page number to whatever it repeats.
+        needle = _TRAILING_NUMBER_RE.sub('', needle).strip()
+        if len(needle) < MIN_LOOKUP_LENGTH and len(needle.split()) < MIN_LOOKUP_WORDS:
             return None
         if needle not in self.text:
             return False
