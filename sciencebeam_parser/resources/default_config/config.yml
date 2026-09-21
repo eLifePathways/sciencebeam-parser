@@ -343,7 +343,13 @@ profiles:
     processors:
       fulltext:
         noise_filter:
-          enabled: false
+          enabled: true
+          outside_main_area: true
+          # This is the only profile that segments with a model reading text, and
+          # it is the only one that wants the blocks left in place: dropping them
+          # is worth nothing to it (0.549 either way) where overruling the label
+          # they get is worth +0.010, and `reference_title` 0.532 to 0.573.
+          action: 'relabel'
   llm_all:
     sequence_models: llm_all
     processors:
