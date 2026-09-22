@@ -49,6 +49,11 @@ jobs:
 
     env:
       BENCHMARK_SPLIT: validation
+      # A document the parser fails on writes no prediction, and scoring
+      # iterates prediction files, so it leaves the denominator rather than
+      # scoring zero. The failing set moves between runs, so a second pass
+      # over what is still missing recovers most of it.
+      BENCHMARK_RETRY_PASSES: 2
       BENCHMARK_MODE: >-
         ${{
           contains(github.event.pull_request.labels.*.name, 'benchmark:full') && 'full' ||
@@ -248,6 +253,7 @@ jobs:
             --parser-url http://localhost:8080 \
             --parser-image "${{ steps.image_tag.outputs.value }}" \
             --profile "${{ env.BENCHMARK_PROFILE }}" \
+            --retry-passes ${{ env.BENCHMARK_RETRY_PASSES }} \
             ${{ env.BENCHMARK_CORPORA }} \
             "${PUSH_CURRENT_ARG[@]}"
 
