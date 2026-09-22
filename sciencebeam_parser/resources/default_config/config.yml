@@ -225,6 +225,22 @@ sequence_model_profiles:
     extends:
       - wapiti_refseg_scielo_preprints_ore
       - wapiti_citation_scielo_preprints_ore
+  # The same training documents as the wapiti pair above, on the delft engine.
+  # Interim: a bucket path is benchmarked from a pull request and never merges.
+  delft_refseg_scielo_preprints_ore:
+    extends: grobid_crf_0_9_0
+    reference_segmenter:
+      path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/dd39a9d6246b94a4e5861cf548921a7a3f1ba0ca/reference-segmenter/delft/2026-09-18_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore'
+      engine: 'delft'
+  delft_citation_scielo_preprints_ore:
+    extends: grobid_crf_0_9_0
+    citation:
+      path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/dd39a9d6246b94a4e5861cf548921a7a3f1ba0ca/citation/delft/2026-09-18_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore'
+      engine: 'delft'
+  delft_scielo_preprints_ore:
+    extends:
+      - delft_refseg_scielo_preprints_ore
+      - delft_citation_scielo_preprints_ore
   # Opt-in only: select with SCIENCEBEAM_PARSER__PROFILE, never by default.
   # Requires an api key in SCIENCEBEAM_LLM_API_KEY or OPENROUTER_API_KEY.
   # One profile per model so a failure can be attributed, plus a combined one.
@@ -298,6 +314,24 @@ profiles:
           enabled: false
   wapiti_scielo_preprints_ore:
     sequence_models: wapiti_scielo_preprints_ore
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+  delft_refseg_scielo_preprints_ore:
+    sequence_models: delft_refseg_scielo_preprints_ore
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+  delft_citation_scielo_preprints_ore:
+    sequence_models: delft_citation_scielo_preprints_ore
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+  delft_scielo_preprints_ore:
+    sequence_models: delft_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
