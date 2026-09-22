@@ -46,12 +46,24 @@ generates.
 **Overall** covers only corpora every column scored, so a column missing one
 drops it from the aggregate for all of them.
 
+A document the parser fails on writes no prediction, and scoring iterates
+prediction files, so it is left out rather than scored zero. The report states
+each run's coverage — how many documents a retry recovered, and how many ended
+with no prediction — and calls out a comparison whose columns cover different
+documents, since a delta across unequal sets reflects which documents each
+column covered as well as how it performed.
+
 ## Running it
 
 ```sh
 make docker-benchmark-with-baselines            # smoke by default
 make docker-benchmark BENCHMARK_MODE=small
+make docker-benchmark BENCHMARK_RETRY_PASSES=2  # ask again for what failed
 ```
+
+`BENCHMARK_RETRY_PASSES` is how many times a run goes over the corpus, asking
+again for documents that still have no prediction; `1` never retries. CI uses
+`2`, a local run the default, so a failure stays in front of you.
 
 In CI, label a PR `benchmark:smoke` (or `:small`, `:medium`, `:large`, `:full`,
 `:plos`). Each run posts a new comment and collapses the previous ones.
