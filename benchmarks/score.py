@@ -152,6 +152,26 @@ def _score_corpus(  # pylint: disable=too-many-locals
     return {"n": n, "aggregated": aggregated}
 
 
+def _coverage_note(run_record: dict) -> Optional[str]:
+    """What the run had to retry, and what it never got.
+
+    Neither is visible in the scores: a document without a prediction leaves the
+    denominator rather than scoring zero, and a retried document scores like any
+    other. Both say something about the run rather than about the models, so they
+    are stated where the scores are.
+    """
+    recovered = run_record.get("n_recovered") or 0
+    errors = run_record.get("n_errors") or 0
+    if not recovered and not errors:
+        return None
+    parts = []
+    if recovered:
+        parts.append(f"{recovered} recovered on retry")
+    if errors:
+        parts.append(f"{errors} without a prediction, and so not scored")
+    return "**Coverage:** " + ", ".join(parts)
+
+
 def _render_report(  # pylint: disable=too-many-locals
     corpus_results: Dict[str, Any],
     field_names: List[str],
@@ -165,6 +185,9 @@ def _render_report(  # pylint: disable=too-many-locals
         cfg = run_record.get("profile") or run_record.get("parser_config") or "default"
         mode = run_record.get("mode", "?")
         lines += [f"**Image:** `{image}`  **Config:** `{cfg}`  **Mode:** {mode}", ""]
+        coverage = _coverage_note(run_record)
+        if coverage:
+            lines += [coverage, ""]
 
     for corpus, result in corpus_results.items():
         n = result.get("n", 0)

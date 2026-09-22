@@ -11,7 +11,7 @@ import httpx
 import yaml
 
 from benchmarks.fetch import fetch_gold, get_corpus_variants
-from benchmarks.predict import run_predict
+from benchmarks.predict import DEFAULT_RETRY_PASSES, run_predict
 from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
@@ -229,6 +229,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     push_current: bool = False,
     concurrency: int = 0,
     include: Optional[Iterable[str]] = None,
+    retry_passes: int = DEFAULT_RETRY_PASSES,
 ) -> None:
     # pylint: disable=too-many-locals
     corpus_variants = get_corpus_variants(config, split, include)
@@ -259,9 +260,11 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
     profile = parser_profile or "default"
     primary_run_dir = runs_dir / split
+    # The retry applies to the run under test rather than to the baselines: those
+    # are served from the store or from a CRF that does not fail this way.
     run_predict(config, mode, split, data_dir, primary_run_dir,
                 parser_url, parser_image, parser_profile, concurrency,
-                include=include)
+                include=include, retry_passes=retry_passes)
     run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split,
               include=include)
 
@@ -332,6 +335,13 @@ def main(argv=None) -> None:
     parser.add_argument("--profile", default=None)
     parser.add_argument("--concurrency", type=int, default=0)
     parser.add_argument(
+        "--retry-passes", type=int, default=DEFAULT_RETRY_PASSES,
+        help=(
+            "Times to go over the corpus, asking again for documents that have no"
+            " prediction yet (1 = no retry). Applies to the run under test"
+        ),
+    )
+    parser.add_argument(
         "--include-corpus", action="append", default=None, dest="include_corpus",
         metavar="CORPUS",
         help=(
@@ -373,6 +383,7 @@ def main(argv=None) -> None:
         push_current=args.push_current,
         concurrency=args.concurrency,
         include=args.include_corpus,
+        retry_passes=args.retry_passes,
     )
 
 

@@ -70,6 +70,7 @@ GROBID_WAIT_RETRIES ?= 120
 GROBID_WAIT_INTERVAL ?= 5
 BENCHMARK_PARSER_URL ?= $(SCIENCEBEAM_PARSER_URL)
 BENCHMARK_CONCURRENCY ?= 0
+BENCHMARK_RETRY_PASSES ?= 1
 
 TRAINING_DATA_OUTPUT ?= data/generated-training-data
 TRAINING_DATA_NUM_WORKERS ?= 1
@@ -255,6 +256,7 @@ dev-benchmark-predict:
 		--out $(BENCHMARK_RUN) \
 		--parser-url $(BENCHMARK_PARSER_URL) \
 		--concurrency $(BENCHMARK_CONCURRENCY) \
+		--retry-passes $(BENCHMARK_RETRY_PASSES) \
 		$(ARGS)
 
 
@@ -309,6 +311,7 @@ dev-benchmark-with-baselines:
 		--runs benchmarks/runs \
 		--parser-url $(BENCHMARK_PARSER_URL) \
 		--concurrency $(BENCHMARK_CONCURRENCY) \
+		--retry-passes $(BENCHMARK_RETRY_PASSES) \
 		$(ARGS)
 
 

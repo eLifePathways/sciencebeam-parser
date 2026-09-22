@@ -527,3 +527,27 @@ class TestAttributionIsNotScored:
             for score in without
             if score["scoring_method"] == "exact"
         )
+
+
+class TestCoverageNote:
+    def _report(self, run_record: dict) -> str:
+        return _render_report({}, [], {}, run_record)
+
+    def test_should_say_how_many_documents_a_retry_recovered(self):
+        result = self._report({"n_recovered": 3, "n_errors": 0, "retry_passes": 2})
+        assert "**Coverage:** 3 recovered on retry" in result
+
+    def test_should_say_how_many_documents_were_never_predicted(self):
+        result = self._report({"n_recovered": 0, "n_errors": 2, "retry_passes": 1})
+        assert "2 without a prediction, and so not scored" in result
+
+    def test_should_state_both_when_a_run_recovered_some_and_lost_others(self):
+        result = self._report({"n_recovered": 3, "n_errors": 1, "retry_passes": 2})
+        assert "3 recovered on retry, 1 without a prediction" in result
+
+    def test_should_stay_silent_when_every_document_was_predicted_first_time(self):
+        result = self._report({"n_recovered": 0, "n_errors": 0, "retry_passes": 2})
+        assert "Coverage" not in result
+
+    def test_should_stay_silent_for_a_run_record_that_predates_the_counts(self):
+        assert "Coverage" not in self._report({"mode": "smoke"})
