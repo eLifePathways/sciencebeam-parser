@@ -222,6 +222,35 @@ def _render_field_table(  # pylint: disable=too-many-locals
     return lines
 
 
+def _coverage_lines(
+    labeled_run_records: List[Tuple[str, Optional[dict]]]
+) -> List[str]:
+    """Per column, what it had to retry and what it never got.
+
+    Neither is visible in a score: a document without a prediction leaves the
+    denominator rather than scoring zero, and a retried one scores like any other.
+    This is what says a column is short because a run failed rather than because it
+    covers less, and it is why an unequal comparison is unequal.
+    """
+    stated = []
+    for label, run_record in labeled_run_records:
+        if not run_record:
+            continue
+        recovered = run_record.get("n_recovered") or 0
+        errors = run_record.get("n_errors") or 0
+        if not recovered and not errors:
+            continue
+        parts = []
+        if recovered:
+            parts.append(f"{recovered} recovered on retry")
+        if errors:
+            parts.append(f"{errors} without a prediction, and so not scored")
+        stated.append(f"> **{label}**: {', '.join(parts)}.")
+    if not stated:
+        return []
+    return [*stated, ""]
+
+
 def _unequal_docs_note(counts_by_label: List[Tuple[str, int]]) -> List[str]:
     """Call out a comparison whose columns do not cover the same documents.
 
@@ -323,6 +352,7 @@ def _render_overall_section(  # pylint: disable=too-many-locals
 
 def _render_comparison_report(
     labeled_summaries: List[Tuple[str, dict]],
+    labeled_run_records: Optional[List[Tuple[str, Optional[dict]]]] = None,
 ) -> str:
     if not labeled_summaries:
         return ""
@@ -334,6 +364,7 @@ def _render_comparison_report(
     corpora = list(primary_summary.get("corpora", {}).keys())
 
     lines = ["## ScienceBeam Parser Evaluation", ""]
+    lines += _coverage_lines(labeled_run_records or [])
 
     if len(corpora) > 1:
         lines.extend(_render_overall_section(
@@ -385,7 +416,17 @@ def run_compare(
         (label, json.loads(path.read_text()))
         for label, path in labeled_summary_paths
     ]
-    report = _render_comparison_report(labeled_summaries)
+    # A run that only scored stored predictions has no run record, and so nothing
+    # to say about its own coverage.
+    labeled_run_records = [
+        (
+            label,
+            json.loads((path.parent / "run.json").read_text())
+            if (path.parent / "run.json").exists() else None,
+        )
+        for label, path in labeled_summary_paths
+    ]
+    report = _render_comparison_report(labeled_summaries, labeled_run_records)
     if out_path:
         out_path.write_text(report)
         LOGGER.info("Comparison report written to %s", out_path)
