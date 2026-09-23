@@ -389,8 +389,21 @@ class TestEndOneOffTheEnd:
                 {'start': 1, 'end': len(LINES) + 2, 'label': 'body'}
             ]}))
 
-    def test_should_still_reject_a_start_past_the_last_line(self):
-        with pytest.raises(LlmMalformedResponseError, match='out of range'):
+    def test_should_drop_a_trailing_region_that_begins_past_the_last_line(self):
+        """One entry too many, chained off a region that already ran to the end."""
+        assert decode(json.dumps({'regions': [
+            {'start': 1, 'end': len(LINES), 'label': 'body'},
+            {'start': len(LINES) + 1, 'end': len(LINES) + 1, 'label': 'references'},
+        ]})) == ['B-<body>'] + ['I-<body>'] * (len(LINES) - 1)
+
+    def test_should_reject_a_response_whose_only_region_begins_past_the_end(self):
+        with pytest.raises(LlmMalformedResponseError, match='no line has a label'):
             decode(json.dumps({'regions': [
                 {'start': len(LINES) + 1, 'end': len(LINES) + 1, 'label': 'body'}
+            ]}))
+
+    def test_should_still_reject_a_start_further_out(self):
+        with pytest.raises(LlmMalformedResponseError, match='out of range'):
+            decode(json.dumps({'regions': [
+                {'start': len(LINES) + 2, 'end': len(LINES) + 2, 'label': 'body'}
             ]}))

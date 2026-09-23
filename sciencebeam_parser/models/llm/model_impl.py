@@ -458,8 +458,11 @@ class LlmModelImpl(ModelImpl):
                     # it that way would return a document silently missing its
                     # opening -- title, authors and affiliations included --
                     # while still looking like an answer.
+                    where = (
+                        'the only window' if len(windows) == 1 else 'the first window'
+                    )
                     raise LlmMalformedResponseError(
-                        f'the first window, covering lines {window.core_start}'
+                        f'{where}, covering lines {window.core_start}'
                         f'..{window.core_end - 1}, failed and there is no region'
                         ' before it to carry'
                     )

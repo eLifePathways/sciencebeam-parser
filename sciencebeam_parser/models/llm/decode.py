@@ -345,6 +345,14 @@ def render_numbered_line_texts(
     )
 
 
+def _is_one_past_the_end(value: Any, line_count: int) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value == line_count + 1
+    )
+
+
 def _get_line_index(value: Any, field_name: str, line_count: int) -> int:
     """Lines are numbered from 1 in the prompt and indexed from 0 here.
 
@@ -390,6 +398,12 @@ def parse_regions(
             raise LlmMalformedResponseError(
                 f'region entry has unexpected key(s) {unexpected}: {entry!r}'
             )
+        if _is_one_past_the_end(entry.get('start'), line_count):
+            # A region that begins one past the last line covers nothing: the
+            # model chained one entry too many off a region that already ran to
+            # the end. Dropping it is arithmetic rather than a reading of intent,
+            # and it is the same overshoot `end` is already taken through.
+            continue
         start = _get_line_index(entry.get('start'), 'start', line_count)
         end = _get_line_index(entry.get('end'), 'end', line_count)
         # numbered from 1 in the prompt, 0-based everywhere inside
@@ -403,6 +417,10 @@ def parse_regions(
                 f'region label {name!r} is not one of {sorted(allowed)}'
             )
         regions.append((start, end, name))
+    if not regions:
+        raise LlmMalformedResponseError(
+            'every region begins past the last line, so no line has a label'
+        )
     regions, touching = resolve_touching_regions(regions)
     _check_regions_do_not_overlap(regions)
     return merge_adjacent_regions(regions), touching
