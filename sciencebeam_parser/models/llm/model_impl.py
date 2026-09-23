@@ -59,7 +59,6 @@ LINES_SHAPE = 'lines'
 EVIDENCE_SHAPE = 'evidence'
 VALUES_SHAPE = 'values'
 REGIONS_SHAPE = 'regions'
-OTHER_REGION_NAME = 'other'
 
 LINE_BASED_SHAPES = (LINES_SHAPE, EVIDENCE_SHAPE)
 
@@ -364,9 +363,16 @@ class LlmModelImpl(ModelImpl):
         if not tokens:
             return []
         line_texts = self._get_line_texts(feature_rows)
-        self._check_input_size(len(line_texts), len(tokens))
         windows = get_line_windows(
             len(line_texts), self.config.window_lines, self.config.window_overlap
+        )
+        # The limit bounds one request rather than the document, since a request is
+        # what the model has to answer. Without windowing the single window is the
+        # document, so this is the same check it has always been; with it, a long
+        # document is split rather than refused.
+        self._check_input_size(
+            max(window.context_end - window.context_start for window in windows),
+            len(tokens)
         )
         if len(windows) > 1:
             LOGGER.info(
@@ -445,10 +451,31 @@ class LlmModelImpl(ModelImpl):
         touching = failed = 0
         for window, (window_regions, window_touching) in zip(windows, per_window):
             if window_regions is None:
+                if not regions:
+                    # Carrying works because it continues a region already
+                    # established. The first window has nothing before it, and
+                    # `other` is the one label no field is read from, so filling
+                    # it that way would return a document silently missing its
+                    # opening -- title, authors and affiliations included --
+                    # while still looking like an answer.
+                    raise LlmMalformedResponseError(
+                        f'the first window, covering lines {window.core_start}'
+                        f'..{window.core_end - 1}, failed and there is no region'
+                        ' before it to carry'
+                    )
                 failed += 1
-                name = regions[-1][2] if regions else OTHER_REGION_NAME
-                regions.append((window.core_start, window.core_end - 1, name))
+                regions.append((window.core_start, window.core_end - 1, regions[-1][2]))
                 continue
+            if len(windows) > 1:
+                LOGGER.info(
+                    'llm %s: window core %d..%d answered %d region(s): %s',
+                    self.config.task, window.core_start, window.core_end,
+                    len(window_regions),
+                    ', '.join(
+                        f'{start}-{end}:{name}'
+                        for start, end, name in window_regions[:6]
+                    )
+                )
             regions.extend(window_regions)
             touching += window_touching
         if failed:

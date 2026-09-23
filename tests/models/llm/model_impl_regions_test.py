@@ -7,7 +7,9 @@ from typing import Optional
 import pytest
 
 from sciencebeam_parser.models.llm.config import LlmEngineConfig
-from sciencebeam_parser.models.llm.decode import LlmInputTooLargeError
+from sciencebeam_parser.models.llm.decode import (
+    LlmInputTooLargeError, LlmMalformedResponseError
+)
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.model_impl import LlmModelImpl
 
@@ -102,3 +104,34 @@ class TestLlmModelImplRegionsShape:
             model_impl.predict_labels(
                 [SEGMENTATION_TOKENS], [segmentation_feature_rows()]
             )
+
+
+WINDOWED = {'window_lines': 2, 'window_overlap': 0, 'max_concurrent_requests': 1}
+
+FIRST_WINDOW_ANSWER = json.dumps(
+    {'regions': [{'start': 1, 'end': 2, 'label': 'front_matter'}]}
+)
+
+
+class TestWindowThatFails:
+    """A window whose call fails is carried by the region before it. The first
+    window has no region before it."""
+
+    def test_should_fail_the_document_when_the_first_window_fails(self):
+        model_impl = get_segmentation_model_impl(content='not json', **WINDOWED)
+        with pytest.raises(LlmMalformedResponseError) as exc_info:
+            model_impl.predict_labels(
+                [SEGMENTATION_TOKENS], [segmentation_feature_rows()]
+            )
+        assert 'no region before it to carry' in str(exc_info.value)
+
+    def test_should_carry_the_previous_region_when_a_later_window_fails(self):
+        model_impl = get_segmentation_model_impl(
+            content=[FIRST_WINDOW_ANSWER, 'not json'], **WINDOWED
+        )
+        result = model_impl.predict_labels(
+            [SEGMENTATION_TOKENS], [segmentation_feature_rows()]
+        )
+        assert [label for _, label in result[0]] == [
+            'B-<header>', 'I-<header>', 'I-<header>', 'I-<header>'
+        ]
