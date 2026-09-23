@@ -299,6 +299,14 @@ sequence_model_profiles:
       # document and say nothing.
       warn_input_lines: 2500
       max_input_lines: 4000
+      # Bounds one request rather than the document, so a document longer than
+      # the guard is split instead of refused. Measured over 60 train documents
+      # against no windowing: 0.595 against 0.587 over ten fields, at the same
+      # cost, splitting 27% of them. Individual documents move either way by up
+      # to 0.15 -- a smaller input re-rolls labels that are unstable anyway --
+      # and the mean does not move. 1500 keeps the largest request near 88k
+      # tokens on the densest measured document, against a 200k context.
+      window_lines: 1500
   llm_references:
     extends:
       - llm_reference_segmenter

@@ -61,7 +61,8 @@ segmentation:
   prompt_version: 'regions-v9'
   reasoning_enabled: false
   warn_input_lines: 2500           # a whole document, not a region
-  max_input_lines: 4000
+  max_input_lines: 4000            # bounds one request, not the document
+  window_lines: 1500               # longer documents are split, not refused
 ```
 
 ### The `regions` shape
@@ -385,6 +386,17 @@ every span to make an oversized region visible.
 
 Above `warn_input_lines` (default 300) the engine logs a warning naming the count. `max_input_lines`
 (default 0, off) raises instead, for a run where failing fast is wanted.
+
+Both bound **one request**, not the document. With `window_lines` set, a document longer than that is
+asked for in windows of that many lines, each carrying `window_overlap` lines of context either side
+that it does not answer for; the cores tile the document exactly, so no line is answered for twice.
+A document at or below `window_lines` is a single window and behaves as it did before.
+
+Windowing is what keeps a long document inside the model's context. It is not free of effect on the
+answer: a smaller input re-rolls labels, so individual documents move either way, though over 60
+documents the mean does not. A window whose call fails is carried by the region before it, and the
+**first** window has none — that fails the document rather than emitting one silently missing its
+opening.
 
 ## Response cache (development only)
 
