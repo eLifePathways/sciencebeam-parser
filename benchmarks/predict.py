@@ -217,6 +217,10 @@ async def _run_predict_async(
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
                         "status": "error", "pass": pass_index,
+                        # How long it took to fail separates a parser that answered
+                        # with an error from one that was still working when the
+                        # timeout took the request away.
+                        "elapsed_ms": round((time.monotonic() - t0) * 1000),
                         "error": msg, "error_body": body,
                         **_llm_usage_entry(exc.response),
                     })
@@ -225,7 +229,9 @@ async def _run_predict_async(
                     msg = str(exc)
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
-                        "status": "error", "pass": pass_index, "error": msg,
+                        "status": "error", "pass": pass_index,
+                        "elapsed_ms": round((time.monotonic() - t0) * 1000),
+                        "error": msg,
                     })
                     progress.record_err(corpus, record_id)
                     LOGGER.error("err %s/%s  %s", corpus, record_id, msg)

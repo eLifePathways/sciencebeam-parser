@@ -479,3 +479,24 @@ class TestRunPredictRetryPasses:
         run_record = self._run(tmp_path, client, retry_passes=3)
         assert run_record["n_records"] == 1
         assert client.post.await_count == 1
+
+
+class TestErrorTiming:
+    def _entry(self, tmp_path: Path, client: AsyncMock) -> dict:
+        run_dir = tmp_path / "run"
+        with patch("benchmarks.predict.httpx.AsyncClient", return_value=client):
+            asyncio.run(_run_predict_async(
+                [_make_record(tmp_path)], set(), run_dir, "http://localhost:8080", 60, 1
+            ))
+        path = run_dir / "predictions" / "manifest.jsonl"
+        return json.loads(path.read_text().splitlines()[0])
+
+    def test_should_record_how_long_an_http_error_took(self, tmp_path: Path):
+        entry = self._entry(tmp_path, _mock_client_http_error(500, "boom"))
+        assert entry["status"] == "error"
+        assert entry["elapsed_ms"] >= 0
+
+    def test_should_record_how_long_a_timeout_took(self, tmp_path: Path):
+        entry = self._entry(tmp_path, _mock_client_timeout())
+        assert entry["status"] == "error"
+        assert entry["elapsed_ms"] >= 0
