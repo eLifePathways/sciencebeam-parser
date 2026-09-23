@@ -408,6 +408,12 @@ def parse_regions(
         end = _get_line_index(entry.get('end'), 'end', line_count)
         # numbered from 1 in the prompt, 0-based everywhere inside
         name = entry.get('label')
+        if end == start - 1:
+            # An empty region, which is how a model chaining exclusive ends
+            # writes one that covers nothing. It claims no line, so dropping it
+            # changes no label. Anything further reversed is a contradiction
+            # about which lines the region holds, and still fails.
+            continue
         if end < start:
             raise LlmMalformedResponseError(
                 f'region ends at line {end}, before it starts at {start}'
@@ -419,7 +425,7 @@ def parse_regions(
         regions.append((start, end, name))
     if not regions:
         raise LlmMalformedResponseError(
-            'every region begins past the last line, so no line has a label'
+            'no region covers a line, so nothing has a label'
         )
     regions, touching = resolve_touching_regions(regions)
     _check_regions_do_not_overlap(regions)

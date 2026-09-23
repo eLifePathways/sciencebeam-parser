@@ -397,9 +397,24 @@ class TestEndOneOffTheEnd:
         ]})) == ['B-<body>'] + ['I-<body>'] * (len(LINES) - 1)
 
     def test_should_reject_a_response_whose_only_region_begins_past_the_end(self):
-        with pytest.raises(LlmMalformedResponseError, match='no line has a label'):
+        with pytest.raises(LlmMalformedResponseError, match='nothing has a label'):
             decode(json.dumps({'regions': [
                 {'start': len(LINES) + 1, 'end': len(LINES) + 1, 'label': 'body'}
+            ]}))
+
+    def test_should_drop_an_empty_region_written_as_end_one_before_start(self):
+        """How a model chaining exclusive ends writes a region covering nothing."""
+        assert decode(json.dumps({'regions': [
+            {'start': 1, 'end': 2, 'label': 'front_matter'},
+            {'start': 3, 'end': 2, 'label': 'other'},
+            {'start': 3, 'end': len(LINES), 'label': 'body'},
+        ]})) == ['B-<header>', 'I-<header>'] + ['B-<body>'] + ['I-<body>'] * (len(LINES) - 3)
+
+    def test_should_still_reject_a_region_reversed_by_more_than_one(self):
+        with pytest.raises(LlmMalformedResponseError, match='before it starts'):
+            decode(json.dumps({'regions': [
+                {'start': 1, 'end': 2, 'label': 'front_matter'},
+                {'start': len(LINES), 'end': 2, 'label': 'body'},
             ]}))
 
     def test_should_still_reject_a_start_further_out(self):
