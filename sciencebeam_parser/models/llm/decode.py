@@ -1,9 +1,13 @@
 import json
 import re
-from typing import Any, List, Mapping, Sequence, Tuple
+from typing import Any, List, Mapping, NamedTuple, Sequence, Tuple
 
 
 LINE_START = 'LINESTART'
+
+# Predicted by the segmentation model, read by nothing downstream.
+OTHER_LABEL = '<other>'
+
 
 LABEL_ONLY_LINE = re.compile(r'^[\[(]?\d{1,3}[\])]?[.)]?$')
 
@@ -51,6 +55,61 @@ EVIDENCE_RESPONSE_SCHEMA: Mapping[str, Any] = {
         },
     },
 }
+
+
+def get_regions_response_schema(labels: Sequence[str]) -> Mapping[str, Any]:
+    """One entry per region: where it starts, where it ends, and what it is.
+
+    The payload is two indices and a label from a closed set, so there is nothing
+    a model could invent that reaches the output. Every guarantee below is
+    enforced again on decode, because a provider that ignores the schema would
+    otherwise be trusted.
+
+    Asking where a region ends as well as where it starts lets a line belong to
+    no region at all, which is what running heads, footers and page numbers are:
+    a line to step over rather than a region to name. Those lines become
+    `<other>`, which the pipeline reads no field from.
+
+    The descriptions are part of the schema rather than only the prompt, so the
+    meaning of a value sits beside the value being generated. Whether a provider
+    shows them to the model depends on how it implements structured outputs.
+    """
+    return {
+        'type': 'object',
+        'additionalProperties': False,
+        'required': ['regions'],
+        'properties': {
+            'regions': {
+                'type': 'array',
+                'description': 'The regions of the article, in reading order.',
+                # `maxItems` binds on the shipped provider and is deliberately
+                # not set: it closes the array mid-document, so a model that
+                # over-segments loses its whole tail to `<other>` without a word.
+                # The count is checked on decode instead, where exceeding it
+                # rejects the response rather than quietly truncating it.
+                'items': {
+                    'type': 'object',
+                    'additionalProperties': False,
+                    'required': ['start', 'end', 'label'],
+                    'properties': {
+                        'start': {
+                            'type': 'integer',
+                            'description': 'Number of the first line of the region.',
+                        },
+                        'end': {
+                            'type': 'integer',
+                            'description': 'Number of the last line of the region.',
+                        },
+                        'label': {
+                            'type': 'string',
+                            'enum': list(labels),
+                            'description': 'The kind of content the region holds.',
+                        },
+                    },
+                },
+            },
+        },
+    }
 
 
 class LlmResponseError(ValueError):
@@ -266,6 +325,293 @@ def iter_labels_for_line_starts(
             continue
         labels.append('I-<reference>')
     return labels
+
+
+def render_numbered_line_texts(
+    line_texts: Sequence[str], max_line_chars: int = 0
+) -> str:
+    """Numbered from 1, which is how a model reads a document anyway: one was
+    caught answering 124, 197 and 549 where the 0-based answer was 123, 196, 548.
+
+    `max_line_chars` cuts each line to its first characters. These are lines off
+    a page rather than paragraphs — median 82 characters, 96 at the ninetieth
+    percentile — so a cut at 80 saves 9% and one at 60 saves 28%. What a region
+    is can usually be told from the start of a line; what it costs to read is
+    mostly the number of lines.
+    """
+    return '\n'.join(
+        f'{number}\t{text[:max_line_chars] if max_line_chars else text}'
+        for number, text in enumerate(line_texts, start=1)
+    )
+
+
+def _is_one_past_the_end(value: Any, line_count: int) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value == line_count + 1
+    )
+
+
+def _get_line_index(value: Any, field_name: str, line_count: int) -> int:
+    """Lines are numbered from 1 in the prompt and indexed from 0 here.
+
+    An end one past the last line is read as the last line. A region running to
+    the end of the input is the common case, and a model that overshoots it by
+    one has said where the region stops in the only way that is not a
+    contradiction. Anything further out is a claim about a line that was never
+    sent.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise LlmMalformedResponseError(
+            f'region {field_name} is not an integer: {value!r}'
+        )
+    if field_name == 'end' and value == line_count + 1:
+        return line_count - 1
+    if not 1 <= value <= line_count:
+        raise LlmMalformedResponseError(
+            f'region {field_name} {value} out of range for {line_count} lines'
+        )
+    return value - 1
+
+
+def parse_regions(
+    content: str,
+    line_count: int,
+    region_names: Sequence[str]
+) -> Tuple[List[Tuple[int, int, str]], int]:
+    payload = get_json_payload(content)
+    if not isinstance(payload, dict) or 'regions' not in payload:
+        raise LlmMalformedResponseError('response has no "regions"')
+    entries = payload['regions']
+    if not isinstance(entries, list):
+        raise LlmMalformedResponseError('"regions" is not a list')
+    if not entries:
+        raise LlmMalformedResponseError('"regions" is empty, so no line has a label')
+    allowed = set(region_names)
+    regions: List[Tuple[int, int, str]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise LlmMalformedResponseError(f'region entry is malformed: {entry!r}')
+        unexpected = sorted(set(entry) - {'start', 'end', 'label'})
+        if unexpected:
+            raise LlmMalformedResponseError(
+                f'region entry has unexpected key(s) {unexpected}: {entry!r}'
+            )
+        if _is_one_past_the_end(entry.get('start'), line_count):
+            # A region that begins one past the last line covers nothing: the
+            # model chained one entry too many off a region that already ran to
+            # the end. Dropping it is arithmetic rather than a reading of intent,
+            # and it is the same overshoot `end` is already taken through.
+            continue
+        start = _get_line_index(entry.get('start'), 'start', line_count)
+        end = _get_line_index(entry.get('end'), 'end', line_count)
+        # numbered from 1 in the prompt, 0-based everywhere inside
+        name = entry.get('label')
+        if end == start - 1:
+            # An empty region, which is how a model chaining exclusive ends
+            # writes one that covers nothing. It claims no line, so dropping it
+            # changes no label. Anything further reversed is a contradiction
+            # about which lines the region holds, and still fails.
+            continue
+        if end < start:
+            raise LlmMalformedResponseError(
+                f'region ends at line {end}, before it starts at {start}'
+            )
+        if not isinstance(name, str) or name not in allowed:
+            raise LlmMalformedResponseError(
+                f'region label {name!r} is not one of {sorted(allowed)}'
+            )
+        regions.append((start, end, name))
+    if not regions:
+        raise LlmMalformedResponseError(
+            'no region covers a line, so nothing has a label'
+        )
+    regions, touching = resolve_touching_regions(regions)
+    _check_regions_do_not_overlap(regions)
+    return merge_adjacent_regions(regions), touching
+
+
+def merge_adjacent_regions(
+    regions: Sequence[Tuple[int, int, str]]
+) -> List[Tuple[int, int, str]]:
+    """Two touching regions of the same kind are one region.
+
+    A model asked for regions will subdivide continuous text anyway — one
+    measured answer split a body into 62 consecutive `body` regions and ran out
+    of room before reaching the bibliography. Merging costs nothing and makes the
+    region count mean what the bound is about.
+    """
+    merged: List[Tuple[int, int, str]] = []
+    for start, end, name in regions:
+        if merged and merged[-1][2] == name and merged[-1][1] + 1 == start:
+            merged[-1] = (merged[-1][0], end, name)
+            continue
+        merged.append((start, end, name))
+    return merged
+
+
+def resolve_touching_regions(
+    regions: Sequence[Tuple[int, int, str]]
+) -> Tuple[List[Tuple[int, int, str]], int]:
+    """A region whose end is the next one's start meant that end exclusively.
+
+    Models chain regions — `79..107` then `107..126` — reading the end as where
+    the next begins. Where that is what a pair says, the earlier region is taken
+    to end a line sooner, which is the only reading under which both statements
+    are true. Anything overlapping by more than one line is a genuine
+    contradiction and is left to fail.
+
+    Returns the resolved regions and how many pairs needed it, so a prompt that
+    provokes this can be told apart from one that does not.
+    """
+    resolved = list(regions)
+    touching = 0
+    for index in range(len(resolved) - 1):
+        start, end, name = resolved[index]
+        next_start = resolved[index + 1][0]
+        if next_start != end or next_start <= start:
+            continue
+        resolved[index] = (start, end - 1, name)
+        touching += 1
+    return resolved, touching
+
+
+def _check_regions_do_not_overlap(
+    regions: Sequence[Tuple[int, int, str]]
+) -> None:
+    """A line may belong to no region, but never to two.
+
+    A gap is a claim the model is entitled to make — running heads, footers and
+    page numbers sit inside a region's span without belonging to it. An overlap
+    is not a claim about anything: it assigns one line to two kinds of content,
+    and there is no reading of it that the pipeline could honour.
+    """
+    for (start, end, _), (next_start, _, _) in zip(regions, regions[1:]):
+        if next_start <= end:
+            raise LlmMalformedResponseError(
+                f'a region covering lines {start}..{end} overlaps the next,'
+                f' which starts at line {next_start}'
+            )
+
+
+def _iter_run(label: str, length: int) -> List[str]:
+    return [f'B-{label}'] + [f'I-{label}'] * (length - 1)
+
+
+def iter_labels_for_regions(
+    regions: Sequence[Tuple[int, int, str]], line_count: int
+) -> List[str]:
+    """One label per line. Lines no region claims are `<other>`.
+
+    `<other>` is a label the model predicts and `processors/fulltext` reads no
+    field from, so a line left out of every region leaves the output rather than
+    joining whichever region happens to surround it.
+    """
+    from sciencebeam_parser.models.llm.tasks import (  # noqa pylint: disable=import-outside-toplevel
+        get_segmentation_label
+    )
+    labels: List[str] = []
+    for start, end, name in regions:
+        if start > len(labels):
+            labels.extend(_iter_run(OTHER_LABEL, start - len(labels)))
+        labels.extend(_iter_run(get_segmentation_label(name), end - start + 1))
+    if len(labels) < line_count:
+        labels.extend(_iter_run(OTHER_LABEL, line_count - len(labels)))
+    if len(labels) != line_count:
+        raise LlmMalformedResponseError(
+            f'regions cover {len(labels)} lines rather than {line_count}'
+        )
+    return labels
+
+
+def count_unclaimed_lines(
+    regions: Sequence[Tuple[int, int, str]], line_count: int
+) -> int:
+    return line_count - sum(end - start + 1 for start, end, _ in regions)
+
+
+class LineWindow(NamedTuple):
+    """`core` is the part a window answers for; the rest is context.
+
+    Cores tile the document exactly, so no line is answered for twice and there
+    is nothing to reconcile where two windows meet. The context either side is
+    what stops a region boundary being decided with nothing before or after it.
+    """
+    context_start: int
+    context_end: int
+    core_start: int
+    core_end: int
+
+
+def get_line_windows(line_count: int, size: int, overlap: int) -> List[LineWindow]:
+    if not size or line_count <= size:
+        return [LineWindow(0, line_count, 0, line_count)]
+    windows: List[LineWindow] = []
+    for core_start in range(0, line_count, size):
+        core_end = min(core_start + size, line_count)
+        windows.append(LineWindow(
+            max(0, core_start - overlap),
+            min(line_count, core_end + overlap),
+            core_start,
+            core_end
+        ))
+    return windows
+
+
+def widen_window(window: LineWindow, line_count: int, overlap: int) -> LineWindow:
+    """The same core, asked with more of the document around it.
+
+    The answer is stable for a given input and turns on a single line of it, so
+    repeating a failed request unchanged returns the same failure, while asking
+    with a wider context is a different question about the same core.
+    """
+    return LineWindow(
+        max(0, window.context_start - overlap),
+        min(line_count, window.context_end + overlap),
+        window.core_start,
+        window.core_end
+    )
+
+
+def decode_regions(
+    content: str,
+    line_count: int,
+    region_names: Sequence[str]
+) -> Tuple[List[Tuple[int, int, str]], int]:
+    """Regions in the coordinates of whatever was sent, and touching pairs."""
+    return parse_regions(
+        content, line_count=line_count, region_names=region_names
+    )
+
+
+def clip_regions_to_core(
+    regions: Sequence[Tuple[int, int, str]], window: LineWindow
+) -> List[Tuple[int, int, str]]:
+    """Window coordinates to document coordinates, keeping only the core."""
+    clipped: List[Tuple[int, int, str]] = []
+    for start, end, name in regions:
+        doc_start = max(start + window.context_start, window.core_start)
+        doc_end = min(end + window.context_start, window.core_end - 1)
+        if doc_start <= doc_end:
+            clipped.append((doc_start, doc_end, name))
+    return clipped
+
+
+def decode_regions_response(
+    content: str,
+    line_texts: Sequence[str],
+    region_names: Sequence[str]
+) -> Tuple[List[str], int, int]:
+    """One label per line, how many lines no region claimed, and how many region
+    pairs stated an end the next region's start contradicted.
+    """
+    regions, touching = decode_regions(content, len(line_texts), region_names)
+    return (
+        iter_labels_for_regions(regions, len(line_texts)),
+        count_unclaimed_lines(regions, len(line_texts)),
+        touching
+    )
 
 
 def decode_line_starts_response(

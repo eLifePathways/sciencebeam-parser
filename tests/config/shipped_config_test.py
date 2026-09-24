@@ -32,6 +32,11 @@ COMBINED_PROFILES: Dict[str, Dict[str, str]] = {
         'reference_segmenter': 'llm_reference_segmenter',
         'citation': 'llm_citation',
     },
+    'llm_all': {
+        'segmentation': 'llm_segmentation',
+        'reference_segmenter': 'llm_reference_segmenter',
+        'citation': 'llm_citation',
+    },
 }
 
 COMBINED_MODEL_PARAMS = [

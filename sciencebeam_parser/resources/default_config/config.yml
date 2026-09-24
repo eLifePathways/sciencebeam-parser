@@ -280,8 +280,40 @@ sequence_model_profiles:
       # provider answers with 429s.
       max_references_per_request: 10
       max_concurrent_requests: 4
+  llm_segmentation:
+    extends: grobid_crf_0_9_0
+    segmentation:
+      engine: 'llm'
+      task: 'segmentation'
+      response_shape: 'regions'
+      # Chosen by measurement over six models on the failure that separates this
+      # from the CRF -- a bibliography the model has already delimited and then
+      # labels `body`. glm is right on 10 of 10 where the previous 9b is right on
+      # 8, and converts 60 benchmark documents of 60 with no rejected response.
+      # No provider is pinned: routing still demands zero retention.
+      model: 'z-ai/glm-4.7-flash'
+      prompt_version: 'regions-v9'
+      reasoning_enabled: false
+      # A whole document rather than a region: median 743 lines and up to 1682 on
+      # the measured corpus, so the references-sized guards would warn on every
+      # document and say nothing.
+      warn_input_lines: 2500
+      max_input_lines: 4000
+      # Bounds one request rather than the document, so a document longer than
+      # the guard is split instead of refused. Measured over 60 train documents
+      # against no windowing: 0.595 against 0.587 over ten fields, at the same
+      # cost, splitting 27% of them. Individual documents move either way by up
+      # to 0.15 -- a smaller input re-rolls labels that are unstable anyway --
+      # and the mean does not move. 1500 keeps the largest request near 88k
+      # tokens on the densest measured document, against a 200k context.
+      window_lines: 1500
   llm_references:
     extends:
+      - llm_reference_segmenter
+      - llm_citation
+  llm_all:
+    extends:
+      - llm_segmentation
       - llm_reference_segmenter
       - llm_citation
 
@@ -348,6 +380,26 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+  llm_segmentation:
+    sequence_models: llm_segmentation
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: true
+          outside_main_area: true
+          # This is the only profile that segments with a model reading text, and
+          # it is the only one that wants the blocks left in place: dropping them
+          # is worth nothing to it (0.549 either way) where overruling the label
+          # they get is worth +0.010, and `reference_title` 0.532 to 0.573.
+          action: 'relabel'
+  llm_all:
+    sequence_models: llm_all
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: true
+          outside_main_area: true
+          action: 'relabel'
   llm_references:
     sequence_models: llm_references
     processors:

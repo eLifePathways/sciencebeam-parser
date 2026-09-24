@@ -21,13 +21,15 @@ default is asserted by test, so changing it there fails the build. Env keys use 
 same way — for example
 `SCIENCEBEAM_PARSER__SEQUENCE_MODEL_PROFILES__LLM_REFERENCE_SEGMENTER__CITATION__MODEL`.
 
-Three profiles, all extending `grobid_crf_0_9_0` so every other model stays on wapiti:
+Five profiles, all extending `grobid_crf_0_9_0` so every other model stays on wapiti:
 
 | profile | replaces |
 | --- | --- |
+| `llm_segmentation` | `segmentation` |
 | `llm_reference_segmenter` | `reference_segmenter` |
 | `llm_citation` | `citation` |
-| `llm_references` | both |
+| `llm_references` | the two reference models |
+| `llm_all` | all three |
 
 One per model matters for attribution: when a run fails, the per-model profiles say which model did
 it without having to read a stack trace.
@@ -51,7 +53,95 @@ citation:
   provider: 'siliconflow'
   prompt_version: 'values-v1'
   reasoning_enabled: false
+segmentation:
+  engine: 'llm'
+  task: 'segmentation'
+  response_shape: 'regions'        # where each region starts, and what it is
+  model: 'z-ai/glm-4.7-flash'      # chosen by measurement; see below
+  prompt_version: 'regions-v9'
+  reasoning_enabled: false
+  warn_input_lines: 2500           # a whole document, not a region
+  max_input_lines: 4000            # bounds one request, not the document
+  window_lines: 1500               # longer documents are split, not refused
 ```
+
+### The `regions` shape
+
+Segmentation reads the whole document rather than a region an upstream model chose, and its rows are
+already lines, so the line text comes from the `whole_line_text` feature column rather than being
+rebuilt from token rows.
+
+The response is one entry per region: the line it starts on, the line it ends on, and one of five
+region names — `front_matter`, `body`, `acknowledgements`, `appendix`, `references`. Those are the
+words a publisher would use rather than GROBID's, and the decoder maps them to the five labels
+`processors/fulltext` consumes. The other seven labels the model predicts reach no scored field and
+are left out of the prompt.
+
+**Asking where a region ends, not only where it starts, lets a line belong to nothing.** That is what
+running heads, footers and page numbers are: a line to step over rather than a region to name. They
+are 4.5% of lines but **533 of 618 region boundaries** on the measured corpus, so giving them a label
+of their own would take a response from about five regions to about fifty — and over-segmentation is
+what truncates one. A line no region claims becomes `<other>`, which the model predicts and
+`processors/fulltext` reads no field from, so it leaves the output rather than joining whichever
+region surrounds it. Turning `noise_filter_enabled` on would drop such lines before segmentation
+instead; it is off here, as for every other profile.
+
+Every line still carries a label, and the count of unclaimed lines is reported on the span and in the
+log. A few are the shape working. A large share is a different thing — a model that stopped reading
+part way leaves the rest unclaimed, which silently drops whole sections rather than mislabelling
+them — so `warn_unclaimed_line_share` (default 0.1) warns above it.
+
+An **overlap** is rejected rather than resolved: it assigns one line to two kinds of content, and
+there is no reading of it the pipeline could honour. So is a region ending before it starts, an index
+outside the document, a label outside the set, and any key that was not asked for.
+
+The schema carries a one-line `description` per property, so the meaning of a value sits beside the
+value being generated rather than only in the prompt. Whether a provider shows those to the model
+depends on how it implements structured outputs, and it is not safe to assume: `maxLength` on a
+string was sent, silently ignored and not rejected, on this provider and model at `temperature: 0`
+([spec 004](../.project-notes/specs/004-llm-assisted-reference-extraction.md)). Constrained decoding
+reduces failures here rather than making a class of them impossible, which is why decode re-checks
+everything the schema asks for.
+
+Prompt versions exist so that question can be measured rather than argued. `regions-v1` states the
+task in prose. `regions-v2` adds a compact picture of the answer, carrying the one thing neither the
+prose nor the enum states — this document's own line range:
+
+```text
+{"regions": [
+  {"start": <0..742>, "end": <0..742>,
+   "label": <front_matter|body|acknowledgements|appendix|references>}
+]}
+```
+
+Line numbers start at 1, and the template's `{{last_line}}` is substituted per document — token
+replacement rather than `str.format`, since the template contains braces of its own. A model was
+caught answering 124, 197 and 549 where the 0-based answers were 123, 196 and 548, so numbering from
+1 agrees with how it reads a document rather than correcting it afterwards.
+
+`regions-v4` adds the one thing a model cannot read off the text: `[outside the text area]` on lines
+outside the page's main area. On the measured corpus that flags 95% of running heads, footers and
+page numbers and 2% of everything else. `is_repetitive_pattern` is not used with it — it raises
+recall by one point and false positives from 168 to 183, and what it adds are repeated section
+headings, which are body. Behind `mark_furniture` and the `llm_segmentation_furniture` profile.
+
+**Page and block boundaries are deliberately not marked.** A version that marked them, with bold and
+italic, scored 0.048 below the plain prompt and was worst on four of six corpora. The mechanism is
+visible in one document: offered a page break, the model ended the front matter there, and on a
+preprint whose first page is a status banner that cut the title, authors and abstract out of it.
+
+The payload is an index and a label from a closed set, so no document text passes through the
+response. Decode re-checks what the schema already asks for, because a provider that ignores the
+schema would otherwise be trusted: an index in range, strictly ascending starts, a first region at
+line 0, a label in the set, and no key that was not asked for.
+
+There is deliberately **no bound on the number of regions**. One looks prudent and is not: once
+furniture is named `other`, a fully correct answer needs 41 to 58 regions on eight of ten measured
+documents, because the running head interrupts the body on every page. A bound low enough to catch a
+runaway is low enough to reject a correct answer on a long document.
+
+A rejected response fails the document rather than falling back to the CRF: a fallback would make a
+benchmark column a blend of two models and hide how often the shape fails.
 
 ### Reasoning
 
@@ -296,6 +386,17 @@ every span to make an oversized region visible.
 
 Above `warn_input_lines` (default 300) the engine logs a warning naming the count. `max_input_lines`
 (default 0, off) raises instead, for a run where failing fast is wanted.
+
+Both bound **one request**, not the document. With `window_lines` set, a document longer than that is
+asked for in windows of that many lines, each carrying `window_overlap` lines of context either side
+that it does not answer for; the cores tile the document exactly, so no line is answered for twice.
+A document at or below `window_lines` is a single window and behaves as it did before.
+
+Windowing is what keeps a long document inside the model's context. It is not free of effect on the
+answer: a smaller input re-rolls labels, so individual documents move either way, though over 60
+documents the mean does not. A window whose call fails is carried by the region before it, and the
+**first** window has none — that fails the document rather than emitting one silently missing its
+opening.
 
 ## Response cache (development only)
 

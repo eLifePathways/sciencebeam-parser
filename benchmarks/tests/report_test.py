@@ -535,3 +535,33 @@ class TestCachedInputNote:
         usage = {**_usage(), "cached_input_tokens": 0}
         report = _render_comparison_report(self._labeled({"biorxiv": usage}))
         assert "prefix cache" not in report
+
+
+class TestCoverageLines:
+    def _render(self, records):
+        summaries = [(label, {"fields": [], "corpora": {}}) for label, _ in records]
+        return _render_comparison_report(summaries, records)
+
+    def test_should_name_the_column_that_lost_documents(self):
+        result = self._render([("llm_all", {"n_recovered": 3, "n_errors": 1})])
+        assert "**llm_all**: 3 recovered on retry, 1 without a prediction" in result
+
+    def test_should_stay_silent_for_a_column_that_lost_nothing(self):
+        result = self._render([("grobid_crf", {"n_recovered": 0, "n_errors": 0})])
+        assert "recovered on retry" not in result
+
+    def test_should_stay_silent_for_a_column_with_no_run_record(self):
+        result = self._render([("stored baseline", None)])
+        assert "recovered on retry" not in result
+
+    def test_should_state_only_the_columns_that_have_something_to_report(self):
+        result = self._render([
+            ("grobid_crf", {"n_recovered": 0, "n_errors": 0}),
+            ("llm_all", {"n_recovered": 0, "n_errors": 2}),
+        ])
+        assert "**llm_all**: 2 without a prediction" in result
+        assert "grobid_crf" not in result
+
+    def test_should_render_without_run_records_at_all(self):
+        summaries = [("llm_all", {"fields": [], "corpora": {}})]
+        assert "ScienceBeam Parser Evaluation" in _render_comparison_report(summaries)

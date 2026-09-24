@@ -20,6 +20,9 @@ LOGGER = logging.getLogger(__name__)
 
 CONVERT_ENDPOINT = "/api/processFulltextDocument"
 DEFAULT_CONCURRENCY = 0  # 0 = auto: max(2, cpu_count)
+# One pass, so a run only retries where it is asked to. A local run usually wants
+# the failure in front of it; a long unattended one would rather cover the corpus.
+DEFAULT_RETRY_PASSES = 1
 
 
 def _resolve_concurrency(concurrency: int) -> int:
@@ -32,18 +35,47 @@ def _manifest_path(run_dir: Path) -> Path:
     return run_dir / "predictions" / "manifest.jsonl"
 
 
-def _load_done(run_dir: Path) -> set:
-    """Return set of (corpus, record_id) already in the manifest."""
+def _manifest_entries(run_dir: Path) -> List[Dict[str, Any]]:
     path = _manifest_path(run_dir)
     if not path.exists():
-        return set()
-    done = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            entry = json.loads(line)
-            if entry.get("status") == "ok":
-                done.add((entry["corpus"], entry["record_id"]))
-    return done
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _load_done(run_dir: Path) -> set:
+    """Return set of (corpus, record_id) already in the manifest."""
+    return {
+        (entry["corpus"], entry["record_id"])
+        for entry in _manifest_entries(run_dir)
+        if entry.get("status") == "ok"
+    }
+
+
+def _summarise_manifest(
+    run_dir: Path, records: List[Dict[str, Any]]
+) -> Tuple[int, int, int]:
+    """Documents predicted, documents missing, and documents a later pass recovered.
+
+    Counted over the manifest rather than over what this invocation processed, so a
+    resumed run reports what the run covers rather than what it did this time. A
+    document is recovered when it failed at least once and ended with a prediction:
+    the manifest is append-only, so both entries are still there to be counted.
+    """
+    wanted = {(record["corpus"], record["record_id"]) for record in records}
+    predicted, failed = set(), set()
+    for entry in _manifest_entries(run_dir):
+        key = (entry.get("corpus"), entry.get("record_id"))
+        if key not in wanted:
+            continue
+        if entry.get("status") == "ok":
+            predicted.add(key)
+        else:
+            failed.add(key)
+    return len(predicted), len(wanted - predicted), len(predicted & failed)
 
 
 def _append_manifest(run_dir: Path, entry: Dict[str, Any]) -> None:
@@ -120,6 +152,7 @@ async def _run_predict_async(
     parser_url: str,
     timeout: int,
     concurrency: int,
+    pass_index: int = 1,
 ) -> Tuple[int, int]:
     to_process = [
         r for r in records if (r["corpus"], r["record_id"]) not in done
@@ -167,7 +200,8 @@ async def _run_predict_async(
                     out_path.write_bytes(response.content)
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
-                        "status": "ok", "elapsed_ms": elapsed_ms,
+                        "status": "ok", "pass": pass_index,
+                        "elapsed_ms": elapsed_ms,
                         **_llm_usage_entry(response),
                     })
                     progress.record_ok(corpus, record_id, elapsed_ms)
@@ -182,7 +216,12 @@ async def _run_predict_async(
                         LOGGER.error("err %s/%s  %s", corpus, record_id, msg)
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
-                        "status": "error", "error": msg, "error_body": body,
+                        "status": "error", "pass": pass_index,
+                        # How long it took to fail separates a parser that answered
+                        # with an error from one that was still working when the
+                        # timeout took the request away.
+                        "elapsed_ms": round((time.monotonic() - t0) * 1000),
+                        "error": msg, "error_body": body,
                         **_llm_usage_entry(exc.response),
                     })
                     progress.record_err(corpus, record_id)
@@ -190,7 +229,9 @@ async def _run_predict_async(
                     msg = str(exc)
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
-                        "status": "error", "error": msg,
+                        "status": "error", "pass": pass_index,
+                        "elapsed_ms": round((time.monotonic() - t0) * 1000),
+                        "error": msg,
                     })
                     progress.record_err(corpus, record_id)
                     LOGGER.error("err %s/%s  %s", corpus, record_id, msg)
@@ -211,20 +252,41 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
     profile: Optional[str],
     concurrency: int = DEFAULT_CONCURRENCY,
     include: Optional[Iterable[str]] = None,
+    retry_passes: int = DEFAULT_RETRY_PASSES,
 ) -> None:
     records = fetch_data(config, mode, split, data_dir, include=include)
     sources = resolved_sources(config, split, include)
-    done = _load_done(run_dir)
 
     t_start = time.monotonic()
     timeout = config.get("parser", {}).get("timeout_seconds", 60)
+    resolved_concurrency = _resolve_concurrency(concurrency)
+    passes = max(1, retry_passes)
 
-    n_ok, n_err = asyncio.run(
-        _run_predict_async(
-            records, done, run_dir, parser_url, timeout,
-            _resolve_concurrency(concurrency),
+    # A later pass asks again for what is still missing, which is a different
+    # question from the engine's own retries: those spend their backoff inside one
+    # request, where this is separated from the first ask by the rest of the run.
+    # A rate-limit window outlasts the former and not the latter.
+    for pass_index in range(1, passes + 1):
+        done = _load_done(run_dir)
+        remaining = [
+            record for record in records
+            if (record["corpus"], record["record_id"]) not in done
+        ]
+        if not remaining:
+            break
+        if pass_index > 1:
+            LOGGER.info(
+                "Retry pass %d of %d over %d document(s) without a prediction",
+                pass_index, passes, len(remaining),
+            )
+        asyncio.run(
+            _run_predict_async(
+                records, done, run_dir, parser_url, timeout,
+                resolved_concurrency, pass_index,
+            )
         )
-    )
+
+    n_ok, n_err, n_recovered = _summarise_manifest(run_dir, records)
 
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "run.json").write_text(json.dumps({
@@ -240,12 +302,18 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
         "fields": config["fields"],
         "n_records": n_ok,
         "n_errors": n_err,
+        # How many documents only have a prediction because they were asked for
+        # twice. Reported beside the scores, since a retried run that states only
+        # its scores reads as a clean one. `retry_passes` says whether a zero here
+        # means nothing failed or nothing was retried.
+        "n_recovered": n_recovered,
+        "retry_passes": passes,
         "elapsed_s": round(time.monotonic() - t_start, 1),
     }, indent=2))
 
     LOGGER.info(
-        "done  ok=%d  err=%d  elapsed=%.1fs",
-        n_ok, n_err, time.monotonic() - t_start,
+        "done  ok=%d  err=%d  recovered=%d  elapsed=%.1fs",
+        n_ok, n_err, n_recovered, time.monotonic() - t_start,
     )
 
 
@@ -280,6 +348,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="Concurrent requests to the parser (0 = auto: max(2, cpu_count))",
     )
     parser.add_argument(
+        "--retry-passes", type=int, default=DEFAULT_RETRY_PASSES,
+        help=(
+            "Times to go over the corpus, asking again for documents that have no"
+            " prediction yet (1 = no retry). How many a retry recovered is reported"
+            " in run.json and the report"
+        ),
+    )
+    parser.add_argument(
         "--include-corpus", action="append", default=None, dest="include_corpus",
         metavar="CORPUS",
         help=(
@@ -305,6 +381,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         profile=args.profile,
         concurrency=args.concurrency,
         include=args.include_corpus,
+        retry_passes=args.retry_passes,
     )
 
 

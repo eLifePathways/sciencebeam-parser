@@ -19,6 +19,8 @@ from benchmarks.predict import (
     _Progress,
     _resolve_concurrency,
     _run_predict_async,
+    _summarise_manifest,
+    run_predict,
 )
 
 LLM_USAGE_1 = {
@@ -348,3 +350,153 @@ class TestManifestLlmUsage:
         entry = self._read_manifest(run_dir)[0]
         assert entry["status"] == "error"
         assert "llm_usage" not in entry
+
+
+def _mock_client_failing_then_ok(failures: int = 1) -> AsyncMock:
+    """Fails the first `failures` times and succeeds after, as a transient error does."""
+    calls = {"n": 0}
+    error_response = MagicMock()
+    error_response.text = "server error"
+    error_response.headers = {}
+
+    def _post(*_args, **_kwargs):
+        calls["n"] += 1
+        response = MagicMock()
+        response.headers = {}
+        response.content = b"<tei/>"
+        if calls["n"] <= failures:
+            response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError(
+                "Server error '500'", request=MagicMock(), response=error_response
+            ))
+        else:
+            response.raise_for_status = MagicMock(return_value=None)
+        return response
+
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.post = AsyncMock(side_effect=_post)
+    return client
+
+
+class TestSummariseManifest:
+    def _write(self, tmp_path: Path, entries: list) -> Path:
+        manifest = tmp_path / "predictions" / "manifest.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("".join(json.dumps(e) + "\n" for e in entries))
+        return tmp_path
+
+    def test_should_count_a_document_that_failed_and_then_succeeded_as_recovered(
+        self, tmp_path: Path
+    ):
+        self._write(tmp_path, [
+            {"corpus": "biorxiv", "record_id": "r1", "status": "error", "pass": 1},
+            {"corpus": "biorxiv", "record_id": "r1", "status": "ok", "pass": 2},
+        ])
+        records = [{"corpus": "biorxiv", "record_id": "r1"}]
+        assert _summarise_manifest(tmp_path, records) == (1, 0, 1)
+
+    def test_should_count_a_document_that_never_succeeded_as_missing(self, tmp_path: Path):
+        self._write(tmp_path, [
+            {"corpus": "biorxiv", "record_id": "r1", "status": "error", "pass": 1},
+            {"corpus": "biorxiv", "record_id": "r1", "status": "error", "pass": 2},
+        ])
+        records = [{"corpus": "biorxiv", "record_id": "r1"}]
+        assert _summarise_manifest(tmp_path, records) == (0, 1, 0)
+
+    def test_should_not_count_a_first_time_success_as_recovered(self, tmp_path: Path):
+        self._write(tmp_path, [
+            {"corpus": "biorxiv", "record_id": "r1", "status": "ok", "pass": 1},
+        ])
+        records = [{"corpus": "biorxiv", "record_id": "r1"}]
+        assert _summarise_manifest(tmp_path, records) == (1, 0, 0)
+
+    def test_should_count_a_record_the_run_never_reached_as_missing(self, tmp_path: Path):
+        self._write(tmp_path, [
+            {"corpus": "biorxiv", "record_id": "r1", "status": "ok", "pass": 1},
+        ])
+        records = [
+            {"corpus": "biorxiv", "record_id": "r1"},
+            {"corpus": "biorxiv", "record_id": "r2"},
+        ]
+        assert _summarise_manifest(tmp_path, records) == (1, 1, 0)
+
+    def test_should_ignore_a_manifest_entry_outside_the_records_asked_for(
+        self, tmp_path: Path
+    ):
+        self._write(tmp_path, [
+            {"corpus": "ore", "record_id": "other", "status": "ok", "pass": 1},
+        ])
+        records = [{"corpus": "biorxiv", "record_id": "r1"}]
+        assert _summarise_manifest(tmp_path, records) == (0, 1, 0)
+
+
+class TestRunPredictRetryPasses:
+    def _run(self, tmp_path: Path, client: AsyncMock, retry_passes: int) -> dict:
+        records = [_make_record(tmp_path)]
+        run_dir = tmp_path / "run"
+        with patch("benchmarks.predict.fetch_data", return_value=records), \
+                patch("benchmarks.predict.resolved_sources", return_value={"biorxiv": {}}), \
+                patch("benchmarks.predict.httpx.AsyncClient", return_value=client):
+            run_predict(
+                config={"fields": ["title"]}, mode="smoke", split="train",
+                data_dir=tmp_path / "data", run_dir=run_dir,
+                parser_url="http://localhost:8080", parser_image=None,
+                profile=None, concurrency=1, retry_passes=retry_passes,
+            )
+        return json.loads((run_dir / "run.json").read_text())
+
+    def _manifest(self, tmp_path: Path) -> list:
+        path = tmp_path / "run" / "predictions" / "manifest.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+    def test_should_recover_a_document_that_fails_once_and_report_it(self, tmp_path: Path):
+        run_record = self._run(tmp_path, _mock_client_failing_then_ok(1), retry_passes=2)
+        assert run_record["n_records"] == 1
+        assert run_record["n_errors"] == 0
+        assert run_record["n_recovered"] == 1
+        assert run_record["retry_passes"] == 2
+
+    def test_should_record_which_pass_produced_each_manifest_entry(self, tmp_path: Path):
+        self._run(tmp_path, _mock_client_failing_then_ok(1), retry_passes=2)
+        entries = self._manifest(tmp_path)
+        assert [(e["status"], e["pass"]) for e in entries] == [("error", 1), ("ok", 2)]
+
+    def test_should_leave_the_failure_when_no_retry_was_asked_for(self, tmp_path: Path):
+        run_record = self._run(tmp_path, _mock_client_failing_then_ok(1), retry_passes=1)
+        assert run_record["n_records"] == 0
+        assert run_record["n_errors"] == 1
+        assert run_record["n_recovered"] == 0
+
+    def test_should_report_a_document_that_fails_every_pass_as_an_error(self, tmp_path: Path):
+        run_record = self._run(tmp_path, _mock_client_failing_then_ok(5), retry_passes=3)
+        assert run_record["n_errors"] == 1
+        assert run_record["n_recovered"] == 0
+        assert len(self._manifest(tmp_path)) == 3
+
+    def test_should_not_ask_again_once_every_document_has_a_prediction(self, tmp_path: Path):
+        client = _mock_client_failing_then_ok(0)
+        run_record = self._run(tmp_path, client, retry_passes=3)
+        assert run_record["n_records"] == 1
+        assert client.post.await_count == 1
+
+
+class TestErrorTiming:
+    def _entry(self, tmp_path: Path, client: AsyncMock) -> dict:
+        run_dir = tmp_path / "run"
+        with patch("benchmarks.predict.httpx.AsyncClient", return_value=client):
+            asyncio.run(_run_predict_async(
+                [_make_record(tmp_path)], set(), run_dir, "http://localhost:8080", 60, 1
+            ))
+        path = run_dir / "predictions" / "manifest.jsonl"
+        return json.loads(path.read_text().splitlines()[0])
+
+    def test_should_record_how_long_an_http_error_took(self, tmp_path: Path):
+        entry = self._entry(tmp_path, _mock_client_http_error(500, "boom"))
+        assert entry["status"] == "error"
+        assert entry["elapsed_ms"] >= 0
+
+    def test_should_record_how_long_a_timeout_took(self, tmp_path: Path):
+        entry = self._entry(tmp_path, _mock_client_timeout())
+        assert entry["status"] == "error"
+        assert entry["elapsed_ms"] >= 0

@@ -160,9 +160,12 @@ sampling:
     scielo_preprints-jats: null
 
 parser:
-  # Per-document conversion timeout (seconds). Large PDFs can exceed the
-  # default of 60s; a timeout is recorded as an error and the run continues.
-  timeout_seconds: 300
+  # Per-document conversion timeout (seconds). A timeout is recorded as an error
+  # and the run continues, so a budget below what the parser itself will spend
+  # turns a document it completed into a missing one: an llm profile allows one
+  # call 300s and retries it, and the slowest observed document took 458s that
+  # way, having timed out once and succeeded on the second attempt.
+  timeout_seconds: 900
 
 seeds:
   sample: 42
