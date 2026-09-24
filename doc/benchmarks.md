@@ -53,6 +53,32 @@ with no prediction — and calls out a comparison whose columns cover different
 documents, since a delta across unequal sets reflects which documents each
 column covered as well as how it performed.
 
+## Where the gold does not record a field
+
+Whether a publisher records an acknowledgement or marks its body sections is a
+property of the publisher rather than of the document, and nothing in the PDF
+says which it is. A score over every document therefore mixes how well a field
+is extracted with how often a model abstains.
+
+The report keeps that combined figure and adds a section splitting it, for each
+field and corpus where some column produced a value the gold has none of, or
+where the corpus records none of the field at all:
+
+- a score over only the documents whose gold records the field, with the count
+  it covers;
+- what each column produced on the documents whose gold records nothing, in
+  documents and in values.
+
+A field a corpus records nothing for shows `—` rather than `0.000`, since there
+is nothing there to extract. **Overall** is unaffected: it stays a
+document-count-weighted mean of the per-corpus figures over every document.
+
+Both figures come from the per-document score files, so
+`python -m benchmarks.score --run <dir> --from-scores` re-summarises a run
+without scoring it again, which also works where its gold is no longer cached.
+It summarises the score files as they stand, including any left by an earlier
+scoring of the same directory.
+
 ## Running it
 
 ```sh

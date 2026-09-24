@@ -9,7 +9,12 @@ from sciencebeam_judge.parsing.xml import parse_xml_mapping
 from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
+import pytest
+
 from benchmarks.score import (
+    _doc_scores_from_dict,
+    _f1_from_aggregated,
+    _summarise_documents,
     _score_pair,
     _build_field_measures,
     _build_field_scoring_types,
@@ -551,3 +556,203 @@ class TestCoverageNote:
 
     def test_should_stay_silent_for_a_run_record_that_predates_the_counts(self):
         assert "Coverage" not in self._report({"mode": "smoke"})
+
+
+def _aggregated(method: str, field: str, f1: float, scoring_type: str = "string") -> list:
+    return [{
+        "scoring_type": scoring_type,
+        "scoring_method": method,
+        "summary_scores": {"by-field": {field: {"scores": {"f1": f1}}}},
+    }]
+
+
+def _gold_presence(n: int, n_gold: int, no_gold_docs: int = 0, no_gold_values: int = 0) -> dict:
+    return {
+        "n": n, "n_gold": n_gold,
+        "no_gold_docs": no_gold_docs, "no_gold_values": no_gold_values,
+    }
+
+
+class TestRenderReportGoldSplit:
+    def test_should_dash_a_field_the_corpus_records_no_gold_for(self):
+        result = _render_report(
+            {"pkp": {
+                "n": 40,
+                "aggregated": _aggregated("edit_sim", "acknowledgement", 0.0),
+                "gold_presence": {"acknowledgement": _gold_presence(40, 0, 14, 14)},
+            }},
+            ["acknowledgement"], {"acknowledgement": "string"}, None,
+        )
+        assert "| acknowledgement | string | — |" in result
+        assert "0.000" not in result
+
+    def test_should_score_a_field_over_the_documents_whose_gold_records_it(self):
+        result = _render_report(
+            {"scielo_br": {
+                "n": 40,
+                "aggregated": _aggregated("edit_sim", "acknowledgement", 0.429),
+                "aggregated_gold_present": _aggregated("edit_sim", "acknowledgement", 0.590),
+                "gold_presence": {"acknowledgement": _gold_presence(40, 5, 3, 3)},
+            }},
+            ["acknowledgement"], {"acknowledgement": "string"}, None,
+        )
+        assert "### Where the gold does not record the field" in result
+        assert "| acknowledgement | 5/40 | 0.590 |" in result
+        assert "* acknowledgement, of 35 such docs: 3 docs/3 values" in result
+        assert "0.429" in result
+
+    def test_should_show_counts_alone_where_the_corpus_records_no_gold(self):
+        result = _render_report(
+            {"pkp": {
+                "n": 40,
+                "aggregated": _aggregated("edit_sim", "reference_title", 0.0, "partial_list"),
+                "gold_presence": {"reference_title": _gold_presence(40, 0, 37, 650)},
+            }},
+            ["reference_title"], {"reference_title": "partial_list"}, None,
+        )
+        split = result.split("### Where the gold does not record the field")[1]
+        assert "* reference_title, of 40 such docs: 37 docs/650 values" in split
+        assert "| Field | Gold |" not in split
+
+    def test_should_state_that_a_model_produced_nothing(self):
+        result = _render_report(
+            {"pkp": {
+                "n": 40,
+                "aggregated": _aggregated("edit_sim", "keywords", 0.0, "partial_ulist"),
+                "gold_presence": {"keywords": _gold_presence(40, 0)},
+            }},
+            ["keywords"], {"keywords": "partial_ulist"}, None,
+        )
+        assert "* keywords, of 40 such docs: nothing" in result
+
+    def test_should_omit_the_section_where_the_gold_records_every_document(self):
+        result = _render_report(
+            {"biorxiv": {
+                "n": 31,
+                "aggregated": _aggregated("edit_sim", "title", 0.9),
+                "aggregated_gold_present": _aggregated("edit_sim", "title", 0.9),
+                "gold_presence": {"title": _gold_presence(31, 31)},
+            }},
+            ["title"], {"title": "string"}, None,
+        )
+        assert "Where the gold does not record the field" not in result
+
+    def test_should_omit_the_section_for_a_run_scored_before_the_split(self):
+        result = _render_report(
+            {"biorxiv": {"n": 31, "aggregated": _aggregated("edit_sim", "title", 0.9)}},
+            ["title"], {"title": "string"}, None,
+        )
+        assert "Where the gold does not record the field" not in result
+        assert "0.900" in result
+
+
+def _scored_document(field: str, expected: int, predicted: int, sim: float = 0.0) -> dict:
+    return {
+        field: {
+            "scoring_type": "string",
+            "edit_sim": {
+                "sim_sum": sim, "expected_count": expected, "predicted_count": predicted,
+                "precision": 0.0, "recall": 0.0, "f1": 0.0,
+            },
+        }
+    }
+
+
+class TestDocScoresFromDict:
+    def test_should_round_trip_doc_scores_to_dict(self):
+        doc_scores = [{
+            "field_name": "title",
+            "scoring_type": "string",
+            "scoring_method": "edit_sim",
+            "match_score": {"sim_sum": 0.5, "expected_count": 1, "predicted_count": 1},
+        }]
+        result = list(_doc_scores_from_dict(_doc_scores_to_dict(doc_scores)))
+        assert len(result) == 1
+        assert result[0]["field_name"] == "title"
+        assert result[0]["scoring_type"] == "string"
+        assert result[0]["scoring_method"] == "edit_sim"
+        # `_doc_scores_to_dict` also stores precision/recall/f1; the counts are what the
+        # sums read.
+        assert result[0]["match_score"]["sim_sum"] == 0.5
+        assert result[0]["match_score"]["expected_count"] == 1
+
+
+class TestSummariseDocuments:
+    def test_should_report_no_aggregate_for_no_documents(self):
+        assert _summarise_documents([], ["title"], {"title": ["edit_sim"]}) == {"n": 0}
+
+    def test_should_aggregate_over_every_document_and_over_the_gold_present_ones(self):
+        documents = [
+            _scored_document("acknowledgement", expected=1, predicted=1, sim=1.0),
+            _scored_document("acknowledgement", expected=0, predicted=1),
+        ]
+        result = _summarise_documents(
+            documents, ["acknowledgement"], {"acknowledgement": ["edit_sim"]}
+        )
+        assert result["n"] == 2
+        assert result["gold_presence"]["acknowledgement"] == {
+            "n": 2, "n_gold": 1, "no_gold_docs": 1, "no_gold_values": 1,
+        }
+        combined = _f1_from_aggregated(
+            result["aggregated"], "acknowledgement", "string", "edit_sim"
+        )
+        conditional = _f1_from_aggregated(
+            result["aggregated_gold_present"], "acknowledgement", "string", "edit_sim"
+        )
+        # The spurious prediction only enlarges precision's denominator.
+        assert combined == pytest.approx(2 / 3)
+        assert conditional == pytest.approx(1.0)
+
+    def test_should_ignore_a_method_the_config_no_longer_asks_for(self):
+        documents = [_scored_document("title", expected=1, predicted=1, sim=1.0)]
+        result = _summarise_documents(documents, ["title"], {"title": ["levenshtein"]})
+        assert result == {"n": 1}
+
+
+class TestRunScoreFromScores:
+    def test_should_summarise_existing_score_files_without_scoring_again(self, tmp_path):
+        run_dir = tmp_path / "run"
+        scores_dir = run_dir / "scores" / "biorxiv"
+        scores_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(json.dumps(
+            {"split": "train", "corpora": ["biorxiv"]}
+        ))
+        for record_id, expected in (("a", 1), ("b", 0)):
+            (scores_dir / f"{record_id}.json").write_text(json.dumps({
+                "record_id": record_id, "corpus": "biorxiv",
+                "fields": _scored_document("acknowledgement", expected, 1, sim=1.0),
+            }))
+
+        with patch("benchmarks.score._score_corpus") as score_corpus:
+            run_score(
+                config={
+                    "fields": ["acknowledgement"],
+                    "scoring": {"default_methods": ["edit_sim"], "default_type": "string"},
+                },
+                run_dir=run_dir, data_dir=tmp_path / "data", out_path=None,
+                from_scores=True,
+            )
+        score_corpus.assert_not_called()
+
+        summary = json.loads((run_dir / "summary.json").read_text())
+        assert summary["corpora"]["biorxiv"]["n"] == 2
+        assert summary["corpora"]["biorxiv"]["gold_presence"]["acknowledgement"] == {
+            "n": 2, "n_gold": 1, "no_gold_docs": 1, "no_gold_values": 1,
+        }
+
+    def test_should_warn_and_report_nothing_where_a_corpus_was_never_scored(
+        self, tmp_path, caplog
+    ):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "run.json").write_text(json.dumps(
+            {"split": "train", "corpora": ["biorxiv"]}
+        ))
+        run_score(
+            config={"fields": ["title"], "scoring": {}},
+            run_dir=run_dir, data_dir=tmp_path / "data", out_path=None,
+            from_scores=True,
+        )
+        assert "No scores directory" in caplog.text
+        summary = json.loads((run_dir / "summary.json").read_text())
+        assert summary["corpora"]["biorxiv"] == {"n": 0}

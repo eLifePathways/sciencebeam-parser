@@ -6,6 +6,13 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from benchmarks.gold_presence import (
+    GOLD_PRESENCE_KEY,
+    GOLD_PRESENT_AGGREGATED_KEY,
+    has_gold,
+    is_split_worth_reporting,
+    produced_bullet,
+)
 from benchmarks.llm_usage import usage_for_corpora
 
 LOGGER = logging.getLogger(__name__)
@@ -16,8 +23,9 @@ def _get_f1(
     corpus: str,
     field: str,
     method: str,
+    aggregated_key: str = "aggregated",
 ) -> Optional[float]:
-    aggregated = summary.get("corpora", {}).get(corpus, {}).get("aggregated", [])
+    aggregated = summary.get("corpora", {}).get(corpus, {}).get(aggregated_key, [])
     field_type = summary.get("field_scoring_types", {}).get(field, "string")
     for entry in aggregated:
         if entry.get("scoring_type") == field_type and entry.get("scoring_method") == method:
@@ -55,8 +63,20 @@ def _fmt_delta(delta: Optional[float]) -> str:
     return f"{delta:+.3f}" if delta is not None else "—"
 
 
+def _gold_presence(summary: dict, corpus: str, field: str) -> Optional[dict]:
+    """None for a summary written before the split, which then reads as unknown."""
+    return summary.get("corpora", {}).get(corpus, {}).get(GOLD_PRESENCE_KEY, {}).get(field)
+
+
 def _corpus_f1_getter(corpus: str) -> Callable[[dict, str, str], Optional[float]]:
-    return lambda s, f, m: _get_f1(s, corpus, f, m)
+    """Dashes a field the corpus records nothing for, where an f1 of 0.000 would read as a
+    failure to extract. Only here: the Overall row means what `_get_f1` returns, and
+    dropping a corpus from that mean would move a published figure."""
+    def get_f1(summary: dict, field: str, method: str) -> Optional[float]:
+        if not has_gold(_gold_presence(summary, corpus, field)):
+            return None
+        return _get_f1(summary, corpus, field, method)
+    return get_f1
 
 
 def _fmt_count(value: Optional[float]) -> str:
@@ -220,6 +240,145 @@ def _render_field_table(  # pylint: disable=too-many-locals
             lines.append(f"| {field} ({method}) | {field_type} | " + " | ".join(cells) + " |")
 
     return lines
+
+
+def _unequal_gold_note(
+    labeled_summaries: List[Tuple[str, dict]], corpus: str, fields: List[str]
+) -> List[str]:
+    """Call out a split whose columns were scored over different documents.
+
+    The `Gold` column states one denominator for the row, so where the runs covered
+    different documents it belongs to one column only, and each variant's figure is over
+    its own gold documents rather than over the stated ones.
+    """
+    for field in fields:
+        counts = [
+            (label, _gold_presence(summary, corpus, field))
+            for label, summary in labeled_summaries
+        ]
+        known = [(label, p) for label, p in counts if p]
+        if len({(p["n_gold"], p["n"]) for _, p in known}) <= 1:
+            continue
+        listed = ", ".join(f"{label} {p['n_gold']}/{p['n']}" for label, p in known)
+        return [
+            f"> ⚠️ **Unequal document sets** ({listed}). The `Gold` column states one of "
+            "them; each figure is over that column's own gold documents.",
+            "",
+        ]
+    return []
+
+
+def _split_presence(
+    labeled_summaries: List[Tuple[str, dict]], corpus: str, field: str
+) -> Optional[dict]:
+    """One presence per field, preferring the primary: whether the gold records a field is
+    a property of the corpus rather than of the variant."""
+    for _, summary in reversed(labeled_summaries):
+        presence = _gold_presence(summary, corpus, field)
+        if presence:
+            return presence
+    return None
+
+
+def _split_fields(
+    labeled_summaries: List[Tuple[str, dict]], corpus: str, field_names: List[str]
+) -> List[str]:
+    return [
+        field for field in field_names
+        if is_split_worth_reporting(
+            [_gold_presence(s, corpus, field) for _, s in labeled_summaries]
+        )
+    ]
+
+
+def _render_split_table(  # pylint: disable=too-many-locals
+    labeled_summaries: List[Tuple[str, dict]],
+    corpus: str,
+    fields: List[str],
+    field_measures: dict,
+) -> List[str]:
+    """The comparison table, restricted to the documents the gold can support."""
+    scored = [
+        (field, presence) for field, presence in (
+            (field, _split_presence(labeled_summaries, corpus, field)) for field in fields
+        ) if presence and presence["n_gold"]
+    ]
+    if not scored:
+        return []
+    primary_label, _ = labeled_summaries[-1]
+    others = labeled_summaries[:-1]
+    col_labels = (
+        [label for label, _ in others] + [primary_label]
+        + [f"Δ {label}" for label, _ in others]
+    )
+    lines = [
+        "| Field (method) | Gold | " + " | ".join(col_labels) + " |",
+        "|" + "|".join(["---"] * (2 + len(col_labels))) + "|",
+    ]
+    for field, presence in scored:
+        gold = f"{presence['n_gold']}/{presence['n']}"
+        for method in field_measures.get(field, []):
+            values = [
+                _get_f1(s, corpus, field, method, GOLD_PRESENT_AGGREGATED_KEY)
+                for _, s in labeled_summaries
+            ]
+            primary_f1 = values[-1]
+            deltas = [
+                _fmt_delta(
+                    primary_f1 - f1 if primary_f1 is not None and f1 is not None else None
+                )
+                for f1 in values[:-1]
+            ]
+            cells = [_fmt_f1(f1) for f1 in values] + deltas
+            lines.append(f"| {field} ({method}) | {gold} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def _render_gold_split_section(
+    labeled_summaries: List[Tuple[str, dict]],
+    field_names: List[str],
+    field_measures: dict,
+    corpora: List[str],
+) -> List[str]:
+    """Each field scored over only the documents whose gold records it, and what each
+    variant produced where it records nothing.
+
+    Empty unless some field earns it, so a comparison over corpora that record everything
+    is unchanged, as is one against a summary written before the split.
+    """
+    blocks: List[str] = []
+    for corpus in corpora:
+        fields = _split_fields(labeled_summaries, corpus, field_names)
+        if not fields:
+            continue
+        n_docs = max(
+            s.get("corpora", {}).get(corpus, {}).get("n", 0) for _, s in labeled_summaries
+        )
+        table = _render_split_table(labeled_summaries, corpus, fields, field_measures)
+        bullets = [
+            bullet for bullet in (
+                produced_bullet(
+                    field,
+                    [(label, _gold_presence(s, corpus, field)) for label, s in labeled_summaries],
+                )
+                for field in fields
+            ) if bullet
+        ]
+        blocks += [f"**{corpus}** ({n_docs} docs)", ""]
+        blocks += _unequal_gold_note(labeled_summaries, corpus, fields)
+        if table:
+            blocks += [*table, ""]
+        blocks += ["Produced where the gold records nothing:", "", *bullets, ""]
+    if not blocks:
+        return []
+    return [
+        "### Where the gold does not record the field",
+        "",
+        "Scored over only the documents whose gold records the field. A corpus recording"
+        " none of it has nothing to score against, and shows the counts alone.",
+        "",
+        *blocks,
+    ]
 
 
 def _coverage_lines(
@@ -397,6 +556,10 @@ def _render_comparison_report(
             "</details>",
             "",
         ]
+
+    lines += _render_gold_split_section(
+        labeled_summaries, field_names, field_measures, corpora,
+    )
 
     return "\n".join(lines)
 
