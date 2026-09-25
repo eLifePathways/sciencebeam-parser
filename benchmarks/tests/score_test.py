@@ -780,8 +780,8 @@ TRANSLATED_ABSTRACT_TEI = b"""<TEI xmlns="http://www.tei-c.org/ns/1.0">
 class TestScoringAMultilingualAbstract:
     def _score(self, gold: bytes, predicted: bytes) -> dict:
         scores = _score_pair(
-            gold, predicted, ["abstract"], ["edit_sim"], prepare_judge(),
-            scoring_types_by_field_map={"abstract": ["variants"]},
+            gold, predicted, ["abstracts"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstracts": ["variants"]},
         )
         return scores[0]["match_score"]
 
@@ -797,7 +797,15 @@ class TestScoringAMultilingualAbstract:
     def test_should_not_score_the_prediction_against_the_languages_joined(self):
         glued = _score_pair(
             MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI,
+            ["abstracts"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstracts": ["string"]},
+        )
+        assert glued[0]["match_score"]["sim_sum"] < 1.0
+
+    def test_should_score_the_article_own_abstract_as_a_single_value(self):
+        scores = _score_pair(
+            MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI,
             ["abstract"], ["edit_sim"], prepare_judge(),
             scoring_types_by_field_map={"abstract": ["string"]},
         )
-        assert glued[0]["match_score"]["sim_sum"] < 1.0
+        assert scores[0]["match_score"]["sim_sum"] < 0.5

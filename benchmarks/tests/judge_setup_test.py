@@ -6,12 +6,7 @@ from sciencebeam_judge.evaluation.scoring_types.scoring_types import resolve_sco
 from sciencebeam_judge.parsing.xml import parse_xml
 
 from benchmarks.judge_setup import prepare_judge
-from benchmarks.variant_scoring import (
-    MAIN_VARIANT_SCORING_TYPE,
-    MAIN_VARIANT_SCORING_TYPE_NAME,
-    SCORING_TYPE_NAME,
-    VARIANTS_SCORING_TYPE,
-)
+from benchmarks.variant_scoring import SCORING_TYPE_NAME, VARIANTS_SCORING_TYPE
 
 GOLD_JATS = b"""<article>
   <front>
@@ -30,14 +25,15 @@ class TestPrepareJudge:
         prepare_judge()
         assert resolve_scoring_type(SCORING_TYPE_NAME) is VARIANTS_SCORING_TYPE
 
-    def test_should_register_the_main_variant_scoring_type(self):
-        prepare_judge()
-        assert resolve_scoring_type(MAIN_VARIANT_SCORING_TYPE_NAME) is MAIN_VARIANT_SCORING_TYPE
-
-    def test_should_read_the_abstract_as_its_variants(self):
+    def test_should_read_the_abstract_as_the_article_own(self):
         xml_mapping = prepare_judge()
         values = parse_xml(BytesIO(GOLD_JATS), xml_mapping, fields=["abstract"])
-        assert values["abstract"] == [
+        assert values["abstract"] == ["the article's own abstract"]
+
+    def test_should_read_the_abstracts_as_every_language(self):
+        xml_mapping = prepare_judge()
+        values = parse_xml(BytesIO(GOLD_JATS), xml_mapping, fields=["abstracts"])
+        assert values["abstracts"] == [
             "the article's own abstract", "the translated abstract"
         ]
 

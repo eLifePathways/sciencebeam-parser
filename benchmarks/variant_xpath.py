@@ -31,12 +31,31 @@ def _is_translation_variant(node: ET.ElementBase, main: ET.ElementBase) -> bool:
     return _is_same_kind(node, main) and _declares_another_language(node, main)
 
 
-def abstract_variants(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
-    """The abstracts a document offers as alternatives, the article's own first."""
-    candidates = [
+def _candidates(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
+    return [
         node for node in article_meta
         if node.tag in (ABSTRACT, TRANS_ABSTRACT)
     ]
+
+
+def _main_variant(candidates: List[ET.ElementBase]) -> ET.ElementBase:
+    """The article's own abstract: the first `<abstract>` in document order, or the first
+    candidate where the document has none."""
+    return next(
+        (node for node in candidates if node.tag == ABSTRACT),
+        candidates[0],
+    )
+
+
+def main_abstract(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
+    """The article's own abstract, as at most one element."""
+    candidates = _candidates(article_meta)
+    return [_main_variant(candidates)] if candidates else []
+
+
+def abstract_variants(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
+    """The abstracts a document offers as alternatives, the article's own first."""
+    candidates = _candidates(article_meta)
     if not candidates:
         return []
     main = _main_variant(candidates)
@@ -46,11 +65,8 @@ def abstract_variants(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
     ]
 
 
-def _main_variant(candidates: List[ET.ElementBase]) -> ET.ElementBase:
-    return next(
-        (node for node in candidates if node.tag == ABSTRACT),
-        candidates[0],
-    )
+def fn_jats_main_abstract(_, nodes):
+    return [variant for node in nodes for variant in main_abstract(node)]
 
 
 def fn_jats_abstract_variants(_, nodes):
@@ -60,4 +76,5 @@ def fn_jats_abstract_variants(_, nodes):
 def register_variant_functions(ns: Optional[ET.FunctionNamespace] = None) -> None:
     if ns is None:
         ns = ET.FunctionNamespace(None)
+    ns["jats-main-abstract"] = fn_jats_main_abstract
     ns["jats-abstract-variants"] = fn_jats_abstract_variants

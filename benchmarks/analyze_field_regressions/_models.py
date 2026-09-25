@@ -34,6 +34,7 @@ MODEL_RELEVANT_LABELS: Dict[str, Dict[str, frozenset]] = {
                              'citation': REFERENCE_PRESENCE_LABELS},
     'title':                {**_HEADER_MODEL_LABELS, 'header': frozenset({'<title>'})},
     'abstract':             {**_HEADER_MODEL_LABELS, 'header': frozenset({'<abstract>'})},
+    'abstracts':            {**_HEADER_MODEL_LABELS, 'header': frozenset({'<abstract>'})},
     'keywords':             {**_HEADER_MODEL_LABELS, 'header': frozenset({'<keyword>'})},
     'author_full_names':    {**_HEADER_MODEL_LABELS, 'header': frozenset({'<author>'}),
                              'name-header': frozenset({'<forenames>', '<surname>'})},
@@ -47,6 +48,7 @@ MODEL_RELEVANT_LABELS: Dict[str, Dict[str, frozenset]] = {
 FIELD_MODEL: Dict[str, str] = {
     'title':                'header',
     'abstract':             'header',
+    'abstracts':            'header',
     'author_full_names':    'name-header',
     'affiliation_text':     'affiliation-address',
     'keywords':             'header',
