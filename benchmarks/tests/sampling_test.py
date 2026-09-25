@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Dict
+
 import numpy as np
 import pytest
 
@@ -106,7 +108,7 @@ class TestStratifiedSampling:
 
     def test_draws_evenly_and_gives_the_remainder_to_the_first_served(self):
         picked = stratified_ids(self._corpus(), 4, seed=42)
-        counts = {}
+        counts: Dict[str, int] = {}
         for record_id in picked:
             counts[record_id[:-1]] = counts.get(record_id[:-1], 0) + 1
         assert sorted(counts.values()) == [1, 1, 2]

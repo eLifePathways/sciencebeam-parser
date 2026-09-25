@@ -2,7 +2,6 @@
 every other task: its rows are already lines, so the text is a feature column.
 """
 import json
-from typing import Optional
 
 import pytest
 
@@ -13,7 +12,7 @@ from sciencebeam_parser.models.llm.decode import (
 from sciencebeam_parser.models.llm.features import get_feature_column_index
 from sciencebeam_parser.models.llm.model_impl import LlmModelImpl
 
-from tests.models.llm.model_impl_test import FakeClient
+from tests.models.llm.model_impl_test import FakeClient, FakeContent
 
 
 SEGMENTATION_CONFIG = {
@@ -40,7 +39,7 @@ def segmentation_feature_rows():
 SEGMENTATION_TOKENS = ['Title', 'Introduction', 'References', '[1]']
 
 
-def get_segmentation_model_impl(content: Optional[str] = None, **overrides):
+def get_segmentation_model_impl(content: FakeContent = None, **overrides):
     return LlmModelImpl(
         LlmEngineConfig.from_model_config({**SEGMENTATION_CONFIG, **overrides}),
         client=FakeClient(content=content)

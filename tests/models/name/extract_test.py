@@ -1,4 +1,5 @@
 import logging
+from typing import List
 
 from sciencebeam_parser.document.layout_document import LayoutBlock
 from sciencebeam_parser.document.semantic_document import (
@@ -103,7 +104,7 @@ class TestNameSemanticExtractor:
         assert author.surname_text == 'Smith'
 
     def test_should_extract_multiple_authors(self):
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<forename>', LayoutBlock.for_text('John')),
                 ('<surname>', LayoutBlock.for_text('Smith')),
@@ -129,7 +130,7 @@ class TestNameSemanticExtractor:
     def test_should_split_on_comma_before_marker(self):
         # The model currently does not provide segmentation as such
         # That is why the segmentation of authors is currently rule-based
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<marker>', LayoutBlock.for_text('1')),
                 ('<forename>', LayoutBlock.for_text('John')),
@@ -156,7 +157,7 @@ class TestNameSemanticExtractor:
     def test_should_split_on_double_comma_before_marker(self):
         # The model currently does not provide segmentation as such
         # That is why the segmentation of authors is currently rule-based
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<marker>', LayoutBlock.for_text('1')),
                 ('<forename>', LayoutBlock.for_text('John')),
@@ -182,7 +183,7 @@ class TestNameSemanticExtractor:
 
     def test_should_split_on_second_title(self):
         # This matches the current rules in GROBID
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<title>', LayoutBlock.for_text('Mr')),
                 ('<forename>', LayoutBlock.for_text('John')),
@@ -207,7 +208,7 @@ class TestNameSemanticExtractor:
 
     def test_should_split_on_second_firstname(self):
         # This matches the current rules in GROBID
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<forename>', LayoutBlock.for_text('John')),
                 ('<surname>', LayoutBlock.for_text('Smith')),
@@ -228,7 +229,7 @@ class TestNameSemanticExtractor:
 
     def test_should_split_on_second_surname(self):
         # This matches the current rules in GROBID
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<surname>', LayoutBlock.for_text('Smith')),
                 ('<forename>', LayoutBlock.for_text('John')),
@@ -249,7 +250,7 @@ class TestNameSemanticExtractor:
 
     def test_should_split_not_split_on_second_middlename(self):
         # This matches the current rules in GROBID
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<forename>', LayoutBlock.for_text('John')),
                 ('<middlename>', LayoutBlock.for_text('M')),
@@ -273,7 +274,7 @@ class TestNameSemanticExtractor:
 
     def test_should_split_not_split_on_second_suffix(self):
         # This matches the current rules in GROBID
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<forename>', LayoutBlock.for_text('John')),
                 ('<surname>', LayoutBlock.for_text('Smith')),
@@ -296,7 +297,7 @@ class TestNameSemanticExtractor:
         assert author_2.surname_text == 'Madison'
 
     def test_should_parse_multiple_markers(self):
-        semantic_content_list = list(
+        semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<forename>', LayoutBlock.for_text('John')),
                 ('<surname>', LayoutBlock.for_text('Smith')),

@@ -1,4 +1,5 @@
 from time import perf_counter
+from typing import Optional
 
 
 class StopWatch:
@@ -22,7 +23,7 @@ class StopWatchRecorder:
     def stop(self):
         self.start(None)
 
-    def start(self, name: str):
+    def start(self, name: Optional[str]):
         elapsed = self.stop_watch.get_elapsed_seconds(reset=True)
         if self.started:
             self.recorded_timings.append((self.started, elapsed))

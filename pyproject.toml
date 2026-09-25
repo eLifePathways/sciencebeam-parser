@@ -77,9 +77,10 @@ include = ["sciencebeam_parser*"]
   "resources/xslt/*.xsl"
 ]
 
-[[tool.mypy.overrides]]
-module = "sciencebeam_judge.*"
+[tool.mypy]
+files = ["sciencebeam_parser", "tests", "benchmarks"]
 ignore_missing_imports = true
+check_untyped_defs = true
 
 [tool.pytest-watcher]
 now = true

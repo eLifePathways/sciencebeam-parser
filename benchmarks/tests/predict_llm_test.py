@@ -169,6 +169,7 @@ class TestPostWithRetry:
         sleep = AsyncMock()
         with patch("benchmarks.predict_llm.asyncio.sleep", new=sleep):
             asyncio.run(_post_with_retry(client, "https://example.test/annotate", 5, 4))
+        assert sleep.await_args is not None
         assert sleep.await_args[0][0] == 7
 
 

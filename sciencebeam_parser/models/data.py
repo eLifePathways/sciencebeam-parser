@@ -4,7 +4,17 @@ import math
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, FrozenSet, Generic, Iterable, List, NamedTuple, Optional, TypeVar
+from typing import (
+    Callable,
+    FrozenSet,
+    Generic,
+    Iterable,
+    Iterator,
+    List,
+    NamedTuple,
+    Optional,
+    TypeVar
+)
 
 from lxml import etree
 
@@ -160,7 +170,7 @@ class ModelDataGenerator(ABC):
     def iter_model_data_for_layout_document(
         self,
         layout_document: LayoutDocument
-    ) -> Iterable[LayoutModelData]:
+    ) -> Iterator[LayoutModelData]:
         pass
 
     def iter_data_lines_for_layout_document(  # pylint: disable=too-many-locals
@@ -919,7 +929,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
     def iter_model_data_for_layout_document(  # pylint: disable=too-many-locals
         self,
         layout_document: LayoutDocument
-    ) -> Iterable[LayoutModelData]:
+    ) -> Iterator[LayoutModelData]:
         relative_font_size_feature = RelativeFontSizeFeature(
             layout_document.iter_all_tokens()
         )

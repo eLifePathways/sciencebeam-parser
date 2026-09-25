@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Counter, Iterable, List, Optional, Set
+from typing import Counter, Iterable, Iterator, List, Optional, Set
 
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
@@ -402,7 +402,7 @@ class SegmentationDataGenerator(ModelDataGenerator):
     def iter_model_data_for_layout_document(
         self,
         layout_document: LayoutDocument
-    ) -> Iterable[LayoutModelData]:
+    ) -> Iterator[LayoutModelData]:
         features_provider = SegmentationLineFeaturesProvider(
             document_features_context=self.document_features_context,
             use_first_token_of_block=self.use_first_token_of_block
