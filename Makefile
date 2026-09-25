@@ -151,7 +151,7 @@ dev-pylint:
 
 
 dev-mypy:
-	$(PYTHON) -m mypy --ignore-missing-imports sciencebeam_parser tests benchmarks
+	$(PYTHON) -m mypy
 
 
 dev-lint: dev-flake8 dev-pylint dev-mypy

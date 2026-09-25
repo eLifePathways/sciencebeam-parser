@@ -148,7 +148,7 @@ RUN python -m pylint sciencebeam_parser tests benchmarks
 # lint-mypy
 FROM dev AS lint-mypy
 
-RUN python -m mypy --ignore-missing-imports sciencebeam_parser tests benchmarks
+RUN python -m mypy
 
 
 # pytest
