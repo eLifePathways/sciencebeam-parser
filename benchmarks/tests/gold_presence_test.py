@@ -158,6 +158,7 @@ class TestProducedRow:
 
     def test_should_count_the_no_gold_documents_of_the_variant_that_scored_most(self):
         row = produced_row("acknowledgement", [_presence(20, 2), _presence(40, 5)])
+        assert row is not None
         assert row[1] == "35"
 
     def test_should_return_none_where_the_gold_records_every_document(self):

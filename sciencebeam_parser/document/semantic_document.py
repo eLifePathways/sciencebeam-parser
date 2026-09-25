@@ -60,7 +60,7 @@ class SemanticContentWrapper(ABC):
 class SemanticSimpleContentWrapper(SemanticContentWrapper):
     content: LayoutBlock = field(default_factory=lambda: LayoutBlock(lines=[]))
 
-    layout_block: dataclasses.InitVar[LayoutBlock] = None
+    layout_block: dataclasses.InitVar[Optional[LayoutBlock]] = None
 
     def __post_init__(self, layout_block: Optional[LayoutBlock] = None):
         assert isinstance(self.content, LayoutBlock)
@@ -132,7 +132,7 @@ class SemanticMixedContentWrapper(SemanticContentWrapper):
 
     def iter_by_type(
         self, type_: Type[T_SemanticContentWrapper]
-    ) -> Iterable[T_SemanticContentWrapper]:
+    ) -> Iterator[T_SemanticContentWrapper]:
         return (
             content for content in self.mixed_content
             if isinstance(content, type_)

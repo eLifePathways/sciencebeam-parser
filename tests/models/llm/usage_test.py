@@ -2,6 +2,7 @@ import contextvars
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict
 
 from sciencebeam_parser.models.llm.usage import (
     REPLAYED_RESPONSE_KEY,
@@ -244,7 +245,7 @@ class TestProviderReportedShape:
     """Anchored on real OpenRouter responses: `prompt_tokens + completion_tokens`
     is the reported `total_tokens`, so reasoning and cached tokens are breakdowns
     of those two rather than additions to them."""
-    GPT_OSS_RESPONSE = {
+    GPT_OSS_RESPONSE: Dict[str, Any] = {
         'model': 'openai/gpt-oss-120b',
         'provider': 'AkashML',
         'usage': {

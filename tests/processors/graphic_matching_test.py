@@ -464,6 +464,7 @@ class TestBoundingBoxDistanceGraphicMatcher:
         page_meta_1 = LayoutPageMeta.for_coordinates(LayoutPageCoordinates(
             x=0, y=0, width=100, height=200, page_number=1
         ))
+        assert page_meta_1.coordinates is not None
         page_meta_2 = LayoutPageMeta.for_coordinates(
             page_meta_1.coordinates._replace(page_number=2)
         )
@@ -495,6 +496,7 @@ class TestBoundingBoxDistanceGraphicMatcher:
         page_meta_1 = LayoutPageMeta.for_coordinates(LayoutPageCoordinates(
             x=0, y=0, width=100, height=200, page_number=1
         ))
+        assert page_meta_1.coordinates is not None
         page_meta_2 = LayoutPageMeta.for_coordinates(
             page_meta_1.coordinates._replace(page_number=2)
         )
@@ -526,8 +528,9 @@ class TestBoundingBoxDistanceGraphicMatcher:
         )
         LOGGER.debug('result: %r', result)
         LOGGER.debug('result.graphic_matches[].local_file_path: %r', [
-            graphic_match.semantic_graphic.layout_graphic.local_file_path
+            layout_graphic.local_file_path
             for graphic_match in result.graphic_matches
+            if (layout_graphic := graphic_match.semantic_graphic.layout_graphic) is not None
         ])
         assert len(result) == 2
         first_match = result.graphic_matches[0]
@@ -542,6 +545,7 @@ class TestBoundingBoxDistanceGraphicMatcher:
         page_meta_1 = LayoutPageMeta.for_coordinates(LayoutPageCoordinates(
             x=0, y=0, width=100, height=200, page_number=1
         ))
+        assert page_meta_1.coordinates is not None
         page_meta_2 = LayoutPageMeta.for_coordinates(
             page_meta_1.coordinates._replace(page_number=2)
         )
@@ -589,8 +593,9 @@ class TestBoundingBoxDistanceGraphicMatcher:
         )
         LOGGER.debug('result: %r', result)
         LOGGER.debug('result.graphic_matches[].local_file_path: %r', [
-            graphic_match.semantic_graphic.layout_graphic.local_file_path
+            layout_graphic.local_file_path
             for graphic_match in result.graphic_matches
+            if (layout_graphic := graphic_match.semantic_graphic.layout_graphic) is not None
         ])
         assert [
             (graphic_match.candidate_semantic_content.get_text(), graphic_match.semantic_graphic)

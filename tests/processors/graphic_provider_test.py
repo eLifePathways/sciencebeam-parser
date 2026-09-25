@@ -143,7 +143,7 @@ class TestGetPageNumbersWithMostlyBitmapGraphics:
 
     def test_should_provide_empty_list_for_pages_without_any_graphics(self):
         layout_document = LayoutDocument(pages=[
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=1,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=1)
             ))
@@ -226,19 +226,19 @@ class TestGetGraphicMatchingCandidatePageNumbersForSemanticContentList:
             coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=2)
         )
         layout_document = LayoutDocument(pages=[
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=2,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=2)
             )),
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=3,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=3)
             )),
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=4,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=4)
             )),
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=5,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=5)
             ))
@@ -325,9 +325,9 @@ class TestGetLayoutDocumentWithTextAndGraphicsReplacedByGraphics:
         assert result.pages[0].graphics[-1].graphic_type == layout_graphic.graphic_type
         assert result.pages[0].graphics[-1].coordinates == layout_graphic.coordinates
         assert list(result.pages[0].blocks[0].iter_all_tokens()) == [keep_token]
-        assert list(result.pages[0].graphics[-1].related_block.iter_all_tokens()) == [
-            keep_token, remove_token
-        ]
+        related_block = result.pages[0].graphics[-1].related_block
+        assert related_block is not None
+        assert list(related_block.iter_all_tokens()) == [keep_token, remove_token]
 
 
 class TestGetLayoutDocumentWithGraphicsReplacedByGraphics:

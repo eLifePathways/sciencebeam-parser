@@ -2,7 +2,7 @@ import contextvars
 import json
 import threading
 from contextvars import ContextVar
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple, Union
 
 import pytest
 
@@ -31,6 +31,8 @@ LINE_STATUS = ['LINESTART', 'LINEEND', 'LINESTART', 'LINEIN', 'LINEIN', 'LINEEND
 
 LINE_STATUS_INDEX = get_feature_column_index('reference_segmenter', 'line_status')
 
+FakeContent = Union[str, List[str], None]
+
 
 def feature_rows():
     return [
@@ -45,8 +47,10 @@ class FakeClient:
     `content` may be a list, one entry per call, so a test can make the first
     response leave a reference out and the next one answer it.
     """
-    def __init__(self, content=None, error: Optional[Exception] = None):
-        self.contents = content if isinstance(content, list) else [content]
+    def __init__(self, content: FakeContent = None, error: Optional[Exception] = None):
+        self.contents: List[Optional[str]] = (
+            list(content) if isinstance(content, list) else [content]
+        )
         self.error = error
         self.prompts: List[str] = []
         self.attempts: List[Tuple[int, ...]] = []
@@ -72,7 +76,7 @@ class FakeClient:
         }
 
 
-def get_model_impl(content: Optional[str] = None, error: Optional[Exception] = None):
+def get_model_impl(content: FakeContent = None, error: Optional[Exception] = None):
     return LlmModelImpl(
         LlmEngineConfig.from_model_config(CONFIG),
         client=FakeClient(content=content, error=error)
@@ -147,7 +151,7 @@ def batched(*per_reference) -> str:
     ]})
 
 
-def get_citation_model_impl(content: str, **overrides):
+def get_citation_model_impl(content: FakeContent, **overrides):
     return LlmModelImpl(
         LlmEngineConfig.from_model_config({**CITATION_CONFIG, **overrides}),
         client=FakeClient(content=content)
@@ -349,15 +353,16 @@ class TestRetryOnMalformedResponse:
         assert len(model_impl.client.prompts) == 2
 
     def test_should_not_retry_when_disabled(self):
+        client = FakeClient(content='{"starts": [0')
         model_impl = LlmModelImpl(
             LlmEngineConfig.from_model_config(
                 {**CONFIG, 'max_malformed_response_retries': 0}
             ),
-            client=FakeClient(content='{"starts": [0')
+            client=client
         )
         with pytest.raises(LlmResponseError):
             model_impl.predict_labels([TOKENS], [feature_rows()])
-        assert len(model_impl.client.prompts) == 1
+        assert len(client.prompts) == 1
 
     def test_should_not_ask_again_when_the_response_parsed(self):
         model_impl = get_model_impl(json.dumps({'starts': [0]}))
@@ -734,16 +739,17 @@ class TestCitationConcurrency:
 
     def test_should_make_one_call_per_batch_when_parallel(self):
         token_lists = [['Alpha'], ['Bravo'], ['Charlie']]
+        client = FakeClient(content=batched([]))
         model_impl = LlmModelImpl(
             LlmEngineConfig.from_model_config({
                 **CITATION_CONFIG,
                 'max_references_per_request': 1,
                 'max_concurrent_requests': 3,
             }),
-            client=FakeClient(content=batched([]))
+            client=client
         )
         model_impl.predict_labels(token_lists, no_features(token_lists))
-        assert len(model_impl.client.prompts) == 3
+        assert len(client.prompts) == 3
 
     def test_should_propagate_a_failure_from_a_worker(self):
         token_lists = [['Alpha'], ['Bravo']]

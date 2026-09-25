@@ -58,7 +58,7 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
 }
 
 
-def get_cleaned_abstract_text(text: str) -> str:
+def get_cleaned_abstract_text(text: Optional[str]) -> Optional[str]:
     if not text:
         return text
     m = re.match(ABSTRACT_REGEX, text, re.IGNORECASE)
@@ -68,7 +68,9 @@ def get_cleaned_abstract_text(text: str) -> str:
     return m.group(1)
 
 
-def get_cleaned_abstract_layout_block(layout_block: LayoutBlock) -> LayoutBlock:
+def get_cleaned_abstract_layout_block(
+    layout_block: Optional[LayoutBlock]
+) -> Optional[LayoutBlock]:
     if not layout_block or not layout_block.lines:
         return layout_block
     layout_tokens_text = LayoutTokensText(layout_block)

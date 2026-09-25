@@ -69,7 +69,7 @@ class TestGetCorpusVariants:
         assert get_corpus_variants(config, "train") == {"biorxiv": "v2"}
 
     def test_defaults_to_v1(self):
-        config = {"dataset": {"splits": {"train": {"biorxiv": {}}}}}
+        config: dict = {"dataset": {"splits": {"train": {"biorxiv": {}}}}}
         assert get_corpus_variants(config, "train") == {"biorxiv": "v1"}
 
     def test_leaves_out_an_opt_in_corpus_nobody_asked_for(self):

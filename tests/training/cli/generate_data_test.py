@@ -869,6 +869,7 @@ def _annotate_block_as_reference(
 def _make_jats_context(
     annotated: JatsAnnotatedLayoutDocument,
     ref_blocks: List[LayoutBlock],
+    fulltext_models: Optional[MagicMock] = None,
 ) -> TrainingDataDocumentContext:
     seg_labels: Dict[int, str] = {
         id(line): '<references>'
@@ -879,7 +880,7 @@ def _make_jats_context(
         output_path='/tmp/test',
         source_filename='test.pdf',
         document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
-        fulltext_models=MagicMock(),
+        fulltext_models=fulltext_models if fulltext_models is not None else MagicMock(),
         use_model=False,
         use_directory_structure=False,
         model_result_cache=ModelResultCache(),
@@ -1328,7 +1329,10 @@ class TestCitationModelJatsPath:
         annotated = JatsAnnotatedLayoutDocument(layout_document=layout_document)
         _annotate_block_as_reference(ref1_block, annotated, instance_id=1)
         _annotate_block_as_reference(ref2_block, annotated, instance_id=2)
-        context = _make_jats_context(annotated, [ref1_block, ref2_block])
+        fulltext_models = MagicMock()
+        context = _make_jats_context(
+            annotated, [ref1_block, ref2_block], fulltext_models=fulltext_models
+        )
 
         result = list(
             CitationModelTrainingDataGenerator().iter_model_layout_documents(
@@ -1339,7 +1343,7 @@ class TestCitationModelJatsPath:
         assert len(result) == 2
         assert _doc_text(result[0]) == ref1_block.text
         assert _doc_text(result[1]) == ref2_block.text
-        context.fulltext_models.reference_segmenter_model.assert_not_called()
+        fulltext_models.reference_segmenter_model.assert_not_called()
 
     def test_returns_empty_when_no_references_annotated(self):
         block = LayoutBlock.for_text('Some text')
@@ -1372,7 +1376,10 @@ class TestNameCitationModelJatsPath:
             sub_field=JatsSubFieldNames.REFERENCE_AUTHOR
         )
         _annotate_block_as_reference(other_block, annotated, instance_id=1)
-        context = _make_jats_context(annotated, [author_block, other_block])
+        fulltext_models = MagicMock()
+        context = _make_jats_context(
+            annotated, [author_block, other_block], fulltext_models=fulltext_models
+        )
 
         result = list(
             NameCitationModelTrainingDataGenerator().iter_model_layout_documents(
@@ -1386,8 +1393,8 @@ class TestNameCitationModelJatsPath:
         assert 'Jones' in result_text
         # Non-author tokens should not be present
         assert 'Title' not in result_text
-        context.fulltext_models.reference_segmenter_model.assert_not_called()
-        context.fulltext_models.citation_model.assert_not_called()
+        fulltext_models.reference_segmenter_model.assert_not_called()
+        fulltext_models.citation_model.assert_not_called()
 
     def test_returns_empty_when_no_author_annotations(self):
         block = LayoutBlock.for_text('Smith 2020')

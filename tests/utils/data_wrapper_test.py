@@ -48,4 +48,5 @@ class TestGetDataWrapperWithImprovedMediaTypeOrFilename:
             filename=None
         )
         result = get_data_wrapper_with_improved_media_type_or_filename(source_data_wrapper)
+        assert result.filename is not None
         assert result.filename.endswith('.pdf')
