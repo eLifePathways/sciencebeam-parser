@@ -57,18 +57,23 @@ def merge_variant_matches(entries: Iterable[Optional[dict]]) -> Optional[dict]:
     }
 
 
+def translation_counts(entry: Optional[dict]) -> str:
+    """What one run credited, over the documents it scored.
+
+    Both numbers are stated because runs covering different documents have different
+    denominators, and a shared one would be wrong for all but the run it came from.
+    """
+    if entry is None:
+        return "unknown"
+    return f"{entry['n_translation']} of {entry['n_variants']}"
+
+
 def variant_match_row(field: str, entries: Sequence[Optional[dict]]) -> Optional[List[str]]:
-    """One table row: the field, how many documents carry it in more than one language, and
-    how many of those each run credited a translation for. None where no document does."""
-    n_variants = max(
-        (entry["n_variants"] for entry in entries if entry),
-        default=0,
-    )
-    if not n_variants:
+    """One table row: the field, and what each run credited. None where no document carries
+    the field in more than one language."""
+    if not any(entry and entry["n_variants"] for entry in entries):
         return None
-    return [field, str(n_variants)] + [
-        str(entry["n_translation"]) if entry else "unknown" for entry in entries
-    ]
+    return [field] + [translation_counts(entry) for entry in entries]
 
 
 def render_variant_match_table(
@@ -85,8 +90,8 @@ def render_variant_match_table(
     return [
         "Where the gold carries a field in more than one language:",
         "",
-        "| Field | Docs | Credited a translation |",
-        "|---|---|---|",
+        "| Field | Credited a translation |",
+        "|---|---|",
         *["| " + " | ".join(row) + " |" for row in present],
         "",
     ]

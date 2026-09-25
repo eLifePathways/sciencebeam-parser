@@ -58,16 +58,16 @@ class TestVariantMatchRow:
     def test_should_return_none_where_no_document_offers_a_choice(self):
         assert variant_match_row("abstract", [None]) is None
 
-    def test_should_report_each_run(self):
+    def test_should_state_each_run_own_denominator(self):
         assert variant_match_row("abstract", [
-            {"n_variants": 4, "n_translation": 1},
-            {"n_variants": 4, "n_translation": 3},
-        ]) == ["abstract", "4", "1", "3"]
+            {"n_variants": 46, "n_translation": 7},
+            {"n_variants": 13, "n_translation": 3},
+        ]) == ["abstract", "7 of 46", "3 of 13"]
 
     def test_should_report_a_run_without_a_count_as_unknown(self):
         assert variant_match_row("abstract", [
             {"n_variants": 4, "n_translation": 1}, None,
-        ]) == ["abstract", "4", "1", "unknown"]
+        ]) == ["abstract", "1 of 4", "unknown"]
 
 
 class TestRenderVariantMatchTable:
@@ -78,7 +78,7 @@ class TestRenderVariantMatchTable:
         lines = render_variant_match_table(
             {"abstract": {"n_variants": 27, "n_translation": 7}}, ["abstract"]
         )
-        assert "| abstract | 27 | 7 |" in lines
+        assert "| abstract | 7 of 27 |" in lines
 
 
 class TestMatchedVariantIndex:

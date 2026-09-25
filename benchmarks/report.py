@@ -391,8 +391,8 @@ def _render_variant_match_section(
         "<summary>Credited a translation rather than the article's own language"
         f" ({len(rows)} fields)</summary>",
         "",
-        "| Field | Docs | " + " | ".join(labels) + " |",
-        "|" + "|".join(["---"] * (2 + len(labels))) + "|",
+        "| Field | " + " | ".join(labels) + " |",
+        "|" + "|".join(["---"] * (1 + len(labels))) + "|",
         *["| " + " | ".join(row) + " |" for row in rows],
         "",
         "</details>",

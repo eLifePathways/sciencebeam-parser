@@ -702,14 +702,14 @@ class TestVariantMatchSection:
             ("wapiti", _variant_summary(0.5, {"n_variants": 24, "n_translation": 2})),
             ("current", _variant_summary(0.6, {"n_variants": 24, "n_translation": 9})),
         ])
-        assert "| abstract | 24 | 2 | 9 |" in report
+        assert "| abstract | 2 of 24 | 9 of 24 |" in report
 
     def test_reports_a_run_scored_before_the_count_existed_as_unknown(self):
         report = _render_comparison_report([
             ("wapiti", _variant_summary(0.5, None)),
             ("current", _variant_summary(0.6, {"n_variants": 24, "n_translation": 9})),
         ])
-        assert "| abstract | 24 | unknown | 9 |" in report
+        assert "| abstract | unknown | 9 of 24 |" in report
 
     def test_omits_the_section_where_no_gold_carries_a_second_language(self):
         report = _render_comparison_report([
