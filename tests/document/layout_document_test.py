@@ -140,10 +140,14 @@ class TestRetokenizeLayoutDocument:
         line = retokenized_layout_document.pages[0].blocks[0].lines[0]
         assert [t.text for t in line.tokens] == ['token1', 'token2']
         assert [t.whitespace for t in line.tokens] == [' ', '\n']
-        assert line.tokens[0].coordinates.x == 10.0
-        assert line.tokens[0].coordinates.width == 100 * len('token1') / len(text)
-        assert line.tokens[1].coordinates.x == 10.0 + 100 * len('token1 ') / len(text)
-        assert line.tokens[1].coordinates.width == 100 * len('token2') / len(text)
+        token_1_coordinates = line.tokens[0].coordinates
+        token_2_coordinates = line.tokens[1].coordinates
+        assert token_1_coordinates is not None
+        assert token_2_coordinates is not None
+        assert token_1_coordinates.x == 10.0
+        assert token_1_coordinates.width == 100 * len('token1') / len(text)
+        assert token_2_coordinates.x == 10.0 + 100 * len('token1 ') / len(text)
+        assert token_2_coordinates.width == 100 * len('token2') / len(text)
 
     def test_should_remove_blank_token(self):
         layout_document = LayoutDocument(

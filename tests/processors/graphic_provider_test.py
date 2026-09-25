@@ -325,9 +325,9 @@ class TestGetLayoutDocumentWithTextAndGraphicsReplacedByGraphics:
         assert result.pages[0].graphics[-1].graphic_type == layout_graphic.graphic_type
         assert result.pages[0].graphics[-1].coordinates == layout_graphic.coordinates
         assert list(result.pages[0].blocks[0].iter_all_tokens()) == [keep_token]
-        assert list(result.pages[0].graphics[-1].related_block.iter_all_tokens()) == [
-            keep_token, remove_token
-        ]
+        related_block = result.pages[0].graphics[-1].related_block
+        assert related_block is not None
+        assert list(related_block.iter_all_tokens()) == [keep_token, remove_token]
 
 
 class TestGetLayoutDocumentWithGraphicsReplacedByGraphics:

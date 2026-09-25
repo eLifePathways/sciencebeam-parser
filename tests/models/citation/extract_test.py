@@ -70,6 +70,7 @@ class TestParseWeb:
 
     def test_should_detect_doi_url(self):
         external_identifier = parse_web(LayoutBlock.for_text('http://doi.org/10.1234/test'))
+        assert isinstance(external_identifier, SemanticExternalIdentifier)
         assert external_identifier.external_identifier_type == SemanticExternalIdentifierTypes.DOI
         assert external_identifier.value == '10.1234/test'
 
