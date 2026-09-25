@@ -69,21 +69,25 @@ class TestGetCleanedAbstractLayoutBlock:
     def test_should_return_abstract_if_it_doesnt_contain_prefix(self):
         layout_block = LayoutBlock.for_text(ABSTRACT_1)
         cleaned_layout_block = get_cleaned_abstract_layout_block(layout_block)
+        assert cleaned_layout_block is not None
         assert join_layout_tokens(cleaned_layout_block.lines[0].tokens) == ABSTRACT_1
 
     def test_should_return_remove_abstract_prefix(self):
         layout_block = LayoutBlock.for_text('Abstract ' + ABSTRACT_1)
         cleaned_layout_block = get_cleaned_abstract_layout_block(layout_block)
+        assert cleaned_layout_block is not None
         assert join_layout_tokens(cleaned_layout_block.lines[0].tokens) == ABSTRACT_1
 
     def test_should_return_remove_abstract_dot_prefix(self):
         layout_block = LayoutBlock.for_text('Abstract. ' + ABSTRACT_1)
         cleaned_layout_block = get_cleaned_abstract_layout_block(layout_block)
+        assert cleaned_layout_block is not None
         assert join_layout_tokens(cleaned_layout_block.lines[0].tokens) == ABSTRACT_1
 
     def test_should_return_remove_abstract_colon_prefix(self):
         layout_block = LayoutBlock.for_text('Abstract: ' + ABSTRACT_1)
         cleaned_layout_block = get_cleaned_abstract_layout_block(layout_block)
+        assert cleaned_layout_block is not None
         assert join_layout_tokens(cleaned_layout_block.lines[0].tokens) == ABSTRACT_1
 
 
