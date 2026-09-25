@@ -667,7 +667,10 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
     return gap_match
 
 
-def _search_range(
+# PROTOTYPE: the post-body floor adds a parameter and a branch to a function that
+# was already at pylint's limits.  A shipped version wants the per-field window
+# rules separated rather than this grown further.
+def _search_range(  # pylint: disable=too-many-locals
     fv: JatsFieldValue,
     last_match_end: int,
     body_floor: int,
@@ -676,6 +679,7 @@ def _search_range(
     keywords_floor: int,
     reference_floor: int,
     parent_match_by_field: Dict[str, Tuple[int, int, int]],
+    post_body_text_end: Optional[Dict[str, int]] = None,
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
     if fv.sub_field_name is not None and fv.field_name in parent_match_by_field:
@@ -727,12 +731,20 @@ def _search_range(
         # for -- body and figures lie before it -- while letting the region be
         # searched in any order, and neither body_content_end nor reference_floor
         # is advanced by a post-body match, so it cannot creep.
-        start = (
-            max(body_content_end, reference_floor)
-            if _POST_BODY_REGION_FLOOR and fv.field_name in _POST_BODY_FIELDS
-            else last_match_end
-        )
-        return max(0, start - 200), None
+        if _POST_BODY_REGION_FLOOR and fv.field_name in _POST_BODY_FIELDS:
+            # The floor lets the region be searched in any order.  A repeated
+            # value still advances past its own previous match, because ORE
+            # prints one copy of each checklist question per reviewer and the
+            # copies have to land on different ones: searching every copy from
+            # the floor collapses them all onto the first.
+            start = max(
+                0,
+                max(body_content_end, reference_floor) - 200,
+                (post_body_text_end or {}).get(fv.text, 0),
+            )
+        else:
+            start = max(0, last_match_end - 200)
+        return start, None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
         # Keywords are anchored to just after the keywords header/abstract so
@@ -1057,12 +1069,14 @@ class LayoutDocumentJatsAligner:
         # Furthest end of any DOI/PMID/PMCID match for the current reference instance.
         # Used to advance the backward-search floor past identifier URLs in the tail.
         ref_id_subfield_end: Dict[str, int] = {}
+        # End of the previous match of each distinct post-body value text.
+        post_body_text_end: Dict[str, int] = {}
 
         for fv in field_values:
             search_start, search_end = _search_range(
                 fv, last_match_end, body_floor, body_content_end,
                 front_matter_end, keywords_floor, reference_floor,
-                parent_match_by_field,
+                parent_match_by_field, post_body_text_end,
             )
             masked = (
                 sub_field_masked_ranges.get(fv.field_name)
@@ -1176,6 +1190,10 @@ class LayoutDocumentJatsAligner:
             matched_count += 1
             a_start, a_end, block_ranges = match_range
             last_match_end = max(last_match_end, a_end)
+            if fv.field_name in _POST_BODY_FIELDS:
+                post_body_text_end[fv.text] = max(
+                    post_body_text_end.get(fv.text, 0), a_end
+                )
             if fv.field_name in _ANCHOR_FIELDS:
                 body_floor = max(body_floor, a_end)
             if fv.field_name in _FRONT_MATTER_END_FIELDS:
