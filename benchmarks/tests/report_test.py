@@ -608,8 +608,7 @@ class TestGoldSplitSection:
             ("current", _split_summary(0.0, 0.0, _presence(40, 0, 30, 30))),
         ])
         assert (
-            "* acknowledgement, of 40 such docs: wapiti 13 docs/13 values;"
-            " current 30 docs/30 values" in report
+            "| acknowledgement | 40 | 13 docs, 13 values | 30 docs, 30 values |" in report
         )
 
     def test_shows_counts_alone_where_the_corpus_records_no_gold(self):
@@ -673,6 +672,4 @@ class TestGoldSplitSection:
         new = _split_summary(0.9, 0.95, _presence(40, 5, 3, 3), field="title")
         new["corpora"]["biorxiv"] = new["corpora"].pop("scielo_br")
         report = _render_comparison_report([("wapiti", old), ("current", new)])
-        assert (
-            "* title, of 35 such docs: wapiti unknown; current 3 docs/3 values" in report
-        )
+        assert "| title | 35 | unknown | 3 docs, 3 values |" in report

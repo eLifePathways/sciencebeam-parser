@@ -598,7 +598,7 @@ class TestRenderReportGoldSplit:
         )
         assert "### Where the gold does not record the field" in result
         assert "| acknowledgement | 5/40 | 0.590 |" in result
-        assert "* acknowledgement, of 35 such docs: 3 docs/3 values" in result
+        assert "| acknowledgement | 35 | 3 docs, 3 values |" in result
         assert "0.429" in result
 
     def test_should_show_counts_alone_where_the_corpus_records_no_gold(self):
@@ -611,7 +611,7 @@ class TestRenderReportGoldSplit:
             ["reference_title"], {"reference_title": "partial_list"}, None,
         )
         split = result.split("### Where the gold does not record the field")[1]
-        assert "* reference_title, of 40 such docs: 37 docs/650 values" in split
+        assert "| reference_title | 40 | 37 docs, 650 values |" in split
         assert "| Field | Gold |" not in split
 
     def test_should_state_that_a_model_produced_nothing(self):
@@ -623,7 +623,7 @@ class TestRenderReportGoldSplit:
             }},
             ["keywords"], {"keywords": "partial_ulist"}, None,
         )
-        assert "* keywords, of 40 such docs: nothing" in result
+        assert "| keywords | 40 | none |" in result
 
     def test_should_omit_the_section_where_the_gold_records_every_document(self):
         result = _render_report(

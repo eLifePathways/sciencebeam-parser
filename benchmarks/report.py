@@ -11,7 +11,7 @@ from benchmarks.gold_presence import (
     GOLD_PRESENT_AGGREGATED_KEY,
     has_gold,
     is_split_worth_reporting,
-    produced_bullet,
+    produced_row,
 )
 from benchmarks.llm_usage import usage_for_corpora
 
@@ -355,20 +355,28 @@ def _render_gold_split_section(
             s.get("corpora", {}).get(corpus, {}).get("n", 0) for _, s in labeled_summaries
         )
         table = _render_split_table(labeled_summaries, corpus, fields, field_measures)
-        bullets = [
-            bullet for bullet in (
-                produced_bullet(
+        labels = [label for label, _ in labeled_summaries]
+        rows = [
+            row for row in (
+                produced_row(
                     field,
-                    [(label, _gold_presence(s, corpus, field)) for label, s in labeled_summaries],
+                    [_gold_presence(s, corpus, field) for _, s in labeled_summaries],
                 )
                 for field in fields
-            ) if bullet
+            ) if row
         ]
         blocks += [f"**{corpus}** ({n_docs} docs)", ""]
         blocks += _unequal_gold_note(labeled_summaries, corpus, fields)
         if table:
             blocks += [*table, ""]
-        blocks += ["Produced where the gold records nothing:", "", *bullets, ""]
+        blocks += [
+            "Produced where the gold records nothing:",
+            "",
+            "| Field | No gold | " + " | ".join(labels) + " |",
+            "|" + "|".join(["---"] * (2 + len(labels))) + "|",
+            *["| " + " | ".join(row) + " |" for row in rows],
+            "",
+        ]
     if not blocks:
         return []
     return [

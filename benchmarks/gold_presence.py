@@ -11,12 +11,10 @@ what decides whether a field is worth reporting separately at all.
 """
 from __future__ import annotations
 
-from typing import Dict, Iterable, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence
 
 GOLD_PRESENCE_KEY = "gold_presence"
 GOLD_PRESENT_AGGREGATED_KEY = "aggregated_gold_present"
-
-LabeledPresence = Sequence[Tuple[Optional[str], Optional[dict]]]
 
 
 def _continuous_scores(field_entry: dict) -> Iterable[dict]:
@@ -96,35 +94,31 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" + ("" if count == 1 else "s")
 
 
-def _produced_counts(presence: Optional[dict]) -> str:
-    """`unknown` and `nothing` are opposite conclusions, so a summary written before the
-    split never reads as a model that abstained."""
+def produced_counts(presence: Optional[dict]) -> str:
+    """What one variant produced on the documents whose gold records nothing.
+
+    Both counts are stated because on a list field the document count understates it:
+    twenty-two documents carried a hundred and eighty-three section titles. `unknown` and
+    `none` are opposite conclusions, so a summary written before the split never reads as
+    a model that abstained.
+    """
     if presence is None:
         return "unknown"
     if not presence["no_gold_docs"]:
-        return "nothing"
+        return "none"
     return (
         f"{_plural(presence['no_gold_docs'], 'doc')}"
-        f"/{_plural(presence['no_gold_values'], 'value')}"
+        f", {_plural(presence['no_gold_values'], 'value')}"
     )
 
 
-def produced_bullet(field: str, labeled_presence: LabeledPresence) -> Optional[str]:
-    """What each variant produced on the documents whose gold records nothing.
-
-    Both counts are stated because on a list field the document count understates it:
-    twenty-two documents carried a hundred and eighty-three section titles. Every labelled
-    variant is named, so one missing from the line is never mistaken for one that produced
-    nothing.
-    """
+def produced_row(field: str, presences: Sequence[Optional[dict]]) -> Optional[List[str]]:
+    """One table row: the field, how many documents its gold records nothing for, and what
+    each variant produced on them. None where the gold records every document."""
     no_gold = max(
-        (presence["n"] - presence["n_gold"] for _, presence in labeled_presence if presence),
+        (presence["n"] - presence["n_gold"] for presence in presences if presence),
         default=0,
     )
     if not no_gold:
         return None
-    produced = [
-        f"{label} {_produced_counts(presence)}" if label else _produced_counts(presence)
-        for label, presence in labeled_presence
-    ]
-    return f"* {field}, of {_plural(no_gold, 'such doc')}: " + "; ".join(produced)
+    return [field, str(no_gold)] + [produced_counts(presence) for presence in presences]

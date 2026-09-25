@@ -5,7 +5,8 @@ from benchmarks.gold_presence import (
     has_gold,
     is_split_worth_reporting,
     predicted_value_count,
-    produced_bullet,
+    produced_counts,
+    produced_row,
     summarise_gold_presence,
 )
 
@@ -129,50 +130,35 @@ class TestIsSplitWorthReporting:
         assert not is_split_worth_reporting([None])
 
 
-class TestProducedBullet:
-    def test_should_state_documents_and_values_per_label(self):
-        bullet = produced_bullet("reference_title", [
-            ("wapiti", _presence(39, 37, no_gold_docs=2, no_gold_values=118)),
-            ("current", _presence(39, 37, no_gold_docs=2, no_gold_values=139)),
-        ])
-        assert bullet == (
-            "* reference_title, of 2 such docs: "
-            "wapiti 2 docs/118 values; current 2 docs/139 values"
-        )
-
-    def test_should_omit_the_label_where_there_is_one_variant(self):
-        bullet = produced_bullet("acknowledgement", [
-            (None, _presence(40, 0, no_gold_docs=14, no_gold_values=14)),
-        ])
-        assert bullet == "* acknowledgement, of 40 such docs: 14 docs/14 values"
-
-    def test_should_say_nothing_where_a_variant_abstained(self):
-        bullet = produced_bullet("keywords", [
-            ("wapiti", _presence(40, 0)),
-            ("current", _presence(40, 0, no_gold_docs=3, no_gold_values=3)),
-        ])
-        assert bullet == (
-            "* keywords, of 40 such docs: wapiti nothing; current 3 docs/3 values"
-        )
-
-    def test_should_say_nothing_where_the_one_variant_abstained(self):
-        bullet = produced_bullet("keywords", [(None, _presence(40, 0))])
-        assert bullet == "* keywords, of 40 such docs: nothing"
-
-    def test_should_distinguish_a_variant_without_the_split_from_one_that_abstained(self):
-        bullet = produced_bullet("acknowledgement", [
-            ("wapiti", None),
-            ("current", _presence(40, 5, no_gold_docs=3, no_gold_values=3)),
-        ])
-        assert bullet == (
-            "* acknowledgement, of 35 such docs: wapiti unknown; current 3 docs/3 values"
-        )
+class TestProducedCounts:
+    def test_should_state_documents_and_values(self):
+        assert produced_counts(
+            _presence(39, 37, no_gold_docs=2, no_gold_values=118)
+        ) == "2 docs, 118 values"
 
     def test_should_use_the_singular_for_one(self):
-        bullet = produced_bullet("title", [
-            (None, _presence(10, 9, no_gold_docs=1, no_gold_values=1)),
+        assert produced_counts(
+            _presence(10, 9, no_gold_docs=1, no_gold_values=1)
+        ) == "1 doc, 1 value"
+
+    def test_should_say_none_where_the_variant_abstained(self):
+        assert produced_counts(_presence(40, 0)) == "none"
+
+    def test_should_distinguish_a_variant_without_the_split_from_one_that_abstained(self):
+        assert produced_counts(None) == "unknown"
+
+
+class TestProducedRow:
+    def test_should_give_the_field_its_no_gold_count_and_a_cell_per_variant(self):
+        row = produced_row("reference_title", [
+            _presence(39, 37, no_gold_docs=2, no_gold_values=118),
+            _presence(39, 37, no_gold_docs=2, no_gold_values=139),
         ])
-        assert bullet == "* title, of 1 such doc: 1 doc/1 value"
+        assert row == ["reference_title", "2", "2 docs, 118 values", "2 docs, 139 values"]
+
+    def test_should_count_the_no_gold_documents_of_the_variant_that_scored_most(self):
+        row = produced_row("acknowledgement", [_presence(20, 2), _presence(40, 5)])
+        assert row[1] == "35"
 
     def test_should_return_none_where_the_gold_records_every_document(self):
-        assert produced_bullet("title", [(None, _presence(10, 10))]) is None
+        assert produced_row("title", [_presence(10, 10)]) is None

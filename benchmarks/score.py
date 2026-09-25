@@ -25,7 +25,7 @@ from benchmarks.gold_presence import (
     gold_records_field,
     has_gold,
     is_split_worth_reporting,
-    produced_bullet,
+    produced_row,
     summarise_gold_presence,
 )
 from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
@@ -297,12 +297,17 @@ def _render_split_corpus_block(
             )
             lines.append(f"| {field} | {presence['n_gold']}/{presence['n']} |" + cells)
         lines.append("")
-    bullets = [
-        produced_bullet(field, [(None, presence_by_field.get(field))])
+    rows = [
+        produced_row(field, [presence_by_field.get(field)])
         for field in fields
     ]
-    lines += ["Produced where the gold records nothing:", ""]
-    lines += [bullet for bullet in bullets if bullet]
+    lines += [
+        "Produced where the gold records nothing:",
+        "",
+        "| Field | No gold | Produced |",
+        "|---|---|---|",
+    ]
+    lines += ["| " + " | ".join(row) + " |" for row in rows if row]
     return lines + [""]
 
 
