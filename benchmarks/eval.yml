@@ -197,6 +197,9 @@ scoring:
   #   variants     - the gold holds the same field in more than one language, the article's
   #                  own first; scores the prediction against whichever it matches best and
   #                  records which one that was
+  #   main_variant - the same, except only the article's own language is a right answer; a
+  #                  prediction carrying several values is still read, and a translation
+  #                  scores as wrong
   default_methods:
     - levenshtein
     - edit_sim
