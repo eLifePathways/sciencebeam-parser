@@ -1,5 +1,6 @@
 # pylint: disable=too-many-lines
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple
@@ -76,6 +77,10 @@ _REFERENCE_FIELDS: FrozenSet[str] = frozenset({
 _POST_BODY_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.SUB_ARTICLE,
 })
+
+# PROTOTYPE toggle, so the two behaviours can be measured against each other on
+# the same corpus without switching code between runs.
+_POST_BODY_REGION_FLOOR = os.environ.get('SCIENCEBEAM_SUB_ARTICLE_REGION_FLOOR') == '1'
 
 # Smith-Waterman scoring: match=2, mismatch=-1, gap=-1
 _SCORING = SimpleScoring(match_score=2, mismatch_score=-1, gap_score=-1)
@@ -714,7 +719,20 @@ def _search_range(
         # Anchor fields (abstract, title) and post-body fields (sub-articles) both
         # search from last_match_end so they follow reading order and cannot fall
         # back to the front-matter window.
-        return max(0, last_match_end - 200), None
+        #
+        # PROTOTYPE (spec 030 investigation): under the toggle, a post-body field
+        # searches from a floor rather than that cursor.  Sub-article values repeat
+        # within a document and do not follow the page, so a cursor loses every
+        # value earlier than the last match.  The floor keeps what the cursor was
+        # for -- body and figures lie before it -- while letting the region be
+        # searched in any order, and neither body_content_end nor reference_floor
+        # is advanced by a post-body match, so it cannot creep.
+        start = (
+            max(body_content_end, reference_floor)
+            if _POST_BODY_REGION_FLOOR and fv.field_name in _POST_BODY_FIELDS
+            else last_match_end
+        )
+        return max(0, start - 200), None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
         # Keywords are anchored to just after the keywords header/abstract so
