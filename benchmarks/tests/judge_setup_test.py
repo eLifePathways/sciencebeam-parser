@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from io import BytesIO
 
+import pytest
+
 from sciencebeam_judge.evaluation.scoring_types.scoring_types import resolve_scoring_type
 from sciencebeam_judge.parsing.xml import parse_xml
 
@@ -50,3 +52,43 @@ class TestPrepareJudge:
         xml_mapping = prepare_judge()
         values = parse_xml(BytesIO(GOLD_JATS), xml_mapping, fields=["title"])
         assert values["title"] == ["The title"]
+
+
+ARTICLE_META_SHAPES = {
+    "one abstract": "<abstract>only</abstract>",
+    "a translation": (
+        "<abstract>main</abstract><trans-abstract xml:lang='en'>translated</trans-abstract>"
+    ),
+    "a translation filed first": (
+        "<trans-abstract xml:lang='en'>translated</trans-abstract><abstract>main</abstract>"
+    ),
+    "three languages": (
+        "<abstract>main</abstract>"
+        "<trans-abstract xml:lang='en'>english</trans-abstract>"
+        "<trans-abstract xml:lang='es'>spanish</trans-abstract>"
+    ),
+    "a repeated abstract in another language": (
+        "<abstract xml:lang='es' abstract-type='short'>spanish</abstract>"
+        "<abstract xml:lang='en' abstract-type='short'>english</abstract>"
+    ),
+    "a plain-language summary": (
+        "<abstract>main</abstract>"
+        "<abstract abstract-type='plain-language-summary'>summary</abstract>"
+    ),
+    "no abstract": "<title-group><article-title>The title</article-title></title-group>",
+}
+
+
+class TestTheFirstAbstractIsTheArticleOwn:
+    """The contract `variants` and `main_variant` rely on: whatever else `abstracts` holds,
+    its first value is what `abstract` reads on its own."""
+
+    @pytest.mark.parametrize("shape", sorted(ARTICLE_META_SHAPES))
+    def test_should_hold_for_every_shape_the_corpora_carry(self, shape: str):
+        xml_mapping = prepare_judge()
+        article = (
+            f"<article><front><article-meta>{ARTICLE_META_SHAPES[shape]}"
+            "</article-meta></front></article>"
+        ).encode("utf-8")
+        values = parse_xml(BytesIO(article), xml_mapping, fields=["abstract", "abstracts"])
+        assert values["abstracts"][:1] == values["abstract"]

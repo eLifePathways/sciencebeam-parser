@@ -3,9 +3,15 @@
 The gold values are the variants a document carries, the first of them the article's own,
 and a prediction may carry several values of its own. The best matching pair of the two is
 credited, and the score records which gold variant that was. `main_variant` restricts the
-gold to the article's own and leaves the prediction side alone, which the mapping cannot
+gold to its first value and leaves the prediction side alone, which the mapping cannot
 express: the judge reads one field name on both sides, so `abstract` limits the prediction
-as well. Written against sciencebeam-judge's `ScoringType` interface so it can move there
+as well.
+
+That first value is the article's own because the field's mapping puts it there, which is
+a contract between the two rather than something either can check alone. For `abstracts`
+it is `variant_xpath.abstract_variants`, and `judge_setup_test` asserts that the first of
+`abstracts` is what `abstract` reads alone. A field mapped without that ordering must not
+use these types. Written against sciencebeam-judge's `ScoringType` interface so it can move there
 once the rule has settled.
 """
 from __future__ import annotations

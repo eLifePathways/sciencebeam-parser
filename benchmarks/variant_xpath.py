@@ -9,6 +9,8 @@ from typing import List, Optional
 
 from lxml import etree as ET
 
+from sciencebeam_judge.utils.xml import get_text_content
+
 XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
 
 ABSTRACT = "abstract"
@@ -66,11 +68,16 @@ def abstract_variants(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
 
 
 def fn_jats_main_abstract(_, nodes):
-    return [variant for node in nodes for variant in main_abstract(node)]
+    return [get_text_content(variant) for node in nodes for variant in main_abstract(node)]
 
 
 def fn_jats_abstract_variants(_, nodes):
-    return [variant for node in nodes for variant in abstract_variants(node)]
+    # Text rather than elements: lxml re-sorts a node-set a function returns into document
+    # order, which would discard the article's own abstract being first.
+    return [
+        get_text_content(variant)
+        for node in nodes for variant in abstract_variants(node)
+    ]
 
 
 def register_variant_functions(ns: Optional[ET.FunctionNamespace] = None) -> None:
