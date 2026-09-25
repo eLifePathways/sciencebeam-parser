@@ -9,8 +9,8 @@ from sciencebeam_judge.parsing.xml import parse_xml
 
 from benchmarks.judge_setup import prepare_judge
 from benchmarks.variant_scoring import (
-    MAIN_VARIANT_SCORING_TYPE,
-    MAIN_VARIANT_SCORING_TYPE_NAME,
+    FIRST_VARIANT_SCORING_TYPE,
+    FIRST_VARIANT_SCORING_TYPE_NAME,
     SCORING_TYPE_NAME,
     VARIANTS_SCORING_TYPE,
 )
@@ -32,9 +32,9 @@ class TestPrepareJudge:
         prepare_judge()
         assert resolve_scoring_type(SCORING_TYPE_NAME) is VARIANTS_SCORING_TYPE
 
-    def test_should_register_the_main_variant_scoring_type(self):
+    def test_should_register_the_first_variant_scoring_type(self):
         prepare_judge()
-        assert resolve_scoring_type(MAIN_VARIANT_SCORING_TYPE_NAME) is MAIN_VARIANT_SCORING_TYPE
+        assert resolve_scoring_type(FIRST_VARIANT_SCORING_TYPE_NAME) is FIRST_VARIANT_SCORING_TYPE
 
     def test_should_read_the_abstract_as_the_article_own(self):
         xml_mapping = prepare_judge()
@@ -80,7 +80,7 @@ ARTICLE_META_SHAPES = {
 
 
 class TestTheFirstAbstractIsTheArticleOwn:
-    """The contract `variants` and `main_variant` rely on: whatever else `abstracts` holds,
+    """The contract `variants` and `first_variant` rely on: whatever else `abstracts` holds,
     its first value is what `abstract` reads on its own."""
 
     @pytest.mark.parametrize("shape", sorted(ARTICLE_META_SHAPES))

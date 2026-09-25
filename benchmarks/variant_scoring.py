@@ -2,17 +2,19 @@
 
 The gold values are the variants a document carries, the first of them the article's own,
 and a prediction may carry several values of its own. The best matching pair of the two is
-credited, and the score records which gold variant that was. `main_variant` restricts the
-gold to its first value and leaves the prediction side alone, which the mapping cannot
-express: the judge reads one field name on both sides, so `abstract` limits the prediction
-as well.
+credited, and the score records which gold value that was. `first_variant` credits the
+first gold value alone while leaving the prediction side lenient, which the mapping cannot
+express on its own: one field name is read on both sides, so restricting the gold to
+`abstract` would restrict the prediction to its own main abstract with it.
 
-That first value is the article's own because the field's mapping puts it there, which is
-a contract between the two rather than something either can check alone. For `abstracts`
-it is `variant_xpath.abstract_variants`, and `judge_setup_test` asserts that the first of
-`abstracts` is what `abstract` reads alone. A field mapped without that ordering must not
-use these types. Written against sciencebeam-judge's `ScoringType` interface so it can move there
-once the rule has settled.
+Neither type is told which value is the article's own, and neither can find out: the judge
+hands a scoring type the values of one field and nothing else. They read the first, and it
+is the mapping that has to put the right one there. `variant_xpath.abstract_variants`
+builds its list from `main_abstract` for that reason, and `judge_setup_test` asserts the
+result through the mapping. A field mapped without that ordering must not use these types.
+
+Written against sciencebeam-judge's `ScoringType` interface so it can move there once the
+rule has settled.
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ from sciencebeam_judge.evaluation.scoring_types.scoring_type import ScoringType
 from sciencebeam_judge.evaluation.scoring_types.string import STRING_SCORING_TYPE
 
 SCORING_TYPE_NAME = "variants"
-MAIN_VARIANT_SCORING_TYPE_NAME = "main_variant"
+FIRST_VARIANT_SCORING_TYPE_NAME = "first_variant"
 
 VARIANT_COUNT = "variant_count"
 MATCHED_VARIANT_INDEX = "matched_variant_index"
@@ -47,7 +49,7 @@ def select_variant_indices(
     actual: Sequence[str],
     convert_to_lower: bool = False,
 ) -> Tuple[int, int]:
-    """The gold and predicted values that match each other best, the main variant on a tie."""
+    """The gold and predicted values that match each other best, the first gold on a tie."""
     if not expected or not actual or (len(expected) == 1 and len(actual) == 1):
         return 0, 0
     method = get_scoring_method(SELECTION_METHOD)
@@ -64,8 +66,8 @@ def select_variant_indices(
 
 
 class VariantsScoringType(ScoringType):
-    def __init__(self, main_only: bool = False):
-        self.main_only = main_only
+    def __init__(self, first_only: bool = False):
+        self.first_only = first_only
 
     def score(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -75,7 +77,7 @@ class VariantsScoringType(ScoringType):
         measures: Optional[List[str]] = None,
         convert_to_lower: bool = False,
     ) -> Dict[str, Any]:
-        if self.main_only:
+        if self.first_only:
             expected = expected[:1]
         expected_index, actual_index = select_variant_indices(
             expected, actual, convert_to_lower
@@ -87,7 +89,7 @@ class VariantsScoringType(ScoringType):
             measures=measures,
             convert_to_lower=convert_to_lower,
         )
-        if self.main_only:
+        if self.first_only:
             return scores
         return {
             method: {
@@ -100,4 +102,4 @@ class VariantsScoringType(ScoringType):
 
 
 VARIANTS_SCORING_TYPE = VariantsScoringType()
-MAIN_VARIANT_SCORING_TYPE = VariantsScoringType(main_only=True)
+FIRST_VARIANT_SCORING_TYPE = VariantsScoringType(first_only=True)

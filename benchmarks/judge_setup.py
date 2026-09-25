@@ -14,8 +14,8 @@ from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
 from benchmarks.variant_scoring import (
-    MAIN_VARIANT_SCORING_TYPE,
-    MAIN_VARIANT_SCORING_TYPE_NAME,
+    FIRST_VARIANT_SCORING_TYPE,
+    FIRST_VARIANT_SCORING_TYPE_NAME,
     SCORING_TYPE_NAME,
     VARIANTS_SCORING_TYPE,
 )
@@ -29,7 +29,7 @@ def prepare_judge() -> Dict[str, Dict[str, str]]:
     register_functions()
     register_variant_functions()
     SCORING_TYPE_MAP[SCORING_TYPE_NAME] = VARIANTS_SCORING_TYPE
-    SCORING_TYPE_MAP[MAIN_VARIANT_SCORING_TYPE_NAME] = MAIN_VARIANT_SCORING_TYPE
+    SCORING_TYPE_MAP[FIRST_VARIANT_SCORING_TYPE_NAME] = FIRST_VARIANT_SCORING_TYPE
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
     for section, entries in parse_xml_mapping(XML_MAPPING_OVERRIDE_PATH).items():
         xml_mapping.setdefault(section, {}).update(entries)
