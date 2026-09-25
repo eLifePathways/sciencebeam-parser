@@ -14,6 +14,7 @@ from sciencebeam_judge.evaluation.score_aggregation import (
     combine_and_compact_document_scores,
     summarise_combined_document_scores,
 )
+from sciencebeam_judge.evaluation.scoring_types.scoring_types import resolve_scoring_type
 from sciencebeam_judge.parsing.xml import parse_xml
 
 from benchmarks.fetch import included_corpora
@@ -84,10 +85,15 @@ def _build_field_scoring_types(
     default_type: str,
     per_field: Dict[str, dict],
 ) -> Dict[str, str]:
-    return {
+    scoring_types = {
         f: per_field.get(f, {}).get("type", default_type)
         for f in field_names
     }
+    for scoring_type in set(scoring_types.values()):
+        # Resolved here rather than per document: scoring raises per document and the run
+        # goes on, so an unknown type would warn once per document and report nothing.
+        resolve_scoring_type(scoring_type)
+    return scoring_types
 
 
 def _doc_scores_to_dict(doc_scores: List[dict]) -> dict:

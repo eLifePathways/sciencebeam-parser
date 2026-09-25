@@ -8,11 +8,11 @@ from sciencebeam_judge.evaluation.scoring_types.scoring_types import resolve_sco
 from sciencebeam_judge.parsing.xml import parse_xml
 
 from benchmarks.judge_setup import prepare_judge
-from benchmarks.variant_scoring import (
-    FIRST_VARIANT_SCORING_TYPE,
-    FIRST_VARIANT_SCORING_TYPE_NAME,
-    SCORING_TYPE_NAME,
-    VARIANTS_SCORING_TYPE,
+from benchmarks.best_match_scoring import (
+    BEST_MATCH_FROM_FIRST_SCORING_TYPE,
+    BEST_MATCH_FROM_FIRST_SCORING_TYPE_NAME,
+    BEST_MATCH_SCORING_TYPE_NAME,
+    BEST_MATCH_SCORING_TYPE,
 )
 
 GOLD_JATS = b"""<article>
@@ -30,11 +30,13 @@ GOLD_JATS = b"""<article>
 class TestPrepareJudge:
     def test_should_register_the_variants_scoring_type(self):
         prepare_judge()
-        assert resolve_scoring_type(SCORING_TYPE_NAME) is VARIANTS_SCORING_TYPE
+        assert resolve_scoring_type(BEST_MATCH_SCORING_TYPE_NAME) is BEST_MATCH_SCORING_TYPE
 
-    def test_should_register_the_first_variant_scoring_type(self):
+    def test_should_register_the_best_match_from_first_scoring_type(self):
         prepare_judge()
-        assert resolve_scoring_type(FIRST_VARIANT_SCORING_TYPE_NAME) is FIRST_VARIANT_SCORING_TYPE
+        assert resolve_scoring_type(
+            BEST_MATCH_FROM_FIRST_SCORING_TYPE_NAME
+        ) is BEST_MATCH_FROM_FIRST_SCORING_TYPE
 
     def test_should_read_the_abstract_as_the_article_own(self):
         xml_mapping = prepare_judge()

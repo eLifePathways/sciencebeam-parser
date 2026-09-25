@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from benchmarks.variant_match import (
-    matched_variant_index,
+    matched_expected_index,
     merge_variant_matches,
     render_variant_match_table,
     summarise_variant_matches,
@@ -9,7 +9,7 @@ from benchmarks.variant_match import (
 )
 
 
-def _document(variant_count: int, matched_index: int = 0) -> dict:
+def _document(n_expected_values: int, matched_index: int = 0) -> dict:
     return {
         "abstract": {
             "scoring_type": "variants",
@@ -17,8 +17,8 @@ def _document(variant_count: int, matched_index: int = 0) -> dict:
                 "sim_sum": 1.0,
                 "expected_count": 1,
                 "predicted_count": 1,
-                "variant_count": variant_count,
-                "matched_variant_index": matched_index,
+                "n_expected_values": n_expected_values,
+                "matched_expected_index": matched_index,
             },
         }
     }
@@ -83,12 +83,12 @@ class TestRenderVariantMatchTable:
 
 class TestMatchedVariantIndex:
     def test_should_return_the_recorded_index(self):
-        assert matched_variant_index(_document(2, 1)["abstract"]) == 1
+        assert matched_expected_index(_document(2, 1)["abstract"]) == 1
 
     def test_should_return_zero_for_a_field_scored_as_a_string(self):
-        assert matched_variant_index(
+        assert matched_expected_index(
             {"scoring_type": "string", "edit_sim": {"sim_sum": 1.0}}
         ) == 0
 
     def test_should_return_zero_where_the_field_is_absent(self):
-        assert matched_variant_index({}) == 0
+        assert matched_expected_index({}) == 0

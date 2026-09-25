@@ -781,7 +781,7 @@ class TestScoringAMultilingualAbstract:
     def _score(self, gold: bytes, predicted: bytes) -> dict:
         scores = _score_pair(
             gold, predicted, ["abstracts"], ["edit_sim"], prepare_judge(),
-            scoring_types_by_field_map={"abstracts": ["variants"]},
+            scoring_types_by_field_map={"abstracts": ["best_match"]},
         )
         return scores[0]["match_score"]
 
@@ -789,10 +789,10 @@ class TestScoringAMultilingualAbstract:
         match_score = self._score(MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI)
         assert match_score["sim_sum"] == 1.0
 
-    def test_should_record_that_the_credited_variant_was_not_the_article_own(self):
+    def test_should_record_that_the_credited_value_was_not_the_article_own(self):
         match_score = self._score(MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI)
-        assert match_score["matched_variant_index"] == 1
-        assert match_score["variant_count"] == 2
+        assert match_score["matched_expected_index"] == 1
+        assert match_score["n_expected_values"] == 2
 
     def test_should_not_score_the_prediction_against_the_languages_joined(self):
         glued = _score_pair(

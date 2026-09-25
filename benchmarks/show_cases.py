@@ -15,7 +15,7 @@ from lxml import etree as lxml_etree
 from sciencebeam_judge.parsing.xml import parse_xml
 
 from benchmarks.judge_setup import prepare_judge
-from benchmarks.variant_match import matched_variant_index
+from benchmarks.variant_match import matched_expected_index
 
 LOGGER = logging.getLogger(__name__)
 
@@ -83,11 +83,11 @@ def joined_values(values: List[str]) -> Optional[str]:
     return " | ".join(values) if values else None
 
 
-def _matched_variant_index(score_path: Path, field: str) -> int:
+def _matched_expected_index(score_path: Path, field: str) -> int:
     if not score_path.exists():
         return 0
     data = json.loads(score_path.read_text(encoding="utf-8"))
-    return matched_variant_index(data.get("fields", {}).get(field, {}))
+    return matched_expected_index(data.get("fields", {}).get(field, {}))
 
 
 def _run_label(run: Path) -> str:
@@ -319,10 +319,10 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
         gold_values, text_a, text_b = extract_texts(
             corp, record_id, run_a, run_b, data_dir, split, field, xml_mapping,
         )
-        index_a = _matched_variant_index(
+        index_a = _matched_expected_index(
             run_a / "scores" / corp / f"{record_id}.json", field
         )
-        index_b = _matched_variant_index(
+        index_b = _matched_expected_index(
             run_b / "scores" / corp / f"{record_id}.json", field
         )
         alto_xml = None

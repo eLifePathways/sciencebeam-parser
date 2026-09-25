@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, Sequence
 
-from benchmarks.variant_scoring import MATCHED_VARIANT_INDEX, VARIANT_COUNT
+from benchmarks.best_match_scoring import MATCHED_EXPECTED_INDEX, N_EXPECTED_VALUES
 
 VARIANT_MATCH_KEY = "variant_match"
 
@@ -18,15 +18,15 @@ def _variant_scores(field_entry: dict) -> Optional[dict]:
     for method, scores in field_entry.items():
         if method == "scoring_type" or not isinstance(scores, dict):
             continue
-        if VARIANT_COUNT in scores:
+        if N_EXPECTED_VALUES in scores:
             return scores
     return None
 
 
-def matched_variant_index(field_entry: dict) -> int:
+def matched_expected_index(field_entry: dict) -> int:
     """Which gold variant the score was taken against, as the run recorded it."""
     scores = _variant_scores(field_entry)
-    return scores.get(MATCHED_VARIANT_INDEX, 0) if scores else 0
+    return scores.get(MATCHED_EXPECTED_INDEX, 0) if scores else 0
 
 
 def summarise_variant_matches(
@@ -38,10 +38,10 @@ def summarise_variant_matches(
     for fields in documents:
         for field in field_names:
             scores = _variant_scores(fields.get(field) or {})
-            if not scores or scores.get(VARIANT_COUNT, 0) < 2:
+            if not scores or scores.get(N_EXPECTED_VALUES, 0) < 2:
                 continue
             stats[field]["n_variants"] += 1
-            if scores.get(MATCHED_VARIANT_INDEX):
+            if scores.get(MATCHED_EXPECTED_INDEX):
                 stats[field]["n_translation"] += 1
     return {field: entry for field, entry in stats.items() if entry["n_variants"]}
 

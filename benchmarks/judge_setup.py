@@ -13,11 +13,11 @@ from sciencebeam_judge.parsing.xml import parse_xml_mapping
 from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
-from benchmarks.variant_scoring import (
-    FIRST_VARIANT_SCORING_TYPE,
-    FIRST_VARIANT_SCORING_TYPE_NAME,
-    SCORING_TYPE_NAME,
-    VARIANTS_SCORING_TYPE,
+from benchmarks.best_match_scoring import (
+    BEST_MATCH_FROM_FIRST_SCORING_TYPE,
+    BEST_MATCH_FROM_FIRST_SCORING_TYPE_NAME,
+    BEST_MATCH_SCORING_TYPE_NAME,
+    BEST_MATCH_SCORING_TYPE,
 )
 from benchmarks.variant_xpath import register_variant_functions
 
@@ -28,8 +28,8 @@ def prepare_judge() -> Dict[str, Dict[str, str]]:
     """Registers what the judge does not ship with, and returns the mapping to parse with."""
     register_functions()
     register_variant_functions()
-    SCORING_TYPE_MAP[SCORING_TYPE_NAME] = VARIANTS_SCORING_TYPE
-    SCORING_TYPE_MAP[FIRST_VARIANT_SCORING_TYPE_NAME] = FIRST_VARIANT_SCORING_TYPE
+    SCORING_TYPE_MAP[BEST_MATCH_SCORING_TYPE_NAME] = BEST_MATCH_SCORING_TYPE
+    SCORING_TYPE_MAP[BEST_MATCH_FROM_FIRST_SCORING_TYPE_NAME] = BEST_MATCH_FROM_FIRST_SCORING_TYPE
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
     for section, entries in parse_xml_mapping(XML_MAPPING_OVERRIDE_PATH).items():
         xml_mapping.setdefault(section, {}).update(entries)

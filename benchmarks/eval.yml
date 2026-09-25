@@ -195,19 +195,21 @@ scoring:
   #                  (appropriate for ordered multi-value fields)
   #   partial_list - list but pads the shorter list; tolerates length mismatch
   #                  (appropriate for ordered fields where predicted count may differ)
-  #   variants     - scores the prediction against whichever gold value it matches best,
-  #                  and records which one that was; a prediction carrying several values
-  #                  is read the same way
-  #   first_variant - the same, except only the first gold value is a right answer. Named
-  #                   for what it does: that the first value is the article's own is the
-  #                   mapping's doing, and a scoring type is handed one field and cannot
-  #                   check. The mapping cannot say this on its own, since one field name
-  #                   is read on both sides and `abstract` would limit the prediction too
+  #   best_match   - the best matching pair of gold and predicted values, wherever each
+  #                  sits in its list, scored as a single string; records which gold value
+  #                  it was (appropriate where several values are one right answer said
+  #                  differently, rather than a set to reproduce)
+  #   best_match_from_first - the same, except only the first gold value can be matched.
+  #                  A scoring type is handed one field's values and nothing else, so it
+  #                  is named for the position it reads: what the first value means is the
+  #                  mapping's doing. The mapping cannot say this on its own, since one
+  #                  field name is read on both sides and `abstract` would restrict the
+  #                  prediction too
   #
   # `abstract` is the article's own abstract and `abstracts` every language it carries, so
-  # the two rows say what crediting a translation is worth on this run. `first_variant`
-  # over `abstracts` is the third reading: the article's own abstract, found under
-  # whichever language a prediction filed it as.
+  # the two rows say what crediting a translation is worth on this run.
+  # `best_match_from_first` over `abstracts` is the third reading: the article's own
+  # abstract, found under whichever language a prediction filed it as.
   default_methods:
     - levenshtein
     - edit_sim
@@ -219,7 +221,7 @@ scoring:
       methods: [levenshtein, edit_sim]
     abstracts:
       methods: [levenshtein, edit_sim]
-      type: variants
+      type: best_match
     author_full_names:
       type: partial_ulist
     affiliation_text:
