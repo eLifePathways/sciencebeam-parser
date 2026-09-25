@@ -5,7 +5,7 @@ import json
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 import yaml
 
@@ -19,6 +19,15 @@ from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
 from benchmarks.fetch import included_corpora
+from benchmarks.gold_presence import (
+    GOLD_PRESENCE_KEY,
+    GOLD_PRESENT_AGGREGATED_KEY,
+    gold_records_field,
+    has_gold,
+    is_split_worth_reporting,
+    produced_row,
+    summarise_gold_presence,
+)
 from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
 from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
 
@@ -89,6 +98,75 @@ def _doc_scores_to_dict(doc_scores: List[dict]) -> dict:
     return result
 
 
+def _doc_scores_from_dict(fields: Dict[str, dict]) -> Iterator[dict]:
+    """Inverse of `_doc_scores_to_dict`, so a score file aggregates like a fresh score.
+
+    The per-document precision/recall/f1 it also holds are ignored by the sums, which read
+    only the counts.
+    """
+    for field_name, entry in fields.items():
+        for method, match_score in entry.items():
+            if method == "scoring_type":
+                continue
+            yield {
+                "field_name": field_name,
+                "scoring_type": entry.get("scoring_type", "string"),
+                "scoring_method": method,
+                "match_score": match_score,
+            }
+
+
+def _summarise_documents(
+    documents: List[Dict[str, dict]],
+    field_names: List[str],
+    field_measures: Dict[str, List[str]],
+) -> Dict[str, Any]:
+    """One corpus, from the per-document scores, whether just computed or read back."""
+    n = len(documents)
+    all_doc_scores: List[dict] = []
+    gold_present_doc_scores: List[dict] = []
+    for fields in documents:
+        doc_scores = [
+            score for score in _doc_scores_from_dict(fields)
+            if score["scoring_method"] in field_measures.get(score["field_name"], [])
+        ]
+        all_doc_scores += doc_scores
+        gold_present_doc_scores += [
+            score for score in doc_scores
+            if gold_records_field(fields.get(score["field_name"]) or {})
+        ]
+
+    if not all_doc_scores:
+        return {"n": n}
+
+    result: Dict[str, Any] = {
+        "n": n,
+        "aggregated": summarise_combined_document_scores(
+            combine_and_compact_document_scores(all_doc_scores), keys=field_names, count=n
+        ),
+        GOLD_PRESENCE_KEY: summarise_gold_presence(documents, field_names),
+    }
+    if gold_present_doc_scores:
+        # No count: the documents behind it differ per field, so one number would be wrong
+        # for all but the field it came from.
+        result[GOLD_PRESENT_AGGREGATED_KEY] = summarise_combined_document_scores(
+            combine_and_compact_document_scores(gold_present_doc_scores), keys=field_names
+        )
+    return result
+
+
+def _read_scored_documents(scores_dir: Path) -> List[Dict[str, dict]]:
+    """What a previous run scored, which is what it left behind rather than what it would
+    score now: a document whose scoring failed keeps the file of the run before it."""
+    if not scores_dir.exists():
+        LOGGER.warning("No scores directory at %s", scores_dir)
+        return []
+    return [
+        json.loads(path.read_text())["fields"]
+        for path in sorted(scores_dir.glob("*.json"))
+    ]
+
+
 def _score_corpus(  # pylint: disable=too-many-locals
     corpus: str,
     data_dir: Path,
@@ -108,8 +186,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
         return {"n": 0}
 
     scoring_types_by_field_map = {f: [t] for f, t in field_scoring_types.items()}
-    all_doc_scores: List[dict] = []
-    n = 0
+    documents: List[Dict[str, dict]] = []
 
     for pred_path in iter_prediction_files(pred_dir):
         record_id = record_id_from_path(pred_path)
@@ -134,22 +211,16 @@ def _score_corpus(  # pylint: disable=too-many-locals
             if s["scoring_method"] in field_measures[s["field_name"]]
         ]
 
+        fields = _doc_scores_to_dict(doc_scores)
         (scores_dir / f"{record_id}.json").write_text(json.dumps({
             "record_id": record_id,
             "corpus": corpus,
-            "fields": _doc_scores_to_dict(doc_scores),
+            "fields": fields,
         }, indent=2))
 
-        all_doc_scores.extend(doc_scores)
-        n += 1
+        documents.append(fields)
 
-    if not all_doc_scores:
-        return {"n": n}
-
-    aggregated = summarise_combined_document_scores(
-        combine_and_compact_document_scores(all_doc_scores), keys=field_names, count=n
-    )
-    return {"n": n, "aggregated": aggregated}
+    return _summarise_documents(documents, field_names, field_measures)
 
 
 def _coverage_note(run_record: dict) -> Optional[str]:
@@ -170,6 +241,78 @@ def _coverage_note(run_record: dict) -> Optional[str]:
     if errors:
         parts.append(f"{errors} without a prediction, and so not scored")
     return "**Coverage:** " + ", ".join(parts)
+
+
+def _unique_methods(aggregated: List[dict]) -> List[str]:
+    """The same method appears once per scoring type, so column headers are deduplicated."""
+    seen: set = set()
+    methods: List[str] = []
+    for entry in aggregated:
+        method = entry["scoring_method"]
+        if method not in seen:
+            seen.add(method)
+            methods.append(method)
+    return methods
+
+
+def _f1_from_aggregated(
+    aggregated: List[dict], field: str, field_type: str, method: str
+) -> Optional[float]:
+    for entry in aggregated:
+        if entry.get("scoring_type", "string") != field_type:
+            continue
+        if entry["scoring_method"] != method:
+            continue
+        return entry.get("summary_scores", {}).get("by-field", {}).get(
+            field, {}
+        ).get("scores", {}).get("f1")
+    return None
+
+
+def _fmt_f1(f1: Optional[float]) -> str:
+    return f"{f1:.3f}" if f1 is not None else "—"
+
+
+def _score_row(
+    field: str,
+    field_type: str,
+    docs: str,
+    aggregated: List[dict],
+    methods: List[str],
+) -> str:
+    """One table row. An empty `aggregated` dashes every method, which is what a corpus
+    recording nothing for the field gets: an f1 of 0.000 would read as a failure to
+    extract something that is not there."""
+    cells = "".join(
+        " " + _fmt_f1(_f1_from_aggregated(aggregated, field, field_type, method)) + " |"
+        for method in methods
+    )
+    return f"| {field} | {field_type} | {docs} |" + cells
+
+
+def _render_produced_table(
+    result: Dict[str, Any],
+    field_names: List[str],
+) -> List[str]:
+    """The documents whose gold records no value for a field, and what was produced on
+    them. Not a score: nothing in the PDF says whether a publisher recorded the field."""
+    presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
+    rows = [
+        produced_row(field, [presence_by_field.get(field)])
+        for field in field_names
+        if is_split_worth_reporting([presence_by_field.get(field)])
+    ]
+    present = [row for row in rows if row]
+    if not present:
+        return []
+    return [
+        "Produced where the gold records nothing:",
+        "",
+        "| Field | No gold | Produced |",
+        "|---|---|---|",
+        *["| " + " | ".join(row) + " |" for row in present],
+        "",
+    ]
 
 
 def _render_report(  # pylint: disable=too-many-locals
@@ -199,39 +342,34 @@ def _render_report(  # pylint: disable=too-many-locals
             lines += ["_No results._", ""]
             continue
 
-        # aggregated is a list of {scoring_type, scoring_method, summary_scores}.
-        # The same method may appear multiple times (once per scoring type), so deduplicate
-        # column headers and look up scores by (field_type, method).
-        seen: set = set()
-        unique_methods: List[str] = []
-        for entry in aggregated:
-            m = entry["scoring_method"]
-            if m not in seen:
-                seen.add(m)
-                unique_methods.append(m)
+        unique_methods = _unique_methods(aggregated)
+        presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
 
-        score_lookup = {
-            (entry.get("scoring_type", "string"), entry["scoring_method"]): entry
-            for entry in aggregated
-        }
-
-        lines.append("| Field | Type |" + "".join(f" {m} F1 |" for m in unique_methods))
-        lines.append("|---|---|" + "---|" * len(unique_methods))
+        conditional = result.get(GOLD_PRESENT_AGGREGATED_KEY) or []
+        lines.append(
+            "| Field | Type | Docs |" + "".join(f" {m} F1 |" for m in unique_methods)
+        )
+        lines.append("|---|---|---|" + "---|" * len(unique_methods))
 
         for field in field_names:
             field_type = field_scoring_types.get(field, "string")
-            row = f"| {field} | {field_type} |"
-            for method in unique_methods:
-                agg_entry = score_lookup.get((field_type, method))
-                if agg_entry is None:
-                    row += " — |"
-                    continue
-                by_field = agg_entry.get("summary_scores", {}).get("by-field", {})
-                f1 = by_field.get(field, {}).get("scores", {}).get("f1", None)
-                row += f" {f1:.3f} |" if f1 is not None else " — |"
-            lines.append(row)
+            presence = presence_by_field.get(field)
+            split = bool(
+                presence and presence["n_gold"] and is_split_worth_reporting([presence])
+            )
+            n_docs = presence["n"] if presence else n
+            lines.append(_score_row(
+                field, field_type, f"all {n_docs}" if split else str(n_docs),
+                aggregated if has_gold(presence) else [], unique_methods,
+            ))
+            if split and presence:
+                lines.append(_score_row(
+                    field, field_type, f"gold {presence['n_gold']}",
+                    conditional, unique_methods,
+                ))
 
         lines.append("")
+        lines += _render_produced_table(result, field_names)
 
     return "\n".join(lines)
 
@@ -243,6 +381,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     out_path: Optional[Path],
     split_override: Optional[str] = None,
     include: Optional[Iterable[str]] = None,
+    from_scores: bool = False,
 ) -> None:
     register_functions()
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
@@ -277,6 +416,16 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
 
     corpus_results: Dict[str, Any] = {}
     for corpus in corpora:
+        if from_scores:
+            # Summarising what a run already scored, which is all this needs: the gold it
+            # was scored against may no longer be cached, and re-scoring would not change
+            # a figure.
+            LOGGER.info("Summarising corpus %r from its score files...", corpus)
+            corpus_results[corpus] = _summarise_documents(
+                _read_scored_documents(run_dir / "scores" / corpus),
+                field_names, field_measures,
+            )
+            continue
         LOGGER.info("Scoring corpus %r (split=%s)...", corpus, split)
         corpus_results[corpus] = _score_corpus(
             corpus, data_dir / split, run_dir, field_names, all_measures, field_measures,
@@ -315,6 +464,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--split", default=None, help="Dataset split override (default: read from run.json)"
     )
     parser.add_argument(
+        "--from-scores", action="store_true",
+        help="Summarise the run's existing score files rather than scoring again",
+    )
+    parser.add_argument(
         "--include-corpus", action="append", default=None, dest="include_corpus",
         metavar="CORPUS",
         help="Also score an opt-in corpus, repeatable. Ignored where run.json lists corpora",
@@ -333,6 +486,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         out_path=Path(args.out) if args.out else None,
         split_override=args.split,
         include=args.include_corpus,
+        from_scores=args.from_scores,
     )
 
 

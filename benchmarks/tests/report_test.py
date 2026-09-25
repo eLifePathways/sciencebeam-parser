@@ -565,3 +565,114 @@ class TestCoverageLines:
     def test_should_render_without_run_records_at_all(self):
         summaries = [("llm_all", {"fields": [], "corpora": {}})]
         assert "ScienceBeam Parser Evaluation" in _render_comparison_report(summaries)
+
+
+def _presence(n: int, n_gold: int, no_gold_docs: int = 0, no_gold_values: int = 0) -> dict:
+    return {
+        "n": n, "n_gold": n_gold,
+        "no_gold_docs": no_gold_docs, "no_gold_values": no_gold_values,
+    }
+
+
+def _split_summary(
+    f1: float, conditional: float, presence: dict, field: str = "acknowledgement"
+) -> dict:
+    corpus = {
+        "scielo_br": {
+            "n": presence["n"],
+            "aggregated": [_agg("string", "edit_sim", {field: f1})],
+            "aggregated_gold_present": [_agg("string", "edit_sim", {field: conditional})],
+            "gold_presence": {field: presence},
+        }
+    }
+    return _summary(
+        fields=[field],
+        field_measures={field: ["edit_sim"]},
+        field_scoring_types={field: "string"},
+        corpora=corpus,
+    )
+
+
+class TestGoldSplitSection:
+    def test_pairs_a_row_over_the_documents_whose_gold_records_the_field(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.545, 0.750, _presence(40, 5, 3, 3))),
+            ("current", _split_summary(0.429, 0.590, _presence(40, 5, 3, 3))),
+        ])
+        assert (
+            "| acknowledgement (edit_sim) | string | all 40 | 0.545 | 0.429 | -0.116 |"
+            in report
+        )
+        assert (
+            "| acknowledgement (edit_sim) | string | gold 5 | 0.750 | 0.590 | -0.160 |"
+            in report
+        )
+
+    def test_states_the_denominator_of_a_field_with_no_second_row(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.8, 0.8, _presence(40, 40))),
+            ("current", _split_summary(0.9, 0.9, _presence(40, 40))),
+        ])
+        assert "| acknowledgement (edit_sim) | string | 40 | 0.800 | 0.900 | +0.100 |" in report
+
+    def test_counts_what_each_variant_produced_against_no_gold(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.0, 0.0, _presence(40, 0, 13, 13))),
+            ("current", _split_summary(0.0, 0.0, _presence(40, 0, 30, 30))),
+        ])
+        assert (
+            "| acknowledgement | 40 | 13 docs, 13 values | 30 docs, 30 values |" in report
+        )
+
+    def test_dashes_the_score_where_the_corpus_records_no_gold(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.0, 0.0, _presence(40, 0, 13, 13))),
+            ("current", _split_summary(0.0, 0.0, _presence(40, 0, 30, 30))),
+        ])
+        assert "| acknowledgement (edit_sim) | string | 40 | — | — | — |" in report
+        assert "gold 0" not in report
+
+    def test_omits_the_section_where_the_gold_records_every_document(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.8, 0.8, _presence(40, 40))),
+            ("current", _split_summary(0.9, 0.9, _presence(40, 40))),
+        ])
+        assert "Produced where the gold records nothing" not in report
+
+    def test_omits_the_section_for_summaries_written_before_the_split(self):
+        report = _render_comparison_report([
+            ("wapiti", _title_summary(0.80)),
+            ("current", _title_summary(0.85)),
+        ])
+        assert "Produced where the gold records nothing" not in report
+        assert "0.850" in report
+
+    def test_dashes_a_variant_summarised_before_the_split(self):
+        old = _title_summary(0.80, method="edit_sim")
+        old["corpora"]["biorxiv"]["n"] = 40
+        new = _split_summary(0.9, 0.95, _presence(40, 5, 3, 3), field="title")
+        new["corpora"]["biorxiv"] = new["corpora"].pop("scielo_br")
+        report = _render_comparison_report([("wapiti", old), ("current", new)])
+        assert "| title (edit_sim) | string | gold 5 | — | 0.950 | — |" in report
+
+    def test_names_a_variant_summarised_before_the_split_as_unknown(self):
+        old = _title_summary(0.80, method="edit_sim")
+        old["corpora"]["biorxiv"]["n"] = 40
+        new = _split_summary(0.9, 0.95, _presence(40, 5, 3, 3), field="title")
+        new["corpora"]["biorxiv"] = new["corpora"].pop("scielo_br")
+        report = _render_comparison_report([("wapiti", old), ("current", new)])
+        assert "| title | 35 | unknown | 3 docs, 3 values |" in report
+
+    def test_warns_where_the_variants_gold_denominators_differ(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.5, 0.600, _presence(20, 2, 2, 2))),
+            ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
+        ])
+        assert "**Unequal gold document sets** (wapiti 2/20, current 5/40)" in report
+
+    def test_does_not_warn_where_the_variants_cover_the_same_documents(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.5, 0.600, _presence(40, 5, 3, 3))),
+            ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
+        ])
+        assert "Unequal gold document sets" not in report
