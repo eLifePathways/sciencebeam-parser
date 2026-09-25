@@ -25,6 +25,7 @@ SEG_ANNEX = '<annex>'
 SEG_PAGE = '<page>'
 SEG_HEADNOTE = '<headnote>'
 SEG_FOOTNOTE = '<footnote>'
+SEG_OTHER = '<other>'
 
 # Fraction of page height: lines above this → headnote, below this → footnote candidate
 _HEADNOTE_Y_RATIO = 0.08
@@ -303,10 +304,16 @@ class SegmentationLabelDeriver:
         _tag_headnotes_by_text_repetition(
             seg_lines, self.config.page_header_max_first_line_index
         )
+        # `<other>` is peer-review sub-articles, which print as one run at the end
+        # of the document.  Its values are short, repeated checklist fragments in
+        # an order the page does not follow, so the aligner places only some of
+        # them; bridging the gaps between those it does place, and running the
+        # region to the end, recovers the rest without asking the aligner for
+        # per-fragment precision it cannot give.
         _merge_gap_lines(
             seg_lines,
-            enabled_labels={SEG_FRONT, SEG_ANNEX, SEG_REFERENCES},
-            enabled_tail_labels={SEG_ANNEX},
+            enabled_labels={SEG_FRONT, SEG_ANNEX, SEG_REFERENCES, SEG_OTHER},
+            enabled_tail_labels={SEG_ANNEX, SEG_OTHER},
         )
 
         # ── Default remaining untagged lines → body ──

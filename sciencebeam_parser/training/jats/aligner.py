@@ -1,6 +1,5 @@
 # pylint: disable=too-many-lines
 import logging
-import os
 import re
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Optional, Set, Tuple
@@ -78,9 +77,22 @@ _POST_BODY_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.SUB_ARTICLE,
 })
 
-# PROTOTYPE toggle, so the two behaviours can be measured against each other on
-# the same corpus without switching code between runs.
-_POST_BODY_REGION_FLOOR = os.environ.get('SCIENCEBEAM_SUB_ARTICLE_REGION_FLOOR') == '1'
+# How many post-body values may search the whole region before the rest fall back
+# to the cursor.  Searching from a floor costs O(region x needle) per value and
+# there are thousands per document, which is what made one document cost more
+# than the other thirty-nine together.  A region label does not need them all:
+# a handful of anchors places the region, and the gap merge in the segmentation
+# deriver carries it from there to the end of the document.
+# How many post-body values may search the whole region before the rest fall back
+# to the cursor.  Searching from a floor costs O(region x needle) for a value the
+# exact prefilter misses, and there are thousands per document: unbounded, the
+# worst document cost more than the other thirty-eight together.  A region label
+# does not need them all -- these place the region, and the gap merge in the
+# segmentation deriver carries it to the end of the document.
+_POST_BODY_MAX_WIDE_SEARCHES = 40
+
+# Reserved key in the post-body text-end map, counting the wide searches spent.
+_WIDE_SEARCH_BUDGET_KEY = '\x00wide-search-budget'
 
 # Smith-Waterman scoring: match=2, mismatch=-1, gap=-1
 _SCORING = SimpleScoring(match_score=2, mismatch_score=-1, gap_score=-1)
@@ -606,13 +618,44 @@ def _exact_number_match(
     return None
 
 
-def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
+# Shortest needle the exact prefilter will accept.  Below it a verbatim hit says
+# little -- "Yes" occurs everywhere -- and the sliding matcher is cheap anyway,
+# since its cost is proportional to the needle.
+_EXACT_PREFILTER_MIN_LENGTH = 40
+
+
+def _exact_substring_match(
+    haystack: str,
+    needle: str,
+    segments: List[Tuple[int, int]],
+    token_index: '_TokenIndex',
+) -> Optional[_MatchResult]:
+    """Return the first verbatim occurrence of `needle`, on a token boundary.
+
+    The sliding matcher returns the leftmost exact match too, by scanning windows
+    in order and returning as soon as one is exact, so this changes which match
+    is chosen only where there is none.  What it changes is the cost: the matcher
+    is O(window x needle) over every window of the search range, which is the
+    whole post-body region for a field searched from a floor.
+    """
+    for seg_start, seg_end in segments:
+        pos = haystack.find(needle, seg_start, seg_end)
+        while pos != -1:
+            end = pos + len(needle)
+            if token_index.is_token_start(pos) and token_index.is_token_boundary_after(end - 1):
+                return pos, end, [(pos, end)]
+            pos = haystack.find(needle, pos + 1, seg_end)
+    return None
+
+
+def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
     token_index: _TokenIndex,
     field_value: JatsFieldValue,
     config: AlignmentConfig,
     search_start: int,
     search_end: Optional[int] = None,
     masked_ranges: Optional[List[Tuple[int, int]]] = None,
+    prefer_exact: bool = False,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -631,6 +674,10 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
         return _exact_number_match(token_index, needle, segments)
 
     need_len = len(needle)
+    if prefer_exact and need_len >= _EXACT_PREFILTER_MIN_LENGTH:
+        exact = _exact_substring_match(haystack, needle, segments, token_index)
+        if exact is not None:
+            return exact
     window_size = max(
         _DEFAULT_MIN_WINDOW,
         min(config.max_window, need_len * _WINDOW_NEEDLE_MULTIPLIER),
@@ -667,9 +714,8 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
     return gap_match
 
 
-# PROTOTYPE: the post-body floor adds a parameter and a branch to a function that
-# was already at pylint's limits.  A shipped version wants the per-field window
-# rules separated rather than this grown further.
+# The per-field window rules have outgrown one function; splitting them is worth
+# doing next time this needs a branch.
 def _search_range(  # pylint: disable=too-many-locals
     fv: JatsFieldValue,
     last_match_end: int,
@@ -731,7 +777,11 @@ def _search_range(  # pylint: disable=too-many-locals
         # for -- body and figures lie before it -- while letting the region be
         # searched in any order, and neither body_content_end nor reference_floor
         # is advanced by a post-body match, so it cannot creep.
-        if _POST_BODY_REGION_FLOOR and fv.field_name in _POST_BODY_FIELDS:
+        spent = (post_body_text_end or {}).get(_WIDE_SEARCH_BUDGET_KEY, 0)
+        if (
+            fv.field_name in _POST_BODY_FIELDS
+            and spent < _POST_BODY_MAX_WIDE_SEARCHES
+        ):
             # The floor lets the region be searched in any order.  A repeated
             # value still advances past its own previous match, because ORE
             # prints one copy of each checklist question per reviewer and the
@@ -1087,6 +1137,7 @@ class LayoutDocumentJatsAligner:
                 token_index, fv, self.config,
                 search_start=search_start, search_end=search_end,
                 masked_ranges=masked,
+                prefer_exact=fv.field_name in _POST_BODY_FIELDS,
             )
             # If primary match relied on a mid-token within-gap block (e.g. 't'
             # inside 'staff' matching the initial 'T' in "Guardian T"), the SW
@@ -1193,6 +1244,9 @@ class LayoutDocumentJatsAligner:
             if fv.field_name in _POST_BODY_FIELDS:
                 post_body_text_end[fv.text] = max(
                     post_body_text_end.get(fv.text, 0), a_end
+                )
+                post_body_text_end[_WIDE_SEARCH_BUDGET_KEY] = (
+                    post_body_text_end.get(_WIDE_SEARCH_BUDGET_KEY, 0) + 1
                 )
             if fv.field_name in _ANCHOR_FIELDS:
                 body_floor = max(body_floor, a_end)
