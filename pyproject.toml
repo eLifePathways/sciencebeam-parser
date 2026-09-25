@@ -91,7 +91,6 @@ module = [
   "benchmarks.tests.sampling_test",
   "tests.document.layout_document_test",
   "tests.models.citation.extract_test",
-  "tests.models.llm.model_impl_regions_test",
   "tests.models.llm.model_impl_test",
   "tests.models.llm.usage_test",
   "tests.models.name.extract_test",
