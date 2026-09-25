@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import pytest
 
@@ -539,7 +539,9 @@ class TestCachedInputNote:
 
 class TestCoverageLines:
     def _render(self, records):
-        summaries = [(label, {"fields": [], "corpora": {}}) for label, _ in records]
+        summaries: List[Tuple[str, dict]] = [
+            (label, {"fields": [], "corpora": {}}) for label, _ in records
+        ]
         return _render_comparison_report(summaries, records)
 
     def test_should_name_the_column_that_lost_documents(self):
@@ -563,7 +565,7 @@ class TestCoverageLines:
         assert "grobid_crf" not in result
 
     def test_should_render_without_run_records_at_all(self):
-        summaries = [("llm_all", {"fields": [], "corpora": {}})]
+        summaries: List[Tuple[str, dict]] = [("llm_all", {"fields": [], "corpora": {}})]
         assert "ScienceBeam Parser Evaluation" in _render_comparison_report(summaries)
 
 
