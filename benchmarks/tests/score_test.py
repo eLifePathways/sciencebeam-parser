@@ -5,12 +5,9 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-from sciencebeam_judge.parsing.xml import parse_xml_mapping
-from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
-from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
-
 import pytest
 
+from benchmarks.judge_setup import prepare_judge
 from benchmarks.score import (
     _doc_scores_from_dict,
     _f1_from_aggregated,
@@ -264,8 +261,7 @@ class TestRunScoreSplitDetermination:
         run_dir.mkdir()
         (run_dir / "run.json").write_text(json.dumps({"split": "train"}))
 
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
             run_score(
                 config=self._CONFIG,
@@ -282,8 +278,7 @@ class TestRunScoreSplitDetermination:
         run_dir.mkdir()
         (run_dir / "run.json").write_text(json.dumps({"split": "validation"}))
 
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
             run_score(
                 config=self._CONFIG,
@@ -299,8 +294,7 @@ class TestRunScoreSplitDetermination:
         run_dir = tmp_path / "run"
         run_dir.mkdir()
 
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
             run_score(
                 config=self._CONFIG,
@@ -352,8 +346,7 @@ class TestRunScoreCorpusSelection:
         run_dir.mkdir(exist_ok=True)
         if run_json is not None:
             (run_dir / "run.json").write_text(json.dumps(run_json))
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
             run_score(
                 config=self._CONFIG,
@@ -396,8 +389,7 @@ class TestRunScoreLlmUsage:
         manifest.write_text(
             "".join(json.dumps(entry) + "\n" for entry in manifest_entries)
         )
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 1}):
             run_score(
                 config=self._CONFIG,
@@ -505,8 +497,7 @@ class TestAttributionIsNotScored:
     """The attribution element must sit where no scored field's xpath looks."""
 
     def test_should_score_a_prediction_the_same_with_and_without_attribution(self):
-        register_functions()
-        xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+        xml_mapping = prepare_judge()
         field_names = [
             "title", "abstract", "author_full_names", "affiliation_text", "keywords",
             "body_section_titles", "acknowledgement", "first_reference_text",
@@ -766,3 +757,47 @@ class TestRunScoreFromScores:
         assert "No scores directory" in caplog.text
         summary = json.loads((run_dir / "summary.json").read_text())
         assert summary["corpora"]["biorxiv"] == {"n": 0}
+
+
+MULTILINGUAL_GOLD_JATS = b"""<article>
+  <front>
+    <article-meta>
+      <abstract><p>O resumo do artigo, tal como o editor o registou.</p></abstract>
+      <trans-abstract xml:lang="en">
+        <p>The abstract of the article, as the publisher recorded it.</p>
+      </trans-abstract>
+    </article-meta>
+  </front>
+</article>"""
+
+TRANSLATED_ABSTRACT_TEI = b"""<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader><profileDesc><abstract>
+    <div><p>The abstract of the article, as the publisher recorded it.</p></div>
+  </abstract></profileDesc></teiHeader>
+</TEI>"""
+
+
+class TestScoringAMultilingualAbstract:
+    def _score(self, gold: bytes, predicted: bytes) -> dict:
+        scores = _score_pair(
+            gold, predicted, ["abstract"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstract": ["variants"]},
+        )
+        return scores[0]["match_score"]
+
+    def test_should_credit_a_prediction_matching_the_translation(self):
+        match_score = self._score(MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI)
+        assert match_score["sim_sum"] == 1.0
+
+    def test_should_record_that_the_credited_variant_was_not_the_article_own(self):
+        match_score = self._score(MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI)
+        assert match_score["matched_variant_index"] == 1
+        assert match_score["variant_count"] == 2
+
+    def test_should_not_score_the_prediction_against_the_languages_joined(self):
+        glued = _score_pair(
+            MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI,
+            ["abstract"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstract": ["string"]},
+        )
+        assert glued[0]["match_score"]["sim_sum"] < 1.0

@@ -194,6 +194,9 @@ scoring:
   #                  (appropriate for ordered multi-value fields)
   #   partial_list - list but pads the shorter list; tolerates length mismatch
   #                  (appropriate for ordered fields where predicted count may differ)
+  #   variants     - the gold holds the same field in more than one language, the article's
+  #                  own first; scores the prediction against whichever it matches best and
+  #                  records which one that was
   default_methods:
     - levenshtein
     - edit_sim
@@ -203,6 +206,7 @@ scoring:
       methods: [exact, levenshtein, edit_sim]
     abstract:
       methods: [levenshtein, edit_sim]
+      type: variants
     author_full_names:
       type: partial_ulist
     affiliation_text:

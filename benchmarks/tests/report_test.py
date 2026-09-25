@@ -678,3 +678,42 @@ class TestGoldSplitSection:
             ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
         ])
         assert "Unequal gold document sets" not in report
+
+
+def _variant_summary(f1: float, variant_match: Optional[dict], field: str = "abstract") -> dict:
+    corpus = {
+        "scielo_mx": {
+            "n": 30,
+            "aggregated": [_agg("variants", "edit_sim", {field: f1})],
+            **({"variant_match": {field: variant_match}} if variant_match else {}),
+        }
+    }
+    return _summary(
+        fields=[field],
+        field_measures={field: ["edit_sim"]},
+        field_scoring_types={field: "variants"},
+        corpora=corpus,
+    )
+
+
+class TestVariantMatchSection:
+    def test_counts_what_each_variant_credited_a_translation_for(self):
+        report = _render_comparison_report([
+            ("wapiti", _variant_summary(0.5, {"n_variants": 24, "n_translation": 2})),
+            ("current", _variant_summary(0.6, {"n_variants": 24, "n_translation": 9})),
+        ])
+        assert "| abstract | 24 | 2 | 9 |" in report
+
+    def test_reports_a_run_scored_before_the_count_existed_as_unknown(self):
+        report = _render_comparison_report([
+            ("wapiti", _variant_summary(0.5, None)),
+            ("current", _variant_summary(0.6, {"n_variants": 24, "n_translation": 9})),
+        ])
+        assert "| abstract | 24 | unknown | 9 |" in report
+
+    def test_omits_the_section_where_no_gold_carries_a_second_language(self):
+        report = _render_comparison_report([
+            ("wapiti", _variant_summary(0.5, None)),
+            ("current", _variant_summary(0.6, None)),
+        ])
+        assert "Credited a translation" not in report

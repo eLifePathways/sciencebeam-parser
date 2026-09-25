@@ -14,9 +14,7 @@ from sciencebeam_judge.evaluation.score_aggregation import (
     combine_and_compact_document_scores,
     summarise_combined_document_scores,
 )
-from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
-from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
-from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
+from sciencebeam_judge.parsing.xml import parse_xml
 
 from benchmarks.fetch import included_corpora
 from benchmarks.gold_presence import (
@@ -28,8 +26,14 @@ from benchmarks.gold_presence import (
     produced_row,
     summarise_gold_presence,
 )
+from benchmarks.judge_setup import prepare_judge
 from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
 from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
+from benchmarks.variant_match import (
+    VARIANT_MATCH_KEY,
+    render_variant_match_table,
+    summarise_variant_matches,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -146,6 +150,9 @@ def _summarise_documents(
         ),
         GOLD_PRESENCE_KEY: summarise_gold_presence(documents, field_names),
     }
+    variant_match = summarise_variant_matches(documents, field_names)
+    if variant_match:
+        result[VARIANT_MATCH_KEY] = variant_match
     if gold_present_doc_scores:
         # No count: the documents behind it differ per field, so one number would be wrong
         # for all but the field it came from.
@@ -370,6 +377,7 @@ def _render_report(  # pylint: disable=too-many-locals
 
         lines.append("")
         lines += _render_produced_table(result, field_names)
+        lines += render_variant_match_table(result.get(VARIANT_MATCH_KEY) or {}, field_names)
 
     return "\n".join(lines)
 
@@ -383,8 +391,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     include: Optional[Iterable[str]] = None,
     from_scores: bool = False,
 ) -> None:
-    register_functions()
-    xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+    xml_mapping = prepare_judge()
     field_names: List[str] = config["fields"]
     scoring_cfg = config.get("scoring", {})
     default_methods: List[str] = scoring_cfg.get("default_methods", ["levenshtein"])

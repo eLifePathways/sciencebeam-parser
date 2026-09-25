@@ -23,9 +23,7 @@ import logging
 import sys
 from pathlib import Path
 
-from sciencebeam_judge.parsing.xml import parse_xml_mapping
-from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
-from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
+from benchmarks.judge_setup import prepare_judge
 
 from ._aggregate import _aggregate_model_results
 from ._cases import (
@@ -115,8 +113,7 @@ def main() -> None:
     if not cases:
         print('Nothing to analyze.', file=sys.stderr)
 
-    register_functions()
-    xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+    xml_mapping = prepare_judge()
 
     for case in cases:
         _export_doc_examples(

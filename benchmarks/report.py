@@ -15,6 +15,11 @@ from benchmarks.gold_presence import (
     produced_row,
 )
 from benchmarks.llm_usage import usage_for_corpora
+from benchmarks.variant_match import (
+    VARIANT_MATCH_KEY,
+    merge_variant_matches,
+    variant_match_row,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -353,6 +358,48 @@ def _unequal_gold_note(
     return []
 
 
+def _variant_match(summary: dict, corpus: str, field: str) -> Optional[dict]:
+    return summary.get("corpora", {}).get(corpus, {}).get(VARIANT_MATCH_KEY, {}).get(field)
+
+
+def _render_variant_match_section(
+    labeled_summaries: List[Tuple[str, dict]],
+    field_names: List[str],
+    corpora: List[str],
+) -> List[str]:
+    """How often each run was credited a language other than the article's own.
+
+    A run that changed which language it reads moves this and not the score, so the two
+    belong together. Empty where no gold carries a field in more than one language, and so
+    where a summary was written before the count existed.
+    """
+    labels = [label for label, _ in labeled_summaries]
+    rows = []
+    for field in field_names:
+        row = variant_match_row(field, [
+            merge_variant_matches(
+                _variant_match(summary, corpus, field) for corpus in corpora
+            )
+            for _, summary in labeled_summaries
+        ])
+        if row:
+            rows.append(row)
+    if not rows:
+        return []
+    return [
+        "<details>",
+        "<summary>Credited a translation rather than the article's own language"
+        f" ({len(rows)} fields)</summary>",
+        "",
+        "| Field | Docs | " + " | ".join(labels) + " |",
+        "|" + "|".join(["---"] * (2 + len(labels))) + "|",
+        *["| " + " | ".join(row) + " |" for row in rows],
+        "",
+        "</details>",
+        "",
+    ]
+
+
 def _render_produced_section(
     labeled_summaries: List[Tuple[str, dict]],
     field_names: List[str],
@@ -480,6 +527,9 @@ def _render_corpus_section(
     produced = _render_produced_section(labeled_summaries, field_names, [corpus])
     if produced:
         lines += ["", *produced[:-1]]
+    variants = _render_variant_match_section(labeled_summaries, field_names, [corpus])
+    if variants:
+        lines += ["", *variants[:-1]]
     usage_lines = _render_usage_section(
         labeled_summaries, [corpus],
         "**LLM usage**, over every document attempted in this corpus.",
@@ -534,6 +584,9 @@ def _render_overall_section(  # pylint: disable=too-many-locals
     produced = _render_produced_section(labeled_summaries, field_names, common)
     if produced:
         lines += ["", *produced[:-1]]
+    variants = _render_variant_match_section(labeled_summaries, field_names, common)
+    if variants:
+        lines += ["", *variants[:-1]]
     return lines
 
 
