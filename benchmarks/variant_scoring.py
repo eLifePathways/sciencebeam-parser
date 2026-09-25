@@ -2,11 +2,11 @@
 
 The gold values are the variants a document carries, the first of them the article's own,
 and a prediction may carry several values of its own. The best matching pair of the two is
-credited, and the score records which gold variant that was. Which golds are on offer is
-the mapping's decision rather than this one's: over `abstracts` any language is a right
-answer, over `abstract` only the article's own is, and a prediction carrying several is
-read either way. Written against sciencebeam-judge's `ScoringType` interface so it can
-move there once the rule has settled.
+credited, and the score records which gold variant that was. `main_variant` restricts the
+gold to the article's own and leaves the prediction side alone, which the mapping cannot
+express: the judge reads one field name on both sides, so `abstract` limits the prediction
+as well. Written against sciencebeam-judge's `ScoringType` interface so it can move there
+once the rule has settled.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from sciencebeam_judge.evaluation.scoring_types.scoring_type import ScoringType
 from sciencebeam_judge.evaluation.scoring_types.string import STRING_SCORING_TYPE
 
 SCORING_TYPE_NAME = "variants"
+MAIN_VARIANT_SCORING_TYPE_NAME = "main_variant"
 
 VARIANT_COUNT = "variant_count"
 MATCHED_VARIANT_INDEX = "matched_variant_index"
@@ -57,6 +58,9 @@ def select_variant_indices(
 
 
 class VariantsScoringType(ScoringType):
+    def __init__(self, main_only: bool = False):
+        self.main_only = main_only
+
     def score(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         expected: Sequence[str],
@@ -65,6 +69,8 @@ class VariantsScoringType(ScoringType):
         measures: Optional[List[str]] = None,
         convert_to_lower: bool = False,
     ) -> Dict[str, Any]:
+        if self.main_only:
+            expected = expected[:1]
         expected_index, actual_index = select_variant_indices(
             expected, actual, convert_to_lower
         )
@@ -75,6 +81,8 @@ class VariantsScoringType(ScoringType):
             measures=measures,
             convert_to_lower=convert_to_lower,
         )
+        if self.main_only:
+            return scores
         return {
             method: {
                 **score,
@@ -86,3 +94,4 @@ class VariantsScoringType(ScoringType):
 
 
 VARIANTS_SCORING_TYPE = VariantsScoringType()
+MAIN_VARIANT_SCORING_TYPE = VariantsScoringType(main_only=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from sciencebeam_judge.evaluation.scoring_types.string import STRING_SCORING_TYPE
 
 from benchmarks.variant_scoring import (
+    MAIN_VARIANT_SCORING_TYPE,
     MATCHED_VARIANT_INDEX,
     VARIANT_COUNT,
     VARIANTS_SCORING_TYPE,
@@ -82,21 +83,28 @@ class TestVariantsScoringType:
         assert glued["edit_sim"]["sim_sum"] < 1.0
 
 
-class TestScoringAgainstTheArticleOwnAbstractAlone:
-    """What the `abstract` mapping entry gives: one gold value, any predicted one."""
+def _score_main_only(expected, actual):
+    return MAIN_VARIANT_SCORING_TYPE.score(expected, actual, measures=MEASURES)
 
-    def test_should_credit_a_prediction_matching_it(self):
-        scores = _score([ABSTRACT_1], [ABSTRACT_1])
+
+class TestMainVariantScoringType:
+    def test_should_credit_a_prediction_matching_the_article_own_abstract(self):
+        scores = _score_main_only([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_1])
         assert scores["edit_sim"]["sim_sum"] == 1.0
 
     def test_should_not_credit_a_prediction_matching_the_translation(self):
-        scores = _score([ABSTRACT_1], [ABSTRACT_2])
+        scores = _score_main_only([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_2])
         assert scores["edit_sim"]["sim_sum"] < 0.5
 
-    def test_should_still_read_a_prediction_carrying_several_values(self):
-        scores = _score([ABSTRACT_1], [ABSTRACT_2, ABSTRACT_1])
+    def test_should_credit_it_wherever_the_prediction_filed_it(self):
+        scores = _score_main_only([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_2, ABSTRACT_1])
         assert scores["edit_sim"]["sim_sum"] == 1.0
 
-    def test_should_report_no_variant_match_where_the_gold_offers_no_choice(self):
-        scores = _score([ABSTRACT_1], [ABSTRACT_1])
-        assert scores["edit_sim"][VARIANT_COUNT] == 1
+    def test_should_not_score_a_concatenation_of_the_gold_variants(self):
+        scores = _score_main_only([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_1 + ABSTRACT_2])
+        assert scores["edit_sim"]["sim_sum"] < 1.0
+
+    def test_should_record_no_variant_match_since_only_one_can_be_credited(self):
+        scores = _score_main_only([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_1])
+        assert VARIANT_COUNT not in scores["edit_sim"]
+        assert MATCHED_VARIANT_INDEX not in scores["edit_sim"]

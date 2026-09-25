@@ -198,11 +198,14 @@ scoring:
   #   variants     - scores the prediction against whichever gold value it matches best,
   #                  and records which one that was; a prediction carrying several values
   #                  is read the same way
+  #   main_variant - the same, except only the first gold value is a right answer. The
+  #                  mapping cannot say this: one field name is read on both sides, so
+  #                  `abstract` would limit the prediction to its own main variant too
   #
   # `abstract` is the article's own abstract and `abstracts` every language it carries, so
-  # the two rows say what crediting a translation is worth on this run. `variants` over
-  # `abstract` would credit any predicted abstract matching the article's own, and none
-  # matching a translation.
+  # the two rows say what crediting a translation is worth on this run. `main_variant`
+  # over `abstracts` is the third reading: the article's own abstract, found under
+  # whichever language a prediction filed it as.
   default_methods:
     - levenshtein
     - edit_sim
