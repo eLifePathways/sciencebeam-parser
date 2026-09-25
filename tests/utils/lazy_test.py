@@ -11,7 +11,12 @@ class TestLazyLoaded:
 
     def test_should_not_build_until_asked(self):
         calls: List[int] = []
-        lazy = LazyLoaded[int](lambda: calls.append(1) or len(calls))
+
+        def _factory() -> int:
+            calls.append(1)
+            return len(calls)
+
+        lazy = LazyLoaded[int](_factory)
         assert not lazy.is_loaded
         lazy.get()
         assert lazy.is_loaded

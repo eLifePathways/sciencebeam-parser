@@ -82,12 +82,6 @@ files = ["sciencebeam_parser", "tests", "benchmarks"]
 ignore_missing_imports = true
 check_untyped_defs = true
 
-[[tool.mypy.overrides]]
-module = [
-  "tests.utils.lazy_test"
-]
-check_untyped_defs = false
-
 [tool.pytest-watcher]
 now = true
 clear = false
