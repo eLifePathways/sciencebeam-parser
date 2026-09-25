@@ -583,10 +583,10 @@ class TestRenderReportGoldSplit:
             }},
             ["acknowledgement"], {"acknowledgement": "string"}, None,
         )
-        assert "| acknowledgement | string | — |" in result
+        assert "| acknowledgement | string | 40 | — |" in result
         assert "0.000" not in result
 
-    def test_should_score_a_field_over_the_documents_whose_gold_records_it(self):
+    def test_should_pair_a_row_over_the_documents_whose_gold_records_the_field(self):
         result = _render_report(
             {"scielo_br": {
                 "n": 40,
@@ -596,12 +596,10 @@ class TestRenderReportGoldSplit:
             }},
             ["acknowledgement"], {"acknowledgement": "string"}, None,
         )
-        assert "### Where the gold does not record the field" in result
-        assert "| acknowledgement | 5/40 | 0.590 |" in result
-        assert "| acknowledgement | 35 | 3 docs, 3 values |" in result
-        assert "0.429" in result
+        assert "| acknowledgement | string | all 40 | 0.429 |" in result
+        assert "| acknowledgement | string | gold 5 | 0.590 |" in result
 
-    def test_should_show_counts_alone_where_the_corpus_records_no_gold(self):
+    def test_should_not_pair_a_row_over_no_documents(self):
         result = _render_report(
             {"pkp": {
                 "n": 40,
@@ -610,9 +608,20 @@ class TestRenderReportGoldSplit:
             }},
             ["reference_title"], {"reference_title": "partial_list"}, None,
         )
-        split = result.split("### Where the gold does not record the field")[1]
-        assert "| reference_title | 40 | 37 docs, 650 values |" in split
-        assert "| Field | Gold |" not in split
+        assert "gold 0" not in result
+        assert "| reference_title | partial_list | 40 | — |" in result
+
+    def test_should_count_what_was_produced_where_the_gold_records_nothing(self):
+        result = _render_report(
+            {"pkp": {
+                "n": 40,
+                "aggregated": _aggregated("edit_sim", "reference_title", 0.0, "partial_list"),
+                "gold_presence": {"reference_title": _gold_presence(40, 0, 37, 650)},
+            }},
+            ["reference_title"], {"reference_title": "partial_list"}, None,
+        )
+        counts = result.split("### Produced where the gold records nothing")[1]
+        assert "| reference_title | 40 | 37 docs, 650 values |" in counts
 
     def test_should_state_that_a_model_produced_nothing(self):
         result = _render_report(
@@ -635,14 +644,15 @@ class TestRenderReportGoldSplit:
             }},
             ["title"], {"title": "string"}, None,
         )
-        assert "Where the gold does not record the field" not in result
+        assert "Produced where the gold records nothing" not in result
+        assert "| title | string | 31 | 0.900 |" in result
 
     def test_should_omit_the_section_for_a_run_scored_before_the_split(self):
         result = _render_report(
             {"biorxiv": {"n": 31, "aggregated": _aggregated("edit_sim", "title", 0.9)}},
             ["title"], {"title": "string"}, None,
         )
-        assert "Where the gold does not record the field" not in result
+        assert "Produced where the gold records nothing" not in result
         assert "0.900" in result
 
 

@@ -594,15 +594,28 @@ def _split_summary(
 
 
 class TestGoldSplitSection:
-    def test_renders_conditional_f1_with_its_gold_denominator_and_delta(self):
+    def test_pairs_a_row_over_the_documents_whose_gold_records_the_field(self):
         report = _render_comparison_report([
             ("wapiti", _split_summary(0.545, 0.750, _presence(40, 5, 3, 3))),
             ("current", _split_summary(0.429, 0.590, _presence(40, 5, 3, 3))),
         ])
-        split = report.split("### Where the gold does not record the field")[1]
-        assert "| acknowledgement (edit_sim) | 5/40 | 0.750 | 0.590 | -0.160 |" in split
+        assert (
+            "| acknowledgement (edit_sim) | string | all 40 | 0.545 | 0.429 | -0.116 |"
+            in report
+        )
+        assert (
+            "| acknowledgement (edit_sim) | string | gold 5 | 0.750 | 0.590 | -0.160 |"
+            in report
+        )
 
-    def test_states_what_each_variant_produced_against_no_gold(self):
+    def test_states_the_denominator_of_a_field_with_no_second_row(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.8, 0.8, _presence(40, 40))),
+            ("current", _split_summary(0.9, 0.9, _presence(40, 40))),
+        ])
+        assert "| acknowledgement (edit_sim) | string | 40 | 0.800 | 0.900 | +0.100 |" in report
+
+    def test_counts_what_each_variant_produced_against_no_gold(self):
         report = _render_comparison_report([
             ("wapiti", _split_summary(0.0, 0.0, _presence(40, 0, 13, 13))),
             ("current", _split_summary(0.0, 0.0, _presence(40, 0, 30, 30))),
@@ -611,34 +624,27 @@ class TestGoldSplitSection:
             "| acknowledgement | 40 | 13 docs, 13 values | 30 docs, 30 values |" in report
         )
 
-    def test_shows_counts_alone_where_the_corpus_records_no_gold(self):
+    def test_dashes_the_score_where_the_corpus_records_no_gold(self):
         report = _render_comparison_report([
             ("wapiti", _split_summary(0.0, 0.0, _presence(40, 0, 13, 13))),
             ("current", _split_summary(0.0, 0.0, _presence(40, 0, 30, 30))),
         ])
-        split = report.split("### Where the gold does not record the field")[1]
-        assert "| Field (method) | Gold |" not in split
-
-    def test_dashes_the_main_table_where_the_corpus_records_no_gold(self):
-        report = _render_comparison_report([
-            ("wapiti", _split_summary(0.0, 0.0, _presence(40, 0, 13, 13))),
-            ("current", _split_summary(0.0, 0.0, _presence(40, 0, 30, 30))),
-        ])
-        assert "| acknowledgement (edit_sim) | string | — | — | — |" in report
+        assert "| acknowledgement (edit_sim) | string | 40 | — | — | — |" in report
+        assert "gold 0" not in report
 
     def test_omits_the_section_where_the_gold_records_every_document(self):
         report = _render_comparison_report([
             ("wapiti", _split_summary(0.8, 0.8, _presence(40, 40))),
             ("current", _split_summary(0.9, 0.9, _presence(40, 40))),
         ])
-        assert "Where the gold does not record the field" not in report
+        assert "Produced where the gold records nothing" not in report
 
     def test_omits_the_section_for_summaries_written_before_the_split(self):
         report = _render_comparison_report([
             ("wapiti", _title_summary(0.80)),
             ("current", _title_summary(0.85)),
         ])
-        assert "Where the gold does not record the field" not in report
+        assert "Produced where the gold records nothing" not in report
         assert "0.850" in report
 
     def test_dashes_a_variant_summarised_before_the_split(self):
@@ -647,24 +653,7 @@ class TestGoldSplitSection:
         new = _split_summary(0.9, 0.95, _presence(40, 5, 3, 3), field="title")
         new["corpora"]["biorxiv"] = new["corpora"].pop("scielo_br")
         report = _render_comparison_report([("wapiti", old), ("current", new)])
-        split = report.split("### Where the gold does not record the field")[1]
-        assert "| title (edit_sim) | 5/40 | — | 0.950 | — |" in split
-
-    def test_warns_where_the_variants_gold_denominators_differ(self):
-        report = _render_comparison_report([
-            ("wapiti", _split_summary(0.5, 0.600, _presence(20, 2, 2, 2))),
-            ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
-        ])
-        split = report.split("### Where the gold does not record the field")[1]
-        assert "**Unequal document sets** (wapiti 2/20, current 5/40)" in split
-
-    def test_does_not_warn_where_the_variants_cover_the_same_documents(self):
-        report = _render_comparison_report([
-            ("wapiti", _split_summary(0.5, 0.600, _presence(40, 5, 3, 3))),
-            ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
-        ])
-        split = report.split("### Where the gold does not record the field")[1]
-        assert "Unequal document sets" not in split
+        assert "| title (edit_sim) | string | gold 5 | — | 0.950 | — |" in report
 
     def test_names_a_variant_summarised_before_the_split_as_unknown(self):
         old = _title_summary(0.80, method="edit_sim")
@@ -673,3 +662,17 @@ class TestGoldSplitSection:
         new["corpora"]["biorxiv"] = new["corpora"].pop("scielo_br")
         report = _render_comparison_report([("wapiti", old), ("current", new)])
         assert "| title | 35 | unknown | 3 docs, 3 values |" in report
+
+    def test_warns_where_the_variants_gold_denominators_differ(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.5, 0.600, _presence(20, 2, 2, 2))),
+            ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
+        ])
+        assert "**Unequal gold document sets** (wapiti 2/20, current 5/40)" in report
+
+    def test_does_not_warn_where_the_variants_cover_the_same_documents(self):
+        report = _render_comparison_report([
+            ("wapiti", _split_summary(0.5, 0.600, _presence(40, 5, 3, 3))),
+            ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
+        ])
+        assert "Unequal gold document sets" not in report

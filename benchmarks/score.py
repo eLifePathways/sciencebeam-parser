@@ -273,48 +273,43 @@ def _fmt_f1(f1: Optional[float]) -> str:
     return f"{f1:.3f}" if f1 is not None else "—"
 
 
+def _score_row(
+    field: str,
+    field_type: str,
+    docs: str,
+    aggregated: List[dict],
+    methods: List[str],
+) -> str:
+    """One table row. An empty `aggregated` dashes every method, which is what a corpus
+    recording nothing for the field gets: an f1 of 0.000 would read as a failure to
+    extract something that is not there."""
+    cells = "".join(
+        " " + _fmt_f1(_f1_from_aggregated(aggregated, field, field_type, method)) + " |"
+        for method in methods
+    )
+    return f"| {field} | {field_type} | {docs} |" + cells
+
+
 def _render_split_corpus_block(
     corpus: str,
     result: Dict[str, Any],
     fields: List[str],
-    field_scoring_types: Dict[str, str],
 ) -> List[str]:
     presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
-    conditional = result.get(GOLD_PRESENT_AGGREGATED_KEY) or []
-    scored = [field for field in fields if has_gold(presence_by_field.get(field))]
-    methods = _unique_methods(conditional)
-    lines = [f"**{corpus}** ({result.get('n', 0)} docs)", ""]
-    if scored and methods:
-        lines.append("| Field | Gold |" + "".join(f" {method} F1 |" for method in methods))
-        lines.append("|---|---|" + "---|" * len(methods))
-        for field in scored:
-            presence = presence_by_field[field]
-            cells = "".join(
-                " " + _fmt_f1(_f1_from_aggregated(
-                    conditional, field, field_scoring_types.get(field, "string"), method
-                )) + " |"
-                for method in methods
-            )
-            lines.append(f"| {field} | {presence['n_gold']}/{presence['n']} |" + cells)
-        lines.append("")
-    rows = [
-        produced_row(field, [presence_by_field.get(field)])
-        for field in fields
-    ]
-    lines += [
-        "Produced where the gold records nothing:",
+    rows = [produced_row(field, [presence_by_field.get(field)]) for field in fields]
+    return [
+        f"**{corpus}** ({result.get('n', 0)} docs)",
         "",
         "| Field | No gold | Produced |",
         "|---|---|---|",
+        *["| " + " | ".join(row) + " |" for row in rows if row],
+        "",
     ]
-    lines += ["| " + " | ".join(row) + " |" for row in rows if row]
-    return lines + [""]
 
 
 def _render_gold_split_section(
     corpus_results: Dict[str, Any],
     field_names: List[str],
-    field_scoring_types: Dict[str, str],
 ) -> List[str]:
     """Each field scored over only the documents whose gold records it, and what was
     produced where it records nothing.
@@ -330,16 +325,15 @@ def _render_gold_split_section(
             if is_split_worth_reporting([presence_by_field.get(field)])
         ]
         if fields:
-            blocks += _render_split_corpus_block(
-                corpus, result, fields, field_scoring_types
-            )
+            blocks += _render_split_corpus_block(corpus, result, fields)
     if not blocks:
         return []
     return [
-        "### Where the gold does not record the field",
+        "### Produced where the gold records nothing",
         "",
-        "Scored over only the documents whose gold records the field. A corpus recording"
-        " none of it has nothing to score against, and shows the counts alone.",
+        "The documents whose gold records no value for a field, and what was produced on"
+        " them. This is not an extraction result: nothing in the PDF says whether a"
+        " publisher recorded the field. The scores above state which documents they cover.",
         "",
         *blocks,
     ]
@@ -375,25 +369,32 @@ def _render_report(  # pylint: disable=too-many-locals
         unique_methods = _unique_methods(aggregated)
         presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
 
-        lines.append("| Field | Type |" + "".join(f" {m} F1 |" for m in unique_methods))
-        lines.append("|---|---|" + "---|" * len(unique_methods))
+        conditional = result.get(GOLD_PRESENT_AGGREGATED_KEY) or []
+        lines.append(
+            "| Field | Type | Docs |" + "".join(f" {m} F1 |" for m in unique_methods)
+        )
+        lines.append("|---|---|---|" + "---|" * len(unique_methods))
 
         for field in field_names:
             field_type = field_scoring_types.get(field, "string")
-            row = f"| {field} | {field_type} |"
-            if not has_gold(presence_by_field.get(field)):
-                # Nothing to extract, so an f1 of 0.000 would read as a failure to.
-                lines.append(row + " — |" * len(unique_methods))
-                continue
-            for method in unique_methods:
-                row += " " + _fmt_f1(
-                    _f1_from_aggregated(aggregated, field, field_type, method)
-                ) + " |"
-            lines.append(row)
+            presence = presence_by_field.get(field)
+            split = bool(
+                presence and presence["n_gold"] and is_split_worth_reporting([presence])
+            )
+            n_docs = presence["n"] if presence else n
+            lines.append(_score_row(
+                field, field_type, f"all {n_docs}" if split else str(n_docs),
+                aggregated if has_gold(presence) else [], unique_methods,
+            ))
+            if split and presence:
+                lines.append(_score_row(
+                    field, field_type, f"gold {presence['n_gold']}",
+                    conditional, unique_methods,
+                ))
 
         lines.append("")
 
-    lines += _render_gold_split_section(corpus_results, field_names, field_scoring_types)
+    lines += _render_gold_split_section(corpus_results, field_names)
 
     return "\n".join(lines)
 

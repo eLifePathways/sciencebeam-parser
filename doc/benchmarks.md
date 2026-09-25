@@ -60,18 +60,19 @@ property of the publisher rather than of the document, and nothing in the PDF
 says which it is. A score over every document therefore mixes how well a field
 is extracted with how often a model abstains.
 
-The report keeps that combined figure and adds a section splitting it, for each
-field and corpus where some column produced a value the gold has none of, or
-where the corpus records none of the field at all:
-
-- a score over only the documents whose gold records the field, with the count
-  it covers;
-- what each column produced on the documents whose gold records nothing, in
-  documents and in values.
+The report keeps that combined figure and pairs it with a second row, in the
+Overall table and in each per-corpus table, for every field where some column
+produced a value the gold has none of. A `Docs` column says which documents each
+row covers — `all 222` against `gold 79` — so neither is read as the other. The
+`Overall` gold row is weighted by the gold documents it covers, so a corpus
+recording nothing for the field drops out of it; the combined row is unchanged.
 
 A field a corpus records nothing for shows `—` rather than `0.000`, since there
-is nothing there to extract. **Overall** is unaffected: it stays a
-document-count-weighted mean of the per-corpus figures over every document.
+is nothing there to extract, and gets no second row.
+
+What each column produced on the documents whose gold records nothing is counted
+in its own section at the foot of the report, in documents and in values. It is
+not an extraction result and carries no delta.
 
 Both figures come from the per-document score files, so
 `python -m benchmarks.score --run <dir> --from-scores` re-summarises a run
