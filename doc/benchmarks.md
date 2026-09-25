@@ -71,8 +71,9 @@ A field a corpus records nothing for shows `—` rather than `0.000`, since ther
 is nothing there to extract, and gets no second row.
 
 What each column produced on the documents whose gold records nothing is counted
-in its own section at the foot of the report, in documents and in values. It is
-not an extraction result and carries no delta.
+separately, in documents and in values: a collapsed block under each corpus's
+own table, and one under **Overall** covering the run. It is not an extraction
+result and carries no delta.
 
 Both figures come from the per-document score files, so
 `python -m benchmarks.score --run <dir> --from-scores` re-summarises a run

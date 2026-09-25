@@ -94,6 +94,17 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" + ("" if count == 1 else "s")
 
 
+def merge_presence(presences: Iterable[Optional[dict]]) -> Optional[dict]:
+    """One presence over several corpora, for a figure that spans them."""
+    known = [presence for presence in presences if presence]
+    if not known:
+        return None
+    return {
+        key: sum(presence[key] for presence in known)
+        for key in ("n", "n_gold", "no_gold_docs", "no_gold_values")
+    }
+
+
 def produced_counts(presence: Optional[dict]) -> str:
     """What one variant produced on the documents whose gold records nothing.
 

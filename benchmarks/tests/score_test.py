@@ -620,7 +620,7 @@ class TestRenderReportGoldSplit:
             }},
             ["reference_title"], {"reference_title": "partial_list"}, None,
         )
-        counts = result.split("### Produced where the gold records nothing")[1]
+        counts = result.split("Produced where the gold records nothing:")[1]
         assert "| reference_title | 40 | 37 docs, 650 values |" in counts
 
     def test_should_state_that_a_model_produced_nothing(self):

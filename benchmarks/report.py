@@ -11,6 +11,7 @@ from benchmarks.gold_presence import (
     GOLD_PRESENT_AGGREGATED_KEY,
     has_gold,
     is_split_worth_reporting,
+    merge_presence,
     produced_row,
 )
 from benchmarks.llm_usage import usage_for_corpora
@@ -352,77 +353,47 @@ def _unequal_gold_note(
     return []
 
 
-def _split_presence(
-    labeled_summaries: List[Tuple[str, dict]], corpus: str, field: str
-) -> Optional[dict]:
-    """One presence per field, preferring the primary: whether the gold records a field is
-    a property of the corpus rather than of the variant."""
-    for _, summary in reversed(labeled_summaries):
-        presence = _gold_presence(summary, corpus, field)
-        if presence:
-            return presence
-    return None
-
-
-def _split_fields(
-    labeled_summaries: List[Tuple[str, dict]], corpus: str, field_names: List[str]
-) -> List[str]:
-    return [
-        field for field in field_names
-        if is_split_worth_reporting(
-            [_gold_presence(s, corpus, field) for _, s in labeled_summaries]
-        )
-    ]
-
-
-def _render_gold_split_section(
+def _render_produced_section(
     labeled_summaries: List[Tuple[str, dict]],
     field_names: List[str],
     corpora: List[str],
 ) -> List[str]:
     """The documents whose gold records no value for a field, and what each variant
-    produced on them.
+    produced on them, over one corpus or over several.
 
-    Empty unless some field earns it, so a comparison over corpora that record everything
-    is unchanged, as is one against a summary written before the split.
+    Collapsed, and not a score: it carries no delta, because nothing in the PDF says
+    whether a publisher recorded the field. Empty unless some field earns it, so a report
+    over corpora that record everything is unchanged, as is one against a summary written
+    before the split.
     """
-    blocks: List[str] = []
-    for corpus in corpora:
-        fields = _split_fields(labeled_summaries, corpus, field_names)
-        if not fields:
+    labels = [label for label, _ in labeled_summaries]
+    rows = []
+    for field in field_names:
+        presences = [
+            _gold_presence(summary, corpus, field)
+            for _, summary in labeled_summaries for corpus in corpora
+        ]
+        if not is_split_worth_reporting(presences):
             continue
-        n_docs = max(
-            s.get("corpora", {}).get(corpus, {}).get("n", 0) for _, s in labeled_summaries
-        )
-        labels = [label for label, _ in labeled_summaries]
-        rows = [
-            row for row in (
-                produced_row(
-                    field,
-                    [_gold_presence(s, corpus, field) for _, s in labeled_summaries],
-                )
-                for field in fields
-            ) if row
-        ]
-        blocks += [
-            f"**{corpus}** ({n_docs} docs)",
-            "",
-            "| Field | No gold | " + " | ".join(labels) + " |",
-            "|" + "|".join(["---"] * (2 + len(labels))) + "|",
-            *["| " + " | ".join(row) + " |" for row in rows],
-            "",
-        ]
-    if not blocks:
+        row = produced_row(field, [
+            merge_presence(_gold_presence(summary, corpus, field) for corpus in corpora)
+            for _, summary in labeled_summaries
+        ])
+        if row:
+            rows.append(row)
+    if not rows:
         return []
     return [
-        "### Produced where the gold records nothing",
+        "<details>",
+        "<summary>Produced where the gold records nothing"
+        f" ({len(rows)} fields)</summary>",
         "",
-        "The documents whose gold records no value for a field, and what each column"
-        " produced on them. This is not an extraction result: nothing in the PDF says"
-        " whether a publisher recorded the field. The scores above state which documents"
-        " they cover.",
+        "| Field | No gold | " + " | ".join(labels) + " |",
+        "|" + "|".join(["---"] * (2 + len(labels))) + "|",
+        *["| " + " | ".join(row) + " |" for row in rows],
         "",
-        *blocks,
+        "</details>",
+        "",
     ]
 
 
@@ -506,6 +477,9 @@ def _render_corpus_section(
         lambda s, f, m: _get_f1(s, corpus, f, m, GOLD_PRESENT_AGGREGATED_KEY),
         _scope_getter(labeled_summaries, [corpus]),
     ))
+    produced = _render_produced_section(labeled_summaries, field_names, [corpus])
+    if produced:
+        lines += ["", *produced[:-1]]
     usage_lines = _render_usage_section(
         labeled_summaries, [corpus],
         "**LLM usage**, over every document attempted in this corpus.",
@@ -557,6 +531,9 @@ def _render_overall_section(  # pylint: disable=too-many-locals
         lambda s, f, m: _get_overall_gold_f1(s, f, m, common),
         _scope_getter(labeled_summaries, common),
     ))
+    produced = _render_produced_section(labeled_summaries, field_names, common)
+    if produced:
+        lines += ["", *produced[:-1]]
     return lines
 
 
@@ -607,8 +584,6 @@ def _render_comparison_report(
             "</details>",
             "",
         ]
-
-    lines += _render_gold_split_section(labeled_summaries, field_names, corpora)
 
     return "\n".join(lines)
 

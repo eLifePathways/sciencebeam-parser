@@ -290,52 +290,28 @@ def _score_row(
     return f"| {field} | {field_type} | {docs} |" + cells
 
 
-def _render_split_corpus_block(
-    corpus: str,
+def _render_produced_table(
     result: Dict[str, Any],
-    fields: List[str],
+    field_names: List[str],
 ) -> List[str]:
+    """The documents whose gold records no value for a field, and what was produced on
+    them. Not a score: nothing in the PDF says whether a publisher recorded the field."""
     presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
-    rows = [produced_row(field, [presence_by_field.get(field)]) for field in fields]
+    rows = [
+        produced_row(field, [presence_by_field.get(field)])
+        for field in field_names
+        if is_split_worth_reporting([presence_by_field.get(field)])
+    ]
+    present = [row for row in rows if row]
+    if not present:
+        return []
     return [
-        f"**{corpus}** ({result.get('n', 0)} docs)",
+        "Produced where the gold records nothing:",
         "",
         "| Field | No gold | Produced |",
         "|---|---|---|",
-        *["| " + " | ".join(row) + " |" for row in rows if row],
+        *["| " + " | ".join(row) + " |" for row in present],
         "",
-    ]
-
-
-def _render_gold_split_section(
-    corpus_results: Dict[str, Any],
-    field_names: List[str],
-) -> List[str]:
-    """Each field scored over only the documents whose gold records it, and what was
-    produced where it records nothing.
-
-    Empty unless some field earns it, so a report over corpora that record everything is
-    unchanged.
-    """
-    blocks: List[str] = []
-    for corpus, result in corpus_results.items():
-        presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
-        fields = [
-            field for field in field_names
-            if is_split_worth_reporting([presence_by_field.get(field)])
-        ]
-        if fields:
-            blocks += _render_split_corpus_block(corpus, result, fields)
-    if not blocks:
-        return []
-    return [
-        "### Produced where the gold records nothing",
-        "",
-        "The documents whose gold records no value for a field, and what was produced on"
-        " them. This is not an extraction result: nothing in the PDF says whether a"
-        " publisher recorded the field. The scores above state which documents they cover.",
-        "",
-        *blocks,
     ]
 
 
@@ -393,8 +369,7 @@ def _render_report(  # pylint: disable=too-many-locals
                 ))
 
         lines.append("")
-
-    lines += _render_gold_split_section(corpus_results, field_names)
+        lines += _render_produced_table(result, field_names)
 
     return "\n".join(lines)
 
