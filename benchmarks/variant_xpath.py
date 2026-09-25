@@ -40,30 +40,30 @@ def _candidates(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
     ]
 
 
-def _main_variant(candidates: List[ET.ElementBase]) -> ET.ElementBase:
-    """The article's own abstract: the first `<abstract>` in document order, or the first
-    candidate where the document has none."""
-    return next(
-        (node for node in candidates if node.tag == ABSTRACT),
-        candidates[0],
-    )
-
-
 def main_abstract(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
-    """The article's own abstract, as at most one element."""
-    candidates = _candidates(article_meta)
-    return [_main_variant(candidates)] if candidates else []
-
-
-def abstract_variants(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
-    """The abstracts a document offers as alternatives, the article's own first."""
+    """The article's own abstract, as at most one element: the first `<abstract>` in
+    document order, or the first candidate where the document has none."""
     candidates = _candidates(article_meta)
     if not candidates:
         return []
-    main = _main_variant(candidates)
-    return [main] + [
-        node for node in candidates
-        if node is not main and _is_translation_variant(node, main)
+    return [next(
+        (node for node in candidates if node.tag == ABSTRACT),
+        candidates[0],
+    )]
+
+
+def abstract_variants(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
+    """The abstracts a document offers as alternatives, `main_abstract` first.
+
+    The scoring types read that position as the article's own, so the list is built from
+    `main_abstract` rather than from a second reading of the same rule.
+    """
+    main = main_abstract(article_meta)
+    if not main:
+        return []
+    return main + [
+        node for node in _candidates(article_meta)
+        if node is not main[0] and _is_translation_variant(node, main[0])
     ]
 
 
