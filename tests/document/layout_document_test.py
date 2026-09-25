@@ -163,7 +163,7 @@ class TestRetokenizeLayoutDocument:
         assert line.tokens == []
 
     def test_should_preserve_meta(self):
-        page_meta = LayoutPageMeta(COORDINATES_1)
+        page_meta = LayoutPageMeta.for_coordinates(COORDINATES_1)
         layout_document = LayoutDocument(
             pages=[LayoutPage(
                 blocks=[LayoutBlock.for_tokens([
@@ -220,7 +220,7 @@ class TestRemoveEmptyBlocks:
         assert len(cleaned_layout_document.pages) == 2
 
     def test_should_preserve_meta(self):
-        page_meta = LayoutPageMeta(COORDINATES_1)
+        page_meta = LayoutPageMeta.for_coordinates(COORDINATES_1)
         layout_document = LayoutDocument(
             pages=[LayoutPage(
                 blocks=[

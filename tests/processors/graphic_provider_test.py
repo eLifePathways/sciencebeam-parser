@@ -143,7 +143,7 @@ class TestGetPageNumbersWithMostlyBitmapGraphics:
 
     def test_should_provide_empty_list_for_pages_without_any_graphics(self):
         layout_document = LayoutDocument(pages=[
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=1,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=1)
             ))
@@ -226,19 +226,19 @@ class TestGetGraphicMatchingCandidatePageNumbersForSemanticContentList:
             coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=2)
         )
         layout_document = LayoutDocument(pages=[
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=2,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=2)
             )),
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=3,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=3)
             )),
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=4,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=4)
             )),
-            LayoutPage(blocks=LayoutBlock.for_text('test'), meta=LayoutPageMeta(
+            LayoutPage(blocks=[LayoutBlock.for_text('test')], meta=LayoutPageMeta(
                 page_number=5,
                 coordinates=LAYOUT_PAGE_COORDINATES_1._replace(page_number=5)
             ))

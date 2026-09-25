@@ -84,8 +84,6 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 module = [
-  "tests.document.layout_document_test",
-  "tests.processors.graphic_provider_test",
   "tests.utils.lazy_test"
 ]
 check_untyped_defs = false
