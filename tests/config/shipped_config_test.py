@@ -212,18 +212,17 @@ class TestShippedDelftHubProfile:
         ]
 
     def test_should_serve_every_hub_path_with_the_delft_engine(self):
-        # TODO: assert that no model in any shipped profile pairs a `hf://` path
-        # with an engine other than delft.
-        #
-        # `get_shipped_config()['sequence_model_profiles']` gives every profile
-        # name; `get_resolved_models(name)` gives that profile's merged models,
-        # each entry a dict with a `path` and an optional `engine`.
-        # `get_engine_name_for_config(entry)` returns the engine that entry would
-        # actually be loaded with, defaulting to `EngineNames.DELFT` when the key
-        # is absent -- which is exactly the default the deep merge can mask.
-        #
-        # Worth deciding: sweep every profile, or only HUB_PROFILE? Sweeping
-        # costs nothing and catches the next hub profile someone adds on a
-        # wapiti base; scoping to HUB_PROFILE keeps the failure message pointed
-        # at one place. Either way, a failure should name the offending model.
-        raise NotImplementedError
+        """No shipped profile pairs a Hub path with a loader that cannot read one.
+
+        Swept over every profile rather than `delft_hub` alone: the deep merge
+        makes this silent wherever it happens, and a profile added later on a
+        wapiti base would be just as wrong.
+        """
+        wrongly_served = {
+            (profile_name, model_name): get_engine_name_for_config(entry)
+            for profile_name in get_shipped_config()['sequence_model_profiles']
+            for model_name, entry in get_resolved_models(profile_name).items()
+            if entry.get('path', '').startswith(HUB_PATH_PREFIX)
+            and get_engine_name_for_config(entry) != EngineNames.DELFT
+        }
+        assert not wrongly_served
