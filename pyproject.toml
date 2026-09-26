@@ -24,6 +24,18 @@ cpu = [
 ]
 delft = [
     "sciencebeam-trainer-delft[delft]>=1.0.3",
+    # delft is declared here, rather than left to arrive through
+    # sciencebeam-trainer-delft, so that [tool.uv.sources] below binds it to the
+    # branch carrying the Hugging Face Hub support: a uv source is not honoured
+    # for a transitive requirement, and is not carried in the metadata of the
+    # dependency that declares it, so relying on the source in
+    # sciencebeam-trainer-delft's own pyproject resolves delft from PyPI
+    # instead -- which has neither `delft.utilities.hub_models` nor
+    # `delft.utilities.weights`, and so fails on import.
+    # Both floors here are what a consumer installing this project from PyPI
+    # resolves against; in this repo the sources win over them, and the commit
+    # each resolves to is in uv.lock.
+    "delft>=1.1.0",
 ]
 cv = [
     "layoutparser==0.3.2",
@@ -58,6 +70,12 @@ ocr = [
 
 
 [tool.uv.sources]
+# TEMPORARY, both of them, and they travel together: the Hub support in
+# sciencebeam-trainer-delft's branch is written against delft's dev branch.
+# uv.lock holds the commit of each, so a build stays reproducible; to follow a
+# branch, `uv lock --upgrade-package <name>`.
+sciencebeam-trainer-delft = { git = "https://github.com/eLifePathways/sciencebeam-trainer-delft", branch = "feature/hub-models" }
+delft = { git = "https://github.com/kermitt2/delft", branch = "dev" }
 torch = [{ index = "torch-cpu" }]
 torchvision = [{ index = "torch-cpu" }]
 
