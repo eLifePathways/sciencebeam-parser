@@ -504,10 +504,6 @@ dependencies = [
     { name = "truecase" },
     { name = "unidecode" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/6c/ba60bf44bc5a04a8f07073f063311843f636b767b19139fa14239ea59985/delft-1.1.0.tar.gz", hash = "sha256:08866172703ccce429cc597ecfa66312d909d7a67dde9516216782a24d694c32", size = 165680, upload-time = "2026-08-28T07:19:33.307Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/50/121b0e62758d697f2ccafcbe81a408dce06c59b3011f2947f57f824699ae/delft-1.1.0-py3-none-any.whl", hash = "sha256:5fe1b073831918da590e4fbb74d8a514c84f000c61028865846cade56d1d1695", size = 198455, upload-time = "2026-08-28T07:19:31.89Z" },
-]
 
 [[package]]
 name = "dill"
@@ -3557,10 +3553,6 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "tqdm" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6d/27/980e0deef048be94649700b3ac6c5849738f2719a7fa2800af6fbf8505e6/sciencebeam_trainer_delft-1.0.3.tar.gz", hash = "sha256:70094e42fedeeed03de4c30e1053e7f7c8da8778aaa7bd42b5ede43eef9a8c2e", size = 134670, upload-time = "2026-09-18T17:16:22.929Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/99/40/9e1cc821c2c89cd1dad2dcd3359908aee4ef7cff44b4df759b565b2d1609/sciencebeam_trainer_delft-1.0.3-py3-none-any.whl", hash = "sha256:1de29255d233f5c48cf76bdbf530b022f5621671a8954dc3a4a2318d88c13994", size = 139131, upload-time = "2026-09-18T17:16:21.941Z" },
 ]
 
 [package.optional-dependencies]
