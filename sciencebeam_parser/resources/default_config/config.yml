@@ -316,6 +316,22 @@ sequence_model_profiles:
       - llm_segmentation
       - llm_reference_segmenter
       - llm_citation
+  # Models taken from the Hugging Face Hub, rather than from a release archive.
+  # The delft engine resolves an `hf://owner/repository[@revision]/model` path
+  # itself, downloading the model directory under `download_dir`/models; the
+  # revision is optional and, left out, follows the branch, so a model can
+  # change under a running deployment.
+  # Only the models published to the Hub are overridden here, the rest coming
+  # from the base profile. The base is an all-delft one on purpose: a profile
+  # is deep merged over the one it extends, so overriding only `path` on a
+  # wapiti entry would keep `engine: wapiti` and hand a delft directory to the
+  # wapiti loader.
+  delft_hub:
+    extends: biorxiv_elife
+    header:
+      path: 'hf://lfoppiano/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+    affiliation_address:
+      path: 'hf://lfoppiano/grobid-model-affiliation-address/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
 
 profiles:
   biorxiv_elife:
@@ -406,6 +422,8 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+  delft_hub:
+    sequence_models: delft_hub
 
 profile_aliases:
   grobid_crf: grobid_crf_0_9_0

@@ -55,6 +55,34 @@ Models will be loaded "eagerly" at startup, by setting the configuration option 
 
 Which models are used is decided by the `profile`, and a request may name another one — see [Profiles](doc/profiles.md).
 
+#### Sequence models from the Hugging Face Hub
+
+The `delft` engine takes a model directly from the Hugging Face Hub, as well as from an archive
+url. A Hub path is `hf://{owner}/{repository}[@{revision}]/{model}`, where `{model}` is a folder
+at the root of the repository:
+
+```yaml
+models:
+  header:
+    path: 'hf://lfoppiano/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+```
+
+The model directory is downloaded to `{download_dir}/models/{model}`, so it is the existing
+`download_dir` that says where it lands. The revision is optional and, left out, follows the
+default branch of the repository: pin one (`@v1.1.0`, or a commit sha) for a deployment, because
+an unpinned model can change underneath it.
+
+`{model}` is a single path segment, so a repository that groups its models into sub-folders
+cannot be addressed this way; such a model is served over https instead, as an archive or as a
+folder of files.
+
+The shipped `delft_hub` profile serves the models published to the Hub today (`header` and
+`affiliation_address`), taking the rest from `biorxiv_elife`:
+
+```bash
+export SCIENCEBEAM_PARSER__PROFILE=delft_hub
+```
+
 ### Run tests (linting, pytest, etc.)
 
 ```bash
