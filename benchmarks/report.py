@@ -17,6 +17,7 @@ from benchmarks.gold_presence import (
 from benchmarks.llm_usage import usage_for_corpora
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
+    concatenation_row,
     merge_variant_matches,
     variant_match_row,
 )
@@ -367,33 +368,45 @@ def _render_variant_match_section(
     field_names: List[str],
     corpora: List[str],
 ) -> List[str]:
-    """How often each run was credited a language other than the article's own.
+    """How often each run was credited a language other than the article's own, and how
+    often it returned several languages as one value.
 
-    A run that changed which language it reads moves this and not the score, so the two
+    A run that changed which language it reads moves these and not the score, so they
     belong together. Empty where no gold carries a field in more than one language, and so
-    where a summary was written before the count existed.
+    where a summary was written before the counts existed.
     """
     labels = [label for label, _ in labeled_summaries]
-    rows = []
-    for field in field_names:
-        row = variant_match_row(field, [
+    merged = {
+        field: [
             merge_variant_matches(
                 _variant_match(summary, corpus, field) for corpus in corpora
             )
             for _, summary in labeled_summaries
-        ])
-        if row:
-            rows.append(row)
-    if not rows:
+        ]
+        for field in field_names
+    }
+    return _render_counts_section(
+        "Credited a translation rather than the article's own language",
+        labels, [variant_match_row(field, merged[field]) for field in field_names],
+    ) + _render_counts_section(
+        "Returned several languages as a single value",
+        labels, [concatenation_row(field, merged[field]) for field in field_names],
+    )
+
+
+def _render_counts_section(
+    summary_text: str, labels: List[str], rows: List[Optional[List[str]]]
+) -> List[str]:
+    present = [row for row in rows if row]
+    if not present:
         return []
     return [
         "<details>",
-        "<summary>Credited a translation rather than the article's own language"
-        f" ({len(rows)} fields)</summary>",
+        f"<summary>{summary_text} ({len(present)} fields)</summary>",
         "",
         "| Field | " + " | ".join(labels) + " |",
         "|" + "|".join(["---"] * (1 + len(labels))) + "|",
-        *["| " + " | ".join(row) + " |" for row in rows],
+        *["| " + " | ".join(row) + " |" for row in present],
         "",
         "</details>",
         "",

@@ -105,9 +105,18 @@ one was a translation, per corpus. A run that reads the translation of every
 multilingual paper scores like one that reads the article's own abstract, and
 that block is where the difference shows.
 
-`best_match_from_first` is the third reading, and is not scored by default: only
-the article's own abstract counts as gold, but a prediction carrying several
-abstracts is credited if any of them matches it.
+A second block counts predictions that returned several languages as one value,
+which a per-language score can only half match and which reads as a poor
+extraction rather than as the unsegmented one it is.
+
+**On `scielo_mx` the article's own abstract is a reading of document order, not
+of anything the document declares.** Its 59 multilingual documents repeat
+`<abstract>` — so no tag says which is the translation — and none declares an
+article language, so the first one printed is taken as the article's own: Spanish
+on 50 of them and English on 9. `scielo_br` and `scielo_preprints-jats` are not
+affected, since `<trans-abstract>` names the translation outright, and `ore`
+declares an article language. Read that corpus's translation count as a signal
+rather than a verdict.
 
 ## Running it
 

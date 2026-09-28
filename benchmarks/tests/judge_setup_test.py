@@ -78,6 +78,10 @@ ARTICLE_META_SHAPES = {
         "<abstract abstract-type='plain-language-summary'>summary</abstract>"
     ),
     "no abstract": "<title-group><article-title>The title</article-title></title-group>",
+    "translations with no abstract": (
+        "<trans-abstract xml:lang='en'>english</trans-abstract>"
+        "<trans-abstract xml:lang='es'>spanish</trans-abstract>"
+    ),
 }
 
 

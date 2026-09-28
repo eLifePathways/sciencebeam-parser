@@ -173,6 +173,7 @@ seeds:
 fields:
   - title
   - abstract
+  - abstract_anywhere
   - abstracts
   - author_full_names
   - affiliation_text
@@ -206,10 +207,15 @@ scoring:
   #                  field name is read on both sides and `abstract` would restrict the
   #                  prediction too
   #
-  # `abstract` is the article's own abstract and `abstracts` every language it carries, so
-  # the two rows say what crediting a translation is worth on this run.
-  # `best_match_from_first` over `abstracts` is the third reading: the article's own
-  # abstract, found under whichever language a prediction filed it as.
+  # Three readings of the same gold, from strictest to most lenient:
+  #   abstract          - the article's own abstract, against the prediction's own
+  #   abstract_anywhere - the article's own abstract, against any abstract the prediction
+  #                       carries, so a tool that files it as the translation still counts
+  #   abstracts         - any language the document carries, against any the prediction
+  #                       does; what this credits over abstract_anywhere is counted below
+  #                       each corpus table
+  # abstract_anywhere and abstracts read the same mapping entry under two names, because a
+  # score file holds one scoring type per field.
   default_methods:
     - levenshtein
     - edit_sim
@@ -219,6 +225,9 @@ scoring:
       methods: [exact, levenshtein, edit_sim]
     abstract:
       methods: [levenshtein, edit_sim]
+    abstract_anywhere:
+      methods: [levenshtein, edit_sim]
+      type: best_match_from_first
     abstracts:
       methods: [levenshtein, edit_sim]
       type: best_match

@@ -35,6 +35,7 @@ BEST_MATCH_FROM_FIRST_SCORING_TYPE_NAME = "best_match_from_first"
 
 N_EXPECTED_VALUES = "n_expected_values"
 MATCHED_EXPECTED_INDEX = "matched_expected_index"
+MATCHED_CONCATENATION = "matched_concatenation"
 
 SELECTION_METHOD = "edit_sim"
 
@@ -44,6 +45,34 @@ def _preprocessed(method: ScoringMethod, value: str, convert_to_lower: bool) -> 
     if convert_to_lower:
         value = value.lower()
     return method.preprocessing_fn(value)
+
+
+def _matches_concatenation_better(
+    expected: Sequence[str],
+    actual: str,
+    best_score: float,
+    convert_to_lower: bool,
+) -> bool:
+    """Whether the prediction is every gold value at once rather than any one of them.
+
+    A prediction holding two languages in a single value can only half match either, which
+    reads as a poor extraction rather than as the unsegmented one it is.
+    """
+    method = get_scoring_method(SELECTION_METHOD)
+    concatenated = _preprocessed(method, "".join(expected), convert_to_lower)
+    return method.scoring_fn(concatenated, _preprocessed(method, actual, convert_to_lower)) > (
+        best_score
+    )
+
+
+def _best_match_score(
+    expected: str, actual: str, convert_to_lower: bool
+) -> float:
+    method = get_scoring_method(SELECTION_METHOD)
+    return method.scoring_fn(
+        _preprocessed(method, expected, convert_to_lower),
+        _preprocessed(method, actual, convert_to_lower),
+    )
 
 
 def select_best_match_indices(
@@ -79,6 +108,7 @@ class BestMatchScoringType(ScoringType):
         measures: Optional[List[str]] = None,
         convert_to_lower: bool = False,
     ) -> Dict[str, Any]:
+        all_expected = expected
         if self.first_expected_only:
             expected = expected[:1]
         expected_index, actual_index = select_best_match_indices(
@@ -93,12 +123,20 @@ class BestMatchScoringType(ScoringType):
         )
         if self.first_expected_only:
             return scores
+        extra: Dict[str, Any] = {
+            N_EXPECTED_VALUES: len(expected),
+            MATCHED_EXPECTED_INDEX: expected_index,
+        }
+        if len(all_expected) > 1 and actual:
+            extra[MATCHED_CONCATENATION] = _matches_concatenation_better(
+                all_expected, actual[actual_index],
+                _best_match_score(
+                    expected[expected_index], actual[actual_index], convert_to_lower
+                ),
+                convert_to_lower,
+            )
         return {
-            method: {
-                **score,
-                N_EXPECTED_VALUES: len(expected),
-                MATCHED_EXPECTED_INDEX: expected_index,
-            }
+            method: {**score, **extra}
             for method, score in scores.items()
         }
 
