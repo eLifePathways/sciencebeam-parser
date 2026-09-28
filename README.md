@@ -83,6 +83,11 @@ The shipped `delft_hub` profile serves the models published to the Hub today (`h
 export SCIENCEBEAM_PARSER__PROFILE=delft_hub
 ```
 
+A model trained by GROBID expects the features GROBID computes, which differ in places from the
+ones the biorxiv models were trained on. A model entry says which it was trained with, through
+`feature_flavour` (`sciencebeam`, the default, or `grobid`); `delft_hub` sets `grobid` on its
+header model. So far only the header model reads it.
+
 ### Run tests (linting, pytest, etc.)
 
 ```bash

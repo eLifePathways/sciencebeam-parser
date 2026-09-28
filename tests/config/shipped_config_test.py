@@ -204,6 +204,9 @@ class TestShippedDelftHubProfile:
             if model_name in unchanged
         }
 
+    def test_should_give_grobid_features_to_its_grobid_header_model(self):
+        assert get_resolved_models(HUB_PROFILE)['header'].get('feature_flavour') == 'grobid'
+
     def test_should_override_at_least_one_model_with_a_hub_path(self):
         assert [
             model_name

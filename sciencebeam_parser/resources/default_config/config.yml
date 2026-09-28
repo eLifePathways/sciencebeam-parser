@@ -326,10 +326,13 @@ sequence_model_profiles:
   # is deep merged over the one it extends, so overriding only `path` on a
   # wapiti entry would keep `engine: wapiti` and hand a delft directory to the
   # wapiti loader.
+  # A model GROBID trained expects GROBID's features rather than the ones the
+  # biorxiv models were trained on, which `feature_flavour: grobid` selects.
   delft_hub:
     extends: biorxiv_elife
     header:
       path: 'hf://lfoppiano/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+      feature_flavour: 'grobid'
     affiliation_address:
       path: 'hf://lfoppiano/grobid-model-affiliation-address/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
 
