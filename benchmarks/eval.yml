@@ -173,7 +173,6 @@ seeds:
 fields:
   - title
   - abstract
-  - abstract_anywhere
   - abstracts
   - author_full_names
   - affiliation_text
@@ -201,16 +200,12 @@ scoring:
   #                  it was (appropriate where several values are one right answer said
   #                  differently, rather than a set to reproduce)
   #
-  # Three readings of the same gold, from strictest to most lenient:
-  #   abstract          - the article's own abstract, against the prediction's own
-  #   abstract_anywhere - the article's own abstract, against any abstract the prediction
-  #                       carries, so a tool that files it as the translation still counts
-  #   abstracts         - any language the document carries, against any the prediction
-  #                       does; what this credits over abstract_anywhere is counted below
-  #                       each corpus table
-  # abstract_anywhere reads its two sides from different mapping entries — `expected` and
-  # `actual` below — so what counts as the article's own abstract is the mapping's
-  # definition rather than a position a scoring type trusts.
+  # `abstract` is the headline: the article's own abstract, against any abstract the
+  # prediction carries, so a tool that files it as the translation still counts. Its two
+  # sides read different mapping entries, which is what `expected` and `actual` below say.
+  # `abstracts` credits any language the document carries; what that buys over `abstract`,
+  # and how often a prediction returned several languages as one value, are counted below
+  # each corpus table.
   default_methods:
     - levenshtein
     - edit_sim
@@ -219,8 +214,6 @@ scoring:
     title:
       methods: [exact, levenshtein, edit_sim]
     abstract:
-      methods: [levenshtein, edit_sim]
-    abstract_anywhere:
       expected: abstract
       actual: abstracts
       methods: [levenshtein, edit_sim]

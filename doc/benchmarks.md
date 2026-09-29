@@ -87,10 +87,14 @@ A JATS document may hold its abstract in several languages, as repeated
 `<abstract>` elements or as `<abstract>` plus `<trans-abstract>`. Two fields read
 that, and both are scored:
 
-| field | what its gold holds |
-| --- | --- |
-| `abstract` | the article's own abstract, always one value |
-| `abstracts` | every language the document carries it in, the article's own first |
+| field | gold | prediction |
+| --- | --- | --- |
+| `abstract` | the article's own abstract, always one value | any abstract it carries |
+| `abstracts` | every language the document carries it in, the article's own first | any abstract it carries |
+
+`abstract` is the headline. Its two sides read different mapping entries, so a
+tool that finds the article's own abstract but files it as the translation is
+still credited, while one that returns only the translation is not.
 
 The article's own abstract is the first `<abstract>` in document order. A
 `<trans-abstract>` is a translation whatever it declares; a later `<abstract>` is
@@ -98,12 +102,11 @@ one only if it carries the same `abstract-type` and declares a different
 `@xml:lang`. Anything else — a second abstract in the same language, a
 `plain-language-summary` — is not another language and is left out of both fields.
 
-`abstracts` is scored with `best_match`, which credits the gold value the
-prediction matches best rather than requiring the article's own. Below each
-corpus table, and in the comparison report, a block counts how often the credited
-one was a translation, per corpus. A run that reads the translation of every
-multilingual paper scores like one that reads the article's own abstract, and
-that block is where the difference shows.
+`abstracts` credits any language, so the gap between the two rows is what not
+requiring the article's own is worth. Below each corpus table, and in the
+comparison report, a block counts how often the credited one was a translation,
+per corpus: a run that reads the translation of every multilingual paper scores
+like one that reads the article's own, and that block is where it shows.
 
 A second block counts predictions that returned several languages as one value,
 which a per-language score can only half match and which reads as a poor

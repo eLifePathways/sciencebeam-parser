@@ -90,3 +90,29 @@ class TestTheFirstAbstractIsTheArticleOwn:
         ).encode("utf-8")
         values = parse_xml(BytesIO(article), xml_mapping, fields=["abstract", "abstracts"])
         assert values["abstracts"][:1] == values["abstract"]
+
+
+SUB_ARTICLE_JATS = b"""<article>
+  <front>
+    <article-meta>
+      <abstract>the article's own abstract</abstract>
+    </article-meta>
+  </front>
+  <sub-article>
+    <front-stub><abstract>a peer review's abstract</abstract></front-stub>
+  </sub-article>
+</article>"""
+
+
+class TestOnlyTheArticleOwnMetadataIsRead:
+    """`scielo_br` files 37 abstracts in `sub-article/front-stub`. They were outside the
+    mapping before this change and have to stay outside it, or the first abstract in
+    document order stops being the article's."""
+
+    def test_should_not_read_a_sub_article_abstract(self):
+        xml_mapping = prepare_judge()
+        values = parse_xml(
+            BytesIO(SUB_ARTICLE_JATS), xml_mapping, fields=["abstract", "abstracts"]
+        )
+        assert values["abstract"] == ["the article's own abstract"]
+        assert values["abstracts"] == ["the article's own abstract"]
