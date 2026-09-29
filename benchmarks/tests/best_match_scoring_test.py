@@ -3,7 +3,7 @@ from __future__ import annotations
 from sciencebeam_judge.evaluation.scoring_types.string import STRING_SCORING_TYPE
 
 from benchmarks.best_match_scoring import (
-    BEST_MATCH_FROM_FIRST_SCORING_TYPE,
+    MATCHED_CONCATENATION,
     MATCHED_EXPECTED_INDEX,
     N_EXPECTED_VALUES,
     BEST_MATCH_SCORING_TYPE,
@@ -84,28 +84,17 @@ class TestBestMatchScoringType:
         assert glued["edit_sim"]["sim_sum"] < 1.0
 
 
-def _score_from_first(expected, actual):
-    return BEST_MATCH_FROM_FIRST_SCORING_TYPE.score(expected, actual, measures=MEASURES)
+class TestOneGoldValueAgainstSeveralPredicted:
+    """What `eval.yml` gets by naming `abstract` as the gold and `abstracts` as the
+    prediction, without any scoring type slicing a list."""
 
+    def test_should_credit_the_prediction_that_matches_it(self):
+        assert _score([ABSTRACT_1], [ABSTRACT_2, ABSTRACT_1])["edit_sim"]["sim_sum"] == 1.0
 
-class TestBestMatchFromFirstScoringType:
-    def test_should_credit_a_prediction_matching_the_article_own_abstract(self):
-        scores = _score_from_first([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_1])
-        assert scores["edit_sim"]["sim_sum"] == 1.0
+    def test_should_not_credit_a_prediction_holding_only_the_translation(self):
+        assert _score([ABSTRACT_1], [ABSTRACT_2])["edit_sim"]["sim_sum"] < 0.5
 
-    def test_should_not_credit_a_prediction_matching_the_translation(self):
-        scores = _score_from_first([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_2])
-        assert scores["edit_sim"]["sim_sum"] < 0.5
-
-    def test_should_credit_it_wherever_the_prediction_filed_it(self):
-        scores = _score_from_first([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_2, ABSTRACT_1])
-        assert scores["edit_sim"]["sim_sum"] == 1.0
-
-    def test_should_not_score_a_concatenation_of_the_gold_variants(self):
-        scores = _score_from_first([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_1 + ABSTRACT_2])
-        assert scores["edit_sim"]["sim_sum"] < 1.0
-
-    def test_should_record_no_variant_match_since_only_one_can_be_credited(self):
-        scores = _score_from_first([ABSTRACT_1, ABSTRACT_2], [ABSTRACT_1])
-        assert N_EXPECTED_VALUES not in scores["edit_sim"]
-        assert MATCHED_EXPECTED_INDEX not in scores["edit_sim"]
+    def test_should_report_no_choice_of_gold(self):
+        scores = _score([ABSTRACT_1], [ABSTRACT_2, ABSTRACT_1])
+        assert scores["edit_sim"][N_EXPECTED_VALUES] == 1
+        assert MATCHED_CONCATENATION not in scores["edit_sim"]

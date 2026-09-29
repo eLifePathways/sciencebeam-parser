@@ -1,19 +1,9 @@
 """Scoring a field where either side may hold several values for one right answer.
 
-`best_match` credits the best matching pair, any gold value against any predicted one.
-`best_match_from_first` credits the best match the *first* gold value makes with any
-predicted one, so a document offering alternatives has one right answer while a prediction
-offering several is still read. The mapping cannot express the second on its own, since
-one field name is read on both sides: restricting the gold to `abstract` would restrict
-the prediction to its own main abstract with it.
-
-Neither type is told what the first gold value means, and neither can find out — the judge
-hands a scoring type the values of one field and nothing else — so both are named for the
-position they read rather than for what a field puts there.
-`variant_xpath.abstract_variants` puts the article's own abstract first for that reason,
-building its list from `main_abstract`, and `judge_setup_test` asserts the result through
-the mapping. A field mapped without that ordering must not use `best_match_from_first`,
-and `matched_expected_index` means nothing for it.
+The best matching pair is credited, any gold value against any predicted one, and the
+score records which gold value it was. A field that wants one gold value against several
+predicted ones says so in `eval.yml` by naming a different mapping entry per side, so
+nothing here has to read a position and trust what put the value there.
 
 Written against sciencebeam-judge's `ScoringType` interface so it can move there once the
 rule has settled.
@@ -31,7 +21,6 @@ from sciencebeam_judge.evaluation.scoring_types.scoring_type import ScoringType
 from sciencebeam_judge.evaluation.scoring_types.string import STRING_SCORING_TYPE
 
 BEST_MATCH_SCORING_TYPE_NAME = "best_match"
-BEST_MATCH_FROM_FIRST_SCORING_TYPE_NAME = "best_match_from_first"
 
 N_EXPECTED_VALUES = "n_expected_values"
 MATCHED_EXPECTED_INDEX = "matched_expected_index"
@@ -97,9 +86,6 @@ def select_best_match_indices(
 
 
 class BestMatchScoringType(ScoringType):
-    def __init__(self, first_expected_only: bool = False):
-        self.first_expected_only = first_expected_only
-
     def score(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         expected: Sequence[str],
@@ -108,9 +94,6 @@ class BestMatchScoringType(ScoringType):
         measures: Optional[List[str]] = None,
         convert_to_lower: bool = False,
     ) -> Dict[str, Any]:
-        all_expected = expected
-        if self.first_expected_only:
-            expected = expected[:1]
         expected_index, actual_index = select_best_match_indices(
             expected, actual, convert_to_lower
         )
@@ -121,15 +104,13 @@ class BestMatchScoringType(ScoringType):
             measures=measures,
             convert_to_lower=convert_to_lower,
         )
-        if self.first_expected_only:
-            return scores
         extra: Dict[str, Any] = {
             N_EXPECTED_VALUES: len(expected),
             MATCHED_EXPECTED_INDEX: expected_index,
         }
-        if len(all_expected) > 1 and actual:
+        if len(expected) > 1 and actual:
             extra[MATCHED_CONCATENATION] = _matches_concatenation_better(
-                all_expected, actual[actual_index],
+                expected, actual[actual_index],
                 _best_match_score(
                     expected[expected_index], actual[actual_index], convert_to_lower
                 ),
@@ -142,4 +123,3 @@ class BestMatchScoringType(ScoringType):
 
 
 BEST_MATCH_SCORING_TYPE = BestMatchScoringType()
-BEST_MATCH_FROM_FIRST_SCORING_TYPE = BestMatchScoringType(first_expected_only=True)

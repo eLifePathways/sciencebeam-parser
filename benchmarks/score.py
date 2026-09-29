@@ -5,7 +5,7 @@ import json
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import yaml
 
@@ -39,16 +39,31 @@ from benchmarks.variant_match import (
 LOGGER = logging.getLogger(__name__)
 
 
-def _score_pair(
+def _score_pair(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     gold_xml: bytes,
     pred_xml: bytes,
     field_names: List[str],
     measures: List[str],
     xml_mapping: dict,
     scoring_types_by_field_map: Optional[Dict[str, List[str]]] = None,
+    field_sources: Optional[Dict[str, Tuple[str, str]]] = None,
 ) -> List[dict]:
-    expected = parse_xml(BytesIO(gold_xml), xml_mapping, fields=field_names)
-    actual = parse_xml(BytesIO(pred_xml), xml_mapping, fields=field_names)
+    sources = field_sources or {}
+    source_names = sorted({
+        name for field in field_names for name in sources.get(field, (field, field))
+    })
+    gold_values = parse_xml(BytesIO(gold_xml), xml_mapping, fields=source_names)
+    predicted_values = parse_xml(BytesIO(pred_xml), xml_mapping, fields=source_names)
+    expected = {
+        field: gold_values[sources.get(field, (field, field))[0]]
+        for field in field_names
+        if sources.get(field, (field, field))[0] in gold_values
+    }
+    actual = {
+        field: predicted_values[sources.get(field, (field, field))[1]]
+        for field in field_names
+        if sources.get(field, (field, field))[1] in predicted_values
+    }
     return list(
         iter_score_document_fields(
             expected, actual,
@@ -77,6 +92,25 @@ def _build_field_measures(
     return {
         f: per_field.get(f, {}).get("methods", default_methods)
         for f in field_names
+    }
+
+
+def _build_field_sources(
+    field_names: List[str],
+    per_field: Dict[str, dict],
+) -> Dict[str, Tuple[str, str]]:
+    """Which mapping entry each side of a field's comparison reads.
+
+    A field whose gold and prediction come from different entries is how a comparison says
+    "this gold against any of those predicted values" without a scoring type having to read
+    a position and trust what put the value there.
+    """
+    return {
+        field: (
+            per_field.get(field, {}).get("expected", field),
+            per_field.get(field, {}).get("actual", field),
+        )
+        for field in field_names
     }
 
 
@@ -188,6 +222,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
     all_measures: List[str],
     field_measures: Dict[str, List[str]],
     field_scoring_types: Dict[str, str],
+    field_sources: Dict[str, Tuple[str, str]],
     xml_mapping: dict,
 ) -> Dict[str, Any]:
     pred_dir = run_dir / "predictions" / corpus
@@ -214,6 +249,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
                 gold_path.read_bytes(), pred_path.read_bytes(),
                 field_names, all_measures, xml_mapping,
                 scoring_types_by_field_map=scoring_types_by_field_map,
+                field_sources=field_sources,
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             LOGGER.warning("Scoring failed for %s/%s: %s", corpus, record_id, exc)
@@ -405,6 +441,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     per_field_cfg: Dict[str, dict] = scoring_cfg.get("per_field", {})
     field_measures = _build_field_measures(field_names, default_methods, per_field_cfg)
     field_scoring_types = _build_field_scoring_types(field_names, default_type, per_field_cfg)
+    field_sources = _build_field_sources(field_names, per_field_cfg)
     all_measures = list(dict.fromkeys(m for methods in field_measures.values() for m in methods))
 
     run_record = None
@@ -442,7 +479,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         LOGGER.info("Scoring corpus %r (split=%s)...", corpus, split)
         corpus_results[corpus] = _score_corpus(
             corpus, data_dir / split, run_dir, field_names, all_measures, field_measures,
-            field_scoring_types, xml_mapping
+            field_scoring_types, field_sources, xml_mapping
         )
 
     llm_usage = aggregate_llm_usage(read_manifest_entries(run_dir), corpora)

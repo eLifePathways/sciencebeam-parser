@@ -200,12 +200,6 @@ scoring:
   #                  sits in its list, scored as a single string; records which gold value
   #                  it was (appropriate where several values are one right answer said
   #                  differently, rather than a set to reproduce)
-  #   best_match_from_first - the same, except only the first gold value can be matched.
-  #                  A scoring type is handed one field's values and nothing else, so it
-  #                  is named for the position it reads: what the first value means is the
-  #                  mapping's doing. The mapping cannot say this on its own, since one
-  #                  field name is read on both sides and `abstract` would restrict the
-  #                  prediction too
   #
   # Three readings of the same gold, from strictest to most lenient:
   #   abstract          - the article's own abstract, against the prediction's own
@@ -214,8 +208,9 @@ scoring:
   #   abstracts         - any language the document carries, against any the prediction
   #                       does; what this credits over abstract_anywhere is counted below
   #                       each corpus table
-  # abstract_anywhere and abstracts read the same mapping entry under two names, because a
-  # score file holds one scoring type per field.
+  # abstract_anywhere reads its two sides from different mapping entries — `expected` and
+  # `actual` below — so what counts as the article's own abstract is the mapping's
+  # definition rather than a position a scoring type trusts.
   default_methods:
     - levenshtein
     - edit_sim
@@ -226,8 +221,10 @@ scoring:
     abstract:
       methods: [levenshtein, edit_sim]
     abstract_anywhere:
+      expected: abstract
+      actual: abstracts
       methods: [levenshtein, edit_sim]
-      type: best_match_from_first
+      type: best_match
     abstracts:
       methods: [levenshtein, edit_sim]
       type: best_match
