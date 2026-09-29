@@ -19,6 +19,8 @@ class JatsFieldNames:
     BODY_SECTION_PARAGRAPH = 'body_section_paragraph'
     BODY_FIGURE = 'body_figure'
     BODY_TABLE = 'body_table'
+    FLOAT_FIGURE = 'float_figure'
+    FLOAT_TABLE = 'float_table'
     BACK_SECTION_TITLE = 'back_section_title'
     BACK_SECTION_PARAGRAPH = 'back_section_paragraph'
     ACK_SECTION_TITLE = 'acknowledgment_section_title'
@@ -56,6 +58,11 @@ class JatsSubFieldNames:
     AUTHOR_AFF_COUNTRY = 'author_aff-address-country'
 
 
+# Stands in for a float's segmentation label until the deriver resolves it by
+# where the float prints.  It never reaches training data.
+SEG_FLOAT_PLACEHOLDER = '<float>'
+
+
 # ── Segmentation label mapping (mirrors segmentation.conf [tags]) ─────────────
 SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.TITLE:                  '<header>',
@@ -73,6 +80,11 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.BODY_SECTION_PARAGRAPH: '<body>',
     JatsFieldNames.BODY_FIGURE:            '<body>',
     JatsFieldNames.BODY_TABLE:             '<body>',
+    # Resolved by position in `training/jats/segmentation.py`: a float printed
+    # after the reference list is annex, one printed beside the text that cites
+    # it is body, and `<floats-group>` says only where the XML keeps it.
+    JatsFieldNames.FLOAT_FIGURE:           SEG_FLOAT_PLACEHOLDER,
+    JatsFieldNames.FLOAT_TABLE:            SEG_FLOAT_PLACEHOLDER,
     JatsFieldNames.ACK_SECTION_TITLE:      '<acknowledgement>',
     JatsFieldNames.ACK_SECTION_PARAGRAPH:  '<acknowledgement>',
     JatsFieldNames.APPENDIX_GROUP_TITLE:   '<annex>',

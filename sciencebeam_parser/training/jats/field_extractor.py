@@ -212,6 +212,7 @@ class JatsFieldExtractor:
         yield from self._iter_front_values(root)
         yield from self._iter_body_values(root)
         yield from self._iter_back_values(root)
+        yield from self._iter_floats_group_values(root)
         yield from self._iter_sub_article_values(root)
 
     def _emit(
@@ -392,6 +393,39 @@ class JatsFieldExtractor:
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.BODY_TABLE)))
 
+        for _, fv in sorted(entries):
+            yield fv
+
+    def _iter_floats_group_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """Yield the captions of floats JATS holds at the end of the document.
+
+        `<floats-group>` is where a publisher puts tables and figures that print
+        after the reference list rather than beside the text that cites them.
+        Nothing else reads it, so its pages -- seventeen of them on `PPR458717`,
+        and some share of 49 of 50 scielo documents -- had no field to align
+        against and fell to the `<body>` sink.
+
+        Only the label and caption are taken, as the body path does, because the
+        cells of a table do not align as running text.  That is enough: the
+        caption anchors the float, and the deriver's gap merge carries `<annex>`
+        over the rest of it and on to the end of the document.
+        """
+        floats_group = root.find('floats-group')
+        if floats_group is None:
+            return
+        position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
+        entries: List[Tuple[int, JatsFieldValue]] = []
+        for xpath, field_name in (
+            ('.//fig', JatsFieldNames.FLOAT_FIGURE),
+            ('.//table-wrap', JatsFieldNames.FLOAT_TABLE),
+        ):
+            for el in floats_group.xpath(xpath):
+                children = el.xpath('./label') + el.xpath('./caption')
+                text = (_element_text(el) if not children
+                        else ' '.join(_element_text(c) for c in children if _element_text(c)))
+                if text:
+                    entries.append((position[el], JatsFieldValue(
+                        text=text, field_name=field_name)))
         for _, fv in sorted(entries):
             yield fv
 

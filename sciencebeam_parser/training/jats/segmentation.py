@@ -11,7 +11,10 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
-from sciencebeam_parser.training.jats.field_vocab import SEGMENTATION_LABEL_BY_FIELD
+from sciencebeam_parser.training.jats.field_vocab import (
+    SEG_FLOAT_PLACEHOLDER,
+    SEGMENTATION_LABEL_BY_FIELD,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -235,6 +238,24 @@ def _clear_front_beyond_threshold(
             sl.seg_label = None
 
 
+def _resolve_float_lines(seg_lines: List[_SegLine]) -> None:
+    """Give each float the region it prints in, rather than the one JATS files it under.
+
+    A publisher may keep every table and figure in `<floats-group>` whether it
+    prints beside the text that cites it or on its own pages after the reference
+    list.  The first is body, the second is annex, and only the position on the
+    page tells them apart.
+    """
+    last_reference_index = max(
+        (sl.line_index for sl in seg_lines if sl.seg_label == SEG_REFERENCES),
+        default=-1,
+    )
+    for sl in seg_lines:
+        if sl.seg_label != SEG_FLOAT_PLACEHOLDER:
+            continue
+        sl.seg_label = SEG_ANNEX if sl.line_index > last_reference_index else SEG_BODY
+
+
 def _merge_gap_lines(
     seg_lines: List[_SegLine],
     enabled_labels: Set[str],
@@ -295,6 +316,8 @@ class SegmentationLabelDeriver:
         # ── Tier 2: coordinate-based margin detection ──
         page_meta_by_number = _get_page_meta_by_page_number(layout_document)
         _tag_by_coordinates(seg_lines, page_meta_by_number, self.config)
+
+        _resolve_float_lines(seg_lines)
 
         # ── Tier 3: heuristic passes ──
         _clear_front_beyond_threshold(
