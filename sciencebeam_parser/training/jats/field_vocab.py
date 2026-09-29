@@ -58,11 +58,6 @@ class JatsSubFieldNames:
     AUTHOR_AFF_COUNTRY = 'author_aff-address-country'
 
 
-# Stands in for a float's segmentation label until the deriver resolves it by
-# where the float prints.  It never reaches training data.
-SEG_FLOAT_PLACEHOLDER = '<float>'
-
-
 # ── Segmentation label mapping (mirrors segmentation.conf [tags]) ─────────────
 SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.TITLE:                  '<header>',
@@ -80,11 +75,12 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.BODY_SECTION_PARAGRAPH: '<body>',
     JatsFieldNames.BODY_FIGURE:            '<body>',
     JatsFieldNames.BODY_TABLE:             '<body>',
-    # Resolved by position in `training/jats/segmentation.py`: a float printed
-    # after the reference list is annex, one printed beside the text that cites
-    # it is body, and `<floats-group>` says only where the XML keeps it.
-    JatsFieldNames.FLOAT_FIGURE:           SEG_FLOAT_PLACEHOLDER,
-    JatsFieldNames.FLOAT_TABLE:            SEG_FLOAT_PLACEHOLDER,
+    # `<body>` wherever they print.  GROBID's own corpus labels a bare float
+    # caption after the reference list `<body>` 902 times against `<annex>` 234,
+    # and reserves `<annex>` for a named supplementary or appendix section, so a
+    # corpus meant to mix with it has to agree.
+    JatsFieldNames.FLOAT_FIGURE:           '<body>',
+    JatsFieldNames.FLOAT_TABLE:            '<body>',
     JatsFieldNames.ACK_SECTION_TITLE:      '<acknowledgement>',
     JatsFieldNames.ACK_SECTION_PARAGRAPH:  '<acknowledgement>',
     JatsFieldNames.APPENDIX_GROUP_TITLE:   '<annex>',
