@@ -88,6 +88,15 @@ ones the biorxiv models were trained on. A model entry says which it was trained
 `feature_flavour` (`sciencebeam`, the default, or `grobid`); `delft_hub` sets `grobid` on its
 header model. So far only the header model reads it.
 
+Its header model uses the glove-840B word embeddings. They are read from an LMDB index at
+`data/db/glove-840B`, relative to the working directory; when there is none, the vectors are
+downloaded (1.8GB) and indexed on first load, which takes a while. An index built by DeLFT can be
+reused by linking it there:
+
+```bash
+mkdir -p data/db && ln -s /path/to/delft/data/db/glove-840B data/db/glove-840B
+```
+
 ### Run tests (linting, pytest, etc.)
 
 ```bash

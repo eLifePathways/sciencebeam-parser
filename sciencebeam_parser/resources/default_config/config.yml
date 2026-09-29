@@ -328,10 +328,14 @@ sequence_model_profiles:
   # wapiti loader.
   # A model GROBID trained expects GROBID's features rather than the ones the
   # biorxiv models were trained on, which `feature_flavour: grobid` selects.
+  # The header is the glove variant: the character-only one runs titles on into
+  # the next line ("Author list:", "Running Title ...") on English papers, which
+  # word embeddings largely fix. It needs the glove-840B vectors, found as an LMDB
+  # under data/db/glove-840B, else downloaded (1.8GB) and indexed on first load.
   delft_hub:
     extends: biorxiv_elife
     header:
-      path: 'hf://lfoppiano/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://lfoppiano/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-glove_840B'
       feature_flavour: 'grobid'
     affiliation_address:
       path: 'hf://lfoppiano/grobid-model-affiliation-address/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
