@@ -248,12 +248,15 @@ def _resolve_float_lines(seg_lines: List[_SegLine]) -> None:
     """
     last_reference_index = max(
         (sl.line_index for sl in seg_lines if sl.seg_label == SEG_REFERENCES),
-        default=-1,
+        default=None,
     )
     for sl in seg_lines:
         if sl.seg_label != SEG_FLOAT_PLACEHOLDER:
             continue
-        sl.seg_label = SEG_ANNEX if sl.line_index > last_reference_index else SEG_BODY
+        is_after_references = (
+            last_reference_index is not None and sl.line_index > last_reference_index
+        )
+        sl.seg_label = SEG_ANNEX if is_after_references else SEG_BODY
 
 
 def _merge_gap_lines(

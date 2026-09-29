@@ -535,3 +535,54 @@ class TestIterReferenceSubFieldNames:
         assert not list(iter_reference_sub_field_names(_parse_jats(
             '<article><back><sec><p>Some appendix text.</p></sec></back></article>'
         )))
+
+
+class TestFloatsGroup:
+    def test_should_extract_table_and_figure_captions_from_floats_group(self):
+        fields = _fields_by_name(_field_values_for("""
+            <article>
+              <body><sec><p>Body text citing Table 1.</p></sec></body>
+              <floats-group>
+                <table-wrap id="T1">
+                  <label>Tabela 1</label>
+                  <caption><p>Measures for control</p></caption>
+                  <table><tr><td>cell</td></tr></table>
+                </table-wrap>
+                <fig id="F1">
+                  <label>Figura 1</label>
+                  <caption><p>Model fit</p></caption>
+                </fig>
+              </floats-group>
+            </article>
+        """))
+        assert [v.text for v in fields[JatsFieldNames.FLOAT_TABLE]] == [
+            'Tabela 1 Measures for control'
+        ]
+        assert [v.text for v in fields[JatsFieldNames.FLOAT_FIGURE]] == ['Figura 1 Model fit']
+
+    def test_should_not_take_the_cells_of_a_float_table(self):
+        fields = _fields_by_name(_field_values_for("""
+            <article>
+              <floats-group>
+                <table-wrap id="T1">
+                  <label>Tabela 1</label>
+                  <caption><p>Measures</p></caption>
+                  <table><tr><td>a distinctive cell value</td></tr></table>
+                </table-wrap>
+              </floats-group>
+            </article>
+        """))
+        assert 'distinctive cell value' not in fields[JatsFieldNames.FLOAT_TABLE][0].text
+
+    def test_should_not_confuse_a_body_table_with_a_float(self):
+        fields = _fields_by_name(_field_values_for("""
+            <article>
+              <body><sec>
+                <table-wrap id="T1">
+                  <label>Table 1</label><caption><p>In body</p></caption>
+                </table-wrap>
+              </sec></body>
+            </article>
+        """))
+        assert fields[JatsFieldNames.BODY_TABLE]
+        assert not fields[JatsFieldNames.FLOAT_TABLE]

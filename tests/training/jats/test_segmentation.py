@@ -8,8 +8,12 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
-from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
+from sciencebeam_parser.training.jats.field_vocab import (
+    SEG_FLOAT_PLACEHOLDER,
+    JatsFieldNames,
+)
 from sciencebeam_parser.training.jats.segmentation import (
+    SEG_ANNEX,
     SEG_BODY,
     SEG_FRONT,
     SEG_HEADNOTE,
@@ -207,3 +211,43 @@ class TestTextRepetitionHeadnote:
         )
         for line in lines_no_coords:
             assert labels.get(id(line)) == SEG_HEADNOTE
+
+
+class TestFloatPlacement:
+    """A float belongs to the region it prints in, not to the one JATS files it under."""
+
+    def test_float_after_the_references_is_annex(self):
+        reference, table = _make_line('Smith', '2020'), _make_line('Table', '1.', 'Measures')
+        doc = _make_doc_with_page(LayoutBlock(lines=[reference, table]))
+        annotated = _annotate(doc, {
+            0: JatsFieldNames.REFERENCE,
+            1: JatsFieldNames.FLOAT_TABLE,
+        })
+        assert _derive_labels(doc, annotated)[id(table)] == SEG_ANNEX
+
+    def test_float_before_the_references_is_body(self):
+        figure, reference = _make_line('Figure', '1.', 'Model'), _make_line('Smith', '2020')
+        doc = _make_doc_with_page(LayoutBlock(lines=[figure, reference]))
+        annotated = _annotate(doc, {
+            0: JatsFieldNames.FLOAT_FIGURE,
+            1: JatsFieldNames.REFERENCE,
+        })
+        assert _derive_labels(doc, annotated)[id(figure)] == SEG_BODY
+
+    def test_float_is_body_where_the_document_has_no_references(self):
+        table = _make_line('Table', '1.', 'Measures')
+        doc = _make_doc_with_page(LayoutBlock(lines=[table]))
+        annotated = _annotate(doc, {0: JatsFieldNames.FLOAT_TABLE})
+        assert _derive_labels(doc, annotated)[id(table)] == SEG_BODY
+
+    def test_the_placeholder_never_reaches_a_label(self):
+        figure, reference, table = (
+            _make_line('Figure', '1.'), _make_line('Smith', '2020'), _make_line('Table', '1.')
+        )
+        doc = _make_doc_with_page(LayoutBlock(lines=[figure, reference, table]))
+        annotated = _annotate(doc, {
+            0: JatsFieldNames.FLOAT_FIGURE,
+            1: JatsFieldNames.REFERENCE,
+            2: JatsFieldNames.FLOAT_TABLE,
+        })
+        assert SEG_FLOAT_PLACEHOLDER not in _derive_labels(doc, annotated).values()
