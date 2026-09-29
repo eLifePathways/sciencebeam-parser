@@ -673,10 +673,13 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
             if not token:
                 prev_label_instance = None
                 return None
+            # A token no header field claims is other text: 'O' rather than no
+            # label, so the TEI writer places it directly under <front> instead of
+            # inside the element the previous label left open.
             field_name = annotated.get_token_field(token)
             if not field_name:
                 prev_label_instance = None
-                return None
+                return 'O'
             sub_field_name = annotated.get_token_sub_field(token)
             if sub_field_name in _HEADER_ADDRESS_SUB_FIELDS:
                 label: Optional[str] = '<address>'
@@ -684,7 +687,7 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
                 label = HEADER_LABEL_BY_FIELD.get(field_name)
             if label is None:
                 prev_label_instance = None
-                return None
+                return 'O'
             instance_id = annotated.get_token_instance(token)
             label_instance = (label, instance_id)
             prefix = 'B' if label_instance != prev_label_instance else 'I'

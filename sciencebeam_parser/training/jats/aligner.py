@@ -364,6 +364,55 @@ def _extend_match_for_needle_tail(
     return ext_start + match_count, abs_block_ranges + [(ext_start, ext_start + match_count)]
 
 
+def _extend_match_for_needle_head(
+    window: str,
+    needle: str,
+    window_start: int,
+    abs_a_start: int,
+    matched_blocks: List[Tuple[int, int, int]],
+    abs_block_ranges: List[Tuple[int, int]],
+    token_index: Optional['_TokenIndex'] = None,
+) -> Tuple[int, List[Tuple[int, int]]]:
+    """Extend the SW match backwards to cover any unmatched needle prefix.
+
+    The leading counterpart of _extend_match_for_needle_tail. The local alignment in
+    sciencebeam_alignment ends its traceback as soon as the diagonal predecessor
+    scores zero, so a first match separated from the next by a gap is dropped even
+    though it raises the score. Every token is followed by a space in the haystack,
+    which makes this the rule for a leading dotted initial: the needle "a.a.c. morais"
+    is found as "a . c . morais", without the first "a . ".
+
+    Each unmatched needle character, last first, is looked for within
+    _MAX_HAYSTACK_GAP_TO_FILL characters before the current start. The extension
+    is kept only when it begins at a token start, so that it cannot claim the
+    tail of a preceding word.
+    """
+    needle_head = needle[:matched_blocks[0][1]]
+    if not needle_head:
+        return abs_a_start, abs_block_ranges
+
+    pos = abs_a_start - window_start
+    head_positions: List[int] = []
+    for char in reversed(needle_head):
+        limit = max(0, pos - _MAX_HAYSTACK_GAP_TO_FILL - 1)
+        found = next((k for k in range(pos - 1, limit - 1, -1) if window[k] == char), None)
+        if found is None:
+            break
+        head_positions.append(found)
+        pos = found
+
+    if not head_positions:
+        return abs_a_start, abs_block_ranges
+    abs_head_start = window_start + head_positions[-1]
+    if token_index is not None and not token_index.is_token_start(abs_head_start):
+        return abs_a_start, abs_block_ranges
+    head_block_ranges = [
+        (window_start + head_pos, window_start + head_pos + 1)
+        for head_pos in reversed(head_positions)
+    ]
+    return abs_head_start, head_block_ranges + abs_block_ranges
+
+
 def _fuzzy_search_in_window(
     haystack: str,
     needle: str,
@@ -396,6 +445,9 @@ def _fuzzy_search_in_window(
         (ai + window_start, ai + size + window_start)
         for ai, _bi, size in matched_blocks
     ]
+    a_start, abs_block_ranges = _extend_match_for_needle_head(
+        window, needle, window_start, a_start, matched_blocks, abs_block_ranges, token_index
+    )
     a_end, abs_block_ranges = _extend_match_for_needle_tail(
         window, needle, window_start, a_end, matched_blocks, abs_block_ranges, token_index
     )

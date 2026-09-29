@@ -187,6 +187,33 @@ class TestHeaderTeiTrainingDataGenerator:
             xml_root.xpath('./text/front')
         ) == [f'{TEXT_1}\n']
 
+    @pytest.mark.parametrize('label,parent_xpath', [
+        ('<title>', './text/front/docTitle'),
+        ('<author>', './text/front/byline')
+    ])
+    def test_should_put_other_text_after_a_nested_label_directly_under_front(
+        self, label: str, parent_xpath: str
+    ):
+        label_and_layout_line_list = [
+            (label, get_next_layout_line_for_text(TEXT_1)),
+            ('O', get_next_layout_line_for_text(TEXT_2))
+        ]
+        labeled_model_data_list = get_labeled_model_data_list(
+            label_and_layout_line_list,
+            data_generator=get_data_generator()
+        )
+        training_data_generator = get_tei_training_data_generator()
+        xml_root = training_data_generator.get_training_tei_xml_for_model_data_iterable(
+            labeled_model_data_list
+        )
+        LOGGER.debug('xml: %r', etree.tostring(xml_root))
+        assert [
+            get_text_content(node).strip() for node in xml_root.xpath(parent_xpath)
+        ] == [TEXT_1]
+        assert get_text_content_list(
+            xml_root.xpath('./text/front')
+        ) == [f'{TEXT_1}\n{TEXT_2}\n']
+
     def test_should_not_join_separate_labels(self):
         label_and_layout_line_list = [
             ('<title>', get_next_layout_line_for_text(TEXT_1)),
