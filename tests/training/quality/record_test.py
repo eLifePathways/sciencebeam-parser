@@ -182,3 +182,26 @@ class TestQualityRecordWriter:
             ))
             record_file_path = tmp_path / REFERENCE_SEGMENTER / 'quality.jsonl'
             assert len(record_file_path.read_text(encoding='utf-8').splitlines()) == 1
+
+
+class TestSourceFilename:
+    def test_should_reduce_an_absolute_path_to_its_basename(self):
+        record = DocumentQualityRecord(
+            document_id='PPR1',
+            source_filename='/home/someone/checkout/data/train/scielo/PPR1.pdf',
+        )
+        assert record.source_filename == 'PPR1.pdf'
+        row = record.to_json_dict_by_model(['segmentation'])['segmentation']
+        assert row['source_filename'] == 'PPR1.pdf'
+
+    def test_should_leave_a_bare_filename_alone(self):
+        record = DocumentQualityRecord(document_id='PPR1', source_filename='PPR1.pdf')
+        assert record.source_filename == 'PPR1.pdf'
+
+    def test_should_reduce_it_for_a_failed_document_too(self):
+        record = get_failed_document_quality_record(
+            source_filename='/home/someone/checkout/data/train/scielo/PPR1.pdf',
+            document_id='PPR1',
+            status=DocumentStatus.TIMEOUT,
+        )
+        assert record.source_filename == 'PPR1.pdf'

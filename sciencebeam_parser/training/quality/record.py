@@ -88,7 +88,14 @@ class ModelQualityRecord:
 
 @dataclass
 class DocumentQualityRecord:
-    """Everything measured for one document, across the models a run generated for."""
+    """Everything measured for one document, across the models a run generated for.
+
+    `source_filename` is reduced to its basename, because the record is committed
+    beside the data it describes: an absolute path names a directory on whoever
+    ran the generation, and changes the row for every document when the next
+    person runs it from somewhere else.  The corpus and the split are already
+    given by where the record sits, and the stem by `document_id`.
+    """
     document_id: str
     source_filename: str
     status: str = DocumentStatus.OK
@@ -96,6 +103,9 @@ class DocumentQualityRecord:
         default_factory=lambda: JatsQualityRecord(status=JatsStatus.MISSING)
     )
     models: Sequence[ModelQualityRecord] = ()
+
+    def __post_init__(self) -> None:
+        self.source_filename = os.path.basename(self.source_filename)
 
     def to_json_dict_by_model(
         self,
