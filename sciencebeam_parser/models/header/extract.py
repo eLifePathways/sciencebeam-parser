@@ -58,17 +58,10 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
 }
 
 
-# A further block labelled `<abstract>` is usually not one: over a benchmark run most are
-# body text, reviewer reports or bibliography entries the header region swept up. These two
-# bounds are one-sided over that run -- no block matching a gold abstract falls outside them.
-MAX_ABSTRACT_VARIANT_PAGE_GAP = 5
+# A further block labelled `<abstract>` is often not one. A block far shorter than the
+# first is a fragment or a caption rather than another abstract: over a benchmark run no
+# block matching a gold abstract falls below this, and 58 that match none do.
 MIN_ABSTRACT_VARIANT_LENGTH_RATIO = 0.15
-
-
-def _iter_page_numbers(layout_block: LayoutBlock) -> Iterable[int]:
-    for layout_token in layout_block.iter_all_tokens():
-        if layout_token.coordinates is not None:
-            yield layout_token.coordinates.page_number
 
 
 def _get_token_count(layout_block: LayoutBlock) -> int:
@@ -83,13 +76,7 @@ def is_abstract_variant(
     if not primary_token_count:
         return False
     ratio = _get_token_count(layout_block) / primary_token_count
-    if ratio < MIN_ABSTRACT_VARIANT_LENGTH_RATIO:
-        return False
-    page_numbers = list(_iter_page_numbers(layout_block))
-    primary_page_numbers = list(_iter_page_numbers(primary_layout_block))
-    if not page_numbers or not primary_page_numbers:
-        return True
-    return min(page_numbers) - max(primary_page_numbers) <= MAX_ABSTRACT_VARIANT_PAGE_GAP
+    return ratio >= MIN_ABSTRACT_VARIANT_LENGTH_RATIO
 
 
 def get_cleaned_abstract_text(text: Optional[str]) -> Optional[str]:
