@@ -89,12 +89,15 @@ that, and both are scored:
 
 | field | gold | prediction |
 | --- | --- | --- |
-| `abstract` | the article's own abstract, always one value | any abstract it carries |
+| `abstract` | the article's own abstract, always one value | the abstract it filed as the article's own |
 | `abstracts` | every language the document carries it in, the article's own first | any abstract it carries |
 
-`abstract` is the headline. Its two sides read different mapping entries, so a
-tool that finds the article's own abstract but files it as the translation is
-still credited, while one that returns only the translation is not.
+`abstract` is the headline and is literal: the article's own abstract on both
+sides. A third reading is defined but not scored, because nothing that runs today
+can produce a value it would differ on — the article's own abstract against *any*
+abstract a prediction carries, which credits a tool that finds it but files it as
+the translation. `eval.yml` carries the stanza to switch it on once a tool can
+emit more than one abstract.
 
 The article's own abstract is the first `<abstract>` in document order. A
 `<trans-abstract>` is a translation whatever it declares; a later `<abstract>` is

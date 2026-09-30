@@ -201,12 +201,21 @@ scoring:
   #                  it was (appropriate where several values are one right answer said
   #                  differently, rather than a set to reproduce)
   #
-  # `abstract` is the headline: the article's own abstract, against any abstract the
-  # prediction carries, so a tool that files it as the translation still counts. Its two
-  # sides read different mapping entries, which is what `expected` and `actual` below say.
+  # `abstract` is the headline and is literal: the article's own abstract on both sides.
   # `abstracts` credits any language the document carries; what that buys over `abstract`,
   # and how often a prediction returned several languages as one value, are counted below
   # each corpus table.
+  #
+  # A third reading is defined but not scored, because no tool can yet produce a value it
+  # would differ on: the article's own abstract against any abstract a prediction carries,
+  # which credits one that finds it but files it as the translation. A prediction able to
+  # carry several abstracts makes it worth a row, and it is one stanza:
+  #
+  #     abstract_anywhere:
+  #       expected: abstract
+  #       actual: abstracts
+  #       methods: [levenshtein, edit_sim]
+  #       type: best_match
   #
   # `abstract_legacy` is the measure these replaced — every `<abstract>` element joined
   # into one string, `<trans-abstract>` unread — kept so that a figure published before
@@ -219,10 +228,7 @@ scoring:
     title:
       methods: [exact, levenshtein, edit_sim]
     abstract:
-      expected: abstract
-      actual: abstracts
       methods: [levenshtein, edit_sim]
-      type: best_match
     abstracts:
       methods: [levenshtein, edit_sim]
       type: best_match
