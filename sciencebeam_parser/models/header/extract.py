@@ -58,6 +58,40 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
 }
 
 
+# A further block labelled `<abstract>` is usually not one: over a benchmark run most are
+# body text, reviewer reports or bibliography entries the header region swept up. These two
+# bounds are one-sided over that run -- no block matching a gold abstract falls outside them.
+MAX_ABSTRACT_VARIANT_PAGE_GAP = 5
+MIN_ABSTRACT_VARIANT_LENGTH_RATIO = 0.15
+
+
+def _iter_page_numbers(layout_block: LayoutBlock) -> Iterable[int]:
+    for layout_token in layout_block.iter_all_tokens():
+        if layout_token.coordinates is not None:
+            yield layout_token.coordinates.page_number
+
+
+def _get_token_count(layout_block: LayoutBlock) -> int:
+    return sum(1 for _ in layout_block.iter_all_tokens())
+
+
+def is_abstract_variant(
+    layout_block: LayoutBlock,
+    primary_layout_block: LayoutBlock
+) -> bool:
+    primary_token_count = _get_token_count(primary_layout_block)
+    if not primary_token_count:
+        return False
+    ratio = _get_token_count(layout_block) / primary_token_count
+    if ratio < MIN_ABSTRACT_VARIANT_LENGTH_RATIO:
+        return False
+    page_numbers = list(_iter_page_numbers(layout_block))
+    primary_page_numbers = list(_iter_page_numbers(primary_layout_block))
+    if not page_numbers or not primary_page_numbers:
+        return True
+    return min(page_numbers) - max(primary_page_numbers) <= MAX_ABSTRACT_VARIANT_PAGE_GAP
+
+
 def get_cleaned_abstract_text(text: Optional[str]) -> Optional[str]:
     if not text:
         return text
@@ -98,7 +132,7 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         entity_tokens = list(entity_tokens)
         LOGGER.debug('entity_tokens: %s', entity_tokens)
         has_title: bool = False
-        has_abstract: bool = False
+        primary_abstract_block: Optional[LayoutBlock] = None
         aff_address: Optional[SemanticRawAffiliationAddress] = None
         next_previous_label: str = ''
         for name, layout_block in entity_tokens:
@@ -109,13 +143,18 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                 yield SemanticTitle(layout_block=clean_block, trailing_text=trailing)
                 has_title = True
                 continue
-            if name == '<abstract>' and not has_abstract:
+            if name == '<abstract>':
                 abstract_layout_block = get_cleaned_abstract_layout_block(
                     layout_block
                 )
-                yield SemanticAbstract(layout_block=abstract_layout_block)
-                has_abstract = True
-                continue
+                assert abstract_layout_block is not None
+                if primary_abstract_block is None:
+                    yield SemanticAbstract(layout_block=abstract_layout_block)
+                    primary_abstract_block = abstract_layout_block
+                    continue
+                if is_abstract_variant(abstract_layout_block, primary_abstract_block):
+                    yield SemanticAbstract(layout_block=abstract_layout_block)
+                    continue
             if name in {'<affiliation>', '<address>'}:
                 if (
                     aff_address is not None

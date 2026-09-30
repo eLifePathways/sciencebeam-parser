@@ -121,7 +121,7 @@ class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
     def get_abstract(self) -> str:
         return '\n'.join(get_tei_xpath_text_content_list(
             self.root,
-            '//tei:abstract/tei:p',
+            '(//tei:abstract)[1]/tei:p',
         ))
 
     def set_abstract(self, abstract: str):
@@ -130,10 +130,9 @@ class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
             TEI_E('p', abstract)
         )
 
-    def set_abstract_layout_block(self, abstract_block: LayoutBlock):
-        self.set_child_element_at(
-            ['teiHeader', 'profileDesc', 'abstract'],
-            TEI_E('p', *iter_layout_block_tei_children(abstract_block))
+    def add_abstract_layout_block(self, abstract_block: LayoutBlock):
+        self.get_or_create_element_at(['teiHeader', 'profileDesc']).append(
+            TEI_E('abstract', TEI_E('p', *iter_layout_block_tei_children(abstract_block)))
         )
 
     def get_body_element(self) -> etree.ElementBase:

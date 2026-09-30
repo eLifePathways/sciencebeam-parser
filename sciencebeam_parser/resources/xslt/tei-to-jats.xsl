@@ -119,8 +119,13 @@
       </xsl:for-each>
 
       <abstract>
-        <xsl:apply-templates select="tei:profileDesc/tei:abstract"/>
+        <xsl:apply-templates select="tei:profileDesc/tei:abstract[1]"/>
       </abstract>
+      <xsl:for-each select="tei:profileDesc/tei:abstract[position() &gt; 1]">
+        <abstract>
+          <xsl:apply-templates/>
+        </abstract>
+      </xsl:for-each>
 
       <!-- JATS allows one custom-meta-group, so attribution and the parameters
            share it. The attribution is read from the TEI rather than passed in,

@@ -527,6 +527,21 @@ class TestAttributionIsNotScored:
         )
 
 
+class TestFurtherAbstractIsNotScored:
+    """A prediction carrying more than one abstract is scored on the first."""
+
+    def test_should_score_the_first_abstract_rather_than_the_abstracts_joined(self):
+        predicted_tei = PREDICTED_TEI_1.format(encoding_desc="").replace(
+            "<abstract><p>The abstract</p></abstract>",
+            "<abstract><p>The abstract</p></abstract>"
+            "<abstract><p>O resumo</p></abstract>"
+        ).encode("utf-8")
+        scores = _score_pair(
+            GOLD_JATS_1, predicted_tei, ["abstract"], ["exact"], prepare_judge(),
+        )
+        assert [score["match_score"]["true_positive"] for score in scores] == [1]
+
+
 class TestCoverageNote:
     def _report(self, run_record: dict) -> str:
         return _render_report({}, [], {}, run_record)

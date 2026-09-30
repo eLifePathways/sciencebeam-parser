@@ -9,6 +9,8 @@ from sciencebeam_parser.document.semantic_document import (
 from sciencebeam_parser.document.layout_document import (
     LOGGER,
     LayoutBlock,
+    LayoutLine,
+    LayoutPageCoordinates,
     join_layout_tokens
 )
 
@@ -30,6 +32,20 @@ ADDRESS_1 = 'Address 1'
 ADDRESS_2 = 'Address 2'
 
 OTHER_1 = 'Other 1'
+
+LONG_ABSTRACT_1 = ' '.join(['first variant text'] * 20)
+LONG_ABSTRACT_2 = ' '.join(['second variant text'] * 20)
+
+
+def _get_layout_block_for_text_on_page(text: str, page_number: int) -> LayoutBlock:
+    coordinates = LayoutPageCoordinates(x=0, y=0, width=1, height=1, page_number=page_number)
+    return LayoutBlock(lines=[
+        LayoutLine(tokens=[
+            token._replace(coordinates=coordinates)  # pylint: disable=protected-access
+            for token in line.tokens
+        ])
+        for line in LayoutBlock.for_text(text).lines
+    ])
 
 
 class TestGetCleanedAbstractText:
@@ -136,20 +152,64 @@ class TestHeaderSemanticExtractor:
         assert front.get_text_by_type(SemanticTitle) == TITLE_1
         assert semantic_title.trailing_text == '.'
 
-    def test_should_ignore_additional_title_and_abstract(self):
+    def test_should_ignore_additional_title(self):
         # Note: this behaviour should be reviewed
         semantic_content_list = list(
             HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<title>', LayoutBlock.for_text(TITLE_1)),
-                ('<abstract>', LayoutBlock.for_text(ABSTRACT_1)),
-                ('<title>', LayoutBlock.for_text('other')),
-                ('<abstract>', LayoutBlock.for_text('other'))
+                ('<title>', LayoutBlock.for_text('other'))
             ])
         )
         front = SemanticFront(semantic_content_list)
         LOGGER.debug('front: %s', front)
         assert front.get_text_by_type(SemanticTitle) == TITLE_1
-        assert front.get_text_by_type(SemanticAbstract) == ABSTRACT_1
+
+    def test_should_add_additional_abstract_as_further_abstract(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_1)),
+                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_2))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        LOGGER.debug('front: %s', front)
+        assert [
+            join_layout_tokens(list(semantic_abstract.merged_block.iter_all_tokens()))
+            for semantic_abstract in front.iter_by_type(SemanticAbstract)
+        ] == [LONG_ABSTRACT_1, LONG_ABSTRACT_2]
+
+    def test_should_ignore_additional_abstract_much_shorter_than_the_first(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_1)),
+                ('<abstract>', LayoutBlock.for_text('other'))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        LOGGER.debug('front: %s', front)
+        assert len(list(front.iter_by_type(SemanticAbstract))) == 1
+
+    def test_should_ignore_additional_abstract_many_pages_below_the_first(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<abstract>', _get_layout_block_for_text_on_page(LONG_ABSTRACT_1, 1)),
+                ('<abstract>', _get_layout_block_for_text_on_page(LONG_ABSTRACT_2, 12))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        LOGGER.debug('front: %s', front)
+        assert len(list(front.iter_by_type(SemanticAbstract))) == 1
+
+    def test_should_add_additional_abstract_a_few_pages_below_the_first(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<abstract>', _get_layout_block_for_text_on_page(LONG_ABSTRACT_1, 1)),
+                ('<abstract>', _get_layout_block_for_text_on_page(LONG_ABSTRACT_2, 3))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        LOGGER.debug('front: %s', front)
+        assert len(list(front.iter_by_type(SemanticAbstract))) == 2
 
     def test_should_add_raw_authors(self):
         semantic_content_list = list(

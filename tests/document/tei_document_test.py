@@ -88,6 +88,21 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
             '//tei:abstract/tei:p'
         ) == [TOKEN_1]
 
+    def test_should_add_further_abstract_as_further_abstract_element(self):
+        semantic_document = SemanticDocument()
+        semantic_document.front.add_content(
+            SemanticAbstract(LayoutBlock.for_text(TOKEN_1))
+        )
+        semantic_document.front.add_content(
+            SemanticAbstract(LayoutBlock.for_text(TOKEN_2))
+        )
+        tei_document = get_tei_for_semantic_document(semantic_document)
+        LOGGER.debug('tei xml: %r', etree.tostring(tei_document.root))
+        assert tei_document.get_xpath_text_content_list(
+            '//tei:profileDesc/tei:abstract/tei:p'
+        ) == [TOKEN_1, TOKEN_2]
+        assert tei_document.get_abstract() == TOKEN_1
+
     def test_should_add_single_author(self):
         semantic_document = SemanticDocument()
         title = SemanticNameTitle(layout_block=LayoutBlock.for_text('Title1'))
