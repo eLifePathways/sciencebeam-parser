@@ -488,6 +488,11 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         "fields": field_names,
         "field_measures": field_measures,
         "field_scoring_types": field_scoring_types,
+        "field_sources": {
+            field: list(sources)
+            for field, sources in field_sources.items()
+            if sources != (field, field)
+        },
         "corpora": corpus_results,
         **({"llm_usage": llm_usage} if llm_usage else {}),
     }, indent=2))

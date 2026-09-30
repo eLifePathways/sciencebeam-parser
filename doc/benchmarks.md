@@ -108,6 +108,12 @@ comparison report, a block counts how often the credited one was a translation,
 per corpus: a run that reads the translation of every multilingual paper scores
 like one that reads the article's own, and that block is where it shows.
 
+`abstract_legacy` is the measure these replaced: every `<abstract>` element
+joined into one string, with `<trans-abstract>` unread. It is scored so that a
+figure published before the change can be reproduced by a current run — re-score
+the stored predictions and read that row — rather than only restated. A
+comparison whose runs scored a field differently says so above its tables.
+
 A second block counts predictions that returned several languages as one value,
 which a per-language score can only half match and which reads as a poor
 extraction rather than as the unsegmented one it is.

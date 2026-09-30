@@ -717,3 +717,49 @@ class TestVariantMatchSection:
             ("current", _variant_summary(0.6, None)),
         ])
         assert "Credited a translation" not in report
+
+
+def _typed_summary(scoring_type: str, sources: Optional[list] = None) -> dict:
+    summary = _summary(
+        fields=["abstract"],
+        field_measures={"abstract": ["edit_sim"]},
+        field_scoring_types={"abstract": scoring_type},
+        corpora={"biorxiv": {
+            "n": 10,
+            "aggregated": [_agg(scoring_type, "edit_sim", {"abstract": 0.5})],
+        }},
+    )
+    if sources:
+        summary["field_sources"] = {"abstract": sources}
+    return summary
+
+
+class TestDifferentlyScoredNote:
+    def test_warns_where_the_runs_used_different_scoring_types(self):
+        report = _render_comparison_report([
+            ("before", _typed_summary("string")),
+            ("after", _typed_summary("best_match")),
+        ])
+        assert "Scored differently between runs" in report
+        assert "`abstract`" in report
+
+    def test_warns_where_the_runs_read_different_mapping_entries(self):
+        report = _render_comparison_report([
+            ("before", _typed_summary("best_match")),
+            ("after", _typed_summary("best_match", ["abstract", "abstracts"])),
+        ])
+        assert "Scored differently between runs" in report
+
+    def test_is_silent_where_the_runs_measured_the_same_way(self):
+        report = _render_comparison_report([
+            ("before", _typed_summary("best_match")),
+            ("after", _typed_summary("best_match")),
+        ])
+        assert "Scored differently between runs" not in report
+
+    def test_is_silent_about_a_field_only_one_run_scored(self):
+        before = _typed_summary("best_match")
+        after = _typed_summary("best_match")
+        after["fields"] = ["abstract", "abstract_legacy"]
+        report = _render_comparison_report([("before", before), ("after", after)])
+        assert "Scored differently between runs" not in report

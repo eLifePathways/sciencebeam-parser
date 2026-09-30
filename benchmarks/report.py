@@ -603,6 +603,45 @@ def _render_overall_section(  # pylint: disable=too-many-locals
     return lines
 
 
+def _field_definition(summary: dict, field: str) -> Tuple[str, List[str]]:
+    return (
+        summary.get("field_scoring_types", {}).get(field, "string"),
+        summary.get("field_sources", {}).get(field, [field, field]),
+    )
+
+
+def _differently_scored_note(
+    labeled_summaries: List[Tuple[str, dict]], field_names: List[str]
+) -> List[str]:
+    """Fields the runs did not measure the same way.
+
+    A delta between two runs that scored a field differently is a difference between the
+    measures as much as between the runs, and nothing else in the table says so: the Type
+    column states the primary run's.
+    """
+    differing = []
+    for field in field_names:
+        scored_by = [
+            summary for _, summary in labeled_summaries
+            if field in summary.get("fields", [])
+        ]
+        definitions = {
+            (scoring_type, tuple(sources))
+            for scoring_type, sources in (
+                _field_definition(summary, field) for summary in scored_by
+            )
+        }
+        if len(definitions) > 1:
+            differing.append(field)
+    if not differing:
+        return []
+    return [
+        "> ⚠️ **Scored differently between runs** (" + ", ".join(f"`{f}`" for f in differing)
+        + "). Their deltas compare the measures as well as the runs.",
+        "",
+    ]
+
+
 def _render_comparison_report(
     labeled_summaries: List[Tuple[str, dict]],
     labeled_run_records: Optional[List[Tuple[str, Optional[dict]]]] = None,
@@ -618,6 +657,7 @@ def _render_comparison_report(
 
     lines = ["## ScienceBeam Parser Evaluation", ""]
     lines += _coverage_lines(labeled_run_records or [])
+    lines += _differently_scored_note(labeled_summaries, field_names)
 
     if len(corpora) > 1:
         lines.extend(_render_overall_section(
