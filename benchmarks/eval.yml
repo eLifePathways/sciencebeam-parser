@@ -173,6 +173,7 @@ seeds:
 fields:
   - title
   - abstract
+  - abstract_anywhere
   - abstracts
   - abstract_legacy
   - author_full_names
@@ -201,21 +202,19 @@ scoring:
   #                  it was (appropriate where several values are one right answer said
   #                  differently, rather than a set to reproduce)
   #
-  # `abstract` is the headline and is literal: the article's own abstract on both sides.
-  # `abstracts` credits any language the document carries; what that buys over `abstract`,
-  # and how often a prediction returned several languages as one value, are counted below
-  # each corpus table.
-  #
-  # A third reading is defined but not scored, because no tool can yet produce a value it
-  # would differ on: the article's own abstract against any abstract a prediction carries,
-  # which credits one that finds it but files it as the translation. A prediction able to
-  # carry several abstracts makes it worth a row, and it is one stanza:
-  #
-  #     abstract_anywhere:
-  #       expected: abstract
-  #       actual: abstracts
-  #       methods: [levenshtein, edit_sim]
-  #       type: best_match
+  # Three readings of the same gold, from strictest to most lenient:
+  #   abstract          - the article's own abstract on both sides; the headline, and
+  #                       literal
+  #   abstract_anywhere - the article's own abstract against any abstract the prediction
+  #                       carries, so a tool that finds it but files it as the translation
+  #                       is credited. Equal to `abstract` for a prediction holding one
+  #                       abstract, which is every prediction until a JATS-producing tool
+  #                       emits `<trans-abstract>`; the gap between the rows is then how
+  #                       often one was filed as a translation
+  #   abstracts         - any language the document carries, against any the prediction
+  #                       does; what that buys over the rows above, and how often a
+  #                       prediction returned several languages as one value, are counted
+  #                       below each corpus table
   #
   # `abstract_legacy` is the measure these replaced — every `<abstract>` element joined
   # into one string, `<trans-abstract>` unread — kept so that a figure published before
@@ -229,6 +228,11 @@ scoring:
       methods: [exact, levenshtein, edit_sim]
     abstract:
       methods: [levenshtein, edit_sim]
+    abstract_anywhere:
+      expected: abstract
+      actual: abstracts
+      methods: [levenshtein, edit_sim]
+      type: best_match
     abstracts:
       methods: [levenshtein, edit_sim]
       type: best_match

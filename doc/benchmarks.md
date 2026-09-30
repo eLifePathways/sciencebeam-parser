@@ -90,14 +90,14 @@ that, and both are scored:
 | field | gold | prediction |
 | --- | --- | --- |
 | `abstract` | the article's own abstract, always one value | the abstract it filed as the article's own |
+| `abstract_anywhere` | the article's own abstract, always one value | any abstract it carries |
 | `abstracts` | every language the document carries it in, the article's own first | any abstract it carries |
 
 `abstract` is the headline and is literal: the article's own abstract on both
-sides. A third reading is defined but not scored, because nothing that runs today
-can produce a value it would differ on — the article's own abstract against *any*
-abstract a prediction carries, which credits a tool that finds it but files it as
-the translation. `eval.yml` carries the stanza to switch it on once a tool can
-emit more than one abstract.
+sides. `abstract_anywhere` credits a tool that finds the article's own abstract
+but files it as the translation, which a prediction can only do once it carries
+more than one abstract — until then the two rows are the same number, and after
+that the gap between them is how often a tool filed it under the wrong element.
 
 The article's own abstract is the first `<abstract>` in document order. A
 `<trans-abstract>` is a translation whatever it declares; a later `<abstract>` is

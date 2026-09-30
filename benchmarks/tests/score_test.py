@@ -6,9 +6,11 @@ from typing import Optional
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from benchmarks.judge_setup import prepare_judge
 from benchmarks.score import (
+    _build_field_sources,
     _doc_scores_from_dict,
     _f1_from_aggregated,
     _summarise_documents,
@@ -809,3 +811,60 @@ class TestScoringAMultilingualAbstract:
             scoring_types_by_field_map={"abstract": ["string"]},
         )
         assert scores[0]["match_score"]["sim_sum"] < 0.5
+
+
+MULTILINGUAL_PREDICTED_JATS = b"""<article>
+  <front>
+    <article-meta>
+      <abstract><p>The abstract of the article, as the publisher recorded it.</p></abstract>
+      <trans-abstract xml:lang="pt">
+        <p>O resumo do artigo, tal como o editor o registou.</p>
+      </trans-abstract>
+    </article-meta>
+  </front>
+</article>"""
+
+TRANSLATION_ONLY_PREDICTED_JATS = b"""<article>
+  <front>
+    <article-meta>
+      <abstract><p>The abstract of the article, as the publisher recorded it.</p></abstract>
+    </article-meta>
+  </front>
+</article>"""
+
+
+class TestScoringAJatsPredictionCarryingVariants:
+    """What the shipped configuration does with a prediction that files the article's own
+    abstract as the translation, which is what a JATS-producing tool can do and TEI cannot.
+    """
+
+    def _scores(self, predicted: bytes) -> dict:
+        with open("benchmarks/eval.yml", encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file)
+        per_field = config["scoring"]["per_field"]
+        fields = [f for f in config["fields"] if f.startswith("abstract")]
+        doc_scores = _score_pair(
+            MULTILINGUAL_GOLD_JATS, predicted, fields, ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={
+                f: [per_field.get(f, {}).get("type", "string")] for f in fields
+            },
+            field_sources=_build_field_sources(fields, per_field),
+        )
+        return {
+            score["field_name"]: score["match_score"]["sim_sum"] for score in doc_scores
+        }
+
+    def test_should_credit_the_article_own_abstract_filed_as_the_translation(self):
+        scores = self._scores(MULTILINGUAL_PREDICTED_JATS)
+        assert scores["abstract_anywhere"] == 1.0
+        assert scores["abstracts"] == 1.0
+
+    def test_should_not_credit_it_where_the_field_names_the_element(self):
+        scores = self._scores(MULTILINGUAL_PREDICTED_JATS)
+        assert scores["abstract"] < 0.5
+
+    def test_should_credit_only_the_lenient_field_where_the_translation_is_all_it_found(self):
+        scores = self._scores(TRANSLATION_ONLY_PREDICTED_JATS)
+        assert scores["abstract"] < 0.5
+        assert scores["abstract_anywhere"] < 0.5
+        assert scores["abstracts"] == 1.0
