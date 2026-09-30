@@ -100,13 +100,13 @@ class TestMatchedVariantIndex:
 
 class TestConcatenationRow:
     def test_should_count_what_each_run_returned_as_one_value(self):
-        assert concatenation_row("abstracts", [
+        assert concatenation_row("abstract_any_language", [
             {"n_variants": 21, "n_translation": 2, "n_concatenated": 3},
             {"n_variants": 21, "n_translation": 2, "n_concatenated": 0},
-        ]) == ["abstracts", "3 of 21", "0 of 21"]
+        ]) == ["abstract_any_language", "3 of 21", "0 of 21"]
 
     def test_should_return_none_where_no_run_did(self):
-        assert concatenation_row("abstracts", [
+        assert concatenation_row("abstract_any_language", [
             {"n_variants": 21, "n_translation": 2, "n_concatenated": 0},
         ]) is None
 

@@ -174,7 +174,7 @@ fields:
   - title
   - abstract
   - abstract_anywhere
-  - abstracts
+  - abstract_any_language
   - abstract_legacy
   - author_full_names
   - affiliation_text
@@ -211,10 +211,12 @@ scoring:
   #                       abstract, which is every prediction until a JATS-producing tool
   #                       emits `<trans-abstract>`; the gap between the rows is then how
   #                       often one was filed as a translation
-  #   abstracts         - any language the document carries, against any the prediction
-  #                       does; what that buys over the rows above, and how often a
-  #                       prediction returned several languages as one value, are counted
-  #                       below each corpus table
+  #   abstract_any_language - any language the document carries, against any the
+  #                       prediction does; what that buys over the rows above, and how
+  #                       often a prediction returned several languages as one value, are
+  #                       counted below each corpus table
+  # Each name says what it relaxes; the Type column says that a relaxed field is scored on
+  # its best matching pair. `expected` and `actual` name the mapping entry each side reads.
   #
   # `abstract_legacy` is the measure these replaced — every `<abstract>` element joined
   # into one string, `<trans-abstract>` unread — kept so that a figure published before
@@ -233,7 +235,9 @@ scoring:
       actual: abstracts
       methods: [levenshtein, edit_sim]
       type: best_match
-    abstracts:
+    abstract_any_language:
+      expected: abstracts
+      actual: abstracts
       methods: [levenshtein, edit_sim]
       type: best_match
     abstract_legacy:

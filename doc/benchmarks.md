@@ -91,7 +91,7 @@ that, and both are scored:
 | --- | --- | --- |
 | `abstract` | the article's own abstract, always one value | the abstract it filed as the article's own |
 | `abstract_anywhere` | the article's own abstract, always one value | any abstract it carries |
-| `abstracts` | every language the document carries it in, the article's own first | any abstract it carries |
+| `abstract_any_language` | every language the document carries it in, the article's own first | any abstract it carries |
 
 `abstract` is the headline and is literal: the article's own abstract on both
 sides. `abstract_anywhere` credits a tool that finds the article's own abstract
@@ -105,8 +105,8 @@ one only if it carries the same `abstract-type` and declares a different
 `@xml:lang`. Anything else — a second abstract in the same language, a
 `plain-language-summary` — is not another language and is left out of both fields.
 
-`abstracts` credits any language, so the gap between the two rows is what not
-requiring the article's own is worth. Below each corpus table, and in the
+`abstract_any_language` credits any language, so the gap between it and the rows
+above is what not requiring the article's own is worth. Below each corpus table, and in the
 comparison report, a block counts how often the credited one was a translation,
 per corpus: a run that reads the translation of every multilingual paper scores
 like one that reads the article's own, and that block is where it shows.

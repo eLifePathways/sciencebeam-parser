@@ -782,8 +782,8 @@ TRANSLATED_ABSTRACT_TEI = b"""<TEI xmlns="http://www.tei-c.org/ns/1.0">
 class TestScoringAMultilingualAbstract:
     def _score(self, gold: bytes, predicted: bytes) -> dict:
         scores = _score_pair(
-            gold, predicted, ["abstracts"], ["edit_sim"], prepare_judge(),
-            scoring_types_by_field_map={"abstracts": ["best_match"]},
+            gold, predicted, ["abstract_any_language"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstract_any_language": ["best_match"]},
         )
         return scores[0]["match_score"]
 
@@ -799,8 +799,8 @@ class TestScoringAMultilingualAbstract:
     def test_should_not_score_the_prediction_against_the_languages_joined(self):
         glued = _score_pair(
             MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI,
-            ["abstracts"], ["edit_sim"], prepare_judge(),
-            scoring_types_by_field_map={"abstracts": ["string"]},
+            ["abstract_any_language"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstract_any_language": ["string"]},
         )
         assert glued[0]["match_score"]["sim_sum"] < 1.0
 
@@ -857,7 +857,7 @@ class TestScoringAJatsPredictionCarryingVariants:
     def test_should_credit_the_article_own_abstract_filed_as_the_translation(self):
         scores = self._scores(MULTILINGUAL_PREDICTED_JATS)
         assert scores["abstract_anywhere"] == 1.0
-        assert scores["abstracts"] == 1.0
+        assert scores["abstract_any_language"] == 1.0
 
     def test_should_not_credit_it_where_the_field_names_the_element(self):
         scores = self._scores(MULTILINGUAL_PREDICTED_JATS)
@@ -867,4 +867,4 @@ class TestScoringAJatsPredictionCarryingVariants:
         scores = self._scores(TRANSLATION_ONLY_PREDICTED_JATS)
         assert scores["abstract"] < 0.5
         assert scores["abstract_anywhere"] < 0.5
-        assert scores["abstracts"] == 1.0
+        assert scores["abstract_any_language"] == 1.0

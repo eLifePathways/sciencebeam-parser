@@ -746,7 +746,7 @@ class TestDifferentlyScoredNote:
     def test_warns_where_the_runs_read_different_mapping_entries(self):
         report = _render_comparison_report([
             ("before", _typed_summary("best_match")),
-            ("after", _typed_summary("best_match", ["abstract", "abstracts"])),
+            ("after", _typed_summary("best_match", ["abstract", "abstract_any_language"])),
         ])
         assert "Scored differently between runs" in report
 
