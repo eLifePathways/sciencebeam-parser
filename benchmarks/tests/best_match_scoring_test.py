@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sciencebeam_judge.evaluation.scoring_types.scoring_types import resolve_scoring_type
 from sciencebeam_judge.evaluation.scoring_types.string import STRING_SCORING_TYPE
 
 from benchmarks.best_match_scoring import (
@@ -98,3 +99,21 @@ class TestOneGoldValueAgainstSeveralPredicted:
         scores = _score([ABSTRACT_1], [ABSTRACT_2, ABSTRACT_1])
         assert scores["edit_sim"][N_EXPECTED_VALUES] == 1
         assert MATCHED_CONCATENATION not in scores["edit_sim"]
+
+
+class TestWhatBestMatchDoesNotCharge:
+    """`best_match` credits one pair, so a value the gold has none of costs nothing. That
+    is `abstract_all_languages`' question, and `partial_ulist` is what answers it."""
+
+    def test_should_not_charge_for_a_spurious_predicted_value(self):
+        clean = _score([ABSTRACT_1], [ABSTRACT_1])
+        with_extra = _score([ABSTRACT_1], [ABSTRACT_1, "Section 1 introduces the topic."])
+        assert with_extra["edit_sim"]["sim_sum"] == clean["edit_sim"]["sim_sum"] == 1.0
+
+    def test_partial_ulist_does_charge_for_it(self):
+        scores = resolve_scoring_type("partial_ulist").score(
+            [ABSTRACT_1], [ABSTRACT_1, "Section 1 introduces the topic."],
+            measures=["edit_sim"],
+        )["edit_sim"]
+        assert scores["predicted_count"] == 2
+        assert scores["sim_sum"] < scores["predicted_count"]
