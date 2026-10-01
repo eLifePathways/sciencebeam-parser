@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from benchmarks.show_cases import export_case, extract_texts, find_cases
+from benchmarks.show_cases import export_case, extract_texts, find_cases, joined_values
 
 from ._types import FieldPresenceSummary, RegressionCase
 
@@ -142,13 +142,13 @@ def _export_doc_examples(  # pylint: disable=too-many-arguments,too-many-positio
     if sentinel.exists():
         return
     try:
-        gold_text, text_a, text_b = extract_texts(
+        gold_values, text_a, text_b = extract_texts(
             case.corpus, case.record_id, run_a, run_b,
             data_dir, split, analysis_field, xml_mapping,
         )
         export_case(
             doc_dir, case.record_id, case.corpus, analysis_field,
-            gold_text, text_a, text_b,
+            joined_values(gold_values), text_a, text_b,
             run_a, run_b, data_dir, split,
         )
         sentinel.touch()

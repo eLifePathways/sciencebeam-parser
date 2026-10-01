@@ -32,9 +32,9 @@ from io import BytesIO
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
 
-from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
-from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
-from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
+from sciencebeam_judge.parsing.xml import parse_xml
+
+from benchmarks.judge_setup import prepare_judge
 
 from benchmarks.analyze_field_regressions._models import (
     FIELD_MODEL,
@@ -299,8 +299,7 @@ def main() -> None:  # pylint: disable=too-many-locals,too-many-statements
     if not (args.run / 'predictions').exists():
         sys.exit(f'No predictions directory in run: {args.run}')
 
-    register_functions()
-    xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+    xml_mapping = prepare_judge()
 
     model_chain = _get_model_chain(args.field)
     relevant_labels = MODEL_RELEVANT_LABELS.get(args.field, {})
