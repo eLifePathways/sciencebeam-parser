@@ -456,6 +456,46 @@ class TestSubArticle:
         assert any('Reviewer Report' in t for t in texts)
         assert any('comments' in t for t in texts)
 
+    def test_extracts_the_report_heading_from_the_front_stub(self):
+        fvs = _field_values_for(
+            '<article>'
+            '<sub-article article-type="reviewer-report">'
+            '<front-stub>'
+            '<article-id pub-id-type="doi">10.21956/openreseurope.1.r1</article-id>'
+            '<contrib-group>'
+            '<contrib contrib-type="author"><name>'
+            '<surname>Heine</surname><given-names>Martin</given-names></name></contrib>'
+            '<aff id="a1"><label>1</label>University Medical Centre Utrecht</aff>'
+            '</contrib-group>'
+            '<permissions><license><license-p>This is an open access peer review report.'
+            '</license-p></license></permissions>'
+            '</front-stub>'
+            '<body><p>Thank you for addressing the comments.</p></body>'
+            '</sub-article>'
+            '</article>'
+        )
+        sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
+        texts = [v.text for v in sub]
+        assert 'Martin Heine' in texts
+        assert 'University Medical Centre Utrecht' in texts
+        assert 'This is an open access peer review report.' in texts
+        assert '10.21956/openreseurope.1.r1' not in texts
+        by_text = {v.text: v for v in sub}
+        assert by_text['Martin Heine'].exact_only
+        assert by_text['University Medical Centre Utrecht'].exact_only
+        assert by_text['This is an open access peer review report.'].exact_only
+
+    def test_a_report_paragraph_is_not_exact_only(self):
+        fvs = _field_values_for(
+            '<article>'
+            '<sub-article article-type="peer-review">'
+            '<body><p>This manuscript is well written.</p></body>'
+            '</sub-article>'
+            '</article>'
+        )
+        sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
+        assert not sub[0].exact_only
+
     def test_main_article_body_not_labeled_as_sub_article(self):
         fvs = _field_values_for(
             '<article>'

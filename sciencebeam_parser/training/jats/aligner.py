@@ -78,12 +78,6 @@ _POST_BODY_FIELDS: FrozenSet[str] = frozenset({
 })
 
 # How many post-body values may search the whole region before the rest fall back
-# to the cursor.  Searching from a floor costs O(region x needle) per value and
-# there are thousands per document, which is what made one document cost more
-# than the other thirty-nine together.  A region label does not need them all:
-# a handful of anchors places the region, and the gap merge in the segmentation
-# deriver carries it from there to the end of the document.
-# How many post-body values may search the whole region before the rest fall back
 # to the cursor.  Searching from a floor costs O(region x needle) for a value the
 # exact prefilter misses, and there are thousands per document: unbounded, the
 # worst document cost more than the other thirty-eight together.  A region label
@@ -674,6 +668,11 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
         return _exact_number_match(token_index, needle, segments)
 
     need_len = len(needle)
+    if field_value.exact_only:
+        # No length floor: the search is confined to one region, so a short
+        # needle landing on a second occurrence carries the same label anyway,
+        # and a reviewer can be named in seven characters.
+        return _exact_substring_match(haystack, needle, segments, token_index)
     if prefer_exact and need_len >= _EXACT_PREFILTER_MIN_LENGTH:
         exact = _exact_substring_match(haystack, needle, segments, token_index)
         if exact is not None:
@@ -770,26 +769,30 @@ def _search_range(  # pylint: disable=too-many-locals
         # search from last_match_end so they follow reading order and cannot fall
         # back to the front-matter window.
         #
-        # PROTOTYPE (spec 030 investigation): under the toggle, a post-body field
-        # searches from a floor rather than that cursor.  Sub-article values repeat
-        # within a document and do not follow the page, so a cursor loses every
-        # value earlier than the last match.  The floor keeps what the cursor was
-        # for -- body and figures lie before it -- while letting the region be
-        # searched in any order, and neither body_content_end nor reference_floor
-        # is advanced by a post-body match, so it cannot creep.
+        # A post-body field searches from a floor rather than that cursor.
+        # Sub-article values repeat within a document and do not follow the page,
+        # so a cursor loses every value earlier than the last match.  The floor
+        # keeps what the cursor was for -- body and figures lie before it -- while
+        # letting the region be searched in any order, and no post-body match
+        # advances it, so it cannot creep.
         spent = (post_body_text_end or {}).get(_WIDE_SEARCH_BUDGET_KEY, 0)
         if (
             fv.field_name in _POST_BODY_FIELDS
-            and spent < _POST_BODY_MAX_WIDE_SEARCHES
+            and (fv.exact_only or spent < _POST_BODY_MAX_WIDE_SEARCHES)
         ):
-            # The floor lets the region be searched in any order.  A repeated
-            # value still advances past its own previous match, because ORE
-            # prints one copy of each checklist question per reviewer and the
-            # copies have to land on different ones: searching every copy from
-            # the floor collapses them all onto the first.
+            # The reference list, where there is one, is the floor rather than the
+            # last body match.  An author response quotes the paper, so a body
+            # paragraph can match inside the peer review and carry the floor past
+            # most of the region with it; the reference list cannot, because it
+            # prints between the body and the peer review.
+            #
+            # A repeated value still advances past its own previous match, because
+            # ORE prints one copy of each checklist question per reviewer and the
+            # copies have to land on different ones: searching every copy from the
+            # floor collapses them all onto the first.
             start = max(
                 0,
-                max(body_content_end, reference_floor) - 200,
+                (reference_floor if reference_floor > 0 else body_content_end) - 200,
                 (post_body_text_end or {}).get(fv.text, 0),
             )
         else:
@@ -1245,9 +1248,10 @@ class LayoutDocumentJatsAligner:
                 post_body_text_end[fv.text] = max(
                     post_body_text_end.get(fv.text, 0), a_end
                 )
-                post_body_text_end[_WIDE_SEARCH_BUDGET_KEY] = (
-                    post_body_text_end.get(_WIDE_SEARCH_BUDGET_KEY, 0) + 1
-                )
+                if not fv.exact_only:
+                    post_body_text_end[_WIDE_SEARCH_BUDGET_KEY] = (
+                        post_body_text_end.get(_WIDE_SEARCH_BUDGET_KEY, 0) + 1
+                    )
             if fv.field_name in _ANCHOR_FIELDS:
                 body_floor = max(body_floor, a_end)
             if fv.field_name in _FRONT_MATTER_END_FIELDS:

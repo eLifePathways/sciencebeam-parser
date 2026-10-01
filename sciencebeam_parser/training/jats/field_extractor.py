@@ -16,10 +16,61 @@ class JatsFieldValue:
     field_name: str
     sub_field_name: Optional[str] = None
     fallback_text: Optional[str] = None
+    exact_only: bool = False
 
 
 def _element_text(el: etree._Element) -> str:
     return ' '.join(' '.join(el.itertext()).split())
+
+
+def _iter_sub_article_stub_texts(
+    sub_article: etree._Element,
+) -> Iterator[Tuple[etree._Element, str]]:
+    """Yield the front-stub text a peer-review report prints above its body.
+
+    A report's heading block -- its licence sentence, reviewer name and
+    affiliation -- is in `<front-stub>` rather than in a `<title>` or a `<p>`,
+    so without it the region starts at the report's first paragraph and the
+    heading above falls back to `<body>`.
+
+    These are matched verbatim or not at all.  The renderer prints them from
+    these very elements, and there are enough of them per report that letting
+    them slide over the region instead would spend the wide-search budget on the
+    headings and lose the report prose that budget is for.
+
+    The report's own DOI is left out: the PDF breaks it into tokens around every
+    dot and slash, so it is never found verbatim, and letting that one value
+    slide costs more region elsewhere than the heading line it wins.
+    """
+    for el in sub_article.xpath('.//front-stub//contrib/name'):
+        given_names = _element_text_of_first(el, 'given-names')
+        surname = _element_text_of_first(el, 'surname')
+        text = ' '.join(part for part in (given_names, surname) if part)
+        if text:
+            yield el, text
+    for el in sub_article.xpath('.//front-stub//aff'):
+        text = _affiliation_text(el)
+        if text:
+            yield el, text
+    for el in sub_article.xpath('.//front-stub//license-p'):
+        text = _element_text(el)
+        if text:
+            yield el, text
+
+
+def _element_text_of_first(el: etree._Element, tag: str) -> str:
+    found = el.find(tag)
+    return _element_text(found) if found is not None else ''
+
+
+def _affiliation_text(el: etree._Element) -> str:
+    """The affiliation without its `<label>`, which prints as the author's marker."""
+    parts = [el.text or '']
+    for child in el:
+        if child.tag != 'label':
+            parts.append(_element_text(child))
+        parts.append(child.tail or '')
+    return ' '.join(' '.join(parts).split())
 
 
 def _reference_parent_text(ref_el: etree._Element) -> str:
@@ -519,6 +570,9 @@ class JatsFieldExtractor:
                 if text:
                     entries.append((position[el], JatsFieldValue(
                         text=text, field_name=JatsFieldNames.SUB_ARTICLE)))
+            for el, text in _iter_sub_article_stub_texts(sub_article):
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.SUB_ARTICLE, exact_only=True)))
 
-        for _, fv in sorted(entries):
+        for _, fv in sorted(entries, key=lambda entry: entry[0]):
             yield fv
