@@ -335,10 +335,19 @@ sequence_model_profiles:
   delft_hub:
     extends: biorxiv_elife
     header:
-      path: 'hf://lfoppiano/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-glove_840B'
+      path: 'hf://sciencialab/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-glove_840B'
       feature_flavour: 'grobid'
     affiliation_address:
-      path: 'hf://lfoppiano/grobid-model-affiliation-address/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-affiliation-address/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
+    citation:
+      path: 'hf://sciencialab/grobid-model-citation/grobid-citation-BidLSTM_CRF_FEATURES-no_embeddings'
+    reference-segmenter:
+      path: 'hf://sciencialab/grobid-model-reference-segmenter/grobid-reference-segmenter-BidLSTM_CRF_FEATURES-no_embeddings'
+    name-header:
+      path: 'hf://sciencialab/grobid-model-name-header/grobid-name-header-BidLSTM_CRF_FEATURES-no_embeddings'
+    name-citation:
+      path: 'hf://sciencialab/grobid-model-name-citation/grobid-name-citation-BidLSTM_CRF_FEATURES-no_embeddings'
+
 
 profiles:
   biorxiv_elife:
