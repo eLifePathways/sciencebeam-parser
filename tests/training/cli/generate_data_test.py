@@ -694,7 +694,7 @@ class TestMain:
         )
         assert get_text_content_list(xml_root.xpath('text/front'))
 
-    def test_should_write_one_geometry_record_row_per_segmentation_line(
+    def test_should_write_one_line_record_row_per_segmentation_line(
         self,
         tmp_path: Path,
         sample_layout_document: SampleLayoutDocument,
@@ -710,10 +710,10 @@ class TestMain:
             f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
             f'--output-path={output_path}'
         ])
-        geometry_path = _get_expected_file_path_with_suffix(
-            output_path / 'segmentation' / 'corpus' / 'geometry',
+        lines_path = _get_expected_file_path_with_suffix(
+            output_path / 'segmentation' / 'corpus' / 'lines',
             MINIMAL_EXAMPLE_PDF,
-            SegmentationModelTrainingDataGenerator.GEOMETRY_FILENAME_SUFFIX
+            SegmentationModelTrainingDataGenerator.LINES_FILENAME_SUFFIX
         )
         tei_path = _get_expected_file_path_with_suffix(
             output_path / 'segmentation' / 'corpus' / 'tei',
@@ -725,10 +725,10 @@ class TestMain:
             MINIMAL_EXAMPLE_PDF,
             SegmentationTeiTrainingDataGenerator().get_default_data_filename_suffix()
         )
-        assert geometry_path.exists()
+        assert lines_path.exists()
         json_dicts = [
             json.loads(line)
-            for line in geometry_path.read_text(encoding='utf-8').splitlines()
+            for line in lines_path.read_text(encoding='utf-8').splitlines()
         ]
         line_break_count = len(etree.parse(str(tei_path)).getroot().xpath('//lb'))
         raw_row_count = len(raw_path.read_text(encoding='utf-8').splitlines())
@@ -736,8 +736,10 @@ class TestMain:
         assert json_dicts[0]['line_count'] == len(json_dicts) - 1
         assert json_dicts[0]['line_count'] == line_break_count
         assert json_dicts[0]['line_count'] == raw_row_count
+        assert all('label' in json_dict for json_dict in json_dicts[1:])
+        assert all('text' in json_dict for json_dict in json_dicts[1:])
 
-    def test_should_not_write_a_geometry_record_for_another_model(
+    def test_should_not_write_a_line_record_for_another_model(
         self,
         tmp_path: Path,
         sample_layout_document: SampleLayoutDocument,
@@ -753,7 +755,7 @@ class TestMain:
             f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
             f'--output-path={output_path}'
         ])
-        assert not (output_path / 'header' / 'corpus' / 'geometry').exists()
+        assert not (output_path / 'header' / 'corpus' / 'lines').exists()
 
     def test_should_add_gz_suffix_if_enabled(
         self,
