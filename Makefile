@@ -95,6 +95,11 @@ SOURCE_TRAINING_ROOT ?= data/source-training-data
 SOURCE_TRAINING_DATA ?= $(SOURCE_TRAINING_ROOT)/$(SOURCE_TRAINING_MODE)
 SOURCE_TRAINING_SPLIT ?= train
 
+# A comparison file under benchmarks/comparisons/, by name. It names its own
+# variants, so the only thing it needs from here is where to resolve them.
+COMPARISON ?=
+COMPARISON_OUT ?= $(BENCHMARK_RUN)/comparison-$(COMPARISON).md
+
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
 SHOW_CORPUS ?= biorxiv
@@ -110,7 +115,7 @@ COMPARE_DOC_DIR = .temp/compare-with-grobid/by-doc/$(COMPARE_DOC_ID)
 
 .require-%:
 	@if [ -z "$($(*))" ]; then \
-		echo "Error: $* is required. Usage: make $(@:.require-%=%) $*=<value>"; \
+		echo "Error: $* is required. Usage: make $(or $(firstword $(MAKECMDGOALS)),<target>) $*=<value>"; \
 		exit 1; \
 	fi
 
@@ -276,6 +281,27 @@ dev-benchmark-score:
 dev-benchmark-compare:
 	$(PYTHON) -m benchmarks.report \
 		$(ARGS)
+
+
+# Renders a named comparison and its charts from summaries that already exist, so it
+# needs no parser and no network -- run it as often as the question changes.
+dev-comparison: .require-COMPARISON
+	$(PYTHON) -m benchmarks.report \
+		--comparison $(COMPARISON) \
+		--runs benchmarks/runs \
+		--split $(BENCHMARK_SPLIT) \
+		--current-run $(BENCHMARK_RUN) \
+		--out $(COMPARISON_OUT) \
+		$(ARGS)
+	@echo
+	@echo "Wrote $(COMPARISON_OUT)"
+	@ls $(dir $(COMPARISON_OUT))charts/*.png 2>/dev/null || true
+
+
+dev-comparisons-list:
+	@ls benchmarks/comparisons/*.yml 2>/dev/null \
+		| sed -e 's|benchmarks/comparisons/||' -e 's|\.yml$$||' \
+		|| echo "No comparisons yet - add one under benchmarks/comparisons/"
 
 
 dev-benchmark: dev-benchmark-predict dev-benchmark-score
@@ -454,6 +480,10 @@ docker-benchmark-score:
 
 docker-benchmark-compare:
 	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-compare
+
+
+docker-comparison:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-comparison
 
 
 docker-benchmark: docker-benchmark-predict docker-benchmark-score

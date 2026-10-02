@@ -147,11 +147,14 @@ charts:
 ```
 
 ```sh
-python -m benchmarks.report --comparison reference-models \
-  --runs benchmarks/runs --split train \
-  --current-run benchmarks/runs/<run>/train \
-  --out comparison.md
+make dev-comparison COMPARISON=reference-models
 ```
+
+`make dev-comparisons-list` names the ones that exist. The target resolves the
+comparison's variants against `benchmarks/runs` for `BENCHMARK_SPLIT`, writes
+`comparison-<name>.md` into `BENCHMARK_RUN` and prints where the charts went; the
+underlying command is `python -m benchmarks.report --comparison <name>`, which takes
+`--runs`, `--split` and `--current-run` directly.
 
 A variant is **named rather than pointed at** — by `tool`, `version` and `profile`,
 the way the predictions store holds it — so a checked-in file carries no run id and
