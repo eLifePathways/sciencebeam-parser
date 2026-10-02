@@ -320,7 +320,9 @@ sequence_model_profiles:
   # The delft engine resolves an `hf://owner/repository[@revision]/model` path
   # itself, downloading the model directory under `download_dir`/models; the
   # revision is optional and, left out, follows the branch, so a model can
-  # change under a running deployment.
+  # change under a running deployment. Each is therefore pinned to a commit of
+  # its own repository, the repositories carrying no tags: taking a newer model
+  # means changing its sha here.
   # Only the models published to the Hub are overridden here, the rest coming
   # from the base profile. The base is an all-delft one on purpose: a profile
   # is deep merged over the one it extends, so overriding only `path` on a
@@ -335,19 +337,19 @@ sequence_model_profiles:
   delft_hub:
     extends: biorxiv_elife
     header:
-      path: 'hf://sciencialab/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-header@a2b0279ec0605ce8a835a45c9cf3c093b24d181d/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
       feature_flavour: 'grobid'
     affiliation_address:
-      path: 'hf://sciencialab/grobid-model-affiliation-address/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-affiliation-address@3656dad21c4f292234c7000458a9a4a33462ddad/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
     citation:
-      path: 'hf://sciencialab/grobid-model-citation/grobid-citation-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-citation@3db81cd58276cb3a446bbb274c610d1233b7ce8c/grobid-citation-BidLSTM_CRF_FEATURES-no_embeddings'
     reference_segmenter:
-      path: 'hf://sciencialab/grobid-model-reference-segmenter/grobid-reference-segmenter-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-reference-segmenter@c9d959488a08324fa53d40013e9b02f85af4886d/grobid-reference-segmenter-BidLSTM_CRF_FEATURES-no_embeddings'
     name_header:
-      path: 'hf://sciencialab/grobid-model-name-header/grobid-name-header-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-name-header@33d2b42a21cddc7439a2e058329e2dc48ecb1021/grobid-name-header-BidLSTM_CRF_FEATURES-no_embeddings'
       engine: 'delft'
     name_citation:
-      path: 'hf://sciencialab/grobid-model-name-citation/grobid-name-citation-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-name-citation@1b7a20928f9572c5a7b3180a82fbc4370df6189b/grobid-name-citation-BidLSTM_CRF_FEATURES-no_embeddings'
       engine: 'delft'
 
 profiles:
