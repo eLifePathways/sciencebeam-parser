@@ -177,6 +177,7 @@ fields:
   - abstract_any_language
   - abstract_all_languages
   - abstract_legacy
+  - abstract_language
   - author_full_names
   - affiliation_text
   - keywords
@@ -227,6 +228,14 @@ scoring:
   # more than one value on a side resolves it. `expected` and `actual` name the mapping
   # entry each side reads.
   #
+  # `abstract_language` scores the language each abstract is declared to be in, rather
+  # than its text. The two sides are paired by the text, since neither the order nor the
+  # count can be relied on, and a gold abstract that declares no language is left out of
+  # the comparison -- `scielo_br` and `scielo_preprints-jats` declare one on
+  # `<trans-abstract>` and not on the `<abstract>` beside it, and `biorxiv`, `ore` and
+  # `pkp` declare none at all. Its denominator is therefore pairs rather than documents,
+  # and it is not comparable with the rows above.
+  #
   # `abstract_legacy` is the measure these replaced — every `<abstract>` element joined
   # into one string, `<trans-abstract>` unread — kept so that a figure published before
   # the change can be reproduced by a current run rather than only restated.
@@ -254,6 +263,9 @@ scoring:
       actual: abstracts
       methods: [levenshtein, edit_sim]
       type: partial_ulist
+    abstract_language:
+      methods: [exact]
+      type: matched_property
     abstract_legacy:
       methods: [levenshtein, edit_sim]
     author_full_names:

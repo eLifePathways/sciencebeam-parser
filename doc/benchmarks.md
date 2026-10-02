@@ -93,6 +93,7 @@ that, and both are scored:
 | `abstract_anywhere` | the article's own abstract, always one value | any abstract it carries |
 | `abstract_any_language` | every language the document carries it in, the article's own first | any abstract it carries |
 | `abstract_all_languages` | the same | every abstract it carries, paired with the gold |
+| `abstract_language` | the language each abstract is declared to be in | the language it declared for the abstract that matches |
 
 `abstract` is the headline and is literal: the article's own abstract on both
 sides. `abstract_anywhere` credits a tool that finds the article's own abstract
@@ -119,6 +120,16 @@ comparable with the rows above it. Below each corpus table, and in the
 comparison report, a block counts how often the credited one was a translation,
 per corpus: a run that reads the translation of every multilingual paper scores
 like one that reads the article's own, and that block is where it shows.
+
+`abstract_language` scores the declaration rather than the text. The two sides
+are paired by the abstract's text, since neither the order nor the count can be
+relied on, and a gold abstract declaring no language is left out of the
+comparison rather than counted as a miss: `biorxiv`, `ore` and `pkp` declare
+none at all, and `scielo_br` and `scielo_preprints-jats` declare one on
+`<trans-abstract>` and not on the `<abstract>` beside it. Its denominator is
+pairs rather than documents, so a document carrying three declared languages
+weighs three times one carrying a single one, and the figure is not comparable
+with the rows above.
 
 `abstract_legacy` is the measure these replaced: every `<abstract>` element
 joined into one string, with `<trans-abstract>` unread. It is scored so that a
