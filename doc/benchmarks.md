@@ -166,7 +166,10 @@ the split CI runs; `train` is there only where a run pushed it. Comparing what C
 therefore means `BENCHMARK_SPLIT=validation`, which is a deliberate choice rather than a
 default — the point of leaving `validation` alone is what makes its numbers worth quoting.
 
-`make dev-comparisons-list` names the ones that exist. `BENCHMARK_DATA` and
+`stored-baselines` is the one that needs nothing of its own: it names only variants the
+store holds, so it compares what CI compares without a parser or a benchmark run.
+`reference-models` adds the run under test, so it needs one — `COMPARISON_CURRENT_RUN`
+says where its summary is. `make dev-comparisons-list` names them. `BENCHMARK_DATA` and
 `BENCHMARK_RUNS` say where the gold and the runs are, which a git worktree needs since
 neither is in one: both are gitignored and stay in the checkout that produced them.
 `COMPARISON_CURRENT_RUN` points a `current: true` variant at a run directory. A comparison compares runs

@@ -1,0 +1,22 @@
+# The baselines the predictions store holds, against each other. Names no run under
+# test, so it needs no parser and no benchmark of its own -- point it at a checked-out
+# sciencebeam-eval-predictions and it compares what CI compares.
+#
+# The last variant is the primary, so deltas are measured against sciencebeam-parser.
+variants:
+  - {label: grobid 0.9.0, tool: grobid, version: 0.9.0-crf, profile: default}
+  - {label: grobid 0.9.1, tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: sciencebeam-parser, tool: sciencebeam-parser, version: main, profile: grobid_crf}
+
+rows:
+  - {field: title, method: levenshtein, type: string}
+  - {field: abstract, method: levenshtein, type: string}
+  - {field: author_full_names, method: levenshtein, type: partial_ulist}
+  - {field: reference_title, method: levenshtein, type: partial_list}
+  - {field: first_reference_text, method: levenshtein, type: string}
+
+charts:
+  - row: {field: reference_title, method: levenshtein}
+    title: Reference titles by corpus
+  - row: {field: title, method: levenshtein}
+    title: Document titles by corpus
