@@ -263,6 +263,53 @@ def _reclaim_repeated_headnotes(
         seg_line.seg_label = SEG_HEADNOTE
 
 
+def _get_page_number(seg_line: _SegLine) -> Optional[int]:
+    token = seg_line.first_token
+    if token is None or token.coordinates is None or not token.coordinates:
+        return None
+    return token.coordinates.page_number
+
+
+def _is_grounded(seg_line: _SegLine, annotated: JatsAnnotatedLayoutDocument) -> bool:
+    return any(
+        annotated.get_token_field(token) is not None
+        for token in seg_line.layout_line.tokens
+    )
+
+
+def _extend_region_to_page_start(
+    seg_lines: List[_SegLine],
+    label: str,
+    annotated: JatsAnnotatedLayoutDocument,
+) -> None:
+    """Start a region at the top of the page its first line is on.
+
+    A peer-review section is headed by its title, the report's date and the
+    report's licence, none of which the JATS carries, so the region began
+    partway down the page the section starts on.  Where nothing above it on that
+    page is evidenced, the page break is the better boundary than the first line
+    the aligner could ground.
+
+    One evidenced line above stops it, because that is a page whose top still
+    belongs to whatever came before.
+    """
+    first = next((i for i, sl in enumerate(seg_lines) if sl.seg_label == label), None)
+    if first is None:
+        return
+    page_number = _get_page_number(seg_lines[first])
+    if page_number is None:
+        return
+    start = first
+    while start > 0 and _get_page_number(seg_lines[start - 1]) == page_number:
+        start -= 1
+    span = seg_lines[start:first]
+    if any(_is_grounded(sl, annotated) for sl in span):
+        return
+    for seg_line in span:
+        if seg_line.seg_label is None:
+            seg_line.seg_label = label
+
+
 def _is_in_header_zone(
     seg_line: _SegLine,
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -432,6 +479,11 @@ class SegmentationLabelDeriver:
             enabled_labels={SEG_FRONT, SEG_ANNEX, SEG_REFERENCES, SEG_OTHER},
             enabled_tail_labels={SEG_ANNEX, SEG_OTHER},
         )
+
+        # Both regions run to the end of the document, so the page their first
+        # evidenced line sits on is the page the region starts on.
+        for tail_label in (SEG_ANNEX, SEG_OTHER):
+            _extend_region_to_page_start(seg_lines, tail_label, annotated)
 
         # After the merge, not before: a line the merge uses as the anchor of a
         # region may itself be a running header, and taking it back first leaves

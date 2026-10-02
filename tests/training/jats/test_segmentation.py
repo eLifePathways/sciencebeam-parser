@@ -12,6 +12,7 @@ from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
     SEG_BODY,
     SEG_FOOTNOTE,
+    SEG_OTHER,
     SEG_FRONT,
     SEG_HEADNOTE,
     SEG_PAGE,
@@ -232,6 +233,36 @@ class TestReclaimRepeatedHeadnote:
             lines.index(body): JatsFieldNames.BODY_SECTION_PARAGRAPH,
         })
         assert _derive_labels(doc, annotated)[id(absorbed)] == SEG_HEADNOTE
+
+
+class TestRegionStartsAtThePageTop:
+    """A section's heading is above the first line the JATS can evidence."""
+
+    def _make_doc(self, heading_is_grounded: bool):
+        body = _make_line('The', 'article', 'body', 'ends', 'here', page_number=1)
+        heading = _make_line('Open', 'Peer', 'Review', y=80.0, page_number=2)
+        report = _make_line('Thank', 'you', 'for', 'addressing', 'the', 'comments',
+                            y=300.0, page_number=2)
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=[body])], meta=_make_page_meta(1)),
+            LayoutPage(blocks=[LayoutBlock(lines=[heading, report])], meta=_make_page_meta(2)),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(body): JatsFieldNames.BODY_SECTION_PARAGRAPH,
+            lines.index(report): JatsFieldNames.SUB_ARTICLE,
+        }
+        if heading_is_grounded:
+            fields[lines.index(heading)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, _annotate(doc, fields), heading
+
+    def test_the_region_takes_the_unevidenced_heading_above_it(self):
+        doc, annotated, heading = self._make_doc(heading_is_grounded=False)
+        assert _derive_labels(doc, annotated)[id(heading)] == SEG_OTHER
+
+    def test_an_evidenced_line_above_keeps_the_region_where_it_was(self):
+        doc, annotated, heading = self._make_doc(heading_is_grounded=True)
+        assert _derive_labels(doc, annotated)[id(heading)] == SEG_BODY
 
 
 class TestFrontThreshold:
