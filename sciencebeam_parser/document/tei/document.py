@@ -9,6 +9,7 @@ from sciencebeam_parser.document.tei.attribution import (
 )
 from sciencebeam_parser.document.tei.common import (
     TEI_E,
+    XML_NS_PREFIX,
     TeiElementWrapper,
     extend_element,
     get_or_create_element_after,
@@ -130,10 +131,17 @@ class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
             TEI_E('p', abstract)
         )
 
-    def add_abstract_layout_block(self, abstract_block: LayoutBlock):
-        self.get_or_create_element_at(['teiHeader', 'profileDesc']).append(
-            TEI_E('abstract', TEI_E('p', *iter_layout_block_tei_children(abstract_block)))
+    def add_abstract_layout_block(
+        self,
+        abstract_block: LayoutBlock,
+        language: Optional[str] = None
+    ):
+        abstract_element = TEI_E(
+            'abstract', TEI_E('p', *iter_layout_block_tei_children(abstract_block))
         )
+        if language:
+            abstract_element.attrib[XML_NS_PREFIX + 'lang'] = language
+        self.get_or_create_element_at(['teiHeader', 'profileDesc']).append(abstract_element)
 
     def get_body_element(self) -> etree.ElementBase:
         return self.get_or_create_element_at(['text', 'body'])

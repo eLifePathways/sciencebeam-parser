@@ -18,6 +18,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutTokensText
 )
 from sciencebeam_parser.models.extract import SimpleModelSemanticExtractor
+from sciencebeam_parser.utils.language import detect_language
 
 
 LOGGER = logging.getLogger(__name__)
@@ -66,6 +67,13 @@ MIN_ABSTRACT_VARIANT_LENGTH_RATIO = 0.15
 
 def _get_token_count(layout_block: LayoutBlock) -> int:
     return sum(1 for _ in layout_block.iter_all_tokens())
+
+
+def get_semantic_abstract_for_layout_block(layout_block: LayoutBlock) -> SemanticAbstract:
+    return SemanticAbstract(
+        layout_block=layout_block,
+        language=detect_language(str(LayoutTokensText(layout_block)))
+    )
 
 
 def is_abstract_variant(
@@ -136,11 +144,11 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                 )
                 assert abstract_layout_block is not None
                 if primary_abstract_block is None:
-                    yield SemanticAbstract(layout_block=abstract_layout_block)
+                    yield get_semantic_abstract_for_layout_block(abstract_layout_block)
                     primary_abstract_block = abstract_layout_block
                     continue
                 if is_abstract_variant(abstract_layout_block, primary_abstract_block):
-                    yield SemanticAbstract(layout_block=abstract_layout_block)
+                    yield get_semantic_abstract_for_layout_block(abstract_layout_block)
                     continue
             if name in {'<affiliation>', '<address>'}:
                 if (

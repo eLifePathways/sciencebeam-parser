@@ -42,6 +42,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticTitle
 )
 from sciencebeam_parser.document.tei.attribution import DocumentAttribution
+from sciencebeam_parser.document.tei.common import XML_NS_PREFIX, tei_xpath
 from sciencebeam_parser.document.tei_document import (
     get_tei_for_semantic_document
 )
@@ -53,6 +54,18 @@ from tests.document.tei.common_test import (
 
 LOGGER = logging.getLogger(__name__)
 
+
+XML_LANG = XML_NS_PREFIX + 'lang'
+
+ENGLISH_ABSTRACT_1 = (
+    'This study reports on the effects of the intervention that was carried out in a'
+    ' sample of adolescents, and on the data that were collected from the participants.'
+)
+
+PORTUGUESE_ABSTRACT_1 = (
+    'Este estudo relata os efeitos da intervenção que foi realizada em uma amostra de'
+    ' adolescentes, e os dados que foram coletados dos participantes antes e depois.'
+)
 
 WEB_URL_1 = 'http://host/path'
 DOI_1 = '10.1234/test'
@@ -102,6 +115,31 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
             '//tei:profileDesc/tei:abstract/tei:p'
         ) == [TOKEN_1, TOKEN_2]
         assert tei_document.get_abstract() == TOKEN_1
+
+    def test_should_declare_the_language_of_each_abstract(self):
+        semantic_document = SemanticDocument()
+        semantic_document.front.add_content(
+            SemanticAbstract(LayoutBlock.for_text(ENGLISH_ABSTRACT_1), language='en')
+        )
+        semantic_document.front.add_content(
+            SemanticAbstract(LayoutBlock.for_text(PORTUGUESE_ABSTRACT_1), language='pt')
+        )
+        tei_document = get_tei_for_semantic_document(semantic_document)
+        LOGGER.debug('tei xml: %r', etree.tostring(tei_document.root))
+        assert [
+            element.attrib.get(XML_LANG)
+            for element in tei_xpath(tei_document.root, '//tei:profileDesc/tei:abstract')
+        ] == ['en', 'pt']
+
+    def test_should_not_declare_a_language_it_cannot_tell(self):
+        semantic_document = SemanticDocument()
+        semantic_document.front.add_content(
+            SemanticAbstract(LayoutBlock.for_text(TOKEN_1))
+        )
+        tei_document = get_tei_for_semantic_document(semantic_document)
+        assert XML_LANG not in tei_xpath(
+            tei_document.root, '//tei:profileDesc/tei:abstract'
+        )[0].attrib
 
     def test_should_add_single_author(self):
         semantic_document = SemanticDocument()

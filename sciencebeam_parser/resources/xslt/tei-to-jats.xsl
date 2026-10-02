@@ -119,10 +119,12 @@
       </xsl:for-each>
 
       <abstract>
+        <xsl:copy-of select="tei:profileDesc/tei:abstract[1]/@xml:lang"/>
         <xsl:apply-templates select="tei:profileDesc/tei:abstract[1]"/>
       </abstract>
       <xsl:for-each select="tei:profileDesc/tei:abstract[position() &gt; 1]">
         <abstract>
+          <xsl:copy-of select="@xml:lang"/>
           <xsl:apply-templates/>
         </abstract>
       </xsl:for-each>
