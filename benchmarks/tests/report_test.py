@@ -678,3 +678,88 @@ class TestGoldSplitSection:
             ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
         ])
         assert "Unequal gold document sets" not in report
+
+
+def _variant_summary(f1: float, variant_match: Optional[dict], field: str = "abstract") -> dict:
+    corpus = {
+        "scielo_mx": {
+            "n": 30,
+            "aggregated": [_agg("variants", "edit_sim", {field: f1})],
+            **({"variant_match": {field: variant_match}} if variant_match else {}),
+        }
+    }
+    return _summary(
+        fields=[field],
+        field_measures={field: ["edit_sim"]},
+        field_scoring_types={field: "variants"},
+        corpora=corpus,
+    )
+
+
+class TestVariantMatchSection:
+    def test_counts_what_each_variant_credited_a_translation_for(self):
+        report = _render_comparison_report([
+            ("wapiti", _variant_summary(0.5, {"n_variants": 24, "n_translation": 2})),
+            ("current", _variant_summary(0.6, {"n_variants": 24, "n_translation": 9})),
+        ])
+        assert "| abstract | 2 of 24 | 9 of 24 |" in report
+
+    def test_reports_a_run_scored_before_the_count_existed_as_unknown(self):
+        report = _render_comparison_report([
+            ("wapiti", _variant_summary(0.5, None)),
+            ("current", _variant_summary(0.6, {"n_variants": 24, "n_translation": 9})),
+        ])
+        assert "| abstract | unknown | 9 of 24 |" in report
+
+    def test_omits_the_section_where_no_gold_carries_a_second_language(self):
+        report = _render_comparison_report([
+            ("wapiti", _variant_summary(0.5, None)),
+            ("current", _variant_summary(0.6, None)),
+        ])
+        assert "Credited a translation" not in report
+
+
+def _typed_summary(scoring_type: str, sources: Optional[list] = None) -> dict:
+    summary = _summary(
+        fields=["abstract"],
+        field_measures={"abstract": ["edit_sim"]},
+        field_scoring_types={"abstract": scoring_type},
+        corpora={"biorxiv": {
+            "n": 10,
+            "aggregated": [_agg(scoring_type, "edit_sim", {"abstract": 0.5})],
+        }},
+    )
+    if sources:
+        summary["field_sources"] = {"abstract": sources}
+    return summary
+
+
+class TestDifferentlyScoredNote:
+    def test_warns_where_the_runs_used_different_scoring_types(self):
+        report = _render_comparison_report([
+            ("before", _typed_summary("string")),
+            ("after", _typed_summary("best_match")),
+        ])
+        assert "Scored differently between runs" in report
+        assert "`abstract`" in report
+
+    def test_warns_where_the_runs_read_different_mapping_entries(self):
+        report = _render_comparison_report([
+            ("before", _typed_summary("best_match")),
+            ("after", _typed_summary("best_match", ["abstract", "abstract_any_language"])),
+        ])
+        assert "Scored differently between runs" in report
+
+    def test_is_silent_where_the_runs_measured_the_same_way(self):
+        report = _render_comparison_report([
+            ("before", _typed_summary("best_match")),
+            ("after", _typed_summary("best_match")),
+        ])
+        assert "Scored differently between runs" not in report
+
+    def test_is_silent_about_a_field_only_one_run_scored(self):
+        before = _typed_summary("best_match")
+        after = _typed_summary("best_match")
+        after["fields"] = ["abstract", "abstract_legacy"]
+        report = _render_comparison_report([("before", before), ("after", after)])
+        assert "Scored differently between runs" not in report

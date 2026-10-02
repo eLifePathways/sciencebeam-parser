@@ -5,7 +5,7 @@ import json
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import yaml
 
@@ -14,9 +14,8 @@ from sciencebeam_judge.evaluation.score_aggregation import (
     combine_and_compact_document_scores,
     summarise_combined_document_scores,
 )
-from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
-from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
-from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
+from sciencebeam_judge.evaluation.scoring_types.scoring_types import resolve_scoring_type
+from sciencebeam_judge.parsing.xml import parse_xml
 
 from benchmarks.fetch import included_corpora
 from benchmarks.gold_presence import (
@@ -28,22 +27,43 @@ from benchmarks.gold_presence import (
     produced_row,
     summarise_gold_presence,
 )
+from benchmarks.judge_setup import prepare_judge
 from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
 from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
+from benchmarks.variant_match import (
+    VARIANT_MATCH_KEY,
+    render_variant_match_table,
+    summarise_variant_matches,
+)
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _score_pair(
+def _score_pair(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     gold_xml: bytes,
     pred_xml: bytes,
     field_names: List[str],
     measures: List[str],
     xml_mapping: dict,
     scoring_types_by_field_map: Optional[Dict[str, List[str]]] = None,
+    field_sources: Optional[Dict[str, Tuple[str, str]]] = None,
 ) -> List[dict]:
-    expected = parse_xml(BytesIO(gold_xml), xml_mapping, fields=field_names)
-    actual = parse_xml(BytesIO(pred_xml), xml_mapping, fields=field_names)
+    sources = field_sources or {}
+    source_names = sorted({
+        name for field in field_names for name in sources.get(field, (field, field))
+    })
+    gold_values = parse_xml(BytesIO(gold_xml), xml_mapping, fields=source_names)
+    predicted_values = parse_xml(BytesIO(pred_xml), xml_mapping, fields=source_names)
+    expected = {
+        field: gold_values[sources.get(field, (field, field))[0]]
+        for field in field_names
+        if sources.get(field, (field, field))[0] in gold_values
+    }
+    actual = {
+        field: predicted_values[sources.get(field, (field, field))[1]]
+        for field in field_names
+        if sources.get(field, (field, field))[1] in predicted_values
+    }
     return list(
         iter_score_document_fields(
             expected, actual,
@@ -75,15 +95,39 @@ def _build_field_measures(
     }
 
 
+def _build_field_sources(
+    field_names: List[str],
+    per_field: Dict[str, dict],
+) -> Dict[str, Tuple[str, str]]:
+    """Which mapping entry each side of a field's comparison reads.
+
+    A field whose gold and prediction come from different entries is how a comparison says
+    "this gold against any of those predicted values" without a scoring type having to read
+    a position and trust what put the value there.
+    """
+    return {
+        field: (
+            per_field.get(field, {}).get("expected", field),
+            per_field.get(field, {}).get("actual", field),
+        )
+        for field in field_names
+    }
+
+
 def _build_field_scoring_types(
     field_names: List[str],
     default_type: str,
     per_field: Dict[str, dict],
 ) -> Dict[str, str]:
-    return {
+    scoring_types = {
         f: per_field.get(f, {}).get("type", default_type)
         for f in field_names
     }
+    for scoring_type in set(scoring_types.values()):
+        # Resolved here rather than per document: scoring raises per document and the run
+        # goes on, so an unknown type would warn once per document and report nothing.
+        resolve_scoring_type(scoring_type)
+    return scoring_types
 
 
 def _doc_scores_to_dict(doc_scores: List[dict]) -> dict:
@@ -146,6 +190,9 @@ def _summarise_documents(
         ),
         GOLD_PRESENCE_KEY: summarise_gold_presence(documents, field_names),
     }
+    variant_match = summarise_variant_matches(documents, field_names)
+    if variant_match:
+        result[VARIANT_MATCH_KEY] = variant_match
     if gold_present_doc_scores:
         # No count: the documents behind it differ per field, so one number would be wrong
         # for all but the field it came from.
@@ -175,6 +222,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
     all_measures: List[str],
     field_measures: Dict[str, List[str]],
     field_scoring_types: Dict[str, str],
+    field_sources: Dict[str, Tuple[str, str]],
     xml_mapping: dict,
 ) -> Dict[str, Any]:
     pred_dir = run_dir / "predictions" / corpus
@@ -201,6 +249,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
                 gold_path.read_bytes(), pred_path.read_bytes(),
                 field_names, all_measures, xml_mapping,
                 scoring_types_by_field_map=scoring_types_by_field_map,
+                field_sources=field_sources,
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             LOGGER.warning("Scoring failed for %s/%s: %s", corpus, record_id, exc)
@@ -370,6 +419,7 @@ def _render_report(  # pylint: disable=too-many-locals
 
         lines.append("")
         lines += _render_produced_table(result, field_names)
+        lines += render_variant_match_table(result.get(VARIANT_MATCH_KEY) or {}, field_names)
 
     return "\n".join(lines)
 
@@ -383,8 +433,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     include: Optional[Iterable[str]] = None,
     from_scores: bool = False,
 ) -> None:
-    register_functions()
-    xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+    xml_mapping = prepare_judge()
     field_names: List[str] = config["fields"]
     scoring_cfg = config.get("scoring", {})
     default_methods: List[str] = scoring_cfg.get("default_methods", ["levenshtein"])
@@ -392,6 +441,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     per_field_cfg: Dict[str, dict] = scoring_cfg.get("per_field", {})
     field_measures = _build_field_measures(field_names, default_methods, per_field_cfg)
     field_scoring_types = _build_field_scoring_types(field_names, default_type, per_field_cfg)
+    field_sources = _build_field_sources(field_names, per_field_cfg)
     all_measures = list(dict.fromkeys(m for methods in field_measures.values() for m in methods))
 
     run_record = None
@@ -429,7 +479,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         LOGGER.info("Scoring corpus %r (split=%s)...", corpus, split)
         corpus_results[corpus] = _score_corpus(
             corpus, data_dir / split, run_dir, field_names, all_measures, field_measures,
-            field_scoring_types, xml_mapping
+            field_scoring_types, field_sources, xml_mapping
         )
 
     llm_usage = aggregate_llm_usage(read_manifest_entries(run_dir), corpora)
@@ -438,6 +488,11 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         "fields": field_names,
         "field_measures": field_measures,
         "field_scoring_types": field_scoring_types,
+        "field_sources": {
+            field: list(sources)
+            for field, sources in field_sources.items()
+            if sources != (field, field)
+        },
         "corpora": corpus_results,
         **({"llm_usage": llm_usage} if llm_usage else {}),
     }, indent=2))

@@ -12,9 +12,10 @@ from typing import List, Optional, Tuple
 import httpx
 from lxml import etree as lxml_etree
 
-from sciencebeam_judge.parsing.xml import parse_xml, parse_xml_mapping
-from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
-from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
+from sciencebeam_judge.parsing.xml import parse_xml
+
+from benchmarks.judge_setup import prepare_judge
+from benchmarks.variant_match import matched_expected_index
 
 LOGGER = logging.getLogger(__name__)
 
@@ -71,12 +72,22 @@ def _load_doc_score(score_path: Path, field: str, method: str) -> Optional[float
     return _get_doc_score(data.get("fields", {}).get(field, {}), method)
 
 
-def _extract_field_text(xml_path: Path, field: str, xml_mapping: dict) -> Optional[str]:
+def _extract_field_values(xml_path: Path, field: str, xml_mapping: dict) -> List[str]:
     if not xml_path.exists():
-        return None
+        return []
     values = parse_xml(BytesIO(xml_path.read_bytes()), xml_mapping, fields=[field])
-    items = values.get(field, [])
-    return " | ".join(str(v) for v in items) if items else None
+    return [str(value) for value in values.get(field, [])]
+
+
+def joined_values(values: List[str]) -> Optional[str]:
+    return " | ".join(values) if values else None
+
+
+def _matched_expected_index(score_path: Path, field: str) -> int:
+    if not score_path.exists():
+        return 0
+    data = json.loads(score_path.read_text(encoding="utf-8"))
+    return matched_expected_index(data.get("fields", {}).get(field, {}))
 
 
 def _run_label(run: Path) -> str:
@@ -155,17 +166,18 @@ def extract_texts(
     split: str,
     field: str,
     xml_mapping: dict,
-) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+) -> Tuple[List[str], Optional[str], Optional[str]]:
     gold_path = data_dir / split / corpus / f"{record_id}.jats.xml"
     pred_path_a = run_a / "predictions" / corpus / f"{record_id}.tei.xml"
     pred_path_b = run_b / "predictions" / corpus / f"{record_id}.tei.xml"
-    gold_text = _extract_field_text(gold_path, field, xml_mapping)
-    text_a = _extract_field_text(pred_path_a, field, xml_mapping)
-    text_b = _extract_field_text(pred_path_b, field, xml_mapping)
-    return gold_text, text_a, text_b
+    gold_values = _extract_field_values(gold_path, field, xml_mapping)
+    text_a = joined_values(_extract_field_values(pred_path_a, field, xml_mapping))
+    text_b = joined_values(_extract_field_values(pred_path_b, field, xml_mapping))
+    return gold_values, text_a, text_b
 
 
 def _print_case(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
     delta: float,
     corpus: str,
     record_id: str,
@@ -173,16 +185,25 @@ def _print_case(  # pylint: disable=too-many-arguments,too-many-positional-argum
     score_b: float,
     label_a: str,
     label_b: str,
-    gold_text: Optional[str],
+    gold_values: List[str],
     text_a: Optional[str],
     text_b: Optional[str],
+    index_a: int = 0,
+    index_b: int = 0,
 ) -> None:
     width = max(len(label_a), len(label_b), 4)
     print(f"record : {corpus}/{record_id}  Δ={delta:+.3f}")
-    if gold_text is not None:
-        print(f"  {'gold':<{width}} : {gold_text}")
-    print(f"  {label_a:<{width}} : {score_a:.3f} | {word_diff(gold_text, text_a)}")
-    print(f"  {label_b:<{width}} : {score_b:.3f} | {word_diff(gold_text, text_b)}")
+    if gold_values:
+        main_label = "gold 1" if len(gold_values) > 1 else "gold"
+        print(f"  {main_label:<{width}} : {gold_values[0]}")
+    for label, score, text, index in (
+        (label_a, score_a, text_a, index_a),
+        (label_b, score_b, text_b, index_b),
+    ):
+        gold_text = gold_values[index] if index < len(gold_values) else None
+        if index:
+            print(f"  {f'gold {index + 1}':<{width}} : {gold_text}")
+        print(f"  {label:<{width}} : {score:.3f} | {word_diff(gold_text, text)}")
     print()
 
 
@@ -279,8 +300,7 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
     limit: Optional[int],
     parser_url: Optional[str] = None,
 ) -> None:
-    register_functions()
-    xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+    xml_mapping = prepare_judge()
 
     label_a = _run_label(run_a)
     label_b = _run_label(run_b)
@@ -296,8 +316,14 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
     to_show = cases[:limit] if limit is not None else cases
     examples_base = run_a / "examples" / f"vs-{comp_label}" / mode / field / method
     for delta, corp, record_id, score_a, score_b in to_show:
-        gold_text, text_a, text_b = extract_texts(
+        gold_values, text_a, text_b = extract_texts(
             corp, record_id, run_a, run_b, data_dir, split, field, xml_mapping,
+        )
+        index_a = _matched_expected_index(
+            run_a / "scores" / corp / f"{record_id}.json", field
+        )
+        index_b = _matched_expected_index(
+            run_b / "scores" / corp / f"{record_id}.json", field
         )
         alto_xml = None
         if parser_url:
@@ -306,11 +332,12 @@ def run_show_cases(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 alto_xml = _fetch_pdfalto_xml(parser_url, pdf_path)
         _print_case(
             delta, corp, record_id, score_a, score_b,
-            label_a, label_b, gold_text, text_a, text_b,
+            label_a, label_b, gold_values, text_a, text_b,
+            index_a=index_a, index_b=index_b,
         )
         export_case(
             examples_base / corp, record_id, corp, field,
-            gold_text, text_a, text_b,
+            joined_values(gold_values), text_a, text_b,
             run_a, run_b, data_dir, split,
             alto_xml=alto_xml,
         )

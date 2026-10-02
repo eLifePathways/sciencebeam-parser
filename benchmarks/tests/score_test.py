@@ -5,13 +5,12 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-from sciencebeam_judge.parsing.xml import parse_xml_mapping
-from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
-from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
-
 import pytest
+import yaml
 
+from benchmarks.judge_setup import prepare_judge
 from benchmarks.score import (
+    _build_field_sources,
     _doc_scores_from_dict,
     _f1_from_aggregated,
     _summarise_documents,
@@ -264,8 +263,7 @@ class TestRunScoreSplitDetermination:
         run_dir.mkdir()
         (run_dir / "run.json").write_text(json.dumps({"split": "train"}))
 
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
             run_score(
                 config=self._CONFIG,
@@ -282,8 +280,7 @@ class TestRunScoreSplitDetermination:
         run_dir.mkdir()
         (run_dir / "run.json").write_text(json.dumps({"split": "validation"}))
 
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
             run_score(
                 config=self._CONFIG,
@@ -299,8 +296,7 @@ class TestRunScoreSplitDetermination:
         run_dir = tmp_path / "run"
         run_dir.mkdir()
 
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
             run_score(
                 config=self._CONFIG,
@@ -352,8 +348,7 @@ class TestRunScoreCorpusSelection:
         run_dir.mkdir(exist_ok=True)
         if run_json is not None:
             (run_dir / "run.json").write_text(json.dumps(run_json))
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 0}) as mock_score:
             run_score(
                 config=self._CONFIG,
@@ -396,8 +391,7 @@ class TestRunScoreLlmUsage:
         manifest.write_text(
             "".join(json.dumps(entry) + "\n" for entry in manifest_entries)
         )
-        with patch("benchmarks.score.register_functions"), \
-             patch("benchmarks.score.parse_xml_mapping"), \
+        with patch("benchmarks.score.prepare_judge"), \
              patch("benchmarks.score._score_corpus", return_value={"n": 1}):
             run_score(
                 config=self._CONFIG,
@@ -505,8 +499,7 @@ class TestAttributionIsNotScored:
     """The attribution element must sit where no scored field's xpath looks."""
 
     def test_should_score_a_prediction_the_same_with_and_without_attribution(self):
-        register_functions()
-        xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
+        xml_mapping = prepare_judge()
         field_names = [
             "title", "abstract", "author_full_names", "affiliation_text", "keywords",
             "body_section_titles", "acknowledgement", "first_reference_text",
@@ -766,3 +759,112 @@ class TestRunScoreFromScores:
         assert "No scores directory" in caplog.text
         summary = json.loads((run_dir / "summary.json").read_text())
         assert summary["corpora"]["biorxiv"] == {"n": 0}
+
+
+MULTILINGUAL_GOLD_JATS = b"""<article>
+  <front>
+    <article-meta>
+      <abstract><p>O resumo do artigo, tal como o editor o registou.</p></abstract>
+      <trans-abstract xml:lang="en">
+        <p>The abstract of the article, as the publisher recorded it.</p>
+      </trans-abstract>
+    </article-meta>
+  </front>
+</article>"""
+
+TRANSLATED_ABSTRACT_TEI = b"""<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader><profileDesc><abstract>
+    <div><p>The abstract of the article, as the publisher recorded it.</p></div>
+  </abstract></profileDesc></teiHeader>
+</TEI>"""
+
+
+class TestScoringAMultilingualAbstract:
+    def _score(self, gold: bytes, predicted: bytes) -> dict:
+        scores = _score_pair(
+            gold, predicted, ["abstract_any_language"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstract_any_language": ["best_match"]},
+        )
+        return scores[0]["match_score"]
+
+    def test_should_credit_a_prediction_matching_the_translation(self):
+        match_score = self._score(MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI)
+        assert match_score["sim_sum"] == 1.0
+
+    def test_should_record_that_the_credited_value_was_not_the_article_own(self):
+        match_score = self._score(MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI)
+        assert match_score["matched_expected_index"] == 1
+        assert match_score["n_expected_values"] == 2
+
+    def test_should_not_score_the_prediction_against_the_languages_joined(self):
+        glued = _score_pair(
+            MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI,
+            ["abstract_any_language"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstract_any_language": ["string"]},
+        )
+        assert glued[0]["match_score"]["sim_sum"] < 1.0
+
+    def test_should_score_the_article_own_abstract_as_a_single_value(self):
+        scores = _score_pair(
+            MULTILINGUAL_GOLD_JATS, TRANSLATED_ABSTRACT_TEI,
+            ["abstract"], ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={"abstract": ["string"]},
+        )
+        assert scores[0]["match_score"]["sim_sum"] < 0.5
+
+
+MULTILINGUAL_PREDICTED_JATS = b"""<article>
+  <front>
+    <article-meta>
+      <abstract><p>The abstract of the article, as the publisher recorded it.</p></abstract>
+      <trans-abstract xml:lang="pt">
+        <p>O resumo do artigo, tal como o editor o registou.</p>
+      </trans-abstract>
+    </article-meta>
+  </front>
+</article>"""
+
+TRANSLATION_ONLY_PREDICTED_JATS = b"""<article>
+  <front>
+    <article-meta>
+      <abstract><p>The abstract of the article, as the publisher recorded it.</p></abstract>
+    </article-meta>
+  </front>
+</article>"""
+
+
+class TestScoringAJatsPredictionCarryingVariants:
+    """What the shipped configuration does with a prediction that files the article's own
+    abstract as the translation, which is what a JATS-producing tool can do and TEI cannot.
+    """
+
+    def _scores(self, predicted: bytes) -> dict:
+        with open("benchmarks/eval.yml", encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file)
+        per_field = config["scoring"]["per_field"]
+        fields = [f for f in config["fields"] if f.startswith("abstract")]
+        doc_scores = _score_pair(
+            MULTILINGUAL_GOLD_JATS, predicted, fields, ["edit_sim"], prepare_judge(),
+            scoring_types_by_field_map={
+                f: [per_field.get(f, {}).get("type", "string")] for f in fields
+            },
+            field_sources=_build_field_sources(fields, per_field),
+        )
+        return {
+            score["field_name"]: score["match_score"]["sim_sum"] for score in doc_scores
+        }
+
+    def test_should_credit_the_article_own_abstract_filed_as_the_translation(self):
+        scores = self._scores(MULTILINGUAL_PREDICTED_JATS)
+        assert scores["abstract_anywhere"] == 1.0
+        assert scores["abstract_any_language"] == 1.0
+
+    def test_should_not_credit_it_where_the_field_names_the_element(self):
+        scores = self._scores(MULTILINGUAL_PREDICTED_JATS)
+        assert scores["abstract"] < 0.5
+
+    def test_should_credit_only_the_lenient_field_where_the_translation_is_all_it_found(self):
+        scores = self._scores(TRANSLATION_ONLY_PREDICTED_JATS)
+        assert scores["abstract"] < 0.5
+        assert scores["abstract_anywhere"] < 0.5
+        assert scores["abstract_any_language"] == 1.0

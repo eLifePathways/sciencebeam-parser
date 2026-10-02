@@ -15,6 +15,12 @@ from benchmarks.gold_presence import (
     produced_row,
 )
 from benchmarks.llm_usage import usage_for_corpora
+from benchmarks.variant_match import (
+    VARIANT_MATCH_KEY,
+    concatenation_row,
+    merge_variant_matches,
+    variant_match_row,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -353,6 +359,60 @@ def _unequal_gold_note(
     return []
 
 
+def _variant_match(summary: dict, corpus: str, field: str) -> Optional[dict]:
+    return summary.get("corpora", {}).get(corpus, {}).get(VARIANT_MATCH_KEY, {}).get(field)
+
+
+def _render_variant_match_section(
+    labeled_summaries: List[Tuple[str, dict]],
+    field_names: List[str],
+    corpora: List[str],
+) -> List[str]:
+    """How often each run was credited a language other than the article's own, and how
+    often it returned several languages as one value.
+
+    A run that changed which language it reads moves these and not the score, so they
+    belong together. Empty where no gold carries a field in more than one language, and so
+    where a summary was written before the counts existed.
+    """
+    labels = [label for label, _ in labeled_summaries]
+    merged = {
+        field: [
+            merge_variant_matches(
+                _variant_match(summary, corpus, field) for corpus in corpora
+            )
+            for _, summary in labeled_summaries
+        ]
+        for field in field_names
+    }
+    return _render_counts_section(
+        "Credited a translation rather than the article's own language",
+        labels, [variant_match_row(field, merged[field]) for field in field_names],
+    ) + _render_counts_section(
+        "Returned several languages as a single value",
+        labels, [concatenation_row(field, merged[field]) for field in field_names],
+    )
+
+
+def _render_counts_section(
+    summary_text: str, labels: List[str], rows: List[Optional[List[str]]]
+) -> List[str]:
+    present = [row for row in rows if row]
+    if not present:
+        return []
+    return [
+        "<details>",
+        f"<summary>{summary_text} ({len(present)} fields)</summary>",
+        "",
+        "| Field | " + " | ".join(labels) + " |",
+        "|" + "|".join(["---"] * (1 + len(labels))) + "|",
+        *["| " + " | ".join(row) + " |" for row in present],
+        "",
+        "</details>",
+        "",
+    ]
+
+
 def _render_produced_section(
     labeled_summaries: List[Tuple[str, dict]],
     field_names: List[str],
@@ -480,6 +540,9 @@ def _render_corpus_section(
     produced = _render_produced_section(labeled_summaries, field_names, [corpus])
     if produced:
         lines += ["", *produced[:-1]]
+    variants = _render_variant_match_section(labeled_summaries, field_names, [corpus])
+    if variants:
+        lines += ["", *variants[:-1]]
     usage_lines = _render_usage_section(
         labeled_summaries, [corpus],
         "**LLM usage**, over every document attempted in this corpus.",
@@ -534,7 +597,49 @@ def _render_overall_section(  # pylint: disable=too-many-locals
     produced = _render_produced_section(labeled_summaries, field_names, common)
     if produced:
         lines += ["", *produced[:-1]]
+    variants = _render_variant_match_section(labeled_summaries, field_names, common)
+    if variants:
+        lines += ["", *variants[:-1]]
     return lines
+
+
+def _field_definition(summary: dict, field: str) -> Tuple[str, List[str]]:
+    return (
+        summary.get("field_scoring_types", {}).get(field, "string"),
+        summary.get("field_sources", {}).get(field, [field, field]),
+    )
+
+
+def _differently_scored_note(
+    labeled_summaries: List[Tuple[str, dict]], field_names: List[str]
+) -> List[str]:
+    """Fields the runs did not measure the same way.
+
+    A delta between two runs that scored a field differently is a difference between the
+    measures as much as between the runs, and nothing else in the table says so: the Type
+    column states the primary run's.
+    """
+    differing = []
+    for field in field_names:
+        scored_by = [
+            summary for _, summary in labeled_summaries
+            if field in summary.get("fields", [])
+        ]
+        definitions = {
+            (scoring_type, tuple(sources))
+            for scoring_type, sources in (
+                _field_definition(summary, field) for summary in scored_by
+            )
+        }
+        if len(definitions) > 1:
+            differing.append(field)
+    if not differing:
+        return []
+    return [
+        "> ⚠️ **Scored differently between runs** (" + ", ".join(f"`{f}`" for f in differing)
+        + "). Their deltas compare the measures as well as the runs.",
+        "",
+    ]
 
 
 def _render_comparison_report(
@@ -552,6 +657,7 @@ def _render_comparison_report(
 
     lines = ["## ScienceBeam Parser Evaluation", ""]
     lines += _coverage_lines(labeled_run_records or [])
+    lines += _differently_scored_note(labeled_summaries, field_names)
 
     if len(corpora) > 1:
         lines.extend(_render_overall_section(

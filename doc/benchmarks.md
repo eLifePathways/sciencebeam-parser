@@ -81,6 +81,64 @@ without scoring it again, which also works where its gold is no longer cached.
 It summarises the score files as they stand, including any left by an earlier
 scoring of the same directory.
 
+## Where a document carries the abstract in more than one language
+
+A JATS document may hold its abstract in several languages, as repeated
+`<abstract>` elements or as `<abstract>` plus `<trans-abstract>`. Two fields read
+that, and both are scored:
+
+| field | gold | prediction |
+| --- | --- | --- |
+| `abstract` | the article's own abstract, always one value | the abstract it filed as the article's own |
+| `abstract_anywhere` | the article's own abstract, always one value | any abstract it carries |
+| `abstract_any_language` | every language the document carries it in, the article's own first | any abstract it carries |
+| `abstract_all_languages` | the same | every abstract it carries, paired with the gold |
+
+`abstract` is the headline and is literal: the article's own abstract on both
+sides. `abstract_anywhere` credits a tool that finds the article's own abstract
+but files it as the translation, which a prediction can only do once it carries
+more than one abstract — until then the two rows are the same number, and after
+that the gap between them is how often a tool filed it under the wrong element.
+
+The article's own abstract is the first `<abstract>` in document order. A
+`<trans-abstract>` is a translation whatever it declares; a later `<abstract>` is
+one only if it carries the same `abstract-type` and declares a different
+`@xml:lang`. Anything else — a second abstract in the same language, a
+`plain-language-summary` — is not another language and is left out of both fields.
+
+`abstract_any_language` credits any language, so the gap between it and the rows
+above is what not requiring the article's own is worth.
+
+`abstract_all_languages` asks the opposite question — did the prediction reproduce
+every language the document carries — and is the only abstract row that charges
+for an abstract the gold has none of. A format that can hold one abstract cannot
+score well on it, which is why it reads low on the multilingual corpora today. Its
+denominator counts values rather than documents, so a paper carrying four
+languages weighs four times one carrying a single abstract, and its figure is not
+comparable with the rows above it. Below each corpus table, and in the
+comparison report, a block counts how often the credited one was a translation,
+per corpus: a run that reads the translation of every multilingual paper scores
+like one that reads the article's own, and that block is where it shows.
+
+`abstract_legacy` is the measure these replaced: every `<abstract>` element
+joined into one string, with `<trans-abstract>` unread. It is scored so that a
+figure published before the change can be reproduced by a current run — re-score
+the stored predictions and read that row — rather than only restated. A
+comparison whose runs scored a field differently says so above its tables.
+
+A second block counts predictions that returned several languages as one value,
+which a per-language score can only half match and which reads as a poor
+extraction rather than as the unsegmented one it is.
+
+**On `scielo_mx` the article's own abstract is a reading of document order, not
+of anything the document declares.** Its 59 multilingual documents repeat
+`<abstract>` — so no tag says which is the translation — and none declares an
+article language, so the first one printed is taken as the article's own: Spanish
+on 50 of them and English on 9. `scielo_br` and `scielo_preprints-jats` are not
+affected, since `<trans-abstract>` names the translation outright, and `ore`
+declares an article language. Read that corpus's translation count as a signal
+rather than a verdict.
+
 ## Running it
 
 ```sh
