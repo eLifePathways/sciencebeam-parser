@@ -396,3 +396,35 @@ class TestFurnitureInsideReferences:
         )
         labels = _derive_labels(doc, annotated)
         assert labels.get(id(second_page_lines[0])) == SEG_HEADNOTE
+
+
+class TestFrontMatterBoundary:
+    """The reference list bounds the front matter; a line index stands in for it."""
+
+    def _make_doc(self, front_after_references: bool):
+        title = _make_line('A', 'title', 'of', 'the', 'paper')
+        filler = [_make_line('body', f'line{index}') for index in range(100)]
+        grant = _make_line('Grant', 'information:', 'funded', 'by', 'a', 'grant')
+        reference = _make_line('Smith,', 'J.', '(2020).', 'A', 'reference')
+        lines = (
+            [title] + filler + [reference, grant] if front_after_references
+            else [title] + filler + [grant, reference]
+        )
+        doc = _make_doc_with_page(LayoutBlock(lines=lines))
+        index_of = {id(line): i for i, line in enumerate(lines)}
+        annotated = _annotate(doc, {
+            index_of[id(title)]: JatsFieldNames.TITLE,
+            index_of[id(grant)]: JatsFieldNames.FUNDING,
+            index_of[id(reference)]: JatsFieldNames.REFERENCE,
+        })
+        return doc, annotated, grant
+
+    def test_front_matter_past_the_index_is_kept_before_the_references(self):
+        doc, annotated, grant = self._make_doc(front_after_references=False)
+        labels = _derive_labels(doc, annotated, front_max_start_line_index=80)
+        assert labels[id(grant)] == SEG_FRONT
+
+    def test_a_front_match_after_the_references_is_dropped(self):
+        doc, annotated, grant = self._make_doc(front_after_references=True)
+        labels = _derive_labels(doc, annotated, front_max_start_line_index=80)
+        assert labels[id(grant)] != SEG_FRONT

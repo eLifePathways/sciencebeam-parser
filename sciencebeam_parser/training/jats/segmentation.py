@@ -357,19 +357,22 @@ def _grow_run_over_matching_type(
     the body it sits under, so the run grows over an unlabelled neighbour on the
     same page in the same size of type.
     """
-    sizes = [size for size in (_get_line_font_size(seg_lines[i]) for i in run) if size]
-    if not sizes:
-        return
-    run_size = Counter(sizes).most_common(1)[0][0]
-    page_number = _get_page_number(seg_lines[run[0]])
     for step, edge in ((-1, run[0]), (1, run[-1])):
+        # Both taken from the edge rather than from the run: a region spans the
+        # pages its block is set over, and the type it is set in changes within
+        # it -- a title, an abstract and a licence are one front matter and
+        # three sizes.  What carries across the edge is the line beside it.
+        page_number = _get_page_number(seg_lines[edge])
+        edge_size = _get_line_font_size(seg_lines[edge])
+        if edge_size is None:
+            continue
         position = edge + step
         while 0 <= position < len(seg_lines):
             seg_line = seg_lines[position]
             if (
                 seg_line.seg_label is not None
                 or _get_page_number(seg_line) != page_number
-                or _get_line_font_size(seg_line) != run_size
+                or _get_line_font_size(seg_line) != edge_size
             ):
                 break
             seg_line.seg_label = label
@@ -470,18 +473,38 @@ def _clear_front_beyond_threshold(
     seg_lines: List[_SegLine],
     max_block_start_line_index: int,
 ) -> None:
-    if not max_block_start_line_index:
+    """Drop a block of front matter that starts too late to be front matter.
+
+    The reference list is the boundary: nothing printed after it is the paper's
+    own front matter, so a front block starting there is a field that matched
+    somewhere else -- a reviewer's licence sentence carrying the article's
+    copyright, say.  A line index stands in for the boundary where a document
+    has no reference region to measure against.
+
+    The index alone was cutting the front matter short.  A paper whose first
+    page continues onto a second -- keywords, corresponding author, competing
+    interests, grant information -- puts them past any index that a one-page
+    front matter would suggest.
+    """
+    first_reference = next(
+        (index for index, sl in enumerate(seg_lines) if sl.seg_label == SEG_REFERENCES),
+        None,
+    )
+    if first_reference is None and not max_block_start_line_index:
         return
     block_label: Optional[str] = None
     block_start_idx = 0
-    for sl in seg_lines:
+    for index, sl in enumerate(seg_lines):
         if sl.seg_label != block_label:
             block_label = sl.seg_label
-            block_start_idx = sl.line_index
-        if (
-            block_label == SEG_FRONT
-            and block_start_idx > max_block_start_line_index
-        ):
+            block_start_idx = index
+        if block_label != SEG_FRONT:
+            continue
+        beyond = (
+            block_start_idx >= first_reference if first_reference is not None
+            else block_start_idx > max_block_start_line_index
+        )
+        if beyond:
             sl.seg_label = None
 
 
@@ -579,6 +602,13 @@ class SegmentationLabelDeriver:
             _extend_region_to_page_start(seg_lines, tail_label, annotated)
 
         _reclassify_page_foot_notes(seg_lines, page_meta_by_number, self.config)
+
+        # The front matter ends in lines the renderer composes -- how to cite,
+        # first published -- which no JATS field carries, so they sit at the end
+        # of the run with the region on one side only and the gap merge cannot
+        # reach them.  They are set in the same type as the block above them.
+        for front_run in list(_iter_label_runs(seg_lines, SEG_FRONT)):
+            _grow_run_over_matching_type(seg_lines, front_run, SEG_FRONT)
 
         # After the merge, not before: a line the merge uses as the anchor of a
         # region may itself be a running header, and taking it back first leaves
