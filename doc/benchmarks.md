@@ -121,6 +121,42 @@ neither is ignored by all of them.
 The report names what the set was measured on, and warns when the runs behind
 one column, or the columns being compared, differ in hardware or concurrency,
 since a timing delta is then partly a property of the measurement.
+## A comparison of your own
+
+`benchmarks.report` compares any summaries that already exist, so narrowing one
+needs no re-scoring and no re-running:
+
+```sh
+python -m benchmarks.report \
+  --summary "grobid=benchmarks/runs/<run>/summary.json" \
+  --summary "head=benchmarks/runs/<run>/validation/summary.json" \
+  --field acknowledgement --field reference_title \
+  --method levenshtein \
+  --corpus biorxiv --corpus pkp \
+  --out comparison.md
+```
+
+`--field`, `--method` and `--corpus` are repeatable and render in the order
+given. They select what is displayed and never what is computed, so a narrowed
+view shows the same numbers as the full one. Each is checked against every
+summary rather than only the primary, so a field only a baseline scored can be
+asked for; a name no summary scored is an error that says so.
+
+`--chart <field>` additionally draws a grouped bar chart per method and scope,
+with the variants as its series and the corpora along the axis, and writes it to
+`charts/` beside the report. The chart reads the same cells the table does, and a
+variant that scored nothing for a corpus leaves a gap there rather than a bar at
+zero. It needs `--out`, and a single corpus draws nothing.
+
+The report links the images by relative path, which renders in an editor preview
+and in the repository's own view of the file. `--chart-base-url` links them
+somewhere public instead, for a surface that cannot render a local file — the
+files still have to be published there — and `--chart-prefix` keeps runs
+published together from overwriting each other.
+
+The workflow draws no charts unless asked. A `charts:<field>` label on the PR, or
+the `chart_fields` input on a manual run, turns them on; they are uploaded to the
+`benchmark-charts` pre-release and linked from the comment.
 
 ## Where the gold does not record a field
 

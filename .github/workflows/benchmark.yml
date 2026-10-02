@@ -19,6 +19,11 @@ on:
         required: false
         default: false
         type: boolean
+      chart_fields:
+        description: 'Fields to chart, space separated (empty = no charts, which is the default report)'
+        required: false
+        default: ''
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -82,6 +87,13 @@ jobs:
            contains(github.event.pull_request.labels.*.name, 'benchmark:plos') ||
            inputs.include_plos) && '--include-corpus plos-manuscripts' || ''
         }}
+      # Charts are opt-in: without a `charts:<field>` label or a dispatch input this
+      # is empty, no images are drawn, and the report is the one CI has always posted.
+      BENCHMARK_CHART_FIELDS: >-
+        ${{ inputs.chart_fields || '' }}
+      # The release the publish job uploads to. The URL is knowable before the upload
+      # happens, so the report can link it while it is still being rendered.
+      BENCHMARK_CHART_RELEASE: benchmark-charts
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/validation
 
     steps:
@@ -137,6 +149,24 @@ jobs:
           fi
           echo "::notice::Benchmark profile: $PROFILE (from $PROFILE_SOURCE)"
           echo "BENCHMARK_PROFILE=$PROFILE" >> "$GITHUB_ENV"
+
+      - name: Resolve charted fields
+        env:
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          LABEL_FIELDS=$(echo "$PR_LABELS_JSON" \
+            | jq -r '.[]? | select(startswith("charts:")) | sub("^charts:"; "")' | tr '\n' ' ')
+          FIELDS="${LABEL_FIELDS:-${BENCHMARK_CHART_FIELDS}}"
+          for field in $FIELDS; do
+            if ! [[ "$field" =~ ^[A-Za-z0-9_]+$ ]]; then
+              echo "::error::Invalid chart field '$field' - only letters, digits and underscores"
+              exit 1
+            fi
+          done
+          echo "BENCHMARK_CHART_FIELDS=${FIELDS}" >> "$GITHUB_ENV"
+          if [ -n "$FIELDS" ]; then
+            echo "::notice::Charting: $FIELDS"
+          fi
 
       - name: Set image tag
         id: image_tag
@@ -250,6 +280,20 @@ jobs:
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             PUSH_CURRENT_ARG=(--push-current)
           fi
+          # A PR comment cannot render a local file, so the images are linked at the
+          # release the publish job uploads them to. That job runs after this one, so
+          # the links are briefly 404 and then resolve.
+          CHART_ARGS=()
+          for field in ${BENCHMARK_CHART_FIELDS}; do
+            CHART_ARGS+=(--chart "$field")
+          done
+          if [ ${#CHART_ARGS[@]} -gt 0 ]; then
+            CHART_ARGS+=(
+              --chart-prefix "${GITHUB_SHA}-"
+              --chart-base-url \
+                "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.BENCHMARK_CHART_RELEASE }}"
+            )
+          fi
           uv run python -m benchmarks.run \
             --config benchmarks/eval.yml \
             --mode ${{ env.BENCHMARK_MODE }} \
@@ -262,6 +306,7 @@ jobs:
             --profile "${{ env.BENCHMARK_PROFILE }}" \
             --retry-passes ${{ env.BENCHMARK_RETRY_PASSES }} \
             ${{ env.BENCHMARK_CORPORA }} \
+            "${CHART_ARGS[@]}" \
             "${PUSH_CURRENT_ARG[@]}"
 
       # The client only sees {"detail":"Internal Server Error"}, so without this a
@@ -350,4 +395,57 @@ jobs:
             ${{ env.BENCHMARK_RUN }}/*.md
             ${{ env.BENCHMARK_RUN }}/*.json
             ${{ env.BENCHMARK_RUN }}/*.jsonl
+            ${{ env.BENCHMARK_RUN }}/charts/*.png
           retention-days: 30
+
+      - name: Upload charts for publishing
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-charts-${{ github.sha }}
+          path: ${{ env.BENCHMARK_RUN }}/charts/*.png
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # Separate from the benchmark job because this is the only thing here that needs
+  # `contents: write`, and that job runs the code under review. The report links these
+  # images before they exist, at a URL fixed by the release name and the run's sha, so
+  # the links resolve once this finishes rather than needing to be written back.
+  publish-charts:
+    needs: benchmark
+    if: always() && needs.benchmark.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download charts
+        id: download
+        uses: actions/download-artifact@v6
+        with:
+          name: benchmark-charts-${{ github.sha }}
+          path: charts
+        continue-on-error: true
+
+      - name: Publish charts to the release
+        if: steps.download.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: benchmark-charts
+        run: |
+          shopt -s nullglob
+          files=(charts/*.png)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No charts to publish"
+            exit 0
+          fi
+          # A single long-lived pre-release holds every run's images. The filenames carry
+          # the run's sha, so a later run adds to it rather than replacing what an older
+          # PR comment still points at.
+          if ! gh release view "$RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$RELEASE" --repo "${{ github.repository }}" \
+              --prerelease --title "Benchmark charts" \
+              --notes "Images linked from benchmark reports. Written by the benchmark workflow."
+          fi
+          gh release upload "$RELEASE" --repo "${{ github.repository }}" --clobber "${files[@]}"
+          echo "Published ${#files[@]} charts to $RELEASE"

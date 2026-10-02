@@ -39,6 +39,7 @@ telemetry = [
 benchmark = [
     "httpx>=0.28",
     "huggingface-hub>=0.30",
+    "matplotlib>=3.9",
     "numpy>=1.26",
     "pyarrow>=18",
     "sciencebeam-judge>=0.0.26",

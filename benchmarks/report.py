@@ -3,9 +3,20 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from benchmarks.report_charts import ChartSpec, chart_markdown, render_charts
+from benchmarks.report_grid import (
+    GridRow,
+    Selection,
+    SelectionError,
+    build_grid,
+    resolve_corpora,
+    resolve_fields,
+    resolve_measures,
+)
 from benchmarks.gold_presence import (
     GOLD_PRESENCE_KEY,
     GOLD_PRESENT_AGGREGATED_KEY,
@@ -380,15 +391,9 @@ def _render_cost_section(
     ]
 
 
-def _score_cells(
-    labeled_summaries: List[Tuple[str, dict]],
-    field: str,
-    method: str,
-    get_f1_fn: Callable[[dict, str, str], Optional[float]],
-) -> List[str]:
-    others = labeled_summaries[:-1]
-    primary_f1 = get_f1_fn(labeled_summaries[-1][1], field, method)
-    other_f1s = [get_f1_fn(s, field, method) for _, s in others]
+def _score_cells(values: Sequence[Optional[float]]) -> List[str]:
+    primary_f1 = values[-1]
+    other_f1s = list(values[:-1])
     deltas = [
         _fmt_delta(primary_f1 - f1 if primary_f1 is not None and f1 is not None else None)
         for f1 in other_f1s
@@ -396,17 +401,12 @@ def _score_cells(
     return [_fmt_f1(f1) for f1 in other_f1s] + [_fmt_f1(primary_f1)] + deltas
 
 
-def _render_field_table(  # pylint: disable=too-many-locals,too-many-arguments
-    # pylint: disable=too-many-positional-arguments
+def _render_field_table(
     labeled_summaries: List[Tuple[str, dict]],
-    field_names: List[str],
-    field_measures: dict,
+    rows: Sequence[GridRow],
     field_scoring_types: dict,
-    get_f1_fn: Callable[[dict, str, str], Optional[float]],
-    get_gold_f1_fn: Optional[Callable[[dict, str, str], Optional[float]]] = None,
-    scope_fn: Optional[Callable[[str], Tuple[int, Optional[int]]]] = None,
 ) -> List[str]:
-    """Render comparison table. get_f1_fn(summary, field, method) -> Optional[float].
+    """Render the comparison table from cells that were already computed.
 
     A field some document's gold records nothing for gets a second row, over the documents
     that can answer the extraction question. `Docs` says which documents each row covers,
@@ -422,20 +422,13 @@ def _render_field_table(  # pylint: disable=too-many-locals,too-many-arguments
         "|" + "|".join(["---"] * n_cols) + "|",
     ]
 
-    for field in field_names:
-        field_type = field_scoring_types.get(field, "string")
-        n_docs, n_gold = scope_fn(field) if scope_fn else (0, None)
-        split = n_gold is not None and get_gold_f1_fn is not None
-        for method in field_measures.get(field, []):
-            label = f"| {field} ({method}) | {field_type} |"
-            cells = _score_cells(labeled_summaries, field, method, get_f1_fn)
-            lines.append(
-                f"{label} {f'all {n_docs}' if split else n_docs} | " + " | ".join(cells) + " |"
-            )
-            if not split or get_gold_f1_fn is None:
-                continue
-            gold_cells = _score_cells(labeled_summaries, field, method, get_gold_f1_fn)
-            lines.append(f"{label} gold {n_gold} | " + " | ".join(gold_cells) + " |")
+    for row in rows:
+        field_type = field_scoring_types.get(row.field, "string")
+        cells = _score_cells(row.values)
+        lines.append(
+            f"| {row.field} ({row.method}) | {field_type} | {row.docs_label} | "
+            + " | ".join(cells) + " |"
+        )
 
     return lines
 
@@ -663,11 +656,25 @@ def _common_corpora(
     ]
 
 
-def _render_corpus_section(
+def _corpus_grid(
     corpus: str,
     labeled_summaries: List[Tuple[str, dict]],
     field_names: List[str],
     field_measures: dict,
+) -> List[GridRow]:
+    return build_grid(
+        labeled_summaries, field_names, field_measures,
+        _corpus_f1_getter(corpus),
+        lambda s, f, m: _get_f1(s, corpus, f, m, GOLD_PRESENT_AGGREGATED_KEY),
+        _scope_getter(labeled_summaries, [corpus]),
+    )
+
+
+def _render_corpus_section(
+    corpus: str,
+    labeled_summaries: List[Tuple[str, dict]],
+    field_names: List[str],
+    rows: Sequence[GridRow],
     field_scoring_types: dict,
 ) -> List[str]:
     counts_by_label = [
@@ -677,12 +684,7 @@ def _render_corpus_section(
     counts = " | ".join(f"**{label}**: {n} docs" for label, n in counts_by_label)
     lines = [counts, ""] + _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, [corpus], field_names)
-    lines.extend(_render_field_table(
-        labeled_summaries, field_names, field_measures, field_scoring_types,
-        _corpus_f1_getter(corpus),
-        lambda s, f, m: _get_f1(s, corpus, f, m, GOLD_PRESENT_AGGREGATED_KEY),
-        _scope_getter(labeled_summaries, [corpus]),
-    ))
+    lines.extend(_render_field_table(labeled_summaries, rows, field_scoring_types))
     produced = _render_produced_section(labeled_summaries, field_names, [corpus])
     if produced:
         lines += ["", *produced[:-1]]
@@ -698,19 +700,29 @@ def _render_corpus_section(
     return lines
 
 
-def _render_overall_section(  # pylint: disable=too-many-locals
+def _overall_grid(
     labeled_summaries: List[Tuple[str, dict]],
     field_names: List[str],
     field_measures: dict,
+    common: List[str],
+) -> List[GridRow]:
+    return build_grid(
+        labeled_summaries, field_names, field_measures,
+        lambda s, f, m: _get_overall_f1(s, f, m, common),
+        lambda s, f, m: _get_overall_gold_f1(s, f, m, common),
+        _scope_getter(labeled_summaries, common),
+    )
+
+
+def _render_overall_section(  # pylint: disable=too-many-locals
+    labeled_summaries: List[Tuple[str, dict]],
+    field_names: List[str],
+    rows: Sequence[GridRow],
     field_scoring_types: dict,
     corpora: List[str],
+    common: List[str],
 ) -> List[str]:
     _, primary_summary = labeled_summaries[-1]
-    # Only the corpora every run scored. An aggregate over a corpus one run lacks
-    # would differ between columns for composition reasons, which is exactly what
-    # an overall row is read as ruling out. The per-corpus sections below still
-    # show everything, flagged where the columns are unequal.
-    common = _common_corpora(labeled_summaries, corpora)
     omitted = [corpus for corpus in corpora if corpus not in common]
     n_total = sum(
         primary_summary.get("corpora", {}).get(c, {}).get("n", 0) for c in common
@@ -734,12 +746,7 @@ def _render_overall_section(  # pylint: disable=too-many-locals
         ]
     lines += _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, common, field_names)
-    lines.extend(_render_field_table(
-        labeled_summaries, field_names, field_measures, field_scoring_types,
-        lambda s, f, m: _get_overall_f1(s, f, m, common),
-        lambda s, f, m: _get_overall_gold_f1(s, f, m, common),
-        _scope_getter(labeled_summaries, common),
-    ))
+    lines.extend(_render_field_table(labeled_summaries, rows, field_scoring_types))
     produced = _render_produced_section(labeled_summaries, field_names, common)
     if produced:
         lines += ["", *produced[:-1]]
@@ -788,18 +795,81 @@ def _differently_scored_note(
     ]
 
 
-def _render_comparison_report(
+@dataclass(frozen=True)
+class ChartOutput:
+    """Where a chart's image is written, and what the report should link it as."""
+    out_dir: Optional[Path] = None
+    rel_dir: str = "charts"
+    prefix: str = ""
+    base_url: str = ""
+
+
+def _chart_specs(
+    chart_fields: Sequence[str],
+    labels: Sequence[str],
+    corpus_grids: Dict[str, List[GridRow]],
+    overall_rows: Sequence[GridRow],
+    common: Sequence[str],
+) -> List[ChartSpec]:
+    """One chart per field, method and scope, with the variants as its series.
+
+    The values are the per-corpus tables' own cells, so a chart cannot state anything
+    its corpus section does not. A row a corpus has no cells for contributes nothing
+    rather than a zero.
+    """
+    specs: List[ChartSpec] = []
+    for field in chart_fields:
+        for row in overall_rows:
+            if row.field != field:
+                continue
+            per_corpus = [
+                next(
+                    (
+                        found for found in corpus_grids.get(corpus, [])
+                        if (found.field, found.method, found.scope)
+                        == (field, row.method, row.scope)
+                    ),
+                    None,
+                )
+                for corpus in common
+            ]
+            specs.append(ChartSpec(
+                field=field, method=row.method, scope=row.scope, n_docs=row.n_docs,
+                corpora=tuple(common), series=tuple(labels),
+                values=tuple(
+                    tuple(
+                        found.values[index] if found else None for found in per_corpus
+                    )
+                    for index in range(len(labels))
+                ),
+            ))
+    return specs
+
+
+def _render_comparison_report(  # pylint: disable=too-many-locals
     labeled_summaries: List[Tuple[str, dict]],
     labeled_run_records: Optional[List[Tuple[str, Optional[dict]]]] = None,
+    selection: Selection = Selection(),
+    charts: ChartOutput = ChartOutput(),
 ) -> str:
     if not labeled_summaries:
         return ""
 
     _, primary_summary = labeled_summaries[-1]
-    field_names: List[str] = primary_summary.get("fields", [])
-    field_measures: dict = primary_summary.get("field_measures", {})
+    field_names = resolve_fields(labeled_summaries, selection)
+    field_measures = resolve_measures(labeled_summaries, field_names, selection)
     field_scoring_types: dict = primary_summary.get("field_scoring_types", {})
-    corpora = list(primary_summary.get("corpora", {}).keys())
+    corpora = resolve_corpora(labeled_summaries, selection)
+    # Only the corpora every run scored. An aggregate over a corpus one run lacks
+    # would differ between columns for composition reasons, which is exactly what
+    # an overall row is read as ruling out. The per-corpus sections below still
+    # show everything, flagged where the columns are unequal.
+    common = _common_corpora(labeled_summaries, corpora)
+    corpus_grids = {
+        corpus: _corpus_grid(corpus, labeled_summaries, field_names, field_measures)
+        for corpus in corpora
+    }
+    overall_rows = _overall_grid(labeled_summaries, field_names, field_measures, common)
 
     lines = ["## ScienceBeam Parser Evaluation", ""]
     lines += _coverage_lines(labeled_run_records or [])
@@ -807,9 +877,21 @@ def _render_comparison_report(
 
     if len(corpora) > 1:
         lines.extend(_render_overall_section(
-            labeled_summaries, field_names, field_measures, field_scoring_types, corpora,
+            labeled_summaries, field_names, overall_rows, field_scoring_types,
+            corpora, common,
         ))
         lines.append("")
+
+    # A single corpus puts one group of bars on the axis, which says nothing the table
+    # does not.
+    if selection.charts and len(common) > 1:
+        specs = _chart_specs(
+            selection.charts, [label for label, _ in labeled_summaries],
+            corpus_grids, overall_rows, common,
+        )
+        if charts.out_dir is not None:
+            render_charts(specs, charts.out_dir, charts.prefix)
+        lines += chart_markdown(specs, charts.rel_dir, charts.prefix, charts.base_url)
 
     usage_lines = _render_usage_section(
         labeled_summaries, corpora,
@@ -838,7 +920,8 @@ def _render_comparison_report(
     for corpus in corpora:
         n_primary = primary_summary.get("corpora", {}).get(corpus, {}).get("n", 0)
         corpus_lines = _render_corpus_section(
-            corpus, labeled_summaries, field_names, field_measures, field_scoring_types,
+            corpus, labeled_summaries, field_names, corpus_grids[corpus],
+            field_scoring_types,
         )
         lines += [
             "<details>",
@@ -863,6 +946,9 @@ def _parse_labeled_summary(spec: str) -> Tuple[str, Path]:
 def run_compare(
     labeled_summary_paths: List[Tuple[str, Path]],
     out_path: Optional[Path],
+    selection: Selection = Selection(),
+    chart_prefix: str = "",
+    chart_base_url: str = "",
 ) -> None:
     labeled_summaries = [
         (label, json.loads(path.read_text()))
@@ -878,7 +964,14 @@ def run_compare(
         )
         for label, path in labeled_summary_paths
     ]
-    report = _render_comparison_report(labeled_summaries, labeled_run_records)
+    charts = ChartOutput(
+        out_dir=out_path.parent / "charts" if out_path and selection.charts else None,
+        prefix=chart_prefix,
+        base_url=chart_base_url,
+    )
+    report = _render_comparison_report(
+        labeled_summaries, labeled_run_records, selection, charts
+    )
     if out_path:
         out_path.write_text(report)
         LOGGER.info("Comparison report written to %s", out_path)
@@ -901,15 +994,65 @@ def main(argv: Optional[List[str]] = None) -> None:
         ),
     )
     parser.add_argument("--out", default=None, help="Output path (default: stdout only)")
+    parser.add_argument(
+        "--field", action="append", default=None, dest="fields", metavar="FIELD",
+        help=(
+            "Show only this field, repeatable, in the order given. Checked against every"
+            " summary, so a field only a baseline scored can be asked for"
+        ),
+    )
+    parser.add_argument(
+        "--method", action="append", default=None, dest="methods", metavar="METHOD",
+        help="Show only this scoring method, repeatable (e.g. levenshtein)",
+    )
+    parser.add_argument(
+        "--corpus", action="append", default=None, dest="corpora", metavar="CORPUS",
+        help="Show only this corpus, repeatable, in the order given",
+    )
+    parser.add_argument(
+        "--chart", action="append", default=None, dest="charts", metavar="FIELD",
+        help=(
+            "Also chart this field, repeatable: one image per method and scope, with the"
+            " variants as series and the corpora along the axis. Needs --out"
+        ),
+    )
+    parser.add_argument(
+        "--chart-prefix", default="",
+        help=(
+            "Prefix for chart filenames, so charts from different runs do not overwrite"
+            " each other where they are published together"
+        ),
+    )
+    parser.add_argument(
+        "--chart-base-url", default="",
+        help=(
+            "Link charts under this URL instead of by relative path, for a surface that"
+            " cannot render a local file. The files still have to be published there"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if len(args.summaries) < 2:
         parser.error("At least two --summary entries are required for a comparison.")
+    if args.charts and not args.out:
+        parser.error("--chart needs --out, since the images are written beside the report.")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     labeled_paths = [_parse_labeled_summary(s) for s in args.summaries]
-    run_compare(labeled_paths, Path(args.out) if args.out else None)
+    selection = Selection(
+        fields=tuple(args.fields) if args.fields else None,
+        methods=tuple(args.methods) if args.methods else None,
+        corpora=tuple(args.corpora) if args.corpora else None,
+        charts=tuple(args.charts or ()),
+    )
+    try:
+        run_compare(
+            labeled_paths, Path(args.out) if args.out else None,
+            selection, args.chart_prefix, args.chart_base_url,
+        )
+    except SelectionError as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":

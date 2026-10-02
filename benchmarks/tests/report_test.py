@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 import pytest
 
 from benchmarks.report import (
+    ChartOutput,
     _common_corpora,
     _get_f1,
     _get_overall_f1,
@@ -12,6 +13,7 @@ from benchmarks.report import (
     _render_comparison_report,
     _unequal_docs_note,
 )
+from benchmarks.report_grid import Selection, SelectionError
 
 
 def _agg(scoring_type: str, method: str, by_field: dict) -> dict:
@@ -897,3 +899,129 @@ class TestComputeCostSection:
     def test_should_not_warn_where_the_measurement_matched(self):
         report = self._report(("GROBID", _cost()), ("SB", _cost()))
         assert "Measured differently" not in report
+def _two_field_summary(bump: float = 0.0, corpora=("biorxiv", "ore")) -> dict:
+    """Two fields over two corpora, with `title` carrying two methods."""
+    return _summary(
+        fields=["title", "abstract"],
+        field_measures={"title": ["exact", "levenshtein"], "abstract": ["levenshtein"]},
+        field_scoring_types={"title": "string", "abstract": "string"},
+        corpora={
+            name: {
+                "n": 10,
+                "aggregated": [
+                    _agg("string", "exact", {"title": 0.4 + bump}),
+                    _agg("string", "levenshtein", {"title": 0.5 + bump, "abstract": 0.6 + bump}),
+                ],
+            }
+            for name in corpora
+        },
+    )
+
+
+def _rows(report: str) -> List[str]:
+    return [line for line in report.splitlines() if line.startswith("| title") or
+            line.startswith("| abstract")]
+
+
+class TestFieldSelection:
+    def test_shows_only_the_selected_field(self):
+        report = _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(fields=("abstract",)),
+        )
+        assert all(row.startswith("| abstract") for row in _rows(report))
+
+    def test_keeps_the_order_the_fields_were_asked_for(self):
+        report = _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(fields=("abstract", "title")),
+        )
+        assert _rows(report)[0].startswith("| abstract")
+
+    def test_narrows_to_the_selected_method(self):
+        report = _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(fields=("title",), methods=("exact",)),
+        )
+        assert [row.split("|")[1].strip() for row in _rows(report)] == [
+            "title (exact)", "title (exact)", "title (exact)",
+        ]
+
+    def test_shows_only_the_selected_corpus(self):
+        report = _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(corpora=("ore",)),
+        )
+        assert "<b>ore</b>" in report and "<b>biorxiv</b>" not in report
+
+    def test_renders_the_same_numbers_as_the_full_view(self):
+        labeled = [("base", _two_field_summary()), ("head", _two_field_summary(0.05))]
+        full = _rows(_render_comparison_report(labeled))
+        narrowed = _rows(_render_comparison_report(
+            labeled, selection=Selection(fields=("abstract",))
+        ))
+        assert narrowed == [row for row in full if row.startswith("| abstract")]
+
+    def test_rejects_a_field_no_summary_scored(self):
+        with pytest.raises(SelectionError, match="keywords"):
+            _render_comparison_report(
+                [("base", _two_field_summary()), ("head", _two_field_summary())],
+                selection=Selection(fields=("keywords",)),
+            )
+
+
+class TestCharts:
+    def _charted(self, tmp_path, **kwargs):
+        return _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(fields=("abstract",), charts=("abstract",)),
+            charts=ChartOutput(out_dir=tmp_path, **kwargs),
+        )
+
+    def test_adds_a_chart_section(self, tmp_path):
+        assert "### Charts" in self._charted(tmp_path)
+
+    def test_writes_the_image_beside_the_report(self, tmp_path):
+        self._charted(tmp_path)
+        assert (tmp_path / "abstract-levenshtein-all.png").exists()
+
+    def test_links_the_image_relatively_by_default(self, tmp_path):
+        assert "(charts/abstract-levenshtein-all.png)" in self._charted(tmp_path)
+
+    def test_links_under_a_base_url_where_one_is_given(self, tmp_path):
+        report = self._charted(tmp_path, base_url="https://example.org/r")
+        assert "(https://example.org/r/abstract-levenshtein-all.png)" in report
+
+    def test_keeps_a_runs_charts_apart_from_another_runs(self, tmp_path):
+        report = self._charted(tmp_path, prefix="sha1-")
+        assert "sha1-abstract-levenshtein-all.png" in report
+        assert (tmp_path / "sha1-abstract-levenshtein-all.png").exists()
+
+    def test_draws_nothing_without_a_chart_selection(self, tmp_path):
+        report = _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            charts=ChartOutput(out_dir=tmp_path),
+        )
+        assert "### Charts" not in report
+        assert not list(tmp_path.iterdir())
+
+    def test_draws_nothing_for_a_single_corpus(self, tmp_path):
+        report = _render_comparison_report(
+            [
+                ("base", _two_field_summary(corpora=("ore",))),
+                ("head", _two_field_summary(0.05, corpora=("ore",))),
+            ],
+            selection=Selection(charts=("abstract",)),
+            charts=ChartOutput(out_dir=tmp_path),
+        )
+        assert "### Charts" not in report
+
+    def test_charts_each_method_and_scope_of_the_field(self, tmp_path):
+        _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(charts=("title",)),
+            charts=ChartOutput(out_dir=tmp_path),
+        )
+        assert sorted(path.name for path in tmp_path.iterdir()) == [
+            "title-exact-all.png", "title-levenshtein-all.png",
+        ]

@@ -15,6 +15,7 @@ from benchmarks.predict import DEFAULT_RETRY_PASSES, run_predict
 from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
+from benchmarks.report_grid import Selection
 from benchmarks.score import run_score
 
 LOGGER = logging.getLogger(__name__)
@@ -230,6 +231,9 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     concurrency: int = 0,
     include: Optional[Iterable[str]] = None,
     retry_passes: int = DEFAULT_RETRY_PASSES,
+    chart_fields: Optional[Iterable[str]] = None,
+    chart_prefix: str = "",
+    chart_base_url: str = "",
 ) -> None:
     # pylint: disable=too-many-locals
     corpus_variants = get_corpus_variants(config, split, include)
@@ -281,7 +285,11 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     labeled_paths.append((current_label, primary_run_dir / "summary.json"))
 
     if len(labeled_paths) >= 2:
-        run_compare(labeled_paths, primary_run_dir / "comparison.md")
+        run_compare(
+            labeled_paths, primary_run_dir / "comparison.md",
+            Selection(charts=tuple(chart_fields or ())),
+            chart_prefix, chart_base_url,
+        )
     else:
         LOGGER.info("Only one summary available; skipping comparison report")
 
@@ -350,6 +358,21 @@ def main(argv=None) -> None:
             " asked"
         ),
     )
+    parser.add_argument(
+        "--chart", action="append", default=None, dest="chart_fields", metavar="FIELD",
+        help=(
+            "Also chart this field in the comparison, repeatable. Off by default, so a"
+            " run that does not ask produces the report it produces today"
+        ),
+    )
+    parser.add_argument(
+        "--chart-prefix", default="",
+        help="Prefix for chart filenames, so runs published together stay apart",
+    )
+    parser.add_argument(
+        "--chart-base-url", default="",
+        help="Link charts under this URL rather than by relative path",
+    )
     parser.add_argument("--baseline-only", action="store_true")
     parser.add_argument(
         "--push-current", action="store_true",
@@ -384,6 +407,9 @@ def main(argv=None) -> None:
         concurrency=args.concurrency,
         include=args.include_corpus,
         retry_passes=args.retry_passes,
+        chart_fields=args.chart_fields,
+        chart_prefix=args.chart_prefix,
+        chart_base_url=args.chart_base_url,
     )
 
 
