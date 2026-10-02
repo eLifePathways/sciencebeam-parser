@@ -17,6 +17,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.models.data import LabeledLayoutModelData, LayoutModelData
 from sciencebeam_parser.models.header.training_data import (
     HeaderTeiTrainingDataGenerator,
+    ROOT_TRAINING_XML_ELEMENT_PATH as HEADER_ROOT_ELEMENT_PATH,
     TRAINING_XML_ELEMENT_PATH_BY_LABEL as HEADER_ELEMENT_PATH_BY_LABEL
 )
 from sciencebeam_parser.models.segmentation.training_data import (
@@ -93,7 +94,9 @@ def _get_header_spans(
     training_tei_root, trace = generator.get_training_tei_xml_and_trace([
         _get_header_model_data_list(token_label_line_list)
     ])
-    spans = list(iter_labelled_spans(trace, HEADER_ELEMENT_PATH_BY_LABEL))
+    spans = list(iter_labelled_spans(
+        trace, HEADER_ELEMENT_PATH_BY_LABEL, generator.root_training_xml_element_path
+    ))
     tei_line_texts = list(iter_tei_line_texts(
         training_tei_root, generator.root_training_xml_element_path
     ))
@@ -141,16 +144,25 @@ class TestIterLabelledSpans:
             ('<affiliation>', 'A'), ('<affiliation>', 'B')
         ]
 
-    def test_should_label_a_span_in_the_root_element(self):
-        spans, _ = _get_header_spans([('Note', 'B-<note>', 1)])
-        assert [span.label for span in spans] == ['<note>']
+    def test_should_label_a_span_in_the_root_element_as_the_parser_reads_it(self):
+        """`<note>` and unlabelled text both sit bare under `<front>`, and the
+        training TEI parser reads both as other text."""
+        assert [span.label for span in _get_header_spans([('Note', 'B-<note>', 1)])[0]] == [
+            '<other>'
+        ]
+        assert [span.label for span in _get_header_spans([('Loose', 'O', 1)])[0]] == [
+            '<other>'
+        ]
 
     def test_should_keep_a_span_the_layout_could_not_place(self):
         generator = HeaderTeiTrainingDataGenerator()
         _, trace = generator.get_training_tei_xml_and_trace([[
             _get_model_data('Title', 'B-<title>', line_id=1, x=0, placed=False)
         ]])
-        spans = list(iter_labelled_spans(trace, HEADER_ELEMENT_PATH_BY_LABEL))
+        spans = list(iter_labelled_spans(
+            trace, HEADER_ELEMENT_PATH_BY_LABEL,
+            generator.root_training_xml_element_path
+        ))
         assert [(span.label, span.text, span.coordinates) for span in spans] == [
             ('<title>', 'Title', None)
         ]
@@ -178,7 +190,10 @@ class TestIterLabelledSpans:
             ]
         ]
         _, trace = generator.get_training_tei_xml_and_trace([model_data_list])
-        spans = list(iter_labelled_spans(trace, SEGMENTATION_ELEMENT_PATH_BY_LABEL))
+        spans = list(iter_labelled_spans(
+            trace, SEGMENTATION_ELEMENT_PATH_BY_LABEL,
+            generator.root_training_xml_element_path
+        ))
         assert [(span.line_index, span.label, span.text.strip()) for span in spans] == [
             (0, '<header>', 'Title'), (1, '<body>', 'Body')
         ]
@@ -203,7 +218,10 @@ class TestIterTeiLineTexts:
             _get_header_model_data_list([('First', 'B-<title>', 1)]),
             _get_header_model_data_list([('Second', 'B-<title>', 1)])
         ])
-        spans = list(iter_labelled_spans(trace, HEADER_ELEMENT_PATH_BY_LABEL))
+        spans = list(iter_labelled_spans(
+            trace, HEADER_ELEMENT_PATH_BY_LABEL,
+            generator.root_training_xml_element_path
+        ))
         assert [span.line_index for span in spans] == [0, 1]
         check_spans_against_tei('document1', spans, list(iter_tei_line_texts(
             training_tei_root, generator.root_training_xml_element_path
@@ -233,14 +251,26 @@ class TestCheckSpansAgainstTei:
 
 class TestGetModelLabels:
     def test_should_keep_the_first_label_of_two_sharing_an_element_path(self):
-        labels = get_model_labels(HEADER_ELEMENT_PATH_BY_LABEL)
+        labels = get_model_labels(
+            HEADER_ELEMENT_PATH_BY_LABEL, HEADER_ROOT_ELEMENT_PATH
+        )
         assert '<affiliation>' in labels
         assert '<institution>' not in labels
         assert '<address>' in labels
         assert '<location>' not in labels
 
+    def test_should_not_list_a_label_the_tei_cannot_tell_from_other_text(self):
+        labels = get_model_labels(
+            HEADER_ELEMENT_PATH_BY_LABEL, HEADER_ROOT_ELEMENT_PATH
+        )
+        assert '<note>' not in labels
+        assert '<other>' in labels
+        assert '<submission>' in labels
+
     def test_should_keep_the_order_the_table_declares(self):
-        labels = get_model_labels(HEADER_ELEMENT_PATH_BY_LABEL)
+        labels = get_model_labels(
+            HEADER_ELEMENT_PATH_BY_LABEL, HEADER_ROOT_ELEMENT_PATH
+        )
         assert labels.index('<title>') < labels.index('<author>')
 
 

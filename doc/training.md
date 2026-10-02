@@ -156,9 +156,11 @@ write; every line after it is one span, in the order the `tei` writes them:
   `coords` attributes of the parser's own TEI output use.
 - `pages` carries the pages a span sits on, and `page_count` says how many the
   document has.
-- `labels` lists the labels the model can write, in the order its element table
-  declares them. Two labels sharing an element path cannot be told apart in the
-  `tei`, so only the first is listed and only it appears as a span's label.
+- `labels` lists the labels a span can carry, in the order the model's element
+  table declares them. Two labels sharing an element path cannot be told apart in
+  the `tei`, so only the first is listed and only it appears as a span's label;
+  `header` maps `<note>` to the root element alongside unlabelled text, which the
+  training TEI parser reads back as other text, so both are `<other>` here.
 - a span keeps the whitespace before and after it, so the spans of a line
   concatenate to that line of the `tei` exactly.
 - a span the layout could not place keeps its place in the file, with its label and

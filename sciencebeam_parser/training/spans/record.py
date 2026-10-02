@@ -31,6 +31,7 @@ from sciencebeam_parser.document.layout_document import (
     get_merged_coordinates_list
 )
 from sciencebeam_parser.models.data import LayoutModelData
+from sciencebeam_parser.utils.labels import OTHER_LABELS
 from sciencebeam_parser.utils.xml_writer import TracedElement, TracedItem, TracedText
 
 
@@ -66,27 +67,46 @@ def is_line_break(item: TracedItem) -> bool:
     )
 
 
+OTHER_LABEL = '<other>'
+
+
 def get_label_by_element_path(
-    training_xml_element_path_by_label: Mapping[str, Sequence[str]]
+    training_xml_element_path_by_label: Mapping[str, Sequence[str]],
+    root_training_xml_element_path: Sequence[str]
 ) -> Dict[Tuple[str, ...], str]:
-    """The label of each element path, keeping the first label a path is named by."""
-    label_by_element_path: Dict[Tuple[str, ...], str] = {}
+    """The label of each element path, as the parser reading the TEI back would say it.
+
+    Two labels can share an element path, and then the TEI cannot tell them apart;
+    the first of them stands for both.  Text sitting directly in the root element
+    is the case that matters: `header` maps `<note>` there as well as `<other>`,
+    and the training TEI parser reads all of it as other text, so that is what the
+    record says rather than a label no model is taught.
+    """
+    label_by_element_path: Dict[Tuple[str, ...], str] = {
+        tuple(root_training_xml_element_path): OTHER_LABEL
+    }
     for label, element_path in training_xml_element_path_by_label.items():
+        if label in OTHER_LABELS:
+            label_by_element_path[tuple(element_path)] = OTHER_LABEL
+            continue
         label_by_element_path.setdefault(tuple(element_path), label)
     return label_by_element_path
 
 
 def get_model_labels(
-    training_xml_element_path_by_label: Mapping[str, Sequence[str]]
+    training_xml_element_path_by_label: Mapping[str, Sequence[str]],
+    root_training_xml_element_path: Sequence[str]
 ) -> List[str]:
-    """Every label the model can write, in the order its table declares them.
+    """Every label a span of this model can carry, in the order its table declares them.
 
-    Two labels sharing an element path cannot be told apart in the TEI, so only
-    the first of them can appear in a record and only it is listed.  Position in
-    this list is what a reader picks a colour by, so appending a label upstream
-    leaves the labels before it where they were.
+    A label the TEI cannot tell from another is not one of them, so it is left out
+    rather than given a colour nothing will use.  Position in this list is what a
+    reader picks a colour by, so appending a label upstream leaves the labels
+    before it where they were.
     """
-    return list(get_label_by_element_path(training_xml_element_path_by_label).values())
+    return list(get_label_by_element_path(
+        training_xml_element_path_by_label, root_training_xml_element_path
+    ).values())
 
 
 def iter_model_data_tokens(model_data: LayoutModelData) -> Iterable[LayoutToken]:
@@ -139,7 +159,8 @@ class _PendingSpan:
 
 def iter_labelled_spans(
     trace: Iterable[TracedItem],
-    training_xml_element_path_by_label: Mapping[str, Sequence[str]]
+    training_xml_element_path_by_label: Mapping[str, Sequence[str]],
+    root_training_xml_element_path: Sequence[str]
 ) -> Iterator[LabelledSpan]:
     """Every labelled span of the written TEI, in the order it was written.
 
@@ -151,7 +172,9 @@ def iter_labelled_spans(
     last of them is not one; anything else left there is, and is yielded so that
     the check against the TEI sees it rather than losing it quietly.
     """
-    label_by_element_path = get_label_by_element_path(training_xml_element_path_by_label)
+    label_by_element_path = get_label_by_element_path(
+        training_xml_element_path_by_label, root_training_xml_element_path
+    )
 
     def _get_label(path: Tuple[str, ...]) -> str:
         return label_by_element_path.get(path, '/'.join(path))

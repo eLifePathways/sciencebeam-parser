@@ -602,18 +602,20 @@ class AbstractModelTrainingDataGenerator(ABC):
             element_path_by_label = (
                 tei_training_data_generator.training_xml_element_path_by_label
             )
+            root_element_path = (
+                tei_training_data_generator.root_training_xml_element_path
+            )
             spans = list(iter_labelled_spans(
                 trace=trace,
-                training_xml_element_path_by_label=element_path_by_label
+                training_xml_element_path_by_label=element_path_by_label,
+                root_training_xml_element_path=root_element_path
             ))
             check_spans_against_tei(
                 document_id=document_context.source_name,
                 spans=spans,
                 tei_line_texts=list(iter_tei_line_texts(
                     training_tei_root=training_tei_root,
-                    root_training_xml_element_path=(
-                        tei_training_data_generator.root_training_xml_element_path
-                    )
+                    root_training_xml_element_path=root_element_path
                 ))
             )
             LOGGER.info('writing span record to: %r', spans_file_path)
@@ -624,7 +626,7 @@ class AbstractModelTrainingDataGenerator(ABC):
                     model_name=self.model_name,
                     layout_document=layout_document,
                     spans=spans,
-                    labels=get_model_labels(element_path_by_label)
+                    labels=get_model_labels(element_path_by_label, root_element_path)
                 ),
                 encoding='utf-8'
             )
