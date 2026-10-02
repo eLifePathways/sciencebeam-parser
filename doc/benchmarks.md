@@ -150,7 +150,11 @@ charts:
 make dev-comparison COMPARISON=reference-models
 ```
 
-`make dev-comparisons-list` names the ones that exist. The target resolves the
+`make dev-comparisons-list` names the ones that exist. A comparison compares runs
+that have already been scored, so it fails until they have been — naming each variant
+it could not find and listing the baselines that *are* there. A git worktree has no
+`benchmarks/runs` of its own, since it is gitignored and stays in the checkout that
+produced it, so comparing from one means `BENCHMARK_RUNS=<that checkout>/benchmarks/runs`. The target resolves the
 comparison's variants against `benchmarks/runs` for `BENCHMARK_SPLIT`, writes
 `comparison-<name>.md` into `BENCHMARK_RUN` and prints where the charts went; the
 underlying command is `python -m benchmarks.report --comparison <name>`, which takes

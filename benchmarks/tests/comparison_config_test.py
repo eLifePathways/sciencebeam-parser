@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 from benchmarks.comparison_config import (
+    available_baselines,
     load_comparison,
     parse_comparison,
     resolve_variants,
@@ -163,8 +164,27 @@ class TestResolveVariants:
             resolve_variants(self._config(), tmp_path, "train", tmp_path)
 
     def test_should_say_that_nothing_is_generated(self, tmp_path):
+        (tmp_path / "baselines").mkdir()
         with pytest.raises(SelectionError, match="Nothing is generated"):
             resolve_variants(self._config(), tmp_path, "train", tmp_path)
+
+    def test_should_say_when_there_is_no_runs_directory_at_all(self, tmp_path):
+        with pytest.raises(SelectionError, match="does not get one"):
+            resolve_variants(self._config(), tmp_path / "absent", "train", tmp_path)
+
+    def test_should_list_the_baselines_that_were_scored(self, tmp_path):
+        stored = tmp_path / "baselines/grobid/0.9.0-crf/default/train"
+        stored.mkdir(parents=True)
+        (stored / "summary.json").write_text("{}")
+        with pytest.raises(SelectionError, match="grobid/0.9.0-crf/default/train"):
+            resolve_variants(self._config(), tmp_path, "train", tmp_path)
+
+    def test_should_say_a_current_variant_needs_a_run_under_test(self, tmp_path):
+        stored = tmp_path / "baselines/grobid/0.9.1-crf/default/train"
+        stored.mkdir(parents=True)
+        (stored / "summary.json").write_text("{}")
+        with pytest.raises(SelectionError, match="pass --current-run"):
+            resolve_variants(self._config(), tmp_path, "train", None)
 
     def test_should_take_an_explicit_summary_path(self, tmp_path):
         summary = tmp_path / "given.json"
@@ -200,3 +220,18 @@ class TestShippedComparisons:
         assert paths, "expected at least one worked example"
         for path in paths:
             assert load_comparison(str(path)).variants
+
+
+class TestAvailableBaselines:
+    def test_should_be_empty_without_a_baselines_directory(self, tmp_path):
+        assert not available_baselines(tmp_path)
+
+    def test_should_name_a_scored_baseline_by_its_coordinates(self, tmp_path):
+        stored = tmp_path / "baselines/grobid/0.9.0-crf/default/train"
+        stored.mkdir(parents=True)
+        (stored / "summary.json").write_text("{}")
+        assert available_baselines(tmp_path) == ["grobid/0.9.0-crf/default/train"]
+
+    def test_should_skip_a_baseline_that_was_never_scored(self, tmp_path):
+        (tmp_path / "baselines/grobid/0.9.0-crf/default/train").mkdir(parents=True)
+        assert not available_baselines(tmp_path)

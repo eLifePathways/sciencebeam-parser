@@ -172,6 +172,17 @@ def load_comparison(name_or_path: str, base_dir: Path = COMPARISON_DIR) -> Compa
     return parse_comparison(yaml.safe_load(path.read_text(encoding="utf-8")), name=path.stem)
 
 
+def available_baselines(runs_dir: Path) -> List[str]:
+    """`tool/version/profile/split` for every stored baseline that was scored."""
+    root = runs_dir / "baselines"
+    if not root.is_dir():
+        return []
+    return sorted(
+        str(path.parent.relative_to(root))
+        for path in root.glob("*/*/*/*/summary.json")
+    )
+
+
 def resolve_variants(
     config: ComparisonConfig,
     runs_dir: Path,
@@ -180,23 +191,52 @@ def resolve_variants(
 ) -> List[Tuple[str, Path]]:
     """Each variant's summary, in the order declared, with the primary last.
 
-    A variant that cannot be resolved is an error naming it: this reads what a run
-    produced, and will not start one to fill a gap.
+    A variant that cannot be resolved is an error naming it, and saying what is there
+    instead: this reads what a run produced, and will not start one to fill a gap.
     """
     resolved: List[Tuple[str, Path]] = []
     missing: List[str] = []
     for variant in config.variants:
         path = _variant_summary(variant, runs_dir, split, current_dir)
-        if path is None or not path.exists():
-            missing.append(f"{variant.label} ({path})" if path else variant.label)
+        if path is None:
+            missing.append(
+                f"{variant.label} (declared `current: true`, but no run under test was"
+                " given -- pass --current-run)"
+            )
+            continue
+        if not path.exists():
+            missing.append(f"{variant.label} ({path})")
             continue
         resolved.append((variant.label, path))
     if missing:
         raise SelectionError(
-            "No summary for " + "; ".join(missing)
-            + ". Nothing is generated to satisfy a comparison -- run it first."
+            "No summary for " + "; ".join(missing) + "."
+            + _what_is_there(runs_dir, split)
         )
     return resolved
+
+
+def _what_is_there(runs_dir: Path, split: str) -> str:
+    """Point at what the runs directory does hold, so the error has a next step."""
+    if not runs_dir.is_dir():
+        return (
+            f" There is no {runs_dir} at all -- a git worktree does not get one, since"
+            " it is gitignored and lives in the checkout that produced it. Point --runs"
+            " at that checkout, or run a benchmark here first."
+        )
+    found = available_baselines(runs_dir)
+    if not found:
+        return (
+            f" Nothing under {runs_dir / 'baselines'} has been scored yet."
+            " Nothing is generated to satisfy a comparison -- run a benchmark first."
+        )
+    for_split = [name for name in found if name.endswith(f"/{split}")]
+    listed = "\n  ".join(for_split or found)
+    note = "" if for_split else f" (none for split {split!r})"
+    return (
+        f" Nothing is generated to satisfy a comparison. Scored baselines{note}:"
+        f"\n  {listed}"
+    )
 
 
 def _variant_summary(

@@ -99,6 +99,10 @@ SOURCE_TRAINING_SPLIT ?= train
 # variants, so the only thing it needs from here is where to resolve them.
 COMPARISON ?=
 COMPARISON_OUT ?= $(BENCHMARK_RUN)/comparison-$(COMPARISON).md
+# Where a comparison's named variants are resolved from. A git worktree has no
+# benchmarks/runs of its own -- it is gitignored and stays in the checkout that
+# produced it -- so point this at that checkout when comparing from one.
+BENCHMARK_RUNS ?= benchmarks/runs
 
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
@@ -288,7 +292,7 @@ dev-benchmark-compare:
 dev-comparison: .require-COMPARISON
 	$(PYTHON) -m benchmarks.report \
 		--comparison $(COMPARISON) \
-		--runs benchmarks/runs \
+		--runs $(BENCHMARK_RUNS) \
 		--split $(BENCHMARK_SPLIT) \
 		--current-run $(BENCHMARK_RUN) \
 		--out $(COMPARISON_OUT) \
