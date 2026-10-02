@@ -1,10 +1,13 @@
-from typing import List
+from typing import Callable, List
 
 from sciencebeam_parser.models.data import (
     ContextAwareLayoutTokenFeatures,
     ContextAwareLayoutTokenModelDataGenerator,
     DocumentFeaturesContext,
-    FeatureDef
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM,
+    FeatureDef,
+    validate_feature_flavour
 )
 
 
@@ -12,12 +15,26 @@ class HeaderDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
     def __init__(
         self,
         document_features_context: DocumentFeaturesContext,
-        persist_indentation_reference_across_blocks: bool = False
+        persist_indentation_reference_across_blocks: bool = False,
+        feature_flavour: str = FEATURE_FLAVOUR_SCIENCEBEAM
     ):
+        self.feature_flavour = validate_feature_flavour(feature_flavour)
         super().__init__(
             document_features_context,
             persist_indentation_reference_across_blocks=persist_indentation_reference_across_blocks
         )
+        block_status_fn: Callable[[ContextAwareLayoutTokenFeatures], str]
+        line_status_fn: Callable[[ContextAwareLayoutTokenFeatures], str]
+        if feature_flavour == FEATURE_FLAVOUR_GROBID:
+            block_status_fn = ContextAwareLayoutTokenFeatures.get_grobid_header_block_status
+            line_status_fn = ContextAwareLayoutTokenFeatures.get_grobid_header_line_status
+        else:
+            block_status_fn = (
+                ContextAwareLayoutTokenFeatures.get_block_status_with_blockend_for_single_token
+            )
+            line_status_fn = (
+                ContextAwareLayoutTokenFeatures.get_line_status_with_lineend_for_single_token
+            )
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = [
             FeatureDef('token_text', lambda f: f.token_text),
             FeatureDef('lower_token_text', lambda f: f.get_lower_token_text()),
@@ -29,10 +46,8 @@ class HeaderDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
             FeatureDef('suffix_2', lambda f: f.get_suffix(2)),
             FeatureDef('suffix_3', lambda f: f.get_suffix(3)),
             FeatureDef('suffix_4', lambda f: f.get_suffix(4)),
-            FeatureDef('block_status',
-                       lambda f: f.get_block_status_with_blockend_for_single_token()),
-            FeatureDef('line_status',
-                       lambda f: f.get_line_status_with_lineend_for_single_token()),
+            FeatureDef('block_status', block_status_fn),
+            FeatureDef('line_status', line_status_fn),
             FeatureDef('alignment', lambda f: f.get_alignment_status()),
             FeatureDef('token_font_status', lambda f: f.get_token_font_status()),
             FeatureDef('token_font_size', lambda f: f.get_token_font_size_feature()),

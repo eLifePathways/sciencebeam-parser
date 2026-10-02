@@ -98,6 +98,8 @@ SHOW_RUN_B ?= $(shell python3 -c "import yaml; b=yaml.safe_load(open('benchmarks
 SHOW_PARSER_URL ?=
 
 COMPARE_MODEL ?= segmentation
+# The parser profile to take the model data from, e.g. delft_hub; empty for the default.
+COMPARE_PROFILE ?=
 COMPARE_DOC_ID ?= $(basename $(notdir $(COMPARE_PDF)))
 COMPARE_DOC_DIR = .temp/compare-with-grobid/by-doc/$(COMPARE_DOC_ID)
 
@@ -514,7 +516,7 @@ fetch-parser-model-data: .require-COMPARE_PDF
 		-H 'accept: application/json' \
 		-H 'Content-Type: multipart/form-data' \
 		-F "input=@$(COMPARE_PDF);type=application/pdf" \
-		'$(SCIENCEBEAM_PARSER_URL)/api/models/$(COMPARE_MODEL)?output_format=data' \
+		'$(SCIENCEBEAM_PARSER_URL)/api/models/$(COMPARE_MODEL)?output_format=data$(if $(COMPARE_PROFILE),&profile=$(COMPARE_PROFILE))' \
 		> $(COMPARE_DOC_DIR)/sciencebeam-parser/$(COMPARE_MODEL).data
 	curl --fail --show-error \
 		'$(SCIENCEBEAM_PARSER_URL)/api/models/$(COMPARE_MODEL)/feature-names' \

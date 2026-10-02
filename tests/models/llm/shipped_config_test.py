@@ -22,6 +22,11 @@ LLM_MODELS_BY_PROFILE: Dict[str, List[str]] = {
 
 SHAPE_BY_TASK = {'reference_segmenter': 'lines', 'citation': 'values'}
 
+# The schemes a model path may use in the shipped config, each naming somewhere
+# anyone can fetch from. Anything else is a path on the machine it was written on.
+# `hf://` is the Hugging Face Hub, which the delft engine resolves itself.
+PUBLIC_MODEL_LOCATION_PREFIXES = ('http://', 'https://', 'hf://')
+
 
 def get_shipped_config() -> dict:
     return yaml.safe_load(CONFIG_PATH.read_text(encoding='utf-8'))
@@ -50,7 +55,7 @@ class TestShippedDefaults:
                 model_config['path']
                 for model_config in get_resolved_models(profile_name).values()
                 if isinstance(model_config, dict) and 'path' in model_config
-                and not model_config['path'].startswith(('http://', 'https://'))
+                and not model_config['path'].startswith(PUBLIC_MODEL_LOCATION_PREFIXES)
             )
             for profile_name in sorted(shipped_config['profiles'])
         }
