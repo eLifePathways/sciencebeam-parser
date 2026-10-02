@@ -500,3 +500,38 @@ class TestErrorTiming:
         entry = self._entry(tmp_path, _mock_client_timeout())
         assert entry["status"] == "error"
         assert entry["elapsed_ms"] >= 0
+
+
+class TestRequestedProfile:
+    """A run says which profile served it, and the request is what makes that
+    true: naming one the deployment does not offer is refused rather than served
+    by its default."""
+
+    def _run(self, tmp_path: Path, client: AsyncMock, profile: Optional[str]) -> dict:
+        records = [_make_record(tmp_path)]
+        run_dir = tmp_path / "run"
+        with patch("benchmarks.predict.fetch_data", return_value=records), \
+                patch("benchmarks.predict.resolved_sources", return_value={"biorxiv": {}}), \
+                patch("benchmarks.predict.httpx.AsyncClient", return_value=client):
+            run_predict(
+                config={"fields": ["title"]}, mode="smoke", split="train",
+                data_dir=tmp_path / "data", run_dir=run_dir,
+                parser_url="http://localhost:8080", parser_image=None,
+                profile=profile, concurrency=1, retry_passes=1,
+            )
+        return json.loads((run_dir / "run.json").read_text())
+
+    def test_should_ask_for_the_profile_it_records(self, tmp_path: Path):
+        client = _mock_client()
+        run_record = self._run(tmp_path, client, "llm_segmentation_named")
+        assert client.post.call_args.kwargs["params"] == {
+            "profile": "llm_segmentation_named"
+        }
+        assert run_record["profile"] == "llm_segmentation_named"
+
+    def test_should_leave_the_deployment_its_own_profile_when_none_is_given(
+        self, tmp_path: Path
+    ):
+        client = _mock_client()
+        self._run(tmp_path, client, None)
+        assert client.post.call_args.kwargs["params"] is None
