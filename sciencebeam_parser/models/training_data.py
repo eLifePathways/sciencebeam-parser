@@ -240,6 +240,15 @@ class AbstractTeiTrainingDataGenerator(TeiTrainingDataGenerator):
             )
         return training_xml_path
 
+    def get_parent_training_xml_path_within_root(
+        self,
+        element_path: Sequence[str]
+    ) -> Sequence[str]:
+        parent_path = element_path[:-1]
+        if len(parent_path) < len(self.root_training_xml_element_path):
+            return self.root_training_xml_element_path
+        return parent_path
+
     def get_reset_training_xml_path_for_label(
         self,
         label: Optional[str],
@@ -294,7 +303,9 @@ class AbstractTeiTrainingDataGenerator(TeiTrainingDataGenerator):
                     )
                     xml_writer.require_path(xml_writer.current_path[:-1])
                 elif prefix == 'B' and label not in OTHER_LABELS:
-                    xml_writer.require_path(xml_element_path[:-1])
+                    xml_writer.require_path(
+                        self.get_parent_training_xml_path_within_root(xml_element_path)
+                    )
                 xml_writer.require_path_or_below(xml_element_path)
                 xml_writer.append_text(pending_whitespace)
                 pending_whitespace = ''
