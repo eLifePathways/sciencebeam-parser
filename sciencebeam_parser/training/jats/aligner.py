@@ -33,6 +33,16 @@ _ANCHOR_FIELDS: FrozenSet[str] = frozenset({
 # but follow it in JATS ordering, so without this constraint they would be searched
 # from last_match_end (≈abstract end) and miss their true page-1 position.
 _FRONT_MATTER_END_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.ABSTRACT})
+
+# A data-availability section is one run of consecutive values, so each of them
+# can be searched from where the previous one landed.  The section's own values
+# are what place it; the fallback floor below is the end of the abstract, which
+# on a paper whose front matter continues past it would otherwise let a value
+# naming the article match the "how to cite" line on page one.
+_AVAILABILITY_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AVAILABILITY_SECTION_TITLE,
+    JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
+})
 _FRONT_MATTER_BUFFER = 2000
 
 # When the "Keywords" section header is matched, individual keyword values are searched
@@ -54,6 +64,8 @@ _BODY_CONTENT_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.APPENDIX,
     JatsFieldNames.BACK_SECTION_TITLE,
     JatsFieldNames.BACK_SECTION_PARAGRAPH,
+    JatsFieldNames.AVAILABILITY_SECTION_TITLE,
+    JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
 })
 
 # Reference fields use a dedicated floor so that appendix/body content matched
@@ -1109,6 +1121,7 @@ class LayoutDocumentJatsAligner:
         last_match_end = 0
         body_floor = 0
         body_content_end = 0
+        availability_floor = 0
         front_matter_end = 0
         keywords_floor = 0
         reference_floor = 0
@@ -1185,15 +1198,18 @@ class LayoutDocumentJatsAligner:
             # appendix) matches at a later PDF position than subsequent paragraphs
             # of the parent section.  Fall back to searching from body_floor
             # (end of abstract) so those paragraphs are not permanently blocked.
+            retry_floor = max(body_floor, availability_floor) if (
+                fv.field_name in _AVAILABILITY_FIELDS
+            ) else body_floor
             if (
                 match_range is None
                 and fv.sub_field_name is None
                 and fv.field_name in _BODY_CONTENT_FIELDS
-                and search_start > body_floor
+                and search_start > retry_floor
             ):
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config,
-                    search_start=body_floor, search_end=None,
+                    search_start=retry_floor, search_end=None,
                 )
             # Parent REFERENCE fallback: retry with a relaxed threshold when the
             # full-text parent match just misses 0.8.  JATS may concatenate initials
@@ -1263,6 +1279,8 @@ class LayoutDocumentJatsAligner:
                 keywords_floor = max(keywords_floor, a_end)
             if fv.field_name in _BODY_CONTENT_FIELDS:
                 body_content_end = max(body_content_end, a_end)
+            if fv.field_name in _AVAILABILITY_FIELDS:
+                availability_floor = max(availability_floor, a_start)
             if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
                 reference_floor = max(reference_floor, a_end)
             if fv.sub_field_name is None:

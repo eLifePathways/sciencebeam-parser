@@ -19,6 +19,11 @@ class JatsFieldValue:
     exact_only: bool = False
 
 
+# A data-availability section says so structurally; matching on its title would
+# have to guess at "Data availability", "Software availability" and the rest.
+_AVAILABILITY_SEC = '@sec-type="data-availability"'
+
+
 def _element_text(el: etree._Element) -> str:
     return ' '.join(' '.join(el.itertext()).split())
 
@@ -516,14 +521,32 @@ class JatsFieldExtractor:
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.APPENDIX)))
 
-        for el in root.xpath('back//sec[not(ancestor::ack)]/title'):
+        # A data-availability section is back matter the model has its own label
+        # for, so it is taken out of the generic sweep rather than labelled
+        # `<annex>` with everything else that follows the body.
+        for el in root.xpath(f'back//sec[{_AVAILABILITY_SEC}]//title'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.AVAILABILITY_SECTION_TITLE)))
+
+        for el in root.xpath(f'back//sec[{_AVAILABILITY_SEC}]//p'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH)))
+
+        for el in root.xpath(
+            f'back//sec[not(ancestor::ack)][not(ancestor-or-self::sec[{_AVAILABILITY_SEC}])]/title'
+        ):
             text = _element_text(el)
             if text:
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.BACK_SECTION_TITLE)))
 
         for el in root.xpath(
-            'back//sec[not(ancestor::ack)]/p[not(ancestor::ack)]'
+            f'back//sec[not(ancestor::ack)][not(ancestor-or-self::sec[{_AVAILABILITY_SEC}])]'
+            '/p[not(ancestor::ack)]'
             ' | back//p[not(ancestor::sec) and not(ancestor::ack)]'
         ):
             text = _element_text(el)

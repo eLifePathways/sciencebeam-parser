@@ -429,6 +429,38 @@ class TestCopyright:
         assert 'CC-BY' in cr[0].text
 
 
+class TestAvailability:
+    def test_a_data_availability_section_has_its_own_field(self):
+        fvs = _field_values_for(
+            '<article><back>'
+            '<sec sec-type="data-availability"><title>Data availability</title>'
+            '<p>The original data is available from the archive.</p></sec>'
+            '<sec><title>Author contributions</title><p>AB wrote the paper.</p></sec>'
+            '</back></article>'
+        )
+        by_field = {v.field_name: v.text for v in fvs}
+        assert by_field[JatsFieldNames.AVAILABILITY_SECTION_TITLE] == 'Data availability'
+        assert 'available from the archive' in (
+            by_field[JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH]
+        )
+
+    def test_it_is_not_also_emitted_as_back_matter(self):
+        fvs = _field_values_for(
+            '<article><back>'
+            '<sec sec-type="data-availability"><title>Data availability</title>'
+            '<p>The original data is available from the archive.</p></sec>'
+            '<sec><title>Author contributions</title><p>AB wrote the paper.</p></sec>'
+            '</back></article>'
+        )
+        back = [
+            v.text for v in fvs
+            if v.field_name in (
+                JatsFieldNames.BACK_SECTION_TITLE, JatsFieldNames.BACK_SECTION_PARAGRAPH
+            )
+        ]
+        assert back == ['Author contributions', 'AB wrote the paper.']
+
+
 class TestSubArticle:
     def test_extracts_sub_article_paragraphs(self):
         fvs = _field_values_for(

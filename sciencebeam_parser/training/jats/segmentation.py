@@ -21,6 +21,7 @@ SEG_FRONT = '<header>'
 SEG_BODY = '<body>'
 SEG_REFERENCES = '<references>'
 SEG_ACKNOWLEDGEMENT = '<acknowledgement>'
+SEG_AVAILABILITY = '<availability>'
 SEG_ANNEX = '<annex>'
 SEG_PAGE = '<page>'
 SEG_HEADNOTE = '<headnote>'
@@ -476,7 +477,9 @@ class SegmentationLabelDeriver:
         # per-fragment precision it cannot give.
         _merge_gap_lines(
             seg_lines,
-            enabled_labels={SEG_FRONT, SEG_ANNEX, SEG_REFERENCES, SEG_OTHER},
+            enabled_labels={
+                SEG_FRONT, SEG_ANNEX, SEG_AVAILABILITY, SEG_REFERENCES, SEG_OTHER
+            },
             enabled_tail_labels={SEG_ANNEX, SEG_OTHER},
         )
 
