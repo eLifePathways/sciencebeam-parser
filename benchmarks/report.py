@@ -1029,6 +1029,7 @@ def run_compare(
         labeled_summaries, labeled_run_records, selection, charts
     )
     if out_path:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(report)
         LOGGER.info("Comparison report written to %s", out_path)
     print(report)

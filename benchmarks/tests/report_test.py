@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+
 from typing import List, Optional, Tuple
 
 import pytest
 
 from benchmarks.report import (
     ChartOutput,
+    run_compare,
     _common_corpora,
     _get_f1,
     _get_overall_f1,
@@ -1112,3 +1115,13 @@ class TestExpectedTypes:
                 [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
                 selection=Selection(expected_types={"title": "partial_list"}),
             )
+
+
+class TestWritingTheReport:
+    def test_makes_the_output_directory(self, tmp_path):
+        summary = tmp_path / "summary.json"
+        summary.write_text(json.dumps(_two_field_summary()))
+        run_compare(
+            [("base", summary), ("head", summary)], tmp_path / "new/dir/comparison.md",
+        )
+        assert (tmp_path / "new/dir/comparison.md").exists()
