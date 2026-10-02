@@ -132,13 +132,19 @@ def resolve_measures(
     A method no selected field measures is an error rather than a silent narrowing: it
     is almost always a typo, and a second selected method would otherwise hide it.
     """
+    _, primary = labeled_summaries[-1]
+    primary_measures: dict = primary.get("field_measures") or {}
+    if selection.methods is None:
+        # The primary's own list, as the report has always used: a baseline measuring
+        # something the run under test does not is a difference between the runs rather
+        # than a row to add.
+        return {field: list(primary_measures.get(field, [])) for field in field_names}
+
     measures: Dict[str, List[str]] = {}
     for _, summary in labeled_summaries:
         for field, methods in (summary.get("field_measures") or {}).items():
             known = measures.setdefault(field, [])
             known += [method for method in methods if method not in known]
-    if selection.methods is None:
-        return {field: measures.get(field, []) for field in field_names}
 
     narrowed = {
         field: [method for method in measures.get(field, []) if method in selection.methods]

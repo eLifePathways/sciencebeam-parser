@@ -136,13 +136,22 @@ class TestResolveMeasures:
         )
         assert measures == {"title": ["exact", "levenshtein"]}
 
-    def test_should_take_the_union_over_the_summaries(self):
+    def test_should_use_the_primarys_list_where_the_summaries_disagree(self):
         labeled = _labeled(
-            _summary(measures={"title": ["exact"]}),
+            _summary(measures={"title": ["exact", "levenshtein"]}),
             _summary(measures={"title": ["levenshtein"]}),
         )
         assert resolve_measures(labeled, ["title"], Selection()) == {
-            "title": ["exact", "levenshtein"],
+            "title": ["levenshtein"],
+        }
+
+    def test_should_reach_a_method_only_a_baseline_measured_when_asked(self):
+        labeled = _labeled(
+            _summary(measures={"title": ["exact", "levenshtein"]}),
+            _summary(measures={"title": ["levenshtein"]}),
+        )
+        assert resolve_measures(labeled, ["title"], Selection(methods=("exact",))) == {
+            "title": ["exact"],
         }
 
     def test_should_reject_a_method_no_selected_field_measures(self):
