@@ -67,6 +67,16 @@ def build_grid(
 
 
 @dataclass(frozen=True)
+class ChartConfig:
+    """One declared chart: the row it draws, and how it is presented."""
+    field: str
+    method: str
+    scope: str = SCOPE_ALL
+    title: Optional[str] = None
+    corpora: Optional[Tuple[str, ...]] = None
+
+
+@dataclass(frozen=True)
 class Selection:
     """What the reader asked to see, as opposed to what was scored."""
     fields: Optional[Tuple[str, ...]] = None
@@ -75,12 +85,19 @@ class Selection:
     charts: Tuple[str, ...] = ()
     # Which of a charted field's methods get an image. None draws every one it carries.
     chart_methods: Optional[Tuple[str, ...]] = None
+    # Per field, the (method, scope) pairs asked for; an empty method means every one.
+    # None keeps whatever the summaries carry.
+    row_filter: Optional[Dict[str, Tuple[Tuple[str, str], ...]]] = None
+    # Per field, the scoring type the comparison says it should have been measured with.
+    expected_types: Optional[Dict[str, str]] = None
+    # Charts named one at a time, as a comparison file declares them.
+    chart_configs: Tuple[ChartConfig, ...] = ()
 
     @property
     def is_empty(self) -> bool:
         return not (
             self.fields or self.methods or self.corpora or self.charts
-            or self.chart_methods
+            or self.chart_methods or self.row_filter or self.chart_configs
         )
 
 
@@ -165,6 +182,71 @@ def resolve_measures(
             f"{_quoted(empty)} are not measured by {_quoted(selection.methods)}"
         )
     return narrowed
+
+
+def filter_grid_rows(
+    rows: Sequence[GridRow],
+    row_filter: Optional[Dict[str, Tuple[Tuple[str, str], ...]]],
+) -> List[GridRow]:
+    """Keep the rows a comparison asked for, in the order the grid built them."""
+    if row_filter is None:
+        return list(rows)
+    return [
+        row for row in rows
+        if any(
+            (not method or method == row.method) and (not scope or scope == row.scope)
+            for method, scope in row_filter.get(row.field, ())
+        )
+    ]
+
+
+def check_row_filter(
+    rows: Sequence[GridRow],
+    row_filter: Optional[Dict[str, Tuple[Tuple[str, str], ...]]],
+) -> None:
+    """A declared row the summaries cannot answer for is an error naming it.
+
+    A scope is the common case: asking for the gold row of a field whose gold answers
+    every document gets a row that does not exist, and an empty table would read as a
+    score of nothing rather than as a question that cannot be asked.
+    """
+    present = {(row.field, row.method, row.scope) for row in rows}
+    missing = [
+        f"{field} ({method or 'any method'}, {scope or 'any scope'})"
+        for field, wanted in (row_filter or {}).items()
+        for method, scope in wanted
+        if not any(
+            found_field == field and (not method or method == found_method)
+            and (not scope or scope == found_scope)
+            for found_field, found_method, found_scope in present
+        )
+    ]
+    if missing:
+        raise SelectionError(
+            "No summary has " + "; ".join(missing)
+            + ". A gold row exists only where some variant produced a value the gold"
+            " has none of."
+        )
+
+
+def check_expected_types(
+    labeled_summaries: List[Tuple[str, dict]],
+    expected_types: Optional[Dict[str, str]],
+) -> None:
+    """A declared scoring type the summary contradicts is an error stating both.
+
+    A summary gives a field exactly one type, so this asserts what was measured rather
+    than selecting among measurements -- and catches a run that re-typed a field, which
+    the report otherwise only mentions in prose.
+    """
+    for field, expected in (expected_types or {}).items():
+        for label, summary in labeled_summaries:
+            actual = (summary.get("field_scoring_types") or {}).get(field)
+            if actual is not None and actual != expected:
+                raise SelectionError(
+                    f"{label} scored '{field}' as '{actual}', not the '{expected}'"
+                    " the comparison declares"
+                )
 
 
 def resolve_corpora(

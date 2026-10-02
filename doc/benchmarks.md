@@ -123,49 +123,95 @@ one column, or the columns being compared, differ in hardware or concurrency,
 since a timing delta is then partly a property of the measurement.
 ## A comparison of your own
 
-`benchmarks.report` compares any summaries that already exist, so narrowing one
-needs no re-scoring and no re-running:
+A comparison is a file under `benchmarks/comparisons/`, naming the variants to
+put side by side, the rows to keep and what each chart shows. It is a view over
+summaries that already exist, so adding one costs no run and moves no figure.
+
+```yaml
+# benchmarks/comparisons/reference-models.yml
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: main, tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {label: this run, current: true}      # the last is the primary; deltas are to it
+
+corpora: [biorxiv, pkp, scielo_br]        # optional; every corpus otherwise
+
+rows:
+  - {field: reference_title, method: levenshtein, type: partial_list}
+  - {field: acknowledgement, methods: [levenshtein, edit_sim], scope: gold}
+
+charts:
+  - row: {field: reference_title, method: levenshtein}
+    title: Reference titles by corpus
+    corpora: [biorxiv, pkp]               # optional; the table's corpora otherwise
+```
+
+```sh
+python -m benchmarks.report --comparison reference-models \
+  --runs benchmarks/runs --split train \
+  --current-run benchmarks/runs/<run>/train \
+  --out comparison.md
+```
+
+A variant is **named rather than pointed at** — by `tool`, `version` and `profile`,
+the way the predictions store holds it — so a checked-in file carries no run id and
+resolves against whichever run is at hand. `current: true` is the run under test, and
+`summary: <path>` takes a file directly, for something ad hoc. A variant that cannot
+be resolved is an error saying which one; nothing is generated to satisfy a comparison.
+
+A **row** is a field, a scoring method and a scope. Omit `method` for every method the
+field carries, and `scope` for whichever rows it earns — `gold` exists only where some
+variant produced a value the gold has none of. `type` is **asserted, not selected**: a
+summary gives a field exactly one scoring type, so naming it catches a run that re-typed
+the field instead of comparing across the change.
+
+A **chart** names one row and draws it as a grouped bar chart, variants as series and
+corpora along the axis. It reads the same cells the table does, and a variant that
+scored nothing for a corpus leaves a gap there rather than a bar at zero. Charts are
+written to `charts/` beside the report.
+
+Anything named that no summary can answer for — a field, method, corpus, scope, variant
+or asserted type — is an error that says so, rather than an empty column.
+
+### Ad-hoc narrowing
+
+For a one-off, the same selection is available as flags over `--summary` pairs:
 
 ```sh
 python -m benchmarks.report \
   --summary "grobid=benchmarks/runs/<run>/summary.json" \
   --summary "head=benchmarks/runs/<run>/validation/summary.json" \
-  --field acknowledgement --field reference_title \
-  --method levenshtein \
+  --field acknowledgement --method levenshtein \
   --corpus biorxiv --corpus pkp \
-  --out comparison.md
+  --chart acknowledgement --out comparison.md
 ```
 
-`--field`, `--method` and `--corpus` are repeatable and render in the order
-given. They select what is displayed and never what is computed, so a narrowed
-view shows the same numbers as the full one. Each is checked against every
-summary rather than only the primary, so a field only a baseline scored can be
-asked for; a name no summary scored is an error that says so.
+`--field`, `--method` and `--corpus` are repeatable and render in the order given. They
+select what is displayed and never what is computed, so a narrowed view shows the same
+numbers as the full one, and each is checked against every summary rather than only the
+primary. `--chart <field>` draws every method and scope of that field; `--chart-method`
+narrows which images without touching the tables.
 
-`--chart <field>` additionally draws a grouped bar chart per method and scope,
-with the variants as its series and the corpora along the axis, and writes it to
-`charts/` beside the report. The chart reads the same cells the table does, and a
-variant that scored nothing for a corpus leaves a gap there rather than a bar at
-zero. It needs `--out`, and a single corpus draws nothing.
+### Where the images are linked from
 
-The report links the images by relative path, which renders in an editor preview
-and in the repository's own view of the file. `--chart-base-url` links them
-somewhere public instead, for a surface that cannot render a local file — the
-files still have to be published there — and `--chart-prefix` keeps runs
-published together from overwriting each other.
+The report links charts by relative path, which renders in an editor preview and in the
+repository's own view of the file. `--chart-base-url` links them somewhere public
+instead, for a surface that cannot render a local file — the files still have to be
+published there — and `--chart-prefix` keeps runs published together from overwriting
+each other.
 
-`--chart-method` narrows which methods get an image without touching the tables,
-for where the rows are wanted in full but the images are not.
+### In CI
 
-The workflow draws no charts unless asked. A `charts:<field>` label on the PR, or
-the `chart_fields` input on a manual run, turns them on, and `chart-method:<method>`
-(or `chart_methods`) narrows which images are drawn. Both are repeatable. Charts are
-uploaded to the `benchmark-charts` pre-release and linked from the comment.
+The workflow renders no comparison unless asked, and the report it always posts is
+unchanged. A `comparison:<name>` label on the PR, or the `comparison` input on a manual
+run, renders that comparison **beside** the usual report; `charts:<field>` and
+`chart-method:<method>` drive the ad-hoc route. Images are uploaded to the
+`benchmark-charts` pre-release and linked from the comment.
 
-Which **variants** CI compares is not selectable: the columns are the entries under
-`baselines:` in `eval.yml` plus the single profile the run under test uses, which
-`profile:<name>` or the `profile` input chooses. Putting two profiles side by side is
-a job of `benchmarks.report` over the summaries each run produced.
+Which variants CI compares in its **own** report is not selectable: those columns are
+the `baselines:` entries in `eval.yml` plus the one profile the run under test uses,
+which `profile:<name>` chooses. A comparison file is how two named variants are put side
+by side.
 
 ## Where the gold does not record a field
 

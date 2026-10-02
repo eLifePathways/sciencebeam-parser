@@ -1,0 +1,18 @@
+# A worked example: the reference-extraction question, over the corpora where the
+# difference has shown up. Variants are named the way the predictions store names them,
+# so this file holds no run id and resolves against whichever run is at hand.
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: main, tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {label: this run, current: true}
+
+rows:
+  - {field: reference_title, method: levenshtein, type: partial_list}
+  - {field: first_reference_text, method: levenshtein, type: string}
+  - {field: reference_doi, method: levenshtein, type: partial_ulist}
+
+charts:
+  - row: {field: reference_title, method: levenshtein}
+    title: Reference titles by corpus
+  - row: {field: first_reference_text, method: levenshtein}
+    title: First reference text by corpus

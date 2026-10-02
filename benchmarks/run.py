@@ -15,6 +15,7 @@ from benchmarks.predict import DEFAULT_RETRY_PASSES, run_predict
 from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
+from benchmarks.comparison_config import load_comparison, resolve_variants, to_selection
 from benchmarks.report_grid import Selection
 from benchmarks.score import run_score
 
@@ -231,6 +232,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     concurrency: int = 0,
     include: Optional[Iterable[str]] = None,
     retry_passes: int = DEFAULT_RETRY_PASSES,
+    comparison: Optional[str] = None,
     chart_fields: Optional[Iterable[str]] = None,
     chart_methods: Optional[Iterable[str]] = None,
     chart_prefix: str = "",
@@ -296,6 +298,16 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         )
     else:
         LOGGER.info("Only one summary available; skipping comparison report")
+
+    # Beside the report CI always posts, never instead of it: a named comparison answers
+    # a question of its own, and the regression check stays what it was.
+    if comparison:
+        comparison_config = load_comparison(comparison)
+        run_compare(
+            resolve_variants(comparison_config, runs_dir, split, primary_run_dir),
+            primary_run_dir / f"comparison-{comparison_config.name}.md",
+            to_selection(comparison_config), chart_prefix, chart_base_url,
+        )
 
 
 # The restricted set lives with the code that sends documents; see
@@ -363,6 +375,13 @@ def main(argv=None) -> None:
         ),
     )
     parser.add_argument(
+        "--comparison", default=None, metavar="NAME",
+        help=(
+            "Also render a named comparison from benchmarks/comparisons/, beside the"
+            " report this run already produces"
+        ),
+    )
+    parser.add_argument(
         "--chart", action="append", default=None, dest="chart_fields", metavar="FIELD",
         help=(
             "Also chart this field in the comparison, repeatable. Off by default, so a"
@@ -416,6 +435,7 @@ def main(argv=None) -> None:
         concurrency=args.concurrency,
         include=args.include_corpus,
         retry_passes=args.retry_passes,
+        comparison=args.comparison,
         chart_fields=args.chart_fields,
         chart_methods=args.chart_methods,
         chart_prefix=args.chart_prefix,

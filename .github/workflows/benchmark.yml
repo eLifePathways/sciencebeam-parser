@@ -19,6 +19,11 @@ on:
         required: false
         default: false
         type: boolean
+      comparison:
+        description: 'Named comparison from benchmarks/comparisons/ to render as well (empty = none)'
+        required: false
+        default: ''
+        type: string
       chart_fields:
         description: 'Fields to chart, space separated (empty = no charts, which is the default report)'
         required: false
@@ -94,6 +99,8 @@ jobs:
         }}
       # Charts are opt-in: without a `charts:<field>` label or a dispatch input this
       # is empty, no images are drawn, and the report is the one CI has always posted.
+      BENCHMARK_COMPARISON: >-
+        ${{ inputs.comparison || '' }}
       BENCHMARK_CHART_FIELDS: >-
         ${{ inputs.chart_fields || '' }}
       BENCHMARK_CHART_METHODS: >-
@@ -161,6 +168,18 @@ jobs:
         env:
           PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: |
+          LABEL_COMPARISON=$(echo "$PR_LABELS_JSON" \
+            | jq -r '.[]? | select(startswith("comparison:")) | sub("^comparison:"; "")' \
+            | head -n1)
+          COMPARISON="${LABEL_COMPARISON:-${BENCHMARK_COMPARISON}}"
+          if [ -n "$COMPARISON" ] && ! [[ "$COMPARISON" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::Invalid comparison '$COMPARISON' - only letters, digits, dashes and underscores"
+            exit 1
+          fi
+          echo "BENCHMARK_COMPARISON=${COMPARISON}" >> "$GITHUB_ENV"
+          if [ -n "$COMPARISON" ]; then
+            echo "::notice::Comparison: $COMPARISON"
+          fi
           LABEL_FIELDS=$(echo "$PR_LABELS_JSON" \
             | jq -r '.[]? | select(startswith("charts:")) | sub("^charts:"; "")' | tr '\n' ' ')
           FIELDS="${LABEL_FIELDS:-${BENCHMARK_CHART_FIELDS}}"
@@ -302,6 +321,9 @@ jobs:
           # release the publish job uploads them to. That job runs after this one, so
           # the links are briefly 404 and then resolve.
           CHART_ARGS=()
+          if [ -n "${BENCHMARK_COMPARISON}" ]; then
+            CHART_ARGS+=(--comparison "${BENCHMARK_COMPARISON}")
+          fi
           for field in ${BENCHMARK_CHART_FIELDS}; do
             CHART_ARGS+=(--chart "$field")
           done

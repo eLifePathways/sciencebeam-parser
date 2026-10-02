@@ -42,6 +42,8 @@ class ChartSpec:
     series: Tuple[str, ...]
     # Per series, per corpus. None where that variant scored nothing there.
     values: Tuple[Tuple[Optional[float], ...], ...]
+    # What the comparison called it, where it said.
+    title_override: Optional[str] = None
 
     @property
     def filename(self) -> str:
@@ -49,7 +51,7 @@ class ChartSpec:
 
     @property
     def title(self) -> str:
-        return f"{self.field} ({self.method}) — f1 by corpus"
+        return self.title_override or f"{self.field} ({self.method}) — f1 by corpus"
 
     @property
     def caption(self) -> str:

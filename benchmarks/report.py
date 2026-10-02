@@ -7,12 +7,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from benchmarks.comparison_config import load_comparison, resolve_variants, to_selection
 from benchmarks.report_charts import ChartSpec, chart_markdown, render_charts
 from benchmarks.report_grid import (
+    ChartConfig,
     GridRow,
     Selection,
     SelectionError,
     build_grid,
+    check_expected_types,
+    check_row_filter,
+    filter_grid_rows,
     resolve_corpora,
     resolve_fields,
     resolve_measures,
@@ -804,49 +809,89 @@ class ChartOutput:
     base_url: str = ""
 
 
-def _chart_specs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    chart_fields: Sequence[str],
-    chart_methods: Optional[Sequence[str]],
+def _declared_charts(
+    selection: Selection, overall_rows: Sequence[GridRow]
+) -> List[ChartConfig]:
+    """What to draw: each chart a comparison file named, plus every row of a field asked
+    for by name alone, which is what `--chart` means."""
+    declared = list(selection.chart_configs)
+    for field in selection.charts:
+        for row in overall_rows:
+            if row.field != field:
+                continue
+            if selection.chart_methods is not None and row.method not in selection.chart_methods:
+                continue
+            declared.append(ChartConfig(field=field, method=row.method, scope=row.scope))
+    return declared
+
+
+def _chart_spec(
+    chart: ChartConfig,
+    labels: Sequence[str],
+    corpus_grids: Dict[str, List[GridRow]],
+    overall_rows: Sequence[GridRow],
+    common: Sequence[str],
+) -> Optional[ChartSpec]:
+    """The per-corpus tables' own cells, so a chart cannot state anything its corpus
+    section does not. A row a corpus has no cells for contributes nothing rather than a
+    zero."""
+    corpora = [
+        corpus for corpus in common
+        if chart.corpora is None or corpus in chart.corpora
+    ]
+    key = (chart.field, chart.method, chart.scope)
+    overall = next(
+        (row for row in overall_rows if (row.field, row.method, row.scope) == key), None
+    )
+    if overall is None or not corpora:
+        return None
+    per_corpus = [
+        next(
+            (
+                found for found in corpus_grids.get(corpus, [])
+                if (found.field, found.method, found.scope) == key
+            ),
+            None,
+        )
+        for corpus in corpora
+    ]
+    return ChartSpec(
+        field=chart.field, method=chart.method, scope=chart.scope,
+        n_docs=overall.n_docs, corpora=tuple(corpora), series=tuple(labels),
+        values=tuple(
+            tuple(found.values[index] if found else None for found in per_corpus)
+            for index in range(len(labels))
+        ),
+        title_override=chart.title,
+    )
+
+
+def _chart_specs(
+    selection: Selection,
     labels: Sequence[str],
     corpus_grids: Dict[str, List[GridRow]],
     overall_rows: Sequence[GridRow],
     common: Sequence[str],
 ) -> List[ChartSpec]:
-    """One chart per field, method and scope, with the variants as its series.
-
-    The values are the per-corpus tables' own cells, so a chart cannot state anything
-    its corpus section does not. A row a corpus has no cells for contributes nothing
-    rather than a zero.
-    """
-    specs: List[ChartSpec] = []
-    for field in chart_fields:
-        for row in overall_rows:
-            if row.field != field:
-                continue
-            if chart_methods is not None and row.method not in chart_methods:
-                continue
-            per_corpus = [
-                next(
-                    (
-                        found for found in corpus_grids.get(corpus, [])
-                        if (found.field, found.method, found.scope)
-                        == (field, row.method, row.scope)
-                    ),
-                    None,
-                )
-                for corpus in common
-            ]
-            specs.append(ChartSpec(
-                field=field, method=row.method, scope=row.scope, n_docs=row.n_docs,
-                corpora=tuple(common), series=tuple(labels),
-                values=tuple(
-                    tuple(
-                        found.values[index] if found else None for found in per_corpus
-                    )
-                    for index in range(len(labels))
-                ),
-            ))
-    return specs
+    declared = _declared_charts(selection, overall_rows)
+    missing = [
+        f"{chart.field} ({chart.method}, {chart.scope})"
+        for chart in declared
+        if not any(
+            (row.field, row.method, row.scope) == (chart.field, chart.method, chart.scope)
+            for row in overall_rows
+        )
+    ]
+    if missing:
+        raise SelectionError(
+            "Nothing to chart for " + "; ".join(missing)
+            + ". A chart draws a row the tables show."
+        )
+    specs = [
+        _chart_spec(chart, labels, corpus_grids, overall_rows, common)
+        for chart in declared
+    ]
+    return [spec for spec in specs if spec is not None]
 
 
 def _render_comparison_report(  # pylint: disable=too-many-locals
@@ -873,6 +918,13 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
         for corpus in corpora
     }
     overall_rows = _overall_grid(labeled_summaries, field_names, field_measures, common)
+    check_expected_types(labeled_summaries, selection.expected_types)
+    check_row_filter(overall_rows, selection.row_filter)
+    overall_rows = filter_grid_rows(overall_rows, selection.row_filter)
+    corpus_grids = {
+        corpus: filter_grid_rows(rows, selection.row_filter)
+        for corpus, rows in corpus_grids.items()
+    }
 
     lines = ["## ScienceBeam Parser Evaluation", ""]
     lines += _coverage_lines(labeled_run_records or [])
@@ -887,10 +939,9 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
 
     # A single corpus puts one group of bars on the axis, which says nothing the table
     # does not.
-    if selection.charts and len(common) > 1:
+    if (selection.charts or selection.chart_configs) and len(common) > 1:
         specs = _chart_specs(
-            selection.charts, selection.chart_methods,
-            [label for label, _ in labeled_summaries],
+            selection, [label for label, _ in labeled_summaries],
             corpus_grids, overall_rows, common,
         )
         if charts.out_dir is not None:
@@ -968,8 +1019,9 @@ def run_compare(
         )
         for label, path in labeled_summary_paths
     ]
+    wants_charts = bool(selection.charts or selection.chart_configs)
     charts = ChartOutput(
-        out_dir=out_path.parent / "charts" if out_path and selection.charts else None,
+        out_dir=out_path.parent / "charts" if out_path and wants_charts else None,
         prefix=chart_prefix,
         base_url=chart_base_url,
     )
@@ -991,13 +1043,33 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="append",
         dest="summaries",
         metavar="LABEL:PATH",
-        required=True,
+        default=None,
         help=(
             "Summary to include as 'label=path/to/summary.json'. "
             "Repeat for each run. The last entry is the primary (reference for deltas)."
         ),
     )
     parser.add_argument("--out", default=None, help="Output path (default: stdout only)")
+    parser.add_argument(
+        "--comparison", default=None, metavar="NAME_OR_PATH",
+        help=(
+            "A comparison file naming the variants, rows and charts to render. A name"
+            " resolves under benchmarks/comparisons/. Replaces --summary and the"
+            " selection flags"
+        ),
+    )
+    parser.add_argument(
+        "--runs", default="benchmarks/runs",
+        help="Where a comparison's named variants are resolved from",
+    )
+    parser.add_argument(
+        "--split", default="train",
+        help="The split a comparison's named variants were run against",
+    )
+    parser.add_argument(
+        "--current-run", default=None, metavar="DIR",
+        help="The run directory a comparison's `current: true` variant refers to",
+    )
     parser.add_argument(
         "--field", action="append", default=None, dest="fields", metavar="FIELD",
         help=(
@@ -1044,22 +1116,32 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    if len(args.summaries) < 2:
+    if bool(args.comparison) == bool(args.summaries):
+        parser.error("Give either --comparison or at least two --summary entries.")
+    if args.summaries and len(args.summaries) < 2:
         parser.error("At least two --summary entries are required for a comparison.")
-    if args.charts and not args.out:
-        parser.error("--chart needs --out, since the images are written beside the report.")
+    if (args.charts or args.comparison) and not args.out:
+        parser.error("Charts need --out, since the images are written beside the report.")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    labeled_paths = [_parse_labeled_summary(s) for s in args.summaries]
-    selection = Selection(
-        fields=tuple(args.fields) if args.fields else None,
-        methods=tuple(args.methods) if args.methods else None,
-        corpora=tuple(args.corpora) if args.corpora else None,
-        charts=tuple(args.charts or ()),
-        chart_methods=tuple(args.chart_methods) if args.chart_methods else None,
-    )
     try:
+        if args.comparison:
+            config = load_comparison(args.comparison)
+            labeled_paths = resolve_variants(
+                config, Path(args.runs), args.split,
+                Path(args.current_run) if args.current_run else None,
+            )
+            selection = to_selection(config)
+        else:
+            labeled_paths = [_parse_labeled_summary(s) for s in args.summaries]
+            selection = Selection(
+                fields=tuple(args.fields) if args.fields else None,
+                methods=tuple(args.methods) if args.methods else None,
+                corpora=tuple(args.corpora) if args.corpora else None,
+                charts=tuple(args.charts or ()),
+                chart_methods=tuple(args.chart_methods) if args.chart_methods else None,
+            )
         run_compare(
             labeled_paths, Path(args.out) if args.out else None,
             selection, args.chart_prefix, args.chart_base_url,

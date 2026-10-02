@@ -13,7 +13,7 @@ from benchmarks.report import (
     _render_comparison_report,
     _unequal_docs_note,
 )
-from benchmarks.report_grid import Selection, SelectionError
+from benchmarks.report_grid import ChartConfig, Selection, SelectionError
 
 
 def _agg(scoring_type: str, method: str, by_field: dict) -> dict:
@@ -1043,3 +1043,72 @@ class TestCharts:
             charts=ChartOutput(out_dir=tmp_path),
         ))
         assert charted == full
+
+
+class TestDeclaredCharts:
+    def _charted(self, tmp_path, **chart):
+        return _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(chart_configs=(ChartConfig(**chart),)),
+            charts=ChartOutput(out_dir=tmp_path),
+        )
+
+    def test_draws_the_row_it_names(self, tmp_path):
+        self._charted(tmp_path, field="title", method="exact")
+        assert [path.name for path in tmp_path.iterdir()] == ["title-exact-all.png"]
+
+    def test_uses_the_title_it_was_given(self, tmp_path):
+        report = self._charted(
+            tmp_path, field="title", method="exact", title="How titles fare"
+        )
+        assert "![How titles fare, over all" in report
+
+    def test_narrows_to_the_corpora_it_names(self, tmp_path):
+        self._charted(tmp_path, field="title", method="exact", corpora=("ore",))
+        assert (tmp_path / "title-exact-all.png").exists()
+
+    def test_fails_naming_a_row_the_tables_do_not_show(self, tmp_path):
+        with pytest.raises(SelectionError, match="keywords"):
+            self._charted(tmp_path, field="keywords", method="exact")
+
+
+class TestRowFilter:
+    def _report(self, row_filter):
+        return _rows(_render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(
+                fields=("title", "abstract"), row_filter=row_filter,
+            ),
+        ))
+
+    def test_keeps_only_the_named_method(self):
+        rows = self._report({"title": (("exact", ""),)})
+        assert [row.split("|")[1].strip() for row in rows] == [
+            "title (exact)", "title (exact)", "title (exact)",
+        ]
+
+    def test_an_empty_method_keeps_every_one(self):
+        rows = self._report({"title": (("", ""),)})
+        assert {row.split("|")[1].strip() for row in rows} == {
+            "title (exact)", "title (levenshtein)",
+        }
+
+    def test_fails_naming_a_scope_no_summary_has(self):
+        with pytest.raises(SelectionError, match="gold"):
+            self._report({"title": (("exact", "gold"),)})
+
+
+class TestExpectedTypes:
+    def test_passes_where_the_summary_agrees(self):
+        report = _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(expected_types={"title": "string"}),
+        )
+        assert "| title (exact)" in report
+
+    def test_fails_stating_both_types(self):
+        with pytest.raises(SelectionError, match="'string'.*'partial_list'"):
+            _render_comparison_report(
+                [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+                selection=Selection(expected_types={"title": "partial_list"}),
+            )
