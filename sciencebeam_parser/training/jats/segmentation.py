@@ -2,7 +2,7 @@ import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Set
+from typing import Dict, Iterator, List, Mapping, Optional, Set
 
 from sciencebeam_parser.document.layout_document import (
     LayoutDocument,
@@ -31,6 +31,11 @@ SEG_OTHER = '<other>'
 # Fraction of page height: lines above this → headnote, below this → footnote candidate
 _HEADNOTE_Y_RATIO = 0.08
 _FOOTNOTE_Y_RATIO = 0.92
+# A block of notes starts higher up the page than a single footer line does, so
+# it needs a mark of its own.  Measured over both corpora, every run of back
+# matter whose middle line falls below this is a numbered note block and none of
+# the sections that follow a body reach it.
+_FOOTNOTE_BLOCK_Y_RATIO = 0.65
 
 # Line index threshold: front blocks starting beyond this are cleared.
 # ORE papers have a second front-matter page (author roles, competing interests,
@@ -47,6 +52,7 @@ class SegmentationConfig:
     page_header_max_first_line_index: int = _DEFAULT_PAGE_HEADER_MAX_FIRST_LINE_INDEX
     headnote_y_ratio: float = _HEADNOTE_Y_RATIO
     footnote_y_ratio: float = _FOOTNOTE_Y_RATIO
+    footnote_block_y_ratio: float = _FOOTNOTE_BLOCK_Y_RATIO
 
 
 @dataclass
@@ -311,6 +317,90 @@ def _extend_region_to_page_start(
             seg_line.seg_label = label
 
 
+def _iter_label_runs(
+    seg_lines: List[_SegLine], label: str
+) -> Iterator[List[int]]:
+    """Each maximal run of `label`, by index, reading over the furniture inside it."""
+    run: List[int] = []
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label == label:
+            run.append(index)
+        elif seg_line.seg_label not in _FURNITURE_LABELS:
+            if run:
+                yield run
+            run = []
+    if run:
+        yield run
+
+
+def _get_line_font_size(seg_line: _SegLine) -> Optional[float]:
+    sizes = [
+        token.font.font_size
+        for token in seg_line.layout_line.tokens
+        if token.font is not None and token.font.font_size
+    ]
+    if not sizes:
+        return None
+    return Counter(sizes).most_common(1)[0][0]
+
+
+def _grow_run_over_matching_type(
+    seg_lines: List[_SegLine],
+    run: List[int],
+    label: str,
+) -> None:
+    """Take in the lines either side that the block is evidently still setting.
+
+    A note the aligner could not place is left unlabelled at the edge of the
+    block, where the gap merge cannot reach it: it has the block on one side
+    only.  The page says it belongs, because a note block is set smaller than
+    the body it sits under, so the run grows over an unlabelled neighbour on the
+    same page in the same size of type.
+    """
+    sizes = [size for size in (_get_line_font_size(seg_lines[i]) for i in run) if size]
+    if not sizes:
+        return
+    run_size = Counter(sizes).most_common(1)[0][0]
+    page_number = _get_page_number(seg_lines[run[0]])
+    for step, edge in ((-1, run[0]), (1, run[-1])):
+        position = edge + step
+        while 0 <= position < len(seg_lines):
+            seg_line = seg_lines[position]
+            if (
+                seg_line.seg_label is not None
+                or _get_page_number(seg_line) != page_number
+                or _get_line_font_size(seg_line) != run_size
+            ):
+                break
+            seg_line.seg_label = label
+            position += step
+
+
+def _reclassify_page_foot_notes(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+    config: SegmentationConfig,
+) -> None:
+    """A note printed under the body of a page is a footnote, not an annex.
+
+    An essay's numbered notes are back matter in the JATS and an appendix is too,
+    so the field they come from cannot separate them; where they print can.  A
+    run sitting in the lower part of its page is the block under the body, set
+    once per page, rather than a section that follows the body and runs on.
+    """
+    for run in list(_iter_label_runs(seg_lines, SEG_ANNEX)):
+        ratios = sorted(
+            ratio for ratio in (
+                _get_line_y_ratio(seg_lines[i], page_meta_by_number) for i in run
+            ) if ratio is not None
+        )
+        if not ratios or ratios[len(ratios) // 2] <= config.footnote_block_y_ratio:
+            continue
+        for index in run:
+            seg_lines[index].seg_label = SEG_FOOTNOTE
+        _grow_run_over_matching_type(seg_lines, run, SEG_FOOTNOTE)
+
+
 def _is_in_header_zone(
     seg_line: _SegLine,
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -487,6 +577,8 @@ class SegmentationLabelDeriver:
         # evidenced line sits on is the page the region starts on.
         for tail_label in (SEG_ANNEX, SEG_OTHER):
             _extend_region_to_page_start(seg_lines, tail_label, annotated)
+
+        _reclassify_page_foot_notes(seg_lines, page_meta_by_number, self.config)
 
         # After the merge, not before: a line the merge uses as the anchor of a
         # region may itself be a running header, and taking it back first leaves
