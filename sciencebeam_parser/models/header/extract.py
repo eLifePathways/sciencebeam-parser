@@ -18,6 +18,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutTokensText
 )
 from sciencebeam_parser.models.extract import SimpleModelSemanticExtractor
+from sciencebeam_parser.utils.language import detect_language
 
 
 LOGGER = logging.getLogger(__name__)
@@ -56,6 +57,34 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
     '<affiliation>': SemanticRawAffiliation,
     '<address>': SemanticRawAddress
 }
+
+
+# A further block labelled `<abstract>` is often not one. A block far shorter than the
+# first is a fragment or a caption rather than another abstract: over a benchmark run no
+# block matching a gold abstract falls below this, and 58 that match none do.
+MIN_ABSTRACT_VARIANT_LENGTH_RATIO = 0.15
+
+
+def _get_token_count(layout_block: LayoutBlock) -> int:
+    return sum(1 for _ in layout_block.iter_all_tokens())
+
+
+def get_semantic_abstract_for_layout_block(layout_block: LayoutBlock) -> SemanticAbstract:
+    return SemanticAbstract(
+        layout_block=layout_block,
+        language=detect_language(str(LayoutTokensText(layout_block)))
+    )
+
+
+def is_abstract_variant(
+    layout_block: LayoutBlock,
+    primary_layout_block: LayoutBlock
+) -> bool:
+    primary_token_count = _get_token_count(primary_layout_block)
+    if not primary_token_count:
+        return False
+    ratio = _get_token_count(layout_block) / primary_token_count
+    return ratio >= MIN_ABSTRACT_VARIANT_LENGTH_RATIO
 
 
 def get_cleaned_abstract_text(text: Optional[str]) -> Optional[str]:
@@ -98,7 +127,7 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         entity_tokens = list(entity_tokens)
         LOGGER.debug('entity_tokens: %s', entity_tokens)
         has_title: bool = False
-        has_abstract: bool = False
+        primary_abstract_block: Optional[LayoutBlock] = None
         aff_address: Optional[SemanticRawAffiliationAddress] = None
         next_previous_label: str = ''
         for name, layout_block in entity_tokens:
@@ -109,13 +138,18 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                 yield SemanticTitle(layout_block=clean_block, trailing_text=trailing)
                 has_title = True
                 continue
-            if name == '<abstract>' and not has_abstract:
+            if name == '<abstract>':
                 abstract_layout_block = get_cleaned_abstract_layout_block(
                     layout_block
                 )
-                yield SemanticAbstract(layout_block=abstract_layout_block)
-                has_abstract = True
-                continue
+                assert abstract_layout_block is not None
+                if primary_abstract_block is None:
+                    yield get_semantic_abstract_for_layout_block(abstract_layout_block)
+                    primary_abstract_block = abstract_layout_block
+                    continue
+                if is_abstract_variant(abstract_layout_block, primary_abstract_block):
+                    yield get_semantic_abstract_for_layout_block(abstract_layout_block)
+                    continue
             if name in {'<affiliation>', '<address>'}:
                 if (
                     aff_address is not None

@@ -31,6 +31,19 @@ ADDRESS_2 = 'Address 2'
 
 OTHER_1 = 'Other 1'
 
+LONG_ABSTRACT_1 = ' '.join(['first variant text'] * 20)
+LONG_ABSTRACT_2 = ' '.join(['second variant text'] * 20)
+
+ENGLISH_ABSTRACT_1 = (
+    'This study reports on the effects of the intervention that was carried out in a'
+    ' sample of adolescents, and on the data that were collected from the participants.'
+)
+
+PORTUGUESE_ABSTRACT_1 = (
+    'Este estudo relata os efeitos da intervenção que foi realizada em uma amostra de'
+    ' adolescentes, e os dados que foram coletados dos participantes antes e depois.'
+)
+
 
 class TestGetCleanedAbstractText:
     def test_should_return_none_if_passed_in_text_was_none(self):
@@ -136,20 +149,64 @@ class TestHeaderSemanticExtractor:
         assert front.get_text_by_type(SemanticTitle) == TITLE_1
         assert semantic_title.trailing_text == '.'
 
-    def test_should_ignore_additional_title_and_abstract(self):
+    def test_should_ignore_additional_title(self):
         # Note: this behaviour should be reviewed
         semantic_content_list = list(
             HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<title>', LayoutBlock.for_text(TITLE_1)),
-                ('<abstract>', LayoutBlock.for_text(ABSTRACT_1)),
-                ('<title>', LayoutBlock.for_text('other')),
-                ('<abstract>', LayoutBlock.for_text('other'))
+                ('<title>', LayoutBlock.for_text('other'))
             ])
         )
         front = SemanticFront(semantic_content_list)
         LOGGER.debug('front: %s', front)
         assert front.get_text_by_type(SemanticTitle) == TITLE_1
-        assert front.get_text_by_type(SemanticAbstract) == ABSTRACT_1
+
+    def test_should_add_additional_abstract_as_further_abstract(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_1)),
+                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_2))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        LOGGER.debug('front: %s', front)
+        assert [
+            join_layout_tokens(list(semantic_abstract.merged_block.iter_all_tokens()))
+            for semantic_abstract in front.iter_by_type(SemanticAbstract)
+        ] == [LONG_ABSTRACT_1, LONG_ABSTRACT_2]
+
+    def test_should_ignore_additional_abstract_much_shorter_than_the_first(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_1)),
+                ('<abstract>', LayoutBlock.for_text('other'))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        LOGGER.debug('front: %s', front)
+        assert len(list(front.iter_by_type(SemanticAbstract))) == 1
+
+    def test_should_detect_the_language_of_each_abstract(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<abstract>', LayoutBlock.for_text(ENGLISH_ABSTRACT_1)),
+                ('<abstract>', LayoutBlock.for_text(PORTUGUESE_ABSTRACT_1))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        assert [
+            semantic_abstract.language
+            for semantic_abstract in front.iter_by_type(SemanticAbstract)
+        ] == ['en', 'pt']
+
+    def test_should_leave_the_language_unset_where_it_cannot_tell(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        assert next(front.iter_by_type(SemanticAbstract)).language is None
 
     def test_should_add_raw_authors(self):
         semantic_content_list = list(

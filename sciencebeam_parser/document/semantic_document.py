@@ -336,8 +336,9 @@ class SemanticExternalUrl(SemanticOptionalValueSemanticMixedContentWrapper):
     pass
 
 
+@dataclass
 class SemanticAbstract(SemanticSimpleContentWrapper):
-    pass
+    language: Optional[str] = None
 
 
 class SemanticRawNameList(SemanticMixedContentWrapper):
