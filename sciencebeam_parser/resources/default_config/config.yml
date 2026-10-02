@@ -335,7 +335,7 @@ sequence_model_profiles:
   delft_hub:
     extends: biorxiv_elife
     header:
-      path: 'hf://sciencialab/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-glove_840B'
+      path: 'hf://sciencialab/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
       feature_flavour: 'grobid'
     affiliation_address:
       path: 'hf://sciencialab/grobid-model-affiliation-address/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
