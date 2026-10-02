@@ -47,7 +47,11 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL_WITHOUT_ALIAS = {
 TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
     **TRAINING_XML_ELEMENT_PATH_BY_LABEL_WITHOUT_ALIAS,
     '<location>': ROOT_TRAINING_XML_ELEMENT_PATH + ['address'],
-    '<institution>': ROOT_TRAINING_XML_ELEMENT_PATH + ['byline', 'affiliation']
+    '<institution>': ROOT_TRAINING_XML_ELEMENT_PATH + ['byline', 'affiliation'],
+    # Unlabelled text belongs directly under <front>. Without it, a token following
+    # a title or author only closes the innermost element and lands inside
+    # <docTitle> or <byline>, next to <titlePart> or <docAuthor>.
+    '<other>': ROOT_TRAINING_XML_ELEMENT_PATH
 }
 
 # Each new <affiliation> (B- prefix) resets to the front level so it gets its own
