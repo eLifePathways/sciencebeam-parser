@@ -33,6 +33,16 @@ _ANCHOR_FIELDS: FrozenSet[str] = frozenset({
 # but follow it in JATS ordering, so without this constraint they would be searched
 # from last_match_end (≈abstract end) and miss their true page-1 position.
 _FRONT_MATTER_END_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.ABSTRACT})
+
+# A data-availability section is one run of consecutive values, so each of them
+# can be searched from where the previous one landed.  The section's own values
+# are what place it; the fallback floor below is the end of the abstract, which
+# on a paper whose front matter continues past it would otherwise let a value
+# naming the article match the "how to cite" line on page one.
+_AVAILABILITY_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AVAILABILITY_SECTION_TITLE,
+    JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
+})
 _FRONT_MATTER_BUFFER = 2000
 
 # When the "Keywords" section header is matched, individual keyword values are searched
@@ -54,6 +64,8 @@ _BODY_CONTENT_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.APPENDIX,
     JatsFieldNames.BACK_SECTION_TITLE,
     JatsFieldNames.BACK_SECTION_PARAGRAPH,
+    JatsFieldNames.AVAILABILITY_SECTION_TITLE,
+    JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
 })
 
 # Reference fields use a dedicated floor so that appendix/body content matched
@@ -76,6 +88,17 @@ _REFERENCE_FIELDS: FrozenSet[str] = frozenset({
 _POST_BODY_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.SUB_ARTICLE,
 })
+
+# How many post-body values may search the whole region before the rest fall back
+# to the cursor.  Searching from a floor costs O(region x needle) for a value the
+# exact prefilter misses, and there are thousands per document: unbounded, the
+# worst document cost more than the other thirty-eight together.  A region label
+# does not need them all -- these place the region, and the gap merge in the
+# segmentation deriver carries it to the end of the document.
+_POST_BODY_MAX_WIDE_SEARCHES = 40
+
+# Reserved key in the post-body text-end map, counting the wide searches spent.
+_WIDE_SEARCH_BUDGET_KEY = '\x00wide-search-budget'
 
 # Smith-Waterman scoring: match=2, mismatch=-1, gap=-1
 _SCORING = SimpleScoring(match_score=2, mismatch_score=-1, gap_score=-1)
@@ -601,13 +624,44 @@ def _exact_number_match(
     return None
 
 
-def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
+# Shortest needle the exact prefilter will accept.  Below it a verbatim hit says
+# little -- "Yes" occurs everywhere -- and the sliding matcher is cheap anyway,
+# since its cost is proportional to the needle.
+_EXACT_PREFILTER_MIN_LENGTH = 40
+
+
+def _exact_substring_match(
+    haystack: str,
+    needle: str,
+    segments: List[Tuple[int, int]],
+    token_index: '_TokenIndex',
+) -> Optional[_MatchResult]:
+    """Return the first verbatim occurrence of `needle`, on a token boundary.
+
+    The sliding matcher returns the leftmost exact match too, by scanning windows
+    in order and returning as soon as one is exact, so this changes which match
+    is chosen only where there is none.  What it changes is the cost: the matcher
+    is O(window x needle) over every window of the search range, which is the
+    whole post-body region for a field searched from a floor.
+    """
+    for seg_start, seg_end in segments:
+        pos = haystack.find(needle, seg_start, seg_end)
+        while pos != -1:
+            end = pos + len(needle)
+            if token_index.is_token_start(pos) and token_index.is_token_boundary_after(end - 1):
+                return pos, end, [(pos, end)]
+            pos = haystack.find(needle, pos + 1, seg_end)
+    return None
+
+
+def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
     token_index: _TokenIndex,
     field_value: JatsFieldValue,
     config: AlignmentConfig,
     search_start: int,
     search_end: Optional[int] = None,
     masked_ranges: Optional[List[Tuple[int, int]]] = None,
+    prefer_exact: bool = False,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -626,6 +680,15 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
         return _exact_number_match(token_index, needle, segments)
 
     need_len = len(needle)
+    if field_value.exact_only:
+        # No length floor: the search is confined to one region, so a short
+        # needle landing on a second occurrence carries the same label anyway,
+        # and a reviewer can be named in seven characters.
+        return _exact_substring_match(haystack, needle, segments, token_index)
+    if prefer_exact and need_len >= _EXACT_PREFILTER_MIN_LENGTH:
+        exact = _exact_substring_match(haystack, needle, segments, token_index)
+        if exact is not None:
+            return exact
     window_size = max(
         _DEFAULT_MIN_WINDOW,
         min(config.max_window, need_len * _WINDOW_NEEDLE_MULTIPLIER),
@@ -662,7 +725,9 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
     return gap_match
 
 
-def _search_range(
+# The per-field window rules have outgrown one function; splitting them is worth
+# doing next time this needs a branch.
+def _search_range(  # pylint: disable=too-many-locals
     fv: JatsFieldValue,
     last_match_end: int,
     body_floor: int,
@@ -671,6 +736,7 @@ def _search_range(
     keywords_floor: int,
     reference_floor: int,
     parent_match_by_field: Dict[str, Tuple[int, int, int]],
+    post_body_text_end: Optional[Dict[str, int]] = None,
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
     if fv.sub_field_name is not None and fv.field_name in parent_match_by_field:
@@ -714,7 +780,36 @@ def _search_range(
         # Anchor fields (abstract, title) and post-body fields (sub-articles) both
         # search from last_match_end so they follow reading order and cannot fall
         # back to the front-matter window.
-        return max(0, last_match_end - 200), None
+        #
+        # A post-body field searches from a floor rather than that cursor.
+        # Sub-article values repeat within a document and do not follow the page,
+        # so a cursor loses every value earlier than the last match.  The floor
+        # keeps what the cursor was for -- body and figures lie before it -- while
+        # letting the region be searched in any order, and no post-body match
+        # advances it, so it cannot creep.
+        spent = (post_body_text_end or {}).get(_WIDE_SEARCH_BUDGET_KEY, 0)
+        if (
+            fv.field_name in _POST_BODY_FIELDS
+            and (fv.exact_only or spent < _POST_BODY_MAX_WIDE_SEARCHES)
+        ):
+            # The reference list, where there is one, is the floor rather than the
+            # last body match.  An author response quotes the paper, so a body
+            # paragraph can match inside the peer review and carry the floor past
+            # most of the region with it; the reference list cannot, because it
+            # prints between the body and the peer review.
+            #
+            # A repeated value still advances past its own previous match, because
+            # ORE prints one copy of each checklist question per reviewer and the
+            # copies have to land on different ones: searching every copy from the
+            # floor collapses them all onto the first.
+            start = max(
+                0,
+                (reference_floor if reference_floor > 0 else body_content_end) - 200,
+                (post_body_text_end or {}).get(fv.text, 0),
+            )
+        else:
+            start = max(0, last_match_end - 200)
+        return start, None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
         # Keywords are anchored to just after the keywords header/abstract so
@@ -1026,6 +1121,7 @@ class LayoutDocumentJatsAligner:
         last_match_end = 0
         body_floor = 0
         body_content_end = 0
+        availability_floor = 0
         front_matter_end = 0
         keywords_floor = 0
         reference_floor = 0
@@ -1039,12 +1135,14 @@ class LayoutDocumentJatsAligner:
         # Furthest end of any DOI/PMID/PMCID match for the current reference instance.
         # Used to advance the backward-search floor past identifier URLs in the tail.
         ref_id_subfield_end: Dict[str, int] = {}
+        # End of the previous match of each distinct post-body value text.
+        post_body_text_end: Dict[str, int] = {}
 
         for fv in field_values:
             search_start, search_end = _search_range(
                 fv, last_match_end, body_floor, body_content_end,
                 front_matter_end, keywords_floor, reference_floor,
-                parent_match_by_field,
+                parent_match_by_field, post_body_text_end,
             )
             masked = (
                 sub_field_masked_ranges.get(fv.field_name)
@@ -1055,6 +1153,7 @@ class LayoutDocumentJatsAligner:
                 token_index, fv, self.config,
                 search_start=search_start, search_end=search_end,
                 masked_ranges=masked,
+                prefer_exact=fv.field_name in _POST_BODY_FIELDS,
             )
             # If primary match relied on a mid-token within-gap block (e.g. 't'
             # inside 'staff' matching the initial 'T' in "Guardian T"), the SW
@@ -1099,15 +1198,18 @@ class LayoutDocumentJatsAligner:
             # appendix) matches at a later PDF position than subsequent paragraphs
             # of the parent section.  Fall back to searching from body_floor
             # (end of abstract) so those paragraphs are not permanently blocked.
+            retry_floor = max(body_floor, availability_floor) if (
+                fv.field_name in _AVAILABILITY_FIELDS
+            ) else body_floor
             if (
                 match_range is None
                 and fv.sub_field_name is None
                 and fv.field_name in _BODY_CONTENT_FIELDS
-                and search_start > body_floor
+                and search_start > retry_floor
             ):
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config,
-                    search_start=body_floor, search_end=None,
+                    search_start=retry_floor, search_end=None,
                 )
             # Parent REFERENCE fallback: retry with a relaxed threshold when the
             # full-text parent match just misses 0.8.  JATS may concatenate initials
@@ -1158,6 +1260,14 @@ class LayoutDocumentJatsAligner:
             matched_count += 1
             a_start, a_end, block_ranges = match_range
             last_match_end = max(last_match_end, a_end)
+            if fv.field_name in _POST_BODY_FIELDS:
+                post_body_text_end[fv.text] = max(
+                    post_body_text_end.get(fv.text, 0), a_end
+                )
+                if not fv.exact_only:
+                    post_body_text_end[_WIDE_SEARCH_BUDGET_KEY] = (
+                        post_body_text_end.get(_WIDE_SEARCH_BUDGET_KEY, 0) + 1
+                    )
             if fv.field_name in _ANCHOR_FIELDS:
                 body_floor = max(body_floor, a_end)
             if fv.field_name in _FRONT_MATTER_END_FIELDS:
@@ -1169,6 +1279,8 @@ class LayoutDocumentJatsAligner:
                 keywords_floor = max(keywords_floor, a_end)
             if fv.field_name in _BODY_CONTENT_FIELDS:
                 body_content_end = max(body_content_end, a_end)
+            if fv.field_name in _AVAILABILITY_FIELDS:
+                availability_floor = max(availability_floor, a_start)
             if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
                 reference_floor = max(reference_floor, a_end)
             if fv.sub_field_name is None:
