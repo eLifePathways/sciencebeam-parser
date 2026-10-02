@@ -187,6 +187,25 @@ class TestHeaderTeiTrainingDataGenerator:
             xml_root.xpath('./text/front')
         ) == [f'{TEXT_1}\n']
 
+    def test_should_not_open_a_second_front_for_a_label_mapped_to_the_root(self):
+        label_and_layout_line_list = [
+            ('O', get_next_layout_line_for_text(TEXT_1)),
+            ('<note>', get_next_layout_line_for_text(TEXT_2))
+        ]
+        labeled_model_data_list = get_labeled_model_data_list(
+            label_and_layout_line_list,
+            data_generator=get_data_generator()
+        )
+        training_data_generator = get_tei_training_data_generator()
+        xml_root = training_data_generator.get_training_tei_xml_for_model_data_iterable(
+            labeled_model_data_list
+        )
+        LOGGER.debug('xml: %r', etree.tostring(xml_root))
+        assert len(xml_root.xpath('./text/front')) == 1
+        assert get_text_content_list(
+            xml_root.xpath('./text/front')
+        ) == [f'{TEXT_1}\n{TEXT_2}\n']
+
     def test_should_not_join_separate_labels(self):
         label_and_layout_line_list = [
             ('<title>', get_next_layout_line_for_text(TEXT_1)),
