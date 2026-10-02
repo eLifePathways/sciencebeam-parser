@@ -1,4 +1,5 @@
 # pylint: disable=too-many-lines
+import json
 import logging
 import os
 import re
@@ -53,9 +54,11 @@ from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSub
 import sciencebeam_parser.training.cli.generate_data as generate_data_module
 from sciencebeam_parser.training.cli.generate_data import (
     CitationModelTrainingDataGenerator,
+    HeaderModelTrainingDataGenerator,
     ModelResultCache,
     NameCitationModelTrainingDataGenerator,
     ReferenceSegmenterModelTrainingDataGenerator,
+    SegmentationModelTrainingDataGenerator,
     TrainingDataDocumentContext,
     _split_references_by_jats_instance,
     generate_training_data_for_layout_document,
@@ -692,6 +695,69 @@ class TestMain:
         )
         assert get_text_content_list(xml_root.xpath('text/front'))
 
+    def test_should_write_one_line_record_row_per_segmentation_line(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        lines_path = _get_expected_file_path_with_suffix(
+            output_path / 'segmentation' / 'corpus' / 'lines',
+            MINIMAL_EXAMPLE_PDF,
+            SegmentationModelTrainingDataGenerator.LINES_FILENAME_SUFFIX
+        )
+        tei_path = _get_expected_file_path_with_suffix(
+            output_path / 'segmentation' / 'corpus' / 'tei',
+            MINIMAL_EXAMPLE_PDF,
+            SegmentationTeiTrainingDataGenerator().get_default_tei_filename_suffix()
+        )
+        raw_path = _get_expected_file_path_with_suffix(
+            output_path / 'segmentation' / 'corpus' / 'raw',
+            MINIMAL_EXAMPLE_PDF,
+            SegmentationTeiTrainingDataGenerator().get_default_data_filename_suffix()
+        )
+        assert lines_path.exists()
+        json_dicts = [
+            json.loads(line)
+            for line in lines_path.read_text(encoding='utf-8').splitlines()
+        ]
+        line_break_count = len(etree.parse(str(tei_path)).getroot().xpath('//lb'))
+        raw_row_count = len(raw_path.read_text(encoding='utf-8').splitlines())
+        assert line_break_count > 0
+        assert json_dicts[0]['line_count'] == len(json_dicts) - 1
+        assert json_dicts[0]['line_count'] == line_break_count
+        assert json_dicts[0]['line_count'] == raw_row_count
+        assert all('label' in json_dict for json_dict in json_dicts[1:])
+        assert all('text' in json_dict for json_dict in json_dicts[1:])
+
+    def test_should_not_write_a_line_record_for_another_model(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        assert not (output_path / 'header' / 'corpus' / 'lines').exists()
+
     def test_should_add_gz_suffix_if_enabled(
         self,
         tmp_path: Path,
@@ -1130,6 +1196,22 @@ class TestCitationJatsLabelFn:
                 2: JatsSubFieldNames.REFERENCE_PMID
             }
         ) == [IDENTIFIER_LABEL, '<date>', IDENTIFIER_LABEL]
+
+
+@log_on_exception
+class TestHeaderJatsLabelFn:
+    def test_should_label_tokens_no_header_field_claims_as_other(self):
+        line = LayoutLine.for_text('Title A . Smith')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.TITLE, instance_id=1)
+        annotated.set_token_label(line.tokens[3], JatsFieldNames.AUTHOR, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<title>', 'O', 'O', 'B-<author>']
 
 
 @log_on_exception

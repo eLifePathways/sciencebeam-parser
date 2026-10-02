@@ -52,7 +52,10 @@ from sciencebeam_parser.models.model import (
     iter_labeled_layout_token_for_layout_model_label
 )
 from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
-from sciencebeam_parser.models.training_data import TeiTrainingDataGenerator
+from sciencebeam_parser.models.training_data import (
+    AbstractTeiTrainingDataGenerator,
+    TeiTrainingDataGenerator
+)
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 from sciencebeam_parser.config.config import AppConfig
@@ -75,6 +78,10 @@ from sciencebeam_parser.training.quality.counting import (
     ENTITY_ELEMENT_NAME_BY_MODEL,
     count_citation_labels,
     count_entity_elements
+)
+from sciencebeam_parser.training.lines.record import (
+    format_lines_record,
+    iter_labelled_lines
 )
 from sciencebeam_parser.training.quality.record import (
     DocumentQualityRecord,
@@ -474,6 +481,13 @@ class AbstractModelTrainingDataGenerator(ABC):
             document_context.source_name + self.get_pre_file_path_suffix() + suffix
         )
 
+    def get_lines_filename_suffix(self) -> Optional[str]:
+        """The per-line record's suffix, or None for a model that writes none."""
+        return None
+
+    def get_lines_sub_directory(self) -> Optional[str]:
+        return None
+
     @abstractmethod
     def get_tei_training_data_generator(
         self,
@@ -519,6 +533,11 @@ class AbstractModelTrainingDataGenerator(ABC):
             document_context=document_context,
             sub_directory=tei_training_data_generator.get_default_data_sub_directory()
         )
+        lines_file_path = self._get_file_path_with_suffix(
+            self.get_lines_filename_suffix(),
+            document_context=document_context,
+            sub_directory=self.get_lines_sub_directory()
+        )
         assert tei_file_path
         model_data_list_list = list(self.iter_model_data_list(
             layout_document=layout_document,
@@ -550,6 +569,28 @@ class AbstractModelTrainingDataGenerator(ABC):
                 data_file_path,
                 '\n'.join(
                     iter_data_lines_for_model_data_iterables(model_data_list_list)
+                ),
+                encoding='utf-8'
+            )
+        if lines_file_path:
+            assert isinstance(tei_training_data_generator, AbstractTeiTrainingDataGenerator)
+            LOGGER.info('writing line record to: %r', lines_file_path)
+            write_text(
+                lines_file_path,
+                format_lines_record(
+                    document_id=document_context.source_name,
+                    model_name=self.model_name,
+                    layout_document=layout_document,
+                    model_data_list_list=model_data_list_list,
+                    labelled_lines=list(iter_labelled_lines(
+                        training_tei_root=training_tei_root,
+                        root_training_xml_element_path=(
+                            tei_training_data_generator.root_training_xml_element_path
+                        ),
+                        training_xml_element_path_by_label=(
+                            tei_training_data_generator.training_xml_element_path_by_label
+                        )
+                    ))
                 ),
                 encoding='utf-8'
             )
@@ -622,6 +663,14 @@ class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenera
 
 class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'segmentation'
+    LINES_FILENAME_SUFFIX = '.segmentation.lines.jsonl'
+    LINES_SUB_DIRECTORY = 'segmentation/corpus/lines'
+
+    def get_lines_filename_suffix(self) -> Optional[str]:
+        return SegmentationModelTrainingDataGenerator.LINES_FILENAME_SUFFIX
+
+    def get_lines_sub_directory(self) -> Optional[str]:
+        return SegmentationModelTrainingDataGenerator.LINES_SUB_DIRECTORY
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.segmentation_model
@@ -676,7 +725,7 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
             field_name = annotated.get_token_field(token)
             if not field_name:
                 prev_label_instance = None
-                return None
+                return 'O'
             sub_field_name = annotated.get_token_sub_field(token)
             if sub_field_name in _HEADER_ADDRESS_SUB_FIELDS:
                 label: Optional[str] = '<address>'
@@ -684,7 +733,7 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
                 label = HEADER_LABEL_BY_FIELD.get(field_name)
             if label is None:
                 prev_label_instance = None
-                return None
+                return 'O'
             instance_id = annotated.get_token_instance(token)
             label_instance = (label, instance_id)
             prefix = 'B' if label_instance != prev_label_instance else 'I'

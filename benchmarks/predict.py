@@ -145,7 +145,7 @@ class _Progress:
         )
 
 
-async def _run_predict_async(
+async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     records: List[Dict[str, Any]],
     done: set,
     run_dir: Path,
@@ -153,6 +153,7 @@ async def _run_predict_async(
     timeout: int,
     concurrency: int,
     pass_index: int = 1,
+    profile: Optional[str] = None,
 ) -> Tuple[int, int]:
     to_process = [
         r for r in records if (r["corpus"], r["record_id"]) not in done
@@ -181,6 +182,11 @@ async def _run_predict_async(
                     pdf_bytes = Path(rec["pdf_path"]).read_bytes()
                     response = await client.post(
                         f"{parser_url}{CONVERT_ENDPOINT}",
+                        # The request says which profile serves it. Naming one the
+                        # deployment does not offer is refused rather than served
+                        # by its default, so a run cannot be attributed to a
+                        # profile it never used.
+                        params={"profile": profile} if profile else None,
                         data={
                             "includeRawAffiliations": "1",
                             "includeRawCitations": "1",
@@ -282,7 +288,7 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
         asyncio.run(
             _run_predict_async(
                 records, done, run_dir, parser_url, timeout,
-                resolved_concurrency, pass_index,
+                resolved_concurrency, pass_index, profile,
             )
         )
 
@@ -341,7 +347,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--parser-image", default=None, help="Docker image tag (provenance only)"
     )
     parser.add_argument(
-        "--profile", default=None, help="Model configuration profile name"
+        "--profile", default=None,
+        help=(
+            "Profile to serve every request with, from those the deployment"
+            " declares selectable. Recorded in run.json as well"
+        ),
     )
     parser.add_argument(
         "--concurrency", type=int, default=DEFAULT_CONCURRENCY,
