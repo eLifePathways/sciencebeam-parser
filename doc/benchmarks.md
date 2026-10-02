@@ -215,10 +215,16 @@ run, renders that comparison **beside** the usual report; `charts:<field>` and
 `chart-method:<method>` drive the ad-hoc route. Images are uploaded to the
 `benchmark-charts` pre-release and linked from the comment.
 
-Which variants CI compares in its **own** report is not selectable: those columns are
-the `baselines:` entries in `eval.yml` plus the one profile the run under test uses,
-which `profile:<name>` chooses. A comparison file is how two named variants are put side
-by side.
+A comparison names variants of its own, which is most of why it exists — they do not
+have to be among `eval.yml`'s `baselines:`. Any it names that `eval.yml` does not already
+run are fetched from the predictions store and scored before it is rendered. That is not
+generating: a variant whose predictions were never pushed to the store cannot be
+compared, and fails saying so. In practice that means a profile becomes comparable once
+some run has pushed it, which `--push-current` does on `main`.
+
+Those extra variants stay out of the report CI always posts: its columns are still the
+`baselines:` entries plus the one profile the run under test uses, which `profile:<name>`
+chooses.
 
 ## Where the gold does not record a field
 

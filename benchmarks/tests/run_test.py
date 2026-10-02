@@ -4,16 +4,26 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
+from benchmarks.comparison_config import parse_comparison
 from benchmarks.fetch import get_corpus_variants
 from benchmarks.predictions_store import LocalPredictionsStore
 from benchmarks.run import (
     _baseline_env_vars,
+    _comparison_only_variants,
     _coverage,
     _run_baseline,
     _make_label,
     _tool_docker_config,
     run_benchmark,
 )
+
+_COMPARISON_YAML = """
+variants:
+  - {label: crf, tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {label: head, current: true}
+"""
 
 _CONFIG = {
     "baselines": [{"tool": "grobid", "version": "0.9.0-crf", "profile": "default"}],
@@ -112,6 +122,21 @@ class TestRunBenchmark:
             "field_scoring_types": {"title": "string"},
             "corpora": {},
         }))
+
+    def _seed_store(self, store, tool: str, version: str, profile: str) -> None:
+        """A stored, complete set of predictions, so a non-generating baseline has
+        something to be scored from."""
+        # pylint: disable-next=protected-access
+        run_dir = store._run_dir(tool, version, profile, "train")
+        manifest = run_dir / "predictions" / "manifest.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("\n".join(
+            json.dumps({
+                "corpus": record["corpus"], "record_id": record["record_id"],
+                "status": "ok",
+            })
+            for record in self._gold_records()
+        ) + "\n")
 
     def _gold_records(self):
         return [{"corpus": "biorxiv", "record_id": f"r{i}", "xml_path": f"/tmp/r{i}.jats.xml"}
@@ -312,6 +337,78 @@ class TestRunBenchmark:
         assert len(sbp_push) == 1
         assert sbp_push[0][2] == "grobid_crf"  # profile
 
+    @patch("benchmarks.run._docker_stop")
+    @patch("benchmarks.run._docker_start")
+    @patch("benchmarks.run._wait_healthy")
+    @patch("benchmarks.run.run_compare")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_scores_a_comparison_variant_eval_yml_does_not_declare(
+        self, mock_gold, _mock_predict, mock_score, _mock_compare,
+        _mock_wait, _mock_start, _mock_stop, tmp_path: Path,
+    ):
+        mock_gold.return_value = self._gold_records()
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        self._seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+        comparison = tmp_path / "extra.yml"
+        comparison.write_text(_COMPARISON_YAML)
+        scored = []
+
+        def fake_score(_cfg, run_dir, *_a, **_kw):
+            scored.append(Path(run_dir))
+            self._make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        run_benchmark(
+            {**_CONFIG, "baselines": [
+                {"tool": "grobid", "version": "0.9.0-crf", "profile": "default"},
+            ]},
+            "smoke", "train", tmp_path / "data", runs_dir, store,
+            baseline_only=True, comparison=str(comparison),
+        )
+
+        assert any(
+            "sciencebeam-parser/main/grobid_crf" in str(path) for path in scored
+        ), scored
+
+    @patch("benchmarks.run._docker_stop")
+    @patch("benchmarks.run._docker_start")
+    @patch("benchmarks.run._wait_healthy")
+    @patch("benchmarks.run.run_compare")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_keeps_a_comparison_variant_out_of_the_default_report(
+        self, mock_gold, _mock_predict, mock_score, mock_compare,
+        _mock_wait, _mock_start, _mock_stop, tmp_path: Path,
+    ):
+        mock_gold.return_value = self._gold_records()
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        self._seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+        comparison = tmp_path / "extra.yml"
+        comparison.write_text(_COMPARISON_YAML)
+
+        def fake_score(_cfg, run_dir, *_a, **_kw):
+            self._make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        run_benchmark(
+            {**_CONFIG, "baselines": [
+                {"tool": "grobid", "version": "0.9.0-crf", "profile": "default"},
+            ]},
+            "smoke", "train", tmp_path / "data", runs_dir, store,
+            parser_url="http://parser", comparison=str(comparison),
+        )
+
+        # The first run_compare call is the report CI always posts.
+        default_labels = [label for label, _ in mock_compare.call_args_list[0][0][0]]
+        assert not any("grobid_crf" in label for label in default_labels), default_labels
+
 
 class TestCoverage:
     def test_reports_stored_and_expected_per_corpus(self):
@@ -388,3 +485,65 @@ class TestBaselineThatDoesNotGenerate:
             store, runs_dir, {("biorxiv", "r1")}, {"biorxiv": "v1"},
         )
         assert result is None
+
+
+class TestComparisonOnlyVariants:
+    """A comparison names runs of its own; `eval.yml` need not already declare them."""
+
+    def _config(self):
+        return {"baselines": [
+            {"tool": "grobid", "version": "0.9.1-crf", "profile": "default"},
+            {"tool": "sciencebeam-parser", "version": "main", "profile": "grobid_crf"},
+        ]}
+
+    def _comparison(self, body: str):
+        return parse_comparison(yaml.safe_load(body))
+
+    def test_should_be_empty_without_a_comparison(self):
+        assert _comparison_only_variants(self._config(), None) == []
+
+    def test_should_skip_a_variant_eval_yml_already_runs(self):
+        comparison = self._comparison("""
+variants:
+  - {label: a, tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: b, current: true}
+""")
+        assert _comparison_only_variants(self._config(), comparison) == []
+
+    def test_should_name_a_variant_eval_yml_does_not_run(self):
+        comparison = self._comparison("""
+variants:
+  - {label: llm, tool: sciencebeam-parser, version: main, profile: llm_all}
+  - {label: b, current: true}
+""")
+        variants = _comparison_only_variants(self._config(), comparison)
+        assert [(v.tool, v.version, v.profile) for v in variants] == [
+            ("sciencebeam-parser", "main", "llm_all"),
+        ]
+
+    def test_should_tell_two_profiles_of_one_version_apart(self):
+        comparison = self._comparison("""
+variants:
+  - {label: crf, tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {label: llm, tool: sciencebeam-parser, version: main, profile: llm_all}
+""")
+        variants = _comparison_only_variants(self._config(), comparison)
+        assert [v.profile for v in variants] == ["llm_all"]
+
+    def test_should_leave_out_the_run_under_test(self):
+        comparison = self._comparison("""
+variants:
+  - {label: a, tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: head, current: true}
+""")
+        assert all(
+            not v.current for v in _comparison_only_variants(self._config(), comparison)
+        )
+
+    def test_should_leave_out_a_variant_given_by_path(self):
+        comparison = self._comparison("""
+variants:
+  - {label: a, summary: some/summary.json}
+  - {label: b, summary: other/summary.json}
+""")
+        assert _comparison_only_variants(self._config(), comparison) == []

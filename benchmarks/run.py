@@ -15,7 +15,12 @@ from benchmarks.predict import DEFAULT_RETRY_PASSES, run_predict
 from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
-from benchmarks.comparison_config import load_comparison, resolve_variants, to_selection
+from benchmarks.comparison_config import (
+    load_comparison,
+    resolve_variants,
+    store_variants,
+    to_selection,
+)
 from benchmarks.report_grid import Selection
 from benchmarks.score import run_score
 
@@ -217,6 +222,20 @@ def _run_baseline(  # pylint: disable=too-many-locals
     return (label, summary_path) if summary_path.exists() else None
 
 
+def _comparison_only_variants(config: dict, comparison_config) -> list:
+    """A comparison's named variants that `eval.yml` does not already run."""
+    if comparison_config is None:
+        return []
+    declared = {
+        (baseline["tool"], baseline["version"], baseline.get("profile", "default"))
+        for baseline in config.get("baselines", [])
+    }
+    return [
+        variant for variant in store_variants(comparison_config)
+        if (variant.tool, variant.version, variant.profile) not in declared
+    ]
+
+
 def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     config: dict,
     mode: str,
@@ -245,6 +264,8 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         for r in fetch_gold(config, mode, split, data_dir, include=include)
     }
 
+    comparison_config = load_comparison(comparison) if comparison else None
+
     labeled_paths: List[Tuple[str, Path]] = []
     for baseline in config.get("baselines", []):
         profile = baseline.get("profile", "default")
@@ -257,6 +278,17 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         )
         if entry:
             labeled_paths.append(entry)
+
+    # A comparison names runs of its own, which are rarely all of `eval.yml`'s baselines.
+    # They are scored here so the comparison has something to read, and deliberately not
+    # added to `labeled_paths`: the report CI always posts keeps the columns it has.
+    for variant in _comparison_only_variants(config, comparison_config):
+        _run_baseline(
+            config, mode, split, data_dir, runs_dir,
+            str(variant.tool), str(variant.version), variant.profile,
+            False,
+            expected_ids, corpus_variants, store, concurrency, include, None,
+        )
 
     if baseline_only:
         return
@@ -301,8 +333,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
     # Beside the report CI always posts, never instead of it: a named comparison answers
     # a question of its own, and the regression check stays what it was.
-    if comparison:
-        comparison_config = load_comparison(comparison)
+    if comparison_config is not None:
         run_compare(
             resolve_variants(comparison_config, runs_dir, split, primary_run_dir),
             primary_run_dir / f"comparison-{comparison_config.name}.md",

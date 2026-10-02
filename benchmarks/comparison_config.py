@@ -172,6 +172,19 @@ def load_comparison(name_or_path: str, base_dir: Path = COMPARISON_DIR) -> Compa
     return parse_comparison(yaml.safe_load(path.read_text(encoding="utf-8")), name=path.stem)
 
 
+def store_variants(config: ComparisonConfig) -> List[VariantSpec]:
+    """The variants that have to come from the predictions store.
+
+    A comparison may name runs that are not among `eval.yml`'s baselines -- that is most
+    of why it exists -- so they have to be fetched and scored before it can be rendered.
+    Fetching and scoring is not generating: nothing is predicted to satisfy a comparison.
+    """
+    return [
+        variant for variant in config.variants
+        if variant.tool and variant.version and not variant.current
+    ]
+
+
 def available_baselines(runs_dir: Path) -> List[str]:
     """`tool/version/profile/split` for every stored baseline that was scored."""
     root = runs_dir / "baselines"
