@@ -73,10 +73,15 @@ class Selection:
     methods: Optional[Tuple[str, ...]] = None
     corpora: Optional[Tuple[str, ...]] = None
     charts: Tuple[str, ...] = ()
+    # Which of a charted field's methods get an image. None draws every one it carries.
+    chart_methods: Optional[Tuple[str, ...]] = None
 
     @property
     def is_empty(self) -> bool:
-        return not (self.fields or self.methods or self.corpora or self.charts)
+        return not (
+            self.fields or self.methods or self.corpora or self.charts
+            or self.chart_methods
+        )
 
 
 def _union(labeled_summaries: List[Tuple[str, dict]], key: str) -> List[str]:

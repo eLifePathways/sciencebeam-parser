@@ -154,9 +154,18 @@ somewhere public instead, for a surface that cannot render a local file — the
 files still have to be published there — and `--chart-prefix` keeps runs
 published together from overwriting each other.
 
+`--chart-method` narrows which methods get an image without touching the tables,
+for where the rows are wanted in full but the images are not.
+
 The workflow draws no charts unless asked. A `charts:<field>` label on the PR, or
-the `chart_fields` input on a manual run, turns them on; they are uploaded to the
-`benchmark-charts` pre-release and linked from the comment.
+the `chart_fields` input on a manual run, turns them on, and `chart-method:<method>`
+(or `chart_methods`) narrows which images are drawn. Both are repeatable. Charts are
+uploaded to the `benchmark-charts` pre-release and linked from the comment.
+
+Which **variants** CI compares is not selectable: the columns are the entries under
+`baselines:` in `eval.yml` plus the single profile the run under test uses, which
+`profile:<name>` or the `profile` input chooses. Putting two profiles side by side is
+a job of `benchmarks.report` over the summaries each run produced.
 
 ## Where the gold does not record a field
 

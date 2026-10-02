@@ -1025,3 +1025,21 @@ class TestCharts:
         assert sorted(path.name for path in tmp_path.iterdir()) == [
             "title-exact-all.png", "title-levenshtein-all.png",
         ]
+
+    def test_charts_only_the_methods_asked_for(self, tmp_path):
+        _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(charts=("title",), chart_methods=("exact",)),
+            charts=ChartOutput(out_dir=tmp_path),
+        )
+        assert [path.name for path in tmp_path.iterdir()] == ["title-exact-all.png"]
+
+    def test_leaves_the_tables_alone_when_narrowing_the_charts(self, tmp_path):
+        labeled = [("base", _two_field_summary()), ("head", _two_field_summary(0.05))]
+        full = _rows(_render_comparison_report(labeled))
+        charted = _rows(_render_comparison_report(
+            labeled,
+            selection=Selection(charts=("title",), chart_methods=("exact",)),
+            charts=ChartOutput(out_dir=tmp_path),
+        ))
+        assert charted == full

@@ -24,6 +24,11 @@ on:
         required: false
         default: ''
         type: string
+      chart_methods:
+        description: 'Scoring methods to chart, space separated (empty = every method the field carries)'
+        required: false
+        default: ''
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -91,6 +96,8 @@ jobs:
       # is empty, no images are drawn, and the report is the one CI has always posted.
       BENCHMARK_CHART_FIELDS: >-
         ${{ inputs.chart_fields || '' }}
+      BENCHMARK_CHART_METHODS: >-
+        ${{ inputs.chart_methods || '' }}
       # The release the publish job uploads to. The URL is knowable before the upload
       # happens, so the report can link it while it is still being rendered.
       BENCHMARK_CHART_RELEASE: benchmark-charts
@@ -163,9 +170,20 @@ jobs:
               exit 1
             fi
           done
+          LABEL_METHODS=$(echo "$PR_LABELS_JSON" \
+            | jq -r '.[]? | select(startswith("chart-method:")) | sub("^chart-method:"; "")' \
+            | tr '\n' ' ')
+          METHODS="${LABEL_METHODS:-${BENCHMARK_CHART_METHODS}}"
+          for method in $METHODS; do
+            if ! [[ "$method" =~ ^[A-Za-z0-9_]+$ ]]; then
+              echo "::error::Invalid chart method '$method' - only letters, digits and underscores"
+              exit 1
+            fi
+          done
           echo "BENCHMARK_CHART_FIELDS=${FIELDS}" >> "$GITHUB_ENV"
+          echo "BENCHMARK_CHART_METHODS=${METHODS}" >> "$GITHUB_ENV"
           if [ -n "$FIELDS" ]; then
-            echo "::notice::Charting: $FIELDS"
+            echo "::notice::Charting: $FIELDS ${METHODS:+(methods: $METHODS)}"
           fi
 
       - name: Set image tag
@@ -288,6 +306,9 @@ jobs:
             CHART_ARGS+=(--chart "$field")
           done
           if [ ${#CHART_ARGS[@]} -gt 0 ]; then
+            for method in ${BENCHMARK_CHART_METHODS}; do
+              CHART_ARGS+=(--chart-method "$method")
+            done
             CHART_ARGS+=(
               --chart-prefix "${GITHUB_SHA}-"
               --chart-base-url \

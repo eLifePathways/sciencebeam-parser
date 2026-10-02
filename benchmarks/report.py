@@ -804,8 +804,9 @@ class ChartOutput:
     base_url: str = ""
 
 
-def _chart_specs(
+def _chart_specs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     chart_fields: Sequence[str],
+    chart_methods: Optional[Sequence[str]],
     labels: Sequence[str],
     corpus_grids: Dict[str, List[GridRow]],
     overall_rows: Sequence[GridRow],
@@ -821,6 +822,8 @@ def _chart_specs(
     for field in chart_fields:
         for row in overall_rows:
             if row.field != field:
+                continue
+            if chart_methods is not None and row.method not in chart_methods:
                 continue
             per_corpus = [
                 next(
@@ -886,7 +889,8 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     # does not.
     if selection.charts and len(common) > 1:
         specs = _chart_specs(
-            selection.charts, [label for label, _ in labeled_summaries],
+            selection.charts, selection.chart_methods,
+            [label for label, _ in labeled_summaries],
             corpus_grids, overall_rows, common,
         )
         if charts.out_dir is not None:
@@ -1017,6 +1021,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         ),
     )
     parser.add_argument(
+        "--chart-method", action="append", default=None, dest="chart_methods",
+        metavar="METHOD",
+        help=(
+            "Chart only this method, repeatable. Unlike --method this narrows the"
+            " images alone, leaving the tables as they are"
+        ),
+    )
+    parser.add_argument(
         "--chart-prefix", default="",
         help=(
             "Prefix for chart filenames, so charts from different runs do not overwrite"
@@ -1045,6 +1057,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         methods=tuple(args.methods) if args.methods else None,
         corpora=tuple(args.corpora) if args.corpora else None,
         charts=tuple(args.charts or ()),
+        chart_methods=tuple(args.chart_methods) if args.chart_methods else None,
     )
     try:
         run_compare(
