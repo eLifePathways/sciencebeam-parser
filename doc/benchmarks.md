@@ -159,6 +159,13 @@ and the store keeps them, so a question asked after the fact costs only the scor
 no parser, no docker and nothing generated. The second skips even that, and is for
 iterating on rows and charts once the summaries exist.
 
+`BENCHMARK_PREDICTIONS_REPO` points at a checked-out `sciencebeam-eval-predictions`, so
+a comparison reads the variants CI sees rather than only those predicted on this machine.
+That repo holds `validation` for the GROBID and `sciencebeam-parser` baselines, which is
+the split CI runs; `train` is there only where a run pushed it. Comparing what CI compares
+therefore means `BENCHMARK_SPLIT=validation`, which is a deliberate choice rather than a
+default — the point of leaving `validation` alone is what makes its numbers worth quoting.
+
 `make dev-comparisons-list` names the ones that exist. `BENCHMARK_DATA` and
 `BENCHMARK_RUNS` say where the gold and the runs are, which a git worktree needs since
 neither is in one: both are gitignored and stay in the checkout that produced them.

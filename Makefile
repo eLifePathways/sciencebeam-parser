@@ -56,7 +56,8 @@ SCIENCEBEAM_PARSER_URL = http://localhost:$(SCIENCEBEAM_PARSER_PORT)
 BENCHMARK_CONFIG ?= benchmarks/eval.yml
 BENCHMARK_MODE ?= smoke
 BENCHMARK_SPLIT ?= train
-BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+BENCHMARK_RUNS ?= benchmarks/runs
+BENCHMARK_RUN ?= $(BENCHMARK_RUNS)/$(BENCHMARK_SPLIT)
 
 # GROBID baseline version and the path benchmarks.run writes it to (note the
 # 'default' profile segment). The baseline (run-b) is produced by benchmarks.run on
@@ -102,10 +103,13 @@ COMPARISON_OUT ?= $(BENCHMARK_RUN)/comparison-$(COMPARISON).md
 # Where a comparison's named variants are resolved from. A git worktree has no
 # benchmarks/runs of its own -- it is gitignored and stays in the checkout that
 # produced it -- so point this at that checkout when comparing from one.
-BENCHMARK_RUNS ?= benchmarks/runs
 BENCHMARK_DATA ?= benchmarks/data
-# Where a comparison's `current: true` variant resolves to, if it declares one.
-COMPARISON_CURRENT_RUN ?=
+# A checked-out sciencebeam-eval-predictions. Set it to compare the variants CI sees
+# rather than only those predicted on this machine; unset falls back to the local runs.
+BENCHMARK_PREDICTIONS_REPO ?=
+# Where a comparison's `current: true` variant resolves to, if it declares one. The
+# run under test writes its summary here, so a local run satisfies it without being named.
+COMPARISON_CURRENT_RUN ?= $(BENCHMARK_RUN)
 
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
@@ -319,6 +323,7 @@ dev-comparison-with-baselines: .require-COMPARISON
 		--comparison $(COMPARISON) \
 		--comparison-only \
 		--concurrency $(BENCHMARK_CONCURRENCY) \
+		$(if $(BENCHMARK_PREDICTIONS_REPO),--predictions-repo $(BENCHMARK_PREDICTIONS_REPO),) \
 		$(if $(COMPARISON_CURRENT_RUN),--current-run $(COMPARISON_CURRENT_RUN),) \
 		$(ARGS)
 

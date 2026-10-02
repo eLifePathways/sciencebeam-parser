@@ -21,7 +21,7 @@ from benchmarks.comparison_config import (
     store_variants,
     to_selection,
 )
-from benchmarks.report_grid import Selection
+from benchmarks.report_grid import Selection, SelectionError
 from benchmarks.score import run_score
 
 LOGGER = logging.getLogger(__name__)
@@ -511,20 +511,23 @@ def main(argv=None) -> None:
         store = LocalPredictionsStore(Path(args.runs))
 
     if args.comparison_only:
-        run_stored_comparison(
-            config=config,
-            mode=args.mode,
-            split=args.split,
-            data_dir=Path(args.data),
-            runs_dir=Path(args.runs),
-            store=store,
-            comparison=args.comparison,
-            current_run=Path(args.current_run) if args.current_run else None,
-            concurrency=args.concurrency,
-            include=args.include_corpus,
-            chart_prefix=args.chart_prefix,
-            chart_base_url=args.chart_base_url,
-        )
+        try:
+            run_stored_comparison(
+                config=config,
+                mode=args.mode,
+                split=args.split,
+                data_dir=Path(args.data),
+                runs_dir=Path(args.runs),
+                store=store,
+                comparison=args.comparison,
+                current_run=Path(args.current_run) if args.current_run else None,
+                concurrency=args.concurrency,
+                include=args.include_corpus,
+                chart_prefix=args.chart_prefix,
+                chart_base_url=args.chart_base_url,
+            )
+        except SelectionError as error:
+            parser.error(str(error))
         return
 
     run_benchmark(
