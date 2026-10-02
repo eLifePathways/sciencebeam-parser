@@ -17,6 +17,7 @@ from benchmarks.run import (
     _make_label,
     _tool_docker_config,
     run_benchmark,
+    run_stored_comparison,
 )
 
 _COMPARISON_YAML = """
@@ -114,7 +115,7 @@ class TestMakeLabel:
 
 
 class TestRunBenchmark:
-    def _make_summary(self, run_dir: Path) -> None:
+    def make_summary(self, run_dir: Path) -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "summary.json").write_text(json.dumps({
             "fields": ["title"],
@@ -123,7 +124,7 @@ class TestRunBenchmark:
             "corpora": {},
         }))
 
-    def _seed_store(self, store, tool: str, version: str, profile: str) -> None:
+    def seed_store(self, store, tool: str, version: str, profile: str) -> None:
         """A stored, complete set of predictions, so a non-generating baseline has
         something to be scored from."""
         # pylint: disable-next=protected-access
@@ -135,10 +136,10 @@ class TestRunBenchmark:
                 "corpus": record["corpus"], "record_id": record["record_id"],
                 "status": "ok",
             })
-            for record in self._gold_records()
+            for record in self.gold_records()
         ) + "\n")
 
-    def _gold_records(self):
+    def gold_records(self):
         return [{"corpus": "biorxiv", "record_id": f"r{i}", "xml_path": f"/tmp/r{i}.jats.xml"}
                 for i in range(10)]
 
@@ -152,12 +153,12 @@ class TestRunBenchmark:
         self, mock_gold, mock_predict, mock_score, _mock_wait,
         mock_start, _mock_stop, tmp_path: Path,
     ):
-        mock_gold.return_value = self._gold_records()
+        mock_gold.return_value = self.gold_records()
         runs_dir = tmp_path / "runs"
         store = LocalPredictionsStore(runs_dir)
 
         def fake_score(_cfg, run_dir, *_a, **_kw):
-            self._make_summary(run_dir)
+            self.make_summary(run_dir)
 
         mock_score.side_effect = fake_score
 
@@ -182,7 +183,7 @@ class TestRunBenchmark:
         Generating is per document and slow -- tens of seconds each -- so a run
         missing one prediction must not re-predict the ones it already has.
         """
-        mock_gold.return_value = self._gold_records()
+        mock_gold.return_value = self.gold_records()
         runs_dir = tmp_path / "runs"
         store = LocalPredictionsStore(runs_dir)
         # pylint: disable-next=protected-access
@@ -195,7 +196,7 @@ class TestRunBenchmark:
         ))
 
         def fake_score(_cfg, score_run_dir, *_a, **_kw):
-            self._make_summary(score_run_dir)
+            self.make_summary(score_run_dir)
 
         mock_score.side_effect = fake_score
         with patch.object(store, "fetch", wraps=store.fetch) as mock_fetch:
@@ -214,7 +215,7 @@ class TestRunBenchmark:
         self, mock_gold, mock_predict, mock_score, _mock_wait,
         mock_start, _mock_stop, tmp_path: Path,
     ):
-        gold = self._gold_records()
+        gold = self.gold_records()
         mock_gold.return_value = gold
         runs_dir = tmp_path / "runs"
         store = LocalPredictionsStore(runs_dir)
@@ -232,7 +233,7 @@ class TestRunBenchmark:
         )
 
         def fake_score(_cfg, run_dir, *_a, **_kw):
-            self._make_summary(run_dir)
+            self.make_summary(run_dir)
 
         mock_score.side_effect = fake_score
 
@@ -253,7 +254,7 @@ class TestRunBenchmark:
         self, mock_gold, _mock_predict, mock_score, _mock_compare,
         _mock_wait, mock_start, _mock_stop, tmp_path: Path,
     ):
-        mock_gold.return_value = self._gold_records()
+        mock_gold.return_value = self.gold_records()
         config = {
             **_CONFIG,
             "baselines": [
@@ -266,7 +267,7 @@ class TestRunBenchmark:
         store = LocalPredictionsStore(runs_dir)
 
         def fake_score(_cfg, run_dir, *_a, **_kw):
-            self._make_summary(run_dir)
+            self.make_summary(run_dir)
 
         mock_score.side_effect = fake_score
 
@@ -289,12 +290,12 @@ class TestRunBenchmark:
         self, mock_gold, _mock_predict, mock_score, mock_compare,
         _mock_wait, _mock_start, _mock_stop, tmp_path: Path,
     ):
-        mock_gold.return_value = self._gold_records()
+        mock_gold.return_value = self.gold_records()
         runs_dir = tmp_path / "runs"
         store = LocalPredictionsStore(runs_dir)
 
         def fake_score(_cfg, run_dir, *_a, **_kw):
-            self._make_summary(run_dir)
+            self.make_summary(run_dir)
 
         mock_score.side_effect = fake_score
 
@@ -317,13 +318,13 @@ class TestRunBenchmark:
         self, mock_gold, _mock_predict, mock_score, _mock_wait,
         _mock_start, _mock_stop, tmp_path: Path,
     ):
-        mock_gold.return_value = self._gold_records()
+        mock_gold.return_value = self.gold_records()
         runs_dir = tmp_path / "runs"
         store = LocalPredictionsStore(runs_dir)
         push_calls: list = []
 
         def fake_score(_cfg, run_dir, *_a, **_kw):
-            self._make_summary(run_dir)
+            self.make_summary(run_dir)
 
         mock_score.side_effect = fake_score
 
@@ -348,17 +349,17 @@ class TestRunBenchmark:
         self, mock_gold, _mock_predict, mock_score, _mock_compare,
         _mock_wait, _mock_start, _mock_stop, tmp_path: Path,
     ):
-        mock_gold.return_value = self._gold_records()
+        mock_gold.return_value = self.gold_records()
         runs_dir = tmp_path / "runs"
         store = LocalPredictionsStore(runs_dir)
-        self._seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+        self.seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
         comparison = tmp_path / "extra.yml"
         comparison.write_text(_COMPARISON_YAML)
         scored = []
 
         def fake_score(_cfg, run_dir, *_a, **_kw):
             scored.append(Path(run_dir))
-            self._make_summary(run_dir)
+            self.make_summary(run_dir)
 
         mock_score.side_effect = fake_score
 
@@ -385,15 +386,15 @@ class TestRunBenchmark:
         self, mock_gold, _mock_predict, mock_score, mock_compare,
         _mock_wait, _mock_start, _mock_stop, tmp_path: Path,
     ):
-        mock_gold.return_value = self._gold_records()
+        mock_gold.return_value = self.gold_records()
         runs_dir = tmp_path / "runs"
         store = LocalPredictionsStore(runs_dir)
-        self._seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+        self.seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
         comparison = tmp_path / "extra.yml"
         comparison.write_text(_COMPARISON_YAML)
 
         def fake_score(_cfg, run_dir, *_a, **_kw):
-            self._make_summary(run_dir)
+            self.make_summary(run_dir)
 
         mock_score.side_effect = fake_score
 
@@ -547,3 +548,86 @@ variants:
   - {label: b, summary: other/summary.json}
 """)
         assert _comparison_only_variants(self._config(), comparison) == []
+
+
+class TestRunStoredComparison:
+    """The whole run for a question asked after the fact: no parser, nothing generated."""
+
+    def _seeded(self, tmp_path: Path):
+        helper = TestRunBenchmark()
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        for tool, version, profile in (
+            ("grobid", "0.9.0-crf", "default"),
+            ("sciencebeam-parser", "main", "grobid_crf"),
+        ):
+            helper.seed_store(store, tool, version, profile)
+        path = tmp_path / "stored.yml"
+        path.write_text(
+            "variants:\n"
+            "  - {label: grobid, tool: grobid, version: 0.9.0-crf, profile: default}\n"
+            "  - {label: crf, tool: sciencebeam-parser, version: main,"
+            " profile: grobid_crf}\n"
+        )
+        return helper, runs_dir, store, path
+
+    @patch("benchmarks.run.run_compare")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_scores_every_named_variant_from_the_store(
+        self, mock_gold, _mock_predict, mock_score, _mock_compare, tmp_path: Path,
+    ):
+        helper, runs_dir, store, comparison = self._seeded(tmp_path)
+        mock_gold.return_value = helper.gold_records()
+        scored = []
+
+        def fake_score(_cfg, run_dir, *_a, **_kw):
+            scored.append(str(run_dir))
+            helper.make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        run_stored_comparison(
+            _CONFIG, "smoke", "train", tmp_path / "data", runs_dir, store,
+            comparison=str(comparison),
+        )
+
+        assert any("grobid/0.9.0-crf/default" in path for path in scored)
+        assert any("sciencebeam-parser/main/grobid_crf" in path for path in scored)
+
+    @patch("benchmarks.run.run_compare")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_never_predicts_anything(
+        self, mock_gold, mock_predict, mock_score, _mock_compare, tmp_path: Path,
+    ):
+        helper, runs_dir, store, comparison = self._seeded(tmp_path)
+        mock_gold.return_value = helper.gold_records()
+        mock_score.side_effect = lambda _cfg, run_dir, *_a, **_kw: helper.make_summary(run_dir)
+
+        run_stored_comparison(
+            _CONFIG, "smoke", "train", tmp_path / "data", runs_dir, store,
+            comparison=str(comparison),
+        )
+
+        mock_predict.assert_not_called()
+
+    @patch("benchmarks.run.run_compare")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_writes_the_comparison_under_the_split(
+        self, mock_gold, _mock_predict, mock_score, mock_compare, tmp_path: Path,
+    ):
+        helper, runs_dir, store, comparison = self._seeded(tmp_path)
+        mock_gold.return_value = helper.gold_records()
+        mock_score.side_effect = lambda _cfg, run_dir, *_a, **_kw: helper.make_summary(run_dir)
+
+        run_stored_comparison(
+            _CONFIG, "smoke", "train", tmp_path / "data", runs_dir, store,
+            comparison=str(comparison),
+        )
+
+        assert mock_compare.call_args[0][1] == runs_dir / "train/comparison-stored.md"

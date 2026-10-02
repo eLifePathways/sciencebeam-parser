@@ -236,6 +236,51 @@ def _comparison_only_variants(config: dict, comparison_config) -> list:
     ]
 
 
+def run_stored_comparison(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
+    config: dict,
+    mode: str,
+    split: str,
+    data_dir: Path,
+    runs_dir: Path,
+    store: PredictionsStore,
+    comparison: str,
+    out_dir: Optional[Path] = None,
+    current_run: Optional[Path] = None,
+    concurrency: int = 0,
+    include: Optional[Iterable[str]] = None,
+    chart_prefix: str = "",
+    chart_base_url: str = "",
+) -> None:
+    """Render a comparison from predictions the store already holds.
+
+    Fetches each named variant's predictions, scores them and compares -- no parser, no
+    docker and nothing generated. This is the whole run for a question asked after the
+    fact, which is most of them: predictions are the expensive part and they are kept.
+    """
+    comparison_config = load_comparison(comparison)
+    corpus_variants = get_corpus_variants(config, split, include)
+    expected_ids = {
+        (record["corpus"], record["record_id"])
+        for record in fetch_gold(config, mode, split, data_dir, include=include)
+    }
+
+    for variant in store_variants(comparison_config):
+        _run_baseline(
+            config, mode, split, data_dir, runs_dir,
+            str(variant.tool), str(variant.version), variant.profile,
+            False,
+            expected_ids, corpus_variants, store, concurrency, include, None,
+        )
+
+    out_dir = out_dir or runs_dir / split
+    run_compare(
+        resolve_variants(comparison_config, runs_dir, split, current_run),
+        out_dir / f"comparison-{comparison_config.name}.md",
+        to_selection(comparison_config), chart_prefix, chart_base_url,
+    )
+
+
 def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     config: dict,
     mode: str,
@@ -432,6 +477,17 @@ def main(argv=None) -> None:
         "--chart-base-url", default="",
         help="Link charts under this URL rather than by relative path",
     )
+    parser.add_argument(
+        "--comparison-only", action="store_true",
+        help=(
+            "Render --comparison from predictions the store already holds: fetch, score"
+            " and compare, with no parser and nothing generated"
+        ),
+    )
+    parser.add_argument(
+        "--current-run", default=None, metavar="DIR",
+        help="The run directory a comparison's `current: true` variant refers to",
+    )
     parser.add_argument("--baseline-only", action="store_true")
     parser.add_argument(
         "--push-current", action="store_true",
@@ -446,10 +502,30 @@ def main(argv=None) -> None:
 
     check_llm_profile_corpora(config, args.profile, args.include_corpus)
 
+    if args.comparison_only and not args.comparison:
+        parser.error("--comparison-only needs --comparison")
+
     if args.predictions_repo:
         store: PredictionsStore = RepoPredictionsStore(Path(args.predictions_repo))
     else:
         store = LocalPredictionsStore(Path(args.runs))
+
+    if args.comparison_only:
+        run_stored_comparison(
+            config=config,
+            mode=args.mode,
+            split=args.split,
+            data_dir=Path(args.data),
+            runs_dir=Path(args.runs),
+            store=store,
+            comparison=args.comparison,
+            current_run=Path(args.current_run) if args.current_run else None,
+            concurrency=args.concurrency,
+            include=args.include_corpus,
+            chart_prefix=args.chart_prefix,
+            chart_base_url=args.chart_base_url,
+        )
+        return
 
     run_benchmark(
         config=config,

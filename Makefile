@@ -103,6 +103,9 @@ COMPARISON_OUT ?= $(BENCHMARK_RUN)/comparison-$(COMPARISON).md
 # benchmarks/runs of its own -- it is gitignored and stays in the checkout that
 # produced it -- so point this at that checkout when comparing from one.
 BENCHMARK_RUNS ?= benchmarks/runs
+BENCHMARK_DATA ?= benchmarks/data
+# Where a comparison's `current: true` variant resolves to, if it declares one.
+COMPARISON_CURRENT_RUN ?=
 
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
@@ -302,6 +305,24 @@ dev-comparison: .require-COMPARISON
 	@ls $(dir $(COMPARISON_OUT))charts/*.png 2>/dev/null || true
 
 
+# The end-to-end one: fetches each named variant's predictions from the store, scores
+# them and renders the comparison. No parser and no docker -- predictions are the
+# expensive part and they are already kept, so a question asked after the fact costs
+# only the scoring.
+dev-comparison-with-baselines: .require-COMPARISON
+	$(PYTHON) -m benchmarks.run \
+		--config $(BENCHMARK_CONFIG) \
+		--mode $(BENCHMARK_MODE) \
+		--split $(BENCHMARK_SPLIT) \
+		--data $(BENCHMARK_DATA) \
+		--runs $(BENCHMARK_RUNS) \
+		--comparison $(COMPARISON) \
+		--comparison-only \
+		--concurrency $(BENCHMARK_CONCURRENCY) \
+		$(if $(COMPARISON_CURRENT_RUN),--current-run $(COMPARISON_CURRENT_RUN),) \
+		$(ARGS)
+
+
 dev-comparisons-list:
 	@ls benchmarks/comparisons/*.yml 2>/dev/null \
 		| sed -e 's|benchmarks/comparisons/||' -e 's|\.yml$$||' \
@@ -488,6 +509,10 @@ docker-benchmark-compare:
 
 docker-comparison:
 	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-comparison
+
+
+docker-comparison-with-baselines:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-comparison-with-baselines
 
 
 docker-benchmark: docker-benchmark-predict docker-benchmark-score

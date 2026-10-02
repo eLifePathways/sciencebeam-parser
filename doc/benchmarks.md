@@ -147,10 +147,22 @@ charts:
 ```
 
 ```sh
+# Fetch each named variant's predictions from the store, score them, and render:
+make dev-comparison-with-baselines COMPARISON=reference-models
+
+# Or, where every variant has already been scored, just render:
 make dev-comparison COMPARISON=reference-models
 ```
 
-`make dev-comparisons-list` names the ones that exist. A comparison compares runs
+The first is the one to reach for. Predictions are the expensive part of a benchmark
+and the store keeps them, so a question asked after the fact costs only the scoring --
+no parser, no docker and nothing generated. The second skips even that, and is for
+iterating on rows and charts once the summaries exist.
+
+`make dev-comparisons-list` names the ones that exist. `BENCHMARK_DATA` and
+`BENCHMARK_RUNS` say where the gold and the runs are, which a git worktree needs since
+neither is in one: both are gitignored and stay in the checkout that produced them.
+`COMPARISON_CURRENT_RUN` points a `current: true` variant at a run directory. A comparison compares runs
 that have already been scored, so it fails until they have been — naming each variant
 it could not find and listing the baselines that *are* there. A git worktree has no
 `benchmarks/runs` of its own, since it is gitignored and stays in the checkout that
