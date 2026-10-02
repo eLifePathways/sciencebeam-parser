@@ -118,42 +118,54 @@ that is interrupted keeps the records it had, and a document that timed out or
 failed is present with a `status` of `timeout` or `error` in every model's file
 rather than missing.
 
-#### The segmentation line record
+#### The span record
 
-`segmentation` additionally writes one line record per document, holding where on
-the page each of its lines sits, what it says and what it is labelled. Nothing else
-in a corpus carries a coordinate: the features carry relative position bins, and
-the `tei` carries none, so a label can only be judged against the PDF it came from.
+`segmentation` and `header` additionally write one span record per document,
+holding where on the page each labelled run of text sits, what it says and what it
+is labelled. Nothing else in a corpus carries a coordinate: the features carry
+relative position bins, and the `tei` carries none, so a label can only be judged
+against the PDF it came from.
 
-The label and the text are read back out of the training `tei` this run just wrote,
-rather than recomputed, so the record cannot describe a different document to the
-one beside it. With `--use-directory-structure` it sits beside the `tei` and `raw`
-directories, otherwise it is `<document>.segmentation.lines.jsonl` in the output
-path:
+A span is a run of consecutive tokens inside one element and one line. A
+`segmentation` line carries one label and is therefore one span; a `header` line is
+often part one label and part another, so it is more than one.
+
+With `--use-directory-structure` the record sits beside the `tei` and `raw`
+directories, otherwise it is `<document>.<model>.spans.jsonl` in the output path:
 
 ```text
-segmentation/corpus/lines/PPR459453.segmentation.lines.jsonl
+segmentation/corpus/spans/PPR459453.segmentation.spans.jsonl
+header/corpus/spans/PPR459453.header.spans.jsonl
 ```
 
-The first line describes the document and its pages, and every line after it is one
-line of training data, in the order the `tei` writes its `<lb/>` elements and the
-`raw` file writes its rows:
+The first line describes the document, its pages and the labels the model can
+write; every line after it is one span, in the order the `tei` writes them:
 
 ```json
-{"format": "sciencebeam-training-lines", "version": 1, "document_id": "PPR459453",
- "model": "segmentation", "line_count": 1355,
+{"format": "sciencebeam-training-spans", "version": 1, "document_id": "PPR459453",
+ "model": "header", "line_count": 44, "span_count": 50, "page_count": 22,
+ "labels": ["<title>", "<author>", "<address>"],
  "pages": [{"page": 1, "width": 595.28, "height": 841.89}]}
-{"page": 1, "x": 72.0, "y": 88.9, "width": 451.2, "height": 12.0,
- "label": "<header>", "text": "RESEARCH ARTICLE"}
+{"line": 6, "page": 1, "x": 72.0, "y": 88.9, "width": 393.1, "height": 12.0,
+ "label": "<author>", "text": "Poul Holm 1 , James Barrett 2"}
 ```
 
+- `line` counts the `<lb/>` elements of the whole file from 1, so the spans of one
+  line share it. For `segmentation` it is also the row of the `raw` file.
 - coordinates are in PDF points, from the top left of the page, the same space the
   `coords` attributes of the parser's own TEI output use.
-- a line the layout could not place keeps its place in the file, with its label and
+- `pages` carries the pages a span sits on, and `page_count` says how many the
+  document has.
+- `labels` lists the labels the model can write, in the order its element table
+  declares them. Two labels sharing an element path cannot be told apart in the
+  `tei`, so only the first is listed and only it appears as a span's label.
+- a span keeps the whitespace before and after it, so the spans of a line
+  concatenate to that line of the `tei` exactly.
+- a span the layout could not place keeps its place in the file, with its label and
   text and no coordinates.
-- generation fails the document rather than writing a record whose line count
-  disagrees with the training `tei`, since every label after the disagreement would
-  describe the wrong line.
+- generation fails the document rather than writing a record whose spans do not
+  reproduce the training `tei`, since a label drawn over text it does not cover is
+  worse than no record.
 
 ### Annotating `tei` training data for the sequence models
 
