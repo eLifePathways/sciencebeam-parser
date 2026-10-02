@@ -1141,6 +1141,28 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             '"AB" is a compacted initials token; it must be labeled as REFERENCE_AUTHOR'
         )
 
+    def test_author_leading_dotted_initials_are_labeled(self):
+        # The local alignment drops a first match separated from the next by a gap, and
+        # every token is followed by a space in the haystack, so without the head
+        # extension "A . A . C . MORAIS" was labelled from the second "A".
+        doc = _make_doc('Some title', 'A.A.C. MORAIS, G.M. TAVARES')
+        annotated = self._align(
+            doc, [_fv('A.A.C. Morais G.M. Tavares', JatsFieldNames.AUTHOR)]
+        )
+        author_line = list(doc.iter_all_lines())[1]
+        assert [
+            t.text for t in author_line.tokens
+            if annotated.get_token_field(t) != JatsFieldNames.AUTHOR
+        ] == []
+
+    def test_author_head_extension_does_not_claim_the_tail_of_a_preceding_word(self):
+        # "Pizza" ends with the "a" the unmatched needle head "a." looks for, but not at
+        # a token start, so the extension must not reach back into it.
+        doc = _make_doc('Pizza . B. Smith')
+        annotated = self._align(doc, [_fv('A. B. Smith', JatsFieldNames.AUTHOR)])
+        pizza = next(t for t in doc.iter_all_tokens() if t.text == 'Pizza')
+        assert annotated.get_token_field(pizza) is None
+
     def test_reference_author_second_initial_labeled_when_primary_sw_drops_break_even_tail(self):
         # "Jones-Smith AB" is the only author; the PDF renders initials as dotted separate
         # tokens "Jones-Smith, A. B.".  SW matches the long surname (meeting the quality
