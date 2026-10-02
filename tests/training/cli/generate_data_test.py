@@ -54,6 +54,7 @@ from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSub
 import sciencebeam_parser.training.cli.generate_data as generate_data_module
 from sciencebeam_parser.training.cli.generate_data import (
     CitationModelTrainingDataGenerator,
+    HeaderModelTrainingDataGenerator,
     ModelResultCache,
     NameCitationModelTrainingDataGenerator,
     ReferenceSegmenterModelTrainingDataGenerator,
@@ -1195,6 +1196,22 @@ class TestCitationJatsLabelFn:
                 2: JatsSubFieldNames.REFERENCE_PMID
             }
         ) == [IDENTIFIER_LABEL, '<date>', IDENTIFIER_LABEL]
+
+
+@log_on_exception
+class TestHeaderJatsLabelFn:
+    def test_should_label_tokens_no_header_field_claims_as_other(self):
+        line = LayoutLine.for_text('Title A . Smith')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.TITLE, instance_id=1)
+        annotated.set_token_label(line.tokens[3], JatsFieldNames.AUTHOR, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<title>', 'O', 'O', 'B-<author>']
 
 
 @log_on_exception

@@ -37,6 +37,7 @@ LOGGER = logging.getLogger(__name__)
 
 TEXT_1 = 'this is text 1'
 TEXT_2 = 'this is text 2'
+TEXT_3 = 'this is text 3'
 
 TOKEN_1 = 'token1'
 TOKEN_2 = 'token2'
@@ -206,6 +207,33 @@ class TestHeaderTeiTrainingDataGenerator:
             xml_root.xpath('./text/front')
         ) == [f'{TEXT_1}\n{TEXT_2}\n']
 
+    def test_should_put_other_text_between_labels_directly_under_front(self):
+        label_and_layout_line_list = [
+            ('<title>', get_next_layout_line_for_text(TEXT_1)),
+            ('O', get_next_layout_line_for_text(TEXT_2)),
+            ('<author>', get_next_layout_line_for_text(TEXT_3))
+        ]
+        labeled_model_data_list = get_labeled_model_data_list(
+            label_and_layout_line_list,
+            data_generator=get_data_generator()
+        )
+        training_data_generator = get_tei_training_data_generator()
+        xml_root = training_data_generator.get_training_tei_xml_for_model_data_iterable(
+            labeled_model_data_list
+        )
+        LOGGER.debug('xml: %r', etree.tostring(xml_root))
+        assert [
+            get_text_content(node).strip()
+            for node in xml_root.xpath('./text/front/docTitle')
+        ] == [TEXT_1]
+        assert [
+            get_text_content(node).strip()
+            for node in xml_root.xpath('./text/front/byline')
+        ] == [TEXT_3]
+        assert get_text_content_list(
+            xml_root.xpath('./text/front')
+        ) == [f'{TEXT_1}\n{TEXT_2}\n{TEXT_3}\n']
+
     def test_should_not_join_separate_labels(self):
         label_and_layout_line_list = [
             ('<title>', get_next_layout_line_for_text(TEXT_1)),
@@ -374,3 +402,23 @@ class TestHeaderTrainingTeiParser:
                 (TOKEN_3, f'I-{tei_label}'),
                 (TOKEN_4, f'I-{tei_label}')
             ]]
+
+    def test_should_parse_generated_other_text_back_to_the_same_labels(self):
+        label_and_layout_line_list = [
+            ('<title>', get_next_layout_line_for_text(TOKEN_1)),
+            ('O', get_next_layout_line_for_text(TOKEN_2)),
+            ('<author>', get_next_layout_line_for_text(TOKEN_3))
+        ]
+        xml_root = get_tei_training_data_generator(
+        ).get_training_tei_xml_for_model_data_iterable(
+            get_labeled_model_data_list(
+                label_and_layout_line_list,
+                data_generator=get_data_generator()
+            )
+        )
+        LOGGER.debug('xml: %r', etree.tostring(xml_root))
+        assert get_training_tei_parser().parse_training_tei_to_tag_result(xml_root) == [[
+            (TOKEN_1, 'B-<title>'),
+            (TOKEN_2, 'O'),
+            (TOKEN_3, 'B-<author>')
+        ]]
