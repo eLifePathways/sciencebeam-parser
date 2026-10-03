@@ -110,7 +110,7 @@ _POST_BODY_FIELDS: FrozenSet[str] = frozenset({
 # worst document cost more than the other thirty-eight together.  A region label
 # does not need them all -- these place the region, and the gap merge in the
 # segmentation deriver carries it to the end of the document.
-_POST_BODY_MAX_WIDE_SEARCHES = 40
+_POST_BODY_MAX_WIDE_SEARCHES = 200
 
 # Reserved key in the post-body text-end map, counting the wide searches spent.
 _WIDE_SEARCH_BUDGET_KEY = '\x00wide-search-budget'
