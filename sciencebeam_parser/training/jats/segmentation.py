@@ -404,6 +404,39 @@ def _reclassify_page_foot_notes(
         _grow_run_over_matching_type(seg_lines, run, SEG_FOOTNOTE)
 
 
+def _extend_front_to_page_end(
+    seg_lines: List[_SegLine],
+    annotated: JatsAnnotatedLayoutDocument,
+) -> None:
+    """Take the notices the front matter closes with on its own page.
+
+    A first page can end with lines the JATS does not carry -- which gateway or
+    collection the article belongs to -- set apart from the block above them, so
+    neither the gap merge nor a match in the same type reaches them.  They are
+    front matter by position: nothing evidenced stands between them and the
+    body, and the body starts on the page after.
+
+    Bounded to the page the front matter ends on, because a paper whose body
+    starts on that same page has nothing unevidenced between the two and this
+    walks over nothing.
+    """
+    last = max(
+        (index for index, sl in enumerate(seg_lines) if sl.seg_label == SEG_FRONT),
+        default=None,
+    )
+    if last is None:
+        return
+    page_number = _get_page_number(seg_lines[last])
+    for seg_line in seg_lines[last + 1:]:
+        if _get_page_number(seg_line) != page_number:
+            break
+        if seg_line.seg_label in _FURNITURE_LABELS:
+            continue
+        if seg_line.seg_label is not None or _is_grounded(seg_line, annotated):
+            break
+        seg_line.seg_label = SEG_FRONT
+
+
 def _is_in_header_zone(
     seg_line: _SegLine,
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -609,6 +642,7 @@ class SegmentationLabelDeriver:
         # reach them.  They are set in the same type as the block above them.
         for front_run in list(_iter_label_runs(seg_lines, SEG_FRONT)):
             _grow_run_over_matching_type(seg_lines, front_run, SEG_FRONT)
+        _extend_front_to_page_end(seg_lines, annotated)
 
         # After the merge, not before: a line the merge uses as the anchor of a
         # region may itself be a running header, and taking it back first leaves
