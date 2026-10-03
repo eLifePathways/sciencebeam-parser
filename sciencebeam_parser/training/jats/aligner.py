@@ -305,15 +305,32 @@ def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
     return _TokenIndex(all_tokens, skip_tokens=skip_tokens, no_space_after=no_space_after)
 
 
+# How much more page than its own length a value may span before the extra
+# counts against it.  Line breaks and hyphenation stretch an honest match a
+# little; a paragraph claiming the figure caption printed inside it stretches
+# it several times over.
+_MATCH_SPAN_TOLERANCE = 1.2
+
+
 def _match_quality(
     matching_blocks: List[Tuple[int, int, int]],
     needle_len: int,
 ) -> float:
-    """Fraction of needle characters matched (0..1)."""
+    """How much of the needle was found, against how much page it took to find it.
+
+    Counting only the needle lets a value match its characters scattered over
+    any amount of text -- a paragraph claiming the figure caption printed in the
+    middle of it -- so the page the match spans but does not account for counts
+    against it too.
+    """
     if needle_len == 0:
         return 1.0
-    matched = sum(size for _, _, size in matching_blocks if size)
-    return matched / needle_len
+    blocks = [(ai, size) for ai, _bi, size in matching_blocks if size]
+    if not blocks:
+        return 0.0
+    matched = sum(size for _, size in blocks)
+    span = (blocks[-1][0] + blocks[-1][1]) - blocks[0][0]
+    return matched / max(needle_len, span / _MATCH_SPAN_TOLERANCE)
 
 
 def _scan_tail_chars_at_token_starts(
