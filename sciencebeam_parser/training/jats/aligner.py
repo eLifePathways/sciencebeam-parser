@@ -2,7 +2,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
 
 from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 
@@ -669,6 +669,104 @@ def _exact_substring_match(
     return None
 
 
+# A value long enough that the page may set it in more than one place, and the
+# shortest piece worth matching on its own: below this a sentence is common
+# enough to land anywhere.  A value is accepted in pieces when they cover as
+# much of it as the threshold asks of a whole match.
+_FRAGMENT_MIN_NEEDLE_LENGTH = 400
+_FRAGMENT_MIN_PIECE_LENGTH = 120
+# A piece is also capped, because the page can break in the middle of a long
+# sentence and whatever piece holds that break is lost entirely.
+_FRAGMENT_MAX_PIECE_LENGTH = 250
+
+
+def _iter_sentences(text: str) -> Iterator[str]:
+    """The value by sentence, with a long one cut at a word boundary."""
+    for sentence in re.split(r'(?<=[.;:])\s+', text):
+        while len(sentence) > _FRAGMENT_MAX_PIECE_LENGTH:
+            cut = sentence.rfind(' ', 0, _FRAGMENT_MAX_PIECE_LENGTH)
+            if cut <= 0:
+                break
+            yield sentence[:cut]
+            sentence = sentence[cut + 1:]
+        if sentence:
+            yield sentence
+
+
+def _iter_needle_pieces(text: str) -> Iterator[str]:
+    """The value in pieces, each long enough to place on its own."""
+    piece = ''
+    for sentence in _iter_sentences(text):
+        piece = f'{piece} {sentence}'.strip() if piece else sentence
+        if len(piece) >= _FRAGMENT_MIN_PIECE_LENGTH:
+            yield piece
+            piece = ''
+    if piece:
+        yield piece
+
+
+def _iter_piece_matches(
+    token_index: _TokenIndex,
+    field_value: JatsFieldValue,
+    config: AlignmentConfig,
+    pieces: List[str],
+    search_start: int,
+    search_end: Optional[int],
+    masked_ranges: Optional[List[Tuple[int, int]]],
+) -> Iterator[Tuple[str, _MatchResult]]:
+    """Each piece that is found, in order, no piece reaching behind the last."""
+    cursor = search_start
+    for piece in pieces:
+        match = _fuzzy_match_field_value(
+            token_index,
+            JatsFieldValue(text=piece, field_name=field_value.field_name),
+            config,
+            search_start=cursor,
+            search_end=search_end,
+            masked_ranges=masked_ranges,
+        )
+        if match is None:
+            continue
+        cursor = match[1]
+        yield piece, match
+
+
+def _match_field_value_in_pieces(
+    token_index: _TokenIndex,
+    field_value: JatsFieldValue,
+    config: AlignmentConfig,
+    search_start: int,
+    search_end: Optional[int],
+    masked_ranges: Optional[List[Tuple[int, int]]],
+) -> Optional[_MatchResult]:
+    """Find a long value that the page sets in more than one place.
+
+    An abstract can run out of room on its page and continue overleaf, with the
+    rest of the front matter printed in between, so no window holds the whole of
+    it and the value matches nothing at all.  Each piece is matched on its own
+    and in order, and they are taken together when they cover as much of the
+    value as a whole match would have had to.
+    """
+    pieces = [piece for piece in _iter_needle_pieces(field_value.text) if piece]
+    if len(pieces) < 2:
+        return None
+    matches = list(_iter_piece_matches(
+        token_index, field_value, config, pieces,
+        search_start, search_end, masked_ranges,
+    ))
+    needle_length = len(normalize_for_alignment(field_value.text))
+    if not matches or not needle_length:
+        return None
+    covered = sum(len(normalize_for_alignment(piece)) for piece, _ in matches)
+    if covered / needle_length < config.threshold:
+        return None
+    return (
+        matches[0][1][0],
+        max(match[1] for _, match in matches),
+        [block for _, match in matches for block in match[2]],
+    )
+
+
 def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
     token_index: _TokenIndex,
     field_value: JatsFieldValue,
@@ -677,6 +775,7 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
     search_end: Optional[int] = None,
     masked_ranges: Optional[List[Tuple[int, int]]] = None,
     prefer_exact: bool = False,
+    allow_pieces: bool = False,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -737,6 +836,10 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
         if prefix_match is not None:
             return prefix_match
 
+    if gap_match is None and allow_pieces and need_len >= _FRAGMENT_MIN_NEEDLE_LENGTH:
+        return _match_field_value_in_pieces(
+            token_index, field_value, config, search_start, search_end, masked_ranges
+        )
     return gap_match
 
 
@@ -1172,6 +1275,7 @@ class LayoutDocumentJatsAligner:
                 search_start=search_start, search_end=search_end,
                 masked_ranges=masked,
                 prefer_exact=fv.field_name in _POST_BODY_FIELDS,
+                allow_pieces=fv.sub_field_name is None and not fv.exact_only,
             )
             # If primary match relied on a mid-token within-gap block (e.g. 't'
             # inside 'staff' matching the initial 'T' in "Guardian T"), the SW
