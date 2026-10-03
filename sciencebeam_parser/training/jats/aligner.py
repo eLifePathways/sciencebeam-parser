@@ -51,6 +51,21 @@ _FRONT_MATTER_BUFFER = 2000
 _KEYWORDS_SECTION_ANCHOR_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.KEYWORDS_TITLE})
 _KEYWORDS_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.KEYWORDS})
 
+# What the first page carries besides the title and abstract.  The abstract is
+# what bounds their window; where it does not match, they still belong at the
+# front, so they search from the start of the document rather than following the
+# cursor into the body.
+_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AUTHOR,
+    JatsFieldNames.AUTHOR_AFF,
+    JatsFieldNames.AUTHOR_NOTES,
+    JatsFieldNames.COPYRIGHT,
+    JatsFieldNames.FUNDING,
+    JatsFieldNames.MANUSCRIPT_TYPE,
+    JatsFieldNames.KEYWORDS,
+    JatsFieldNames.KEYWORDS_TITLE,
+})
+
 # Fields that appear after the front matter region. They search from the body floor
 # (end of last anchor match) rather than from the global last_match_end.
 _BODY_CONTENT_FIELDS: FrozenSet[str] = frozenset({
@@ -818,7 +833,10 @@ def _search_range(  # pylint: disable=too-many-locals
         is_keywords = fv.field_name in _KEYWORDS_FIELDS
         start = max(keywords_floor, front_matter_end) if is_keywords else 0
         return start, front_matter_end + _FRONT_MATTER_BUFFER
-    return max(0, last_match_end - 200), None
+    return (
+        0 if fv.field_name in _FRONT_MATTER_FIELDS
+        else max(0, last_match_end - 200)
+    ), None
 
 
 def _pre_anchor_indices(
