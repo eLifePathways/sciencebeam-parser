@@ -13,7 +13,7 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_ANNEX,
     SEG_BODY,
     SEG_FOOTNOTE,
-    SEG_OTHER,
+    SEG_REVIEW,
     SEG_FRONT,
     SEG_HEADNOTE,
     SEG_PAGE,
@@ -259,7 +259,7 @@ class TestRegionStartsAtThePageTop:
 
     def test_the_region_takes_the_unevidenced_heading_above_it(self):
         doc, annotated, heading = self._make_doc(heading_is_grounded=False)
-        assert _derive_labels(doc, annotated)[id(heading)] == SEG_OTHER
+        assert _derive_labels(doc, annotated)[id(heading)] == SEG_REVIEW
 
     def test_an_evidenced_line_above_keeps_the_region_where_it_was(self):
         doc, annotated, heading = self._make_doc(heading_is_grounded=True)

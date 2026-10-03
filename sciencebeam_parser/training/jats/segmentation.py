@@ -26,7 +26,7 @@ SEG_ANNEX = '<annex>'
 SEG_PAGE = '<page>'
 SEG_HEADNOTE = '<headnote>'
 SEG_FOOTNOTE = '<footnote>'
-SEG_OTHER = '<other>'
+SEG_REVIEW = '<review>'
 
 # Fraction of page height: lines above this → headnote, below this → footnote candidate
 _HEADNOTE_Y_RATIO = 0.08
@@ -615,7 +615,7 @@ class SegmentationLabelDeriver:
             seg_lines, self.config.page_header_max_first_line_index
         )
         _release_furniture_inside_references(seg_lines)
-        # `<other>` is peer-review sub-articles, which print as one run at the end
+        # `<review>` is the peer-review sub-articles, which print as one run at the end
         # of the document.  Its values are short, repeated checklist fragments in
         # an order the page does not follow, so the aligner places only some of
         # them; bridging the gaps between those it does place, and running the
@@ -624,14 +624,14 @@ class SegmentationLabelDeriver:
         _merge_gap_lines(
             seg_lines,
             enabled_labels={
-                SEG_FRONT, SEG_ANNEX, SEG_AVAILABILITY, SEG_REFERENCES, SEG_OTHER
+                SEG_FRONT, SEG_ANNEX, SEG_AVAILABILITY, SEG_REFERENCES, SEG_REVIEW
             },
-            enabled_tail_labels={SEG_ANNEX, SEG_OTHER},
+            enabled_tail_labels={SEG_ANNEX, SEG_REVIEW},
         )
 
         # Both regions run to the end of the document, so the page their first
         # evidenced line sits on is the page the region starts on.
-        for tail_label in (SEG_ANNEX, SEG_OTHER):
+        for tail_label in (SEG_ANNEX, SEG_REVIEW):
             _extend_region_to_page_start(seg_lines, tail_label, annotated)
 
         _reclassify_page_foot_notes(seg_lines, page_meta_by_number, self.config)

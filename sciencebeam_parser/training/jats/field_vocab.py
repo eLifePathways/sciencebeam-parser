@@ -72,7 +72,7 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.AUTHOR_NOTES:           '<header>',
     JatsFieldNames.FUNDING:               '<header>',
     JatsFieldNames.COPYRIGHT:             '<header>',
-    JatsFieldNames.SUB_ARTICLE:           '<other>',
+    JatsFieldNames.SUB_ARTICLE:           '<review>',
     JatsFieldNames.BODY_SECTION_TITLE:     '<body>',
     JatsFieldNames.BODY_SECTION_PARAGRAPH: '<body>',
     JatsFieldNames.BODY_FIGURE:            '<body>',
