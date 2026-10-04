@@ -2,7 +2,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
 
 from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 
@@ -33,6 +33,16 @@ _ANCHOR_FIELDS: FrozenSet[str] = frozenset({
 # but follow it in JATS ordering, so without this constraint they would be searched
 # from last_match_end (≈abstract end) and miss their true page-1 position.
 _FRONT_MATTER_END_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.ABSTRACT})
+
+# A data-availability section is one run of consecutive values, so each of them
+# can be searched from where the previous one landed.  The section's own values
+# are what place it; the fallback floor below is the end of the abstract, which
+# on a paper whose front matter continues past it would otherwise let a value
+# naming the article match the "how to cite" line on page one.
+_AVAILABILITY_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AVAILABILITY_SECTION_TITLE,
+    JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
+})
 _FRONT_MATTER_BUFFER = 2000
 
 # When the "Keywords" section header is matched, individual keyword values are searched
@@ -40,6 +50,21 @@ _FRONT_MATTER_BUFFER = 2000
 # keywords ("confidence", "Bayesian") false-match in the title or abstract.
 _KEYWORDS_SECTION_ANCHOR_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.KEYWORDS_TITLE})
 _KEYWORDS_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.KEYWORDS})
+
+# What the first page carries besides the title and abstract.  The abstract is
+# what bounds their window; where it does not match, they still belong at the
+# front, so they search from the start of the document rather than following the
+# cursor into the body.
+_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AUTHOR,
+    JatsFieldNames.AUTHOR_AFF,
+    JatsFieldNames.AUTHOR_NOTES,
+    JatsFieldNames.COPYRIGHT,
+    JatsFieldNames.FUNDING,
+    JatsFieldNames.MANUSCRIPT_TYPE,
+    JatsFieldNames.KEYWORDS,
+    JatsFieldNames.KEYWORDS_TITLE,
+})
 
 # Fields that appear after the front matter region. They search from the body floor
 # (end of last anchor match) rather than from the global last_match_end.
@@ -54,6 +79,8 @@ _BODY_CONTENT_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.APPENDIX,
     JatsFieldNames.BACK_SECTION_TITLE,
     JatsFieldNames.BACK_SECTION_PARAGRAPH,
+    JatsFieldNames.AVAILABILITY_SECTION_TITLE,
+    JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
 })
 
 # Reference fields use a dedicated floor so that appendix/body content matched
@@ -76,6 +103,17 @@ _REFERENCE_FIELDS: FrozenSet[str] = frozenset({
 _POST_BODY_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.SUB_ARTICLE,
 })
+
+# How many post-body values may search the whole region before the rest fall back
+# to the cursor.  Searching from a floor costs O(region x needle) for a value the
+# exact prefilter misses, and there are thousands per document: unbounded, the
+# worst document cost more than the other thirty-eight together.  A region label
+# does not need them all -- these place the region, and the gap merge in the
+# segmentation deriver carries it to the end of the document.
+_POST_BODY_MAX_WIDE_SEARCHES = 200
+
+# Reserved key in the post-body text-end map, counting the wide searches spent.
+_WIDE_SEARCH_BUDGET_KEY = '\x00wide-search-budget'
 
 # Smith-Waterman scoring: match=2, mismatch=-1, gap=-1
 _SCORING = SimpleScoring(match_score=2, mismatch_score=-1, gap_score=-1)
@@ -267,15 +305,32 @@ def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
     return _TokenIndex(all_tokens, skip_tokens=skip_tokens, no_space_after=no_space_after)
 
 
+# How much more page than its own length a value may span before the extra
+# counts against it.  Line breaks and hyphenation stretch an honest match a
+# little; a paragraph claiming the figure caption printed inside it stretches
+# it several times over.
+_MATCH_SPAN_TOLERANCE = 1.2
+
+
 def _match_quality(
     matching_blocks: List[Tuple[int, int, int]],
     needle_len: int,
 ) -> float:
-    """Fraction of needle characters matched (0..1)."""
+    """How much of the needle was found, against how much page it took to find it.
+
+    Counting only the needle lets a value match its characters scattered over
+    any amount of text -- a paragraph claiming the figure caption printed in the
+    middle of it -- so the page the match spans but does not account for counts
+    against it too.
+    """
     if needle_len == 0:
         return 1.0
-    matched = sum(size for _, _, size in matching_blocks if size)
-    return matched / needle_len
+    blocks = [(ai, size) for ai, _bi, size in matching_blocks if size]
+    if not blocks:
+        return 0.0
+    matched = sum(size for _, size in blocks)
+    span = (blocks[-1][0] + blocks[-1][1]) - blocks[0][0]
+    return matched / max(needle_len, span / _MATCH_SPAN_TOLERANCE)
 
 
 def _scan_tail_chars_at_token_starts(
@@ -601,13 +656,143 @@ def _exact_number_match(
     return None
 
 
-def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
+# Shortest needle the exact prefilter will accept.  Below it a verbatim hit says
+# little -- "Yes" occurs everywhere -- and the sliding matcher is cheap anyway,
+# since its cost is proportional to the needle.
+_EXACT_PREFILTER_MIN_LENGTH = 40
+
+
+def _exact_substring_match(
+    haystack: str,
+    needle: str,
+    segments: List[Tuple[int, int]],
+    token_index: '_TokenIndex',
+) -> Optional[_MatchResult]:
+    """Return the first verbatim occurrence of `needle`, on a token boundary.
+
+    The sliding matcher returns the leftmost exact match too, by scanning windows
+    in order and returning as soon as one is exact, so this changes which match
+    is chosen only where there is none.  What it changes is the cost: the matcher
+    is O(window x needle) over every window of the search range, which is the
+    whole post-body region for a field searched from a floor.
+    """
+    for seg_start, seg_end in segments:
+        pos = haystack.find(needle, seg_start, seg_end)
+        while pos != -1:
+            end = pos + len(needle)
+            if token_index.is_token_start(pos) and token_index.is_token_boundary_after(end - 1):
+                return pos, end, [(pos, end)]
+            pos = haystack.find(needle, pos + 1, seg_end)
+    return None
+
+
+# A value long enough that the page may set it in more than one place, and the
+# shortest piece worth matching on its own: below this a sentence is common
+# enough to land anywhere.  A value is accepted in pieces when they cover as
+# much of it as the threshold asks of a whole match.
+_FRAGMENT_MIN_NEEDLE_LENGTH = 400
+_FRAGMENT_MIN_PIECE_LENGTH = 120
+# A piece is also capped, because the page can break in the middle of a long
+# sentence and whatever piece holds that break is lost entirely.
+_FRAGMENT_MAX_PIECE_LENGTH = 250
+
+
+def _iter_sentences(text: str) -> Iterator[str]:
+    """The value by sentence, with a long one cut at a word boundary."""
+    for sentence in re.split(r'(?<=[.;:])\s+', text):
+        while len(sentence) > _FRAGMENT_MAX_PIECE_LENGTH:
+            cut = sentence.rfind(' ', 0, _FRAGMENT_MAX_PIECE_LENGTH)
+            if cut <= 0:
+                break
+            yield sentence[:cut]
+            sentence = sentence[cut + 1:]
+        if sentence:
+            yield sentence
+
+
+def _iter_needle_pieces(text: str) -> Iterator[str]:
+    """The value in pieces, each long enough to place on its own."""
+    piece = ''
+    for sentence in _iter_sentences(text):
+        piece = f'{piece} {sentence}'.strip() if piece else sentence
+        if len(piece) >= _FRAGMENT_MIN_PIECE_LENGTH:
+            yield piece
+            piece = ''
+    if piece:
+        yield piece
+
+
+def _iter_piece_matches(
+    token_index: _TokenIndex,
+    field_value: JatsFieldValue,
+    config: AlignmentConfig,
+    pieces: List[str],
+    search_start: int,
+    search_end: Optional[int],
+    masked_ranges: Optional[List[Tuple[int, int]]],
+) -> Iterator[Tuple[str, _MatchResult]]:
+    """Each piece that is found, in order, no piece reaching behind the last."""
+    cursor = search_start
+    for piece in pieces:
+        match = _fuzzy_match_field_value(
+            token_index,
+            JatsFieldValue(text=piece, field_name=field_value.field_name),
+            config,
+            search_start=cursor,
+            search_end=search_end,
+            masked_ranges=masked_ranges,
+        )
+        if match is None:
+            continue
+        cursor = match[1]
+        yield piece, match
+
+
+def _match_field_value_in_pieces(
+    token_index: _TokenIndex,
+    field_value: JatsFieldValue,
+    config: AlignmentConfig,
+    search_start: int,
+    search_end: Optional[int],
+    masked_ranges: Optional[List[Tuple[int, int]]],
+) -> Optional[_MatchResult]:
+    """Find a long value that the page sets in more than one place.
+
+    An abstract can run out of room on its page and continue overleaf, with the
+    rest of the front matter printed in between, so no window holds the whole of
+    it and the value matches nothing at all.  Each piece is matched on its own
+    and in order, and they are taken together when they cover as much of the
+    value as a whole match would have had to.
+    """
+    pieces = [piece for piece in _iter_needle_pieces(field_value.text) if piece]
+    if len(pieces) < 2:
+        return None
+    matches = list(_iter_piece_matches(
+        token_index, field_value, config, pieces,
+        search_start, search_end, masked_ranges,
+    ))
+    needle_length = len(normalize_for_alignment(field_value.text))
+    if not matches or not needle_length:
+        return None
+    covered = sum(len(normalize_for_alignment(piece)) for piece, _ in matches)
+    if covered / needle_length < config.threshold:
+        return None
+    return (
+        matches[0][1][0],
+        max(match[1] for _, match in matches),
+        [block for _, match in matches for block in match[2]],
+    )
+
+
+def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
     token_index: _TokenIndex,
     field_value: JatsFieldValue,
     config: AlignmentConfig,
     search_start: int,
     search_end: Optional[int] = None,
     masked_ranges: Optional[List[Tuple[int, int]]] = None,
+    prefer_exact: bool = False,
+    allow_pieces: bool = False,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -626,6 +811,15 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
         return _exact_number_match(token_index, needle, segments)
 
     need_len = len(needle)
+    if field_value.exact_only:
+        # No length floor: the search is confined to one region, so a short
+        # needle landing on a second occurrence carries the same label anyway,
+        # and a reviewer can be named in seven characters.
+        return _exact_substring_match(haystack, needle, segments, token_index)
+    if prefer_exact and need_len >= _EXACT_PREFILTER_MIN_LENGTH:
+        exact = _exact_substring_match(haystack, needle, segments, token_index)
+        if exact is not None:
+            return exact
     window_size = max(
         _DEFAULT_MIN_WINDOW,
         min(config.max_window, need_len * _WINDOW_NEEDLE_MULTIPLIER),
@@ -659,10 +853,16 @@ def _fuzzy_match_field_value(  # pylint: disable=too-many-locals
         if prefix_match is not None:
             return prefix_match
 
+    if gap_match is None and allow_pieces and need_len >= _FRAGMENT_MIN_NEEDLE_LENGTH:
+        return _match_field_value_in_pieces(
+            token_index, field_value, config, search_start, search_end, masked_ranges
+        )
     return gap_match
 
 
-def _search_range(
+# The per-field window rules have outgrown one function; splitting them is worth
+# doing next time this needs a branch.
+def _search_range(  # pylint: disable=too-many-locals
     fv: JatsFieldValue,
     last_match_end: int,
     body_floor: int,
@@ -671,6 +871,7 @@ def _search_range(
     keywords_floor: int,
     reference_floor: int,
     parent_match_by_field: Dict[str, Tuple[int, int, int]],
+    post_body_text_end: Optional[Dict[str, int]] = None,
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
     if fv.sub_field_name is not None and fv.field_name in parent_match_by_field:
@@ -714,7 +915,36 @@ def _search_range(
         # Anchor fields (abstract, title) and post-body fields (sub-articles) both
         # search from last_match_end so they follow reading order and cannot fall
         # back to the front-matter window.
-        return max(0, last_match_end - 200), None
+        #
+        # A post-body field searches from a floor rather than that cursor.
+        # Sub-article values repeat within a document and do not follow the page,
+        # so a cursor loses every value earlier than the last match.  The floor
+        # keeps what the cursor was for -- body and figures lie before it -- while
+        # letting the region be searched in any order, and no post-body match
+        # advances it, so it cannot creep.
+        spent = (post_body_text_end or {}).get(_WIDE_SEARCH_BUDGET_KEY, 0)
+        if (
+            fv.field_name in _POST_BODY_FIELDS
+            and (fv.exact_only or spent < _POST_BODY_MAX_WIDE_SEARCHES)
+        ):
+            # The reference list, where there is one, is the floor rather than the
+            # last body match.  An author response quotes the paper, so a body
+            # paragraph can match inside the peer review and carry the floor past
+            # most of the region with it; the reference list cannot, because it
+            # prints between the body and the peer review.
+            #
+            # A repeated value still advances past its own previous match, because
+            # ORE prints one copy of each checklist question per reviewer and the
+            # copies have to land on different ones: searching every copy from the
+            # floor collapses them all onto the first.
+            start = max(
+                0,
+                (reference_floor if reference_floor > 0 else body_content_end) - 200,
+                (post_body_text_end or {}).get(fv.text, 0),
+            )
+        else:
+            start = max(0, last_match_end - 200)
+        return start, None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
         # Keywords are anchored to just after the keywords header/abstract so
@@ -723,7 +953,10 @@ def _search_range(
         is_keywords = fv.field_name in _KEYWORDS_FIELDS
         start = max(keywords_floor, front_matter_end) if is_keywords else 0
         return start, front_matter_end + _FRONT_MATTER_BUFFER
-    return max(0, last_match_end - 200), None
+    return (
+        0 if fv.field_name in _FRONT_MATTER_FIELDS
+        else max(0, last_match_end - 200)
+    ), None
 
 
 def _pre_anchor_indices(
@@ -1026,6 +1259,7 @@ class LayoutDocumentJatsAligner:
         last_match_end = 0
         body_floor = 0
         body_content_end = 0
+        availability_floor = 0
         front_matter_end = 0
         keywords_floor = 0
         reference_floor = 0
@@ -1039,12 +1273,14 @@ class LayoutDocumentJatsAligner:
         # Furthest end of any DOI/PMID/PMCID match for the current reference instance.
         # Used to advance the backward-search floor past identifier URLs in the tail.
         ref_id_subfield_end: Dict[str, int] = {}
+        # End of the previous match of each distinct post-body value text.
+        post_body_text_end: Dict[str, int] = {}
 
         for fv in field_values:
             search_start, search_end = _search_range(
                 fv, last_match_end, body_floor, body_content_end,
                 front_matter_end, keywords_floor, reference_floor,
-                parent_match_by_field,
+                parent_match_by_field, post_body_text_end,
             )
             masked = (
                 sub_field_masked_ranges.get(fv.field_name)
@@ -1055,6 +1291,8 @@ class LayoutDocumentJatsAligner:
                 token_index, fv, self.config,
                 search_start=search_start, search_end=search_end,
                 masked_ranges=masked,
+                prefer_exact=fv.field_name in _POST_BODY_FIELDS,
+                allow_pieces=fv.sub_field_name is None and not fv.exact_only,
             )
             # If primary match relied on a mid-token within-gap block (e.g. 't'
             # inside 'staff' matching the initial 'T' in "Guardian T"), the SW
@@ -1099,15 +1337,18 @@ class LayoutDocumentJatsAligner:
             # appendix) matches at a later PDF position than subsequent paragraphs
             # of the parent section.  Fall back to searching from body_floor
             # (end of abstract) so those paragraphs are not permanently blocked.
+            retry_floor = max(body_floor, availability_floor) if (
+                fv.field_name in _AVAILABILITY_FIELDS
+            ) else body_floor
             if (
                 match_range is None
                 and fv.sub_field_name is None
                 and fv.field_name in _BODY_CONTENT_FIELDS
-                and search_start > body_floor
+                and search_start > retry_floor
             ):
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config,
-                    search_start=body_floor, search_end=None,
+                    search_start=retry_floor, search_end=None,
                 )
             # Parent REFERENCE fallback: retry with a relaxed threshold when the
             # full-text parent match just misses 0.8.  JATS may concatenate initials
@@ -1158,6 +1399,14 @@ class LayoutDocumentJatsAligner:
             matched_count += 1
             a_start, a_end, block_ranges = match_range
             last_match_end = max(last_match_end, a_end)
+            if fv.field_name in _POST_BODY_FIELDS:
+                post_body_text_end[fv.text] = max(
+                    post_body_text_end.get(fv.text, 0), a_end
+                )
+                if not fv.exact_only:
+                    post_body_text_end[_WIDE_SEARCH_BUDGET_KEY] = (
+                        post_body_text_end.get(_WIDE_SEARCH_BUDGET_KEY, 0) + 1
+                    )
             if fv.field_name in _ANCHOR_FIELDS:
                 body_floor = max(body_floor, a_end)
             if fv.field_name in _FRONT_MATTER_END_FIELDS:
@@ -1169,6 +1418,8 @@ class LayoutDocumentJatsAligner:
                 keywords_floor = max(keywords_floor, a_end)
             if fv.field_name in _BODY_CONTENT_FIELDS:
                 body_content_end = max(body_content_end, a_end)
+            if fv.field_name in _AVAILABILITY_FIELDS:
+                availability_floor = max(availability_floor, a_start)
             if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
                 reference_floor = max(reference_floor, a_end)
             if fv.sub_field_name is None:

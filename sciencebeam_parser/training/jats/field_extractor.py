@@ -16,10 +16,66 @@ class JatsFieldValue:
     field_name: str
     sub_field_name: Optional[str] = None
     fallback_text: Optional[str] = None
+    exact_only: bool = False
+
+
+# A data-availability section says so structurally; matching on its title would
+# have to guess at "Data availability", "Software availability" and the rest.
+_AVAILABILITY_SEC = '@sec-type="data-availability"'
 
 
 def _element_text(el: etree._Element) -> str:
     return ' '.join(' '.join(el.itertext()).split())
+
+
+def _iter_sub_article_stub_texts(
+    sub_article: etree._Element,
+) -> Iterator[Tuple[etree._Element, str]]:
+    """Yield the front-stub text a peer-review report prints above its body.
+
+    A report's heading block -- its licence sentence, reviewer name and
+    affiliation -- is in `<front-stub>` rather than in a `<title>` or a `<p>`,
+    so without it the region starts at the report's first paragraph and the
+    heading above falls back to `<body>`.
+
+    These are matched verbatim or not at all.  The renderer prints them from
+    these very elements, and there are enough of them per report that letting
+    them slide over the region instead would spend the wide-search budget on the
+    headings and lose the report prose that budget is for.
+
+    The report's own DOI is left out: the PDF breaks it into tokens around every
+    dot and slash, so it is never found verbatim, and letting that one value
+    slide costs more region elsewhere than the heading line it wins.
+    """
+    for el in sub_article.xpath('.//front-stub//contrib/name'):
+        given_names = _element_text_of_first(el, 'given-names')
+        surname = _element_text_of_first(el, 'surname')
+        text = ' '.join(part for part in (given_names, surname) if part)
+        if text:
+            yield el, text
+    for el in sub_article.xpath('.//front-stub//aff'):
+        text = _affiliation_text(el)
+        if text:
+            yield el, text
+    for el in sub_article.xpath('.//front-stub//license-p'):
+        text = _element_text(el)
+        if text:
+            yield el, text
+
+
+def _element_text_of_first(el: etree._Element, tag: str) -> str:
+    found = el.find(tag)
+    return _element_text(found) if found is not None else ''
+
+
+def _affiliation_text(el: etree._Element) -> str:
+    """The affiliation without its `<label>`, which prints as the author's marker."""
+    parts = [el.text or '']
+    for child in el:
+        if child.tag != 'label':
+            parts.append(_element_text(child))
+        parts.append(child.tail or '')
+    return ' '.join(' '.join(parts).split())
 
 
 def _reference_parent_text(ref_el: etree._Element) -> str:
@@ -212,6 +268,7 @@ class JatsFieldExtractor:
         yield from self._iter_front_values(root)
         yield from self._iter_body_values(root)
         yield from self._iter_back_values(root)
+        yield from self._iter_floats_group_values(root)
         yield from self._iter_sub_article_values(root)
 
     def _emit(
@@ -395,6 +452,39 @@ class JatsFieldExtractor:
         for _, fv in sorted(entries):
             yield fv
 
+    def _iter_floats_group_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """Yield the captions of floats JATS holds at the end of the document.
+
+        `<floats-group>` is where a publisher puts tables and figures that print
+        after the reference list rather than beside the text that cites them.
+        Nothing else reads it, so its pages -- seventeen of them on `PPR458717`,
+        and some share of 49 of 50 scielo documents -- had no field to align
+        against and fell to the `<body>` sink.
+
+        Only the label and caption are taken, as the body path does, because the
+        cells of a table do not align as running text.  That is enough: the
+        caption anchors the float, and the deriver's gap merge carries `<annex>`
+        over the rest of it and on to the end of the document.
+        """
+        floats_group = root.find('floats-group')
+        if floats_group is None:
+            return
+        position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
+        entries: List[Tuple[int, JatsFieldValue]] = []
+        for xpath, field_name in (
+            ('.//fig', JatsFieldNames.FLOAT_FIGURE),
+            ('.//table-wrap', JatsFieldNames.FLOAT_TABLE),
+        ):
+            for el in floats_group.xpath(xpath):
+                children = el.xpath('./label') + el.xpath('./caption')
+                text = (_element_text(el) if not children
+                        else ' '.join(_element_text(c) for c in children if _element_text(c)))
+                if text:
+                    entries.append((position[el], JatsFieldValue(
+                        text=text, field_name=field_name)))
+        for _, fv in sorted(entries):
+            yield fv
+
     # ── Back matter ───────────────────────────────────────────────────────────
 
     def _iter_back_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
@@ -431,14 +521,32 @@ class JatsFieldExtractor:
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.APPENDIX)))
 
-        for el in root.xpath('back//sec[not(ancestor::ack)]/title'):
+        # A data-availability section is back matter the model has its own label
+        # for, so it is taken out of the generic sweep rather than labelled
+        # `<annex>` with everything else that follows the body.
+        for el in root.xpath(f'back//sec[{_AVAILABILITY_SEC}]//title'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.AVAILABILITY_SECTION_TITLE)))
+
+        for el in root.xpath(f'back//sec[{_AVAILABILITY_SEC}]//p'):
+            text = _element_text(el)
+            if text:
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH)))
+
+        for el in root.xpath(
+            f'back//sec[not(ancestor::ack)][not(ancestor-or-self::sec[{_AVAILABILITY_SEC}])]/title'
+        ):
             text = _element_text(el)
             if text:
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.BACK_SECTION_TITLE)))
 
         for el in root.xpath(
-            'back//sec[not(ancestor::ack)]/p[not(ancestor::ack)]'
+            f'back//sec[not(ancestor::ack)][not(ancestor-or-self::sec[{_AVAILABILITY_SEC}])]'
+            '/p[not(ancestor::ack)]'
             ' | back//p[not(ancestor::sec) and not(ancestor::ack)]'
         ):
             text = _element_text(el)
@@ -485,6 +593,9 @@ class JatsFieldExtractor:
                 if text:
                     entries.append((position[el], JatsFieldValue(
                         text=text, field_name=JatsFieldNames.SUB_ARTICLE)))
+            for el, text in _iter_sub_article_stub_texts(sub_article):
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=JatsFieldNames.SUB_ARTICLE, exact_only=True)))
 
-        for _, fv in sorted(entries):
+        for _, fv in sorted(entries, key=lambda entry: entry[0]):
             yield fv

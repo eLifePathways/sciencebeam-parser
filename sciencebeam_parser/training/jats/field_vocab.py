@@ -19,8 +19,12 @@ class JatsFieldNames:
     BODY_SECTION_PARAGRAPH = 'body_section_paragraph'
     BODY_FIGURE = 'body_figure'
     BODY_TABLE = 'body_table'
+    FLOAT_FIGURE = 'float_figure'
+    FLOAT_TABLE = 'float_table'
     BACK_SECTION_TITLE = 'back_section_title'
     BACK_SECTION_PARAGRAPH = 'back_section_paragraph'
+    AVAILABILITY_SECTION_TITLE = 'availability_section_title'
+    AVAILABILITY_SECTION_PARAGRAPH = 'availability_section_paragraph'
     ACK_SECTION_TITLE = 'acknowledgment_section_title'
     ACK_SECTION_PARAGRAPH = 'acknowledgment_section_paragraph'
     APPENDIX_GROUP_TITLE = 'appendix_group_title'
@@ -68,11 +72,19 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.AUTHOR_NOTES:           '<header>',
     JatsFieldNames.FUNDING:               '<header>',
     JatsFieldNames.COPYRIGHT:             '<header>',
-    JatsFieldNames.SUB_ARTICLE:           '<other>',
+    JatsFieldNames.SUB_ARTICLE:           '<review>',
     JatsFieldNames.BODY_SECTION_TITLE:     '<body>',
     JatsFieldNames.BODY_SECTION_PARAGRAPH: '<body>',
     JatsFieldNames.BODY_FIGURE:            '<body>',
     JatsFieldNames.BODY_TABLE:             '<body>',
+    # `<body>` wherever they print.  GROBID's own corpus labels a bare float
+    # caption after the reference list `<body>` 902 times against `<annex>` 234,
+    # and reserves `<annex>` for a named supplementary or appendix section, so a
+    # corpus meant to mix with it has to agree.
+    JatsFieldNames.FLOAT_FIGURE:           '<body>',
+    JatsFieldNames.FLOAT_TABLE:            '<body>',
+    JatsFieldNames.AVAILABILITY_SECTION_TITLE:     '<availability>',
+    JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH: '<availability>',
     JatsFieldNames.ACK_SECTION_TITLE:      '<acknowledgement>',
     JatsFieldNames.ACK_SECTION_PARAGRAPH:  '<acknowledgement>',
     JatsFieldNames.APPENDIX_GROUP_TITLE:   '<annex>',

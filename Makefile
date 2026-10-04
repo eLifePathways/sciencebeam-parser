@@ -80,6 +80,11 @@ TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
 # Models to generate training data for (space-separated). Override to add more.
 TRAINING_DATA_MODELS ?= segmentation header affiliation-address reference-segmenter citation
 
+# Where dev-generate-delft-training-data writes, and which model it converts.
+# It converts one model at a time, because the delft CLI takes one model's paths.
+DELFT_TRAINING_DATA_OUTPUT ?= $(TRAINING_DATA_OUTPUT)/delft
+DELFT_TRAINING_DATA_MODEL ?= segmentation
+
 # Source training data (PDF + JATS XML) downloaded from the HF dataset.
 # TRAINING_DATA_OUTPUT must point to a checkout of the output repo; create a
 # symlink at data/generated-training-data or override the variable directly:
@@ -340,6 +345,27 @@ dev-generate-training-data:
 		--models $(TRAINING_DATA_MODELS) \
 		--debug \
 		$(ARGS)
+
+
+dev-generate-delft-training-data:
+	@test -d "$(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT)" || { \
+		echo "ERROR: no '$(SOURCE_TRAINING_SPLIT)' under TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)'."; \
+		echo "       Run dev-generate-training-data first, with the same variables."; \
+		exit 1; }
+	@mkdir -p "$(DELFT_TRAINING_DATA_OUTPUT)"
+	@for corpus in $$(ls "$(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT)"); do \
+		model_dir="$(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT)/$$corpus/$(DELFT_TRAINING_DATA_MODEL)"; \
+		test -d "$$model_dir/corpus/tei" || continue; \
+		echo "converting $$corpus"; \
+		$(PYTHON) -m sciencebeam_parser.training.cli.generate_delft_data \
+			--model-name $(DELFT_TRAINING_DATA_MODEL) \
+			--tei-source-path "$$model_dir/corpus/tei/*.tei.xml*" \
+			--raw-source-path "$$model_dir/corpus/raw" \
+			--quality-record-path "$$model_dir/quality.jsonl" \
+			--delft-output-path \
+			"$(DELFT_TRAINING_DATA_OUTPUT)/$$corpus-$(DELFT_TRAINING_DATA_MODEL).data" \
+			$(ARGS) || exit 1; \
+	done
 
 
 docker-buildx-bake-build-all:

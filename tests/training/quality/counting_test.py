@@ -1,18 +1,24 @@
 from lxml import etree
 
 from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
-from sciencebeam_parser.document.layout_document import LayoutToken
+from sciencebeam_parser.document.layout_document import (
+    LayoutDocument,
+    LayoutLine,
+    LayoutToken
+)
 from sciencebeam_parser.models.data import (
     LabeledLayoutModelData,
     LabeledLayoutToken,
     LayoutModelData
 )
-from sciencebeam_parser.training.jats.field_vocab import JatsSubFieldNames
+from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
+from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
 from sciencebeam_parser.training.quality.counting import (
     count_citation_labels,
     count_entity_elements,
     count_entity_starts,
     count_label_starts_per_sequence,
+    count_segmentation_lines,
     get_labels_for_model_data_list,
     is_model_counted_by_label
 )
@@ -132,6 +138,67 @@ class TestCountCitationLabels:
 
 def _labeled_token(label: str) -> LabeledLayoutToken:
     return LabeledLayoutToken(label=label, layout_token=LayoutToken('token'))
+
+
+def _line(*token_texts: str) -> LayoutLine:
+    return LayoutLine([LayoutToken(text) for text in token_texts])
+
+
+def _labeled_line(label, layout_line: LayoutLine) -> LabeledLayoutModelData:
+    return LabeledLayoutModelData(
+        data_line='line', label=label, layout_line=layout_line
+    )
+
+
+def _annotated(*grounded_lines: LayoutLine) -> JatsAnnotatedLayoutDocument:
+    """A document in which every token of the given lines aligned to a JATS field."""
+    annotated = JatsAnnotatedLayoutDocument(layout_document=LayoutDocument(pages=[]))
+    for layout_line in grounded_lines:
+        for token in layout_line.tokens:
+            annotated.token_label_by_id[id(token)] = (JatsFieldNames.ABSTRACT, None, 0)
+    return annotated
+
+
+class TestCountSegmentationLines:
+    def test_should_count_lines_and_grounded_lines_per_label(self):
+        grounded, ungrounded = _line('alpha'), _line('beta')
+        counts = count_segmentation_lines(
+            [[_labeled_line('<header>', grounded), _labeled_line('<body>', ungrounded)]],
+            _annotated(grounded)
+        )
+        assert counts == {
+            '<header>': {'lines': 1, 'grounded': 1},
+            '<body>': {'lines': 1, 'grounded': 0},
+        }
+
+    def test_should_separate_the_body_sink_from_grounded_body(self):
+        grounded, sink = _line('alpha'), _line('beta')
+        counts = count_segmentation_lines(
+            [[_labeled_line('<body>', grounded), _labeled_line('<body>', sink)]],
+            _annotated(grounded)
+        )
+        assert counts['<body>'] == {'lines': 2, 'grounded': 1}
+
+    def test_should_ground_a_line_where_any_token_aligned(self):
+        partly = _line('alpha', 'beta')
+        annotated = JatsAnnotatedLayoutDocument(layout_document=LayoutDocument(pages=[]))
+        annotated.token_label_by_id[id(partly.tokens[1])] = (JatsFieldNames.TITLE, None, 0)
+        counts = count_segmentation_lines([[_labeled_line('<header>', partly)]], annotated)
+        assert counts['<header>'] == {'lines': 1, 'grounded': 1}
+
+    def test_should_strip_an_iob_prefix_so_a_region_is_counted_once(self):
+        first, second = _line('alpha'), _line('beta')
+        counts = count_segmentation_lines(
+            [[_labeled_line('B-<references>', first), _labeled_line('I-<references>', second)]],
+            _annotated(first, second)
+        )
+        assert counts == {'<references>': {'lines': 2, 'grounded': 2}}
+
+    def test_should_ignore_unlabeled_lines(self):
+        counts = count_segmentation_lines(
+            [[_labeled_line(None, _line('alpha'))]], _annotated()
+        )
+        assert not counts
 
 
 class TestCountEntityStarts:
