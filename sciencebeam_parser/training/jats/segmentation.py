@@ -28,6 +28,7 @@ SEG_ANNEX = '<annex>'
 SEG_PAGE = '<page>'
 SEG_HEADNOTE = '<headnote>'
 SEG_FOOTNOTE = '<footnote>'
+SEG_COVER = '<cover>'
 SEG_REVIEW = '<review>'
 SEG_CONTRIBUTION = '<contribution>'
 SEG_CONFLICT = '<conflict>'
@@ -244,6 +245,60 @@ def _tag_running_feet_by_repetition(
             seg_line.seg_label = SEG_PAGE
 
 
+# What a preprint server opens the page it deposits an article behind with.
+_DEPOSIT_NOTICE_PATTERNS = (
+    re.compile(
+        r'^\s*(situa[\u00e7c][\u00e3a]o'
+        r'|status'
+        r'|estado\s+d(a\s+publica[\u00e7c][\u00e3a]o|e\s+la\s+publicaci[\u00f3o]n))\s*:',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'sob\s+as\s+seguintes\s+condi[\u00e7c][\u00f5o]es'
+        r'|bajo\s+las\s+siguientes\s+condiciones'
+        r'|under\s+the\s+following\s+conditions',
+        re.IGNORECASE,
+    ),
+)
+
+
+def _is_deposit_notice(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _DEPOSIT_NOTICE_PATTERNS)
+
+
+def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
+    """Take the whole of a page the publisher wraps the article in.
+
+    A cover page is the publisher's rather than the author's: it restates the
+    title, the authors and the identifier, and adds the deposit conditions and
+    the licence.  GROBID asks for the whole of such a page under one label and
+    reads nothing back out of it, which is the point -- the deposit conditions
+    are not the paper's header, and a header model trained on them learns that
+    a page of licence terms is bibliographic data.
+
+    The page is recognised by the notice the server opens it with, and only
+    where nothing on it has already been read as part of the article.  It is
+    not always the first page: one preprint carries two, and others print the
+    conditions at the end instead.
+    """
+    pages: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None:
+            pages.setdefault(page_number, []).append(seg_line)
+    for page_lines in pages.values():
+        first = next((sl for sl in page_lines if sl.text.strip()), None)
+        if first is None or not _is_deposit_notice(first.text):
+            continue
+        if any(
+            sl.seg_label not in (None, SEG_FRONT) and sl.seg_label not in _FURNITURE_LABELS
+            for sl in page_lines
+        ):
+            continue
+        for seg_line in page_lines:
+            seg_line.seg_label = SEG_COVER
+
+
 _FURNITURE_LABELS = {SEG_HEADNOTE, SEG_FOOTNOTE, SEG_PAGE}
 
 
@@ -312,12 +367,15 @@ def _reclaim_repeated_headnotes(
     line itself sits in the header zone.  Repetition alone is not enough: a
     running header carrying the article's title repeats, and would otherwise take
     the title out of the front matter, where it prints below the header zone.
+
+    A cover page keeps everything it has: GROBID asks for the whole of one under
+    the one label, and the banner across the top of it is the publisher's too.
     """
     headnote_counts: Counter = Counter(
         sl.text for sl in seg_lines if sl.seg_label == SEG_HEADNOTE
     )
     for seg_line in seg_lines:
-        if seg_line.seg_label in (SEG_HEADNOTE, None):
+        if seg_line.seg_label in (SEG_HEADNOTE, SEG_COVER, None):
             continue
         count = headnote_counts.get(seg_line.text, 0)
         if count < 2 or not _is_valid_headnote_candidate(seg_line.text, count, min_count=2):
@@ -727,6 +785,7 @@ class SegmentationLabelDeriver:
         # ── Tier 2: coordinate-based margin detection ──
         page_meta_by_number = _get_page_meta_by_page_number(layout_document)
         _tag_by_coordinates(seg_lines, page_meta_by_number, self.config)
+        _tag_cover_pages(seg_lines)
 
         # ── Tier 3: heuristic passes ──
         _clear_front_beyond_threshold(
@@ -759,6 +818,12 @@ class SegmentationLabelDeriver:
         # evidenced line sits on is the page the region starts on.
         for tail_label in (SEG_ANNEX, SEG_REVIEW):
             _extend_region_to_page_start(seg_lines, tail_label, annotated)
+
+        # With the cover page taken, the article's own title block is the first
+        # thing above the front matter that nothing else claims: the title and
+        # authors the cover restated, which the aligner matched on the cover and
+        # so left unevidenced here.
+        _extend_region_to_page_start(seg_lines, SEG_FRONT, annotated)
 
         _extend_region_to_page_end(
             seg_lines, SEG_REFERENCES, annotated, page_meta_by_number, self.config
