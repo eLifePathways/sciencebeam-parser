@@ -169,15 +169,27 @@ def _tag_by_coordinates(
 ) -> None:
     """Use vertical position to label headnotes and footnotes for untagged lines.
 
-    The margin is read from the block, not the line alone: a column of body text
-    whose last line crosses into the footer zone is still body, because the rest
+    The margin is read from the block, not the line alone: a column of text
+    whose last line crosses into the footer zone is still text, because the rest
     of its block sits above the zone.  A running foot is a block of its own and
     lies in the zone entirely.
+
+    At the top of a page, position alone is not enough either.  A running head
+    is what every page carries -- 96% of them repeat across the document -- so a
+    line that prints once, on one page, is the page's own content that happens
+    to start at the top: a table caption, or the kind of article it is.  It is
+    left for the regions to claim.  A page number is a page number wherever it
+    prints, at the head as at the foot.
     """
     y_ratio_by_line = {
         id(seg_line): _get_line_y_ratio(seg_line, page_meta_by_number)
         for seg_line in seg_lines
     }
+    pages_by_text: Dict[str, Set[int]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None:
+            pages_by_text.setdefault(seg_line.text, set()).add(page_number)
 
     def is_in_margin(y_ratio: Optional[float]) -> bool:
         return y_ratio is not None and (
@@ -196,13 +208,14 @@ def _tag_by_coordinates(
         y_ratio = y_ratio_by_line[id(seg_line)]
         if y_ratio is None or not block_is_margin.get(seg_line.block_index, True):
             continue
-        if y_ratio < config.headnote_y_ratio:
-            seg_line.seg_label = SEG_HEADNOTE
+        if not (y_ratio < config.headnote_y_ratio or y_ratio > config.footnote_y_ratio):
+            continue
+        if _is_valid_page_number_candidate(seg_line.text):
+            seg_line.seg_label = SEG_PAGE
         elif y_ratio > config.footnote_y_ratio:
-            if _is_valid_page_number_candidate(seg_line.text):
-                seg_line.seg_label = SEG_PAGE
-            else:
-                seg_line.seg_label = SEG_FOOTNOTE
+            seg_line.seg_label = SEG_FOOTNOTE
+        elif len(pages_by_text.get(seg_line.text, ())) > 1:
+            seg_line.seg_label = SEG_HEADNOTE
 
 
 def _tag_headnotes_by_text_repetition(

@@ -115,12 +115,45 @@ class TestMajorityVoteLabeling:
 
 
 class TestCoordinateBasedDetection:
-    def test_line_at_top_of_page_becomes_headnote(self):
-        line = _make_line('Running', 'header', y=20.0)  # 20/1000 = 2% < 8%
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)
+    @staticmethod
+    def _two_pages(*top_lines: LayoutLine) -> LayoutDocument:
+        """A page each, with the given line at the top of it."""
+        return LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[line])],
+                meta=_make_page_meta(page_number=page_number, height=1000.0),
+            )
+            for page_number, line in enumerate(top_lines, 1)
+        ])
+
+    def test_a_line_repeated_at_the_top_of_pages_becomes_headnote(self):
+        # 20/1000 = 2% < 8%, and a running header is what runs across pages.
+        lines = [
+            _make_line('Running', 'header', y=20.0, page_number=page_number)
+            for page_number in (1, 2)
+        ]
+        doc = self._two_pages(*lines)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
-        assert labels[id(line)] == SEG_HEADNOTE
+        assert [labels[id(line)] for line in lines] == [SEG_HEADNOTE, SEG_HEADNOTE]
+
+    def test_a_line_printed_once_at_the_top_is_not_a_headnote(self):
+        caption = _make_line('Table', '6:', 'results', y=20.0, page_number=1)
+        other = _make_line('Running', 'header', y=20.0, page_number=2)
+        doc = self._two_pages(caption, other)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        assert labels[id(caption)] != SEG_HEADNOTE
+
+    def test_a_page_number_at_the_top_becomes_page(self):
+        numbers = [
+            _make_line(str(page_number), y=20.0, page_number=page_number)
+            for page_number in (1, 2)
+        ]
+        doc = self._two_pages(*numbers)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        assert [labels[id(line)] for line in numbers] == [SEG_PAGE, SEG_PAGE]
 
     def test_line_in_middle_of_page_is_not_headnote(self):
         line = _make_line('Normal', 'content', y=500.0)  # 50% of page
