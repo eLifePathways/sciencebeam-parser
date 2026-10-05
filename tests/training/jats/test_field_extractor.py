@@ -449,7 +449,7 @@ class TestAvailability:
             '<article><back>'
             '<sec sec-type="data-availability"><title>Data availability</title>'
             '<p>The original data is available from the archive.</p></sec>'
-            '<sec><title>Author contributions</title><p>AB wrote the paper.</p></sec>'
+            '<sec><title>Ethics</title><p>Approved by the review board.</p></sec>'
             '</back></article>'
         )
         back = [
@@ -458,7 +458,7 @@ class TestAvailability:
                 JatsFieldNames.BACK_SECTION_TITLE, JatsFieldNames.BACK_SECTION_PARAGRAPH
             )
         ]
-        assert back == ['Author contributions', 'AB wrote the paper.']
+        assert back == ['Ethics', 'Approved by the review board.']
 
 
 class TestSubArticle:
@@ -658,3 +658,30 @@ class TestFloatsGroup:
         """))
         assert fields[JatsFieldNames.BODY_TABLE]
         assert not fields[JatsFieldNames.FLOAT_TABLE]
+
+
+class TestContribution:
+    def test_it_should_use_the_section_title_when_sec_type_is_absent(self):
+        fvs = _field_values_for(
+            '<article><back>'
+            "<sec><title>Authors' contributions</title><p>AB wrote the paper.</p></sec>"
+            '</back></article>'
+        )
+        assert [
+            (v.field_name, v.text) for v in fvs
+        ] == [
+            (JatsFieldNames.CONTRIBUTION_SECTION_TITLE, "Authors' contributions"),
+            (JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH, 'AB wrote the paper.'),
+        ]
+
+    def test_it_should_not_claim_a_nested_section(self):
+        fvs = _field_values_for(
+            '<article><body>'
+            '<sec><title>Methods</title>'
+            '<sec><title>Author contributions</title><p>AB ran the model.</p></sec>'
+            '</sec>'
+            '</body></article>'
+        )
+        assert JatsFieldNames.CONTRIBUTION_SECTION_TITLE not in {
+            v.field_name for v in fvs
+        }

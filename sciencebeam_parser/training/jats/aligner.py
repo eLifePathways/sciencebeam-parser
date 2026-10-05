@@ -2,7 +2,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
 
 from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 
@@ -81,6 +81,13 @@ _BODY_CONTENT_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.BACK_SECTION_PARAGRAPH,
     JatsFieldNames.AVAILABILITY_SECTION_TITLE,
     JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
+    JatsFieldNames.CONTRIBUTION_SECTION_TITLE,
+    JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+    JatsFieldNames.CONFLICT_SECTION_TITLE,
+    JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+    JatsFieldNames.FUNDING_SECTION_TITLE,
+    JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
+    JatsFieldNames.BACK_FOOTNOTE,
 })
 
 # Reference fields use a dedicated floor so that appendix/body content matched
@@ -455,6 +462,118 @@ def _fuzzy_search_in_window(
         window, needle, window_start, a_end, matched_blocks, abs_block_ranges, token_index
     )
     return a_start, a_end, abs_block_ranges
+
+
+# A value's opening words, as a pattern that tolerates the punctuation the page
+# keeps as separate tokens.  Six words is enough to be distinctive without
+# reaching past a line break that may have hyphenated the seventh.
+_PROBE_WORDS = 6
+_PROBE_MIN_LETTERS = 8
+# How far either side of the surrounding anchors a value may still be found.
+_EXPECTED_WINDOW_SLACK = 2000
+
+
+def _value_probe(text: str) -> Optional['re.Pattern']:
+    words = re.findall(r'[a-z0-9]+', normalize_for_alignment(text))[:_PROBE_WORDS]
+    if sum(len(word) for word in words) < _PROBE_MIN_LETTERS:
+        return None
+    return re.compile(r'[^a-z0-9]+'.join(re.escape(word) for word in words))
+
+
+def _value_span(text: str) -> int:
+    """How much page a value can take up, allowing for what it is printed with."""
+    return len(normalize_for_alignment(text)) * 2 + 200
+
+
+def _iter_anchor_positions(
+    token_index: '_TokenIndex',
+    field_values: Sequence[JatsFieldValue],
+    config: AlignmentConfig,
+) -> Iterator[Tuple[int, int]]:
+    """Each value, by index, that has exactly one place it can be.
+
+    Its opening words occur once in the page, and the whole of it matches
+    there.  Both halves matter: a title the page breaks across lines can have
+    its opening words occur only in the "how to cite" line, which is one
+    occurrence of the wrong thing.
+    """
+    for index, field_value in enumerate(field_values):
+        if field_value.sub_field_name is not None:
+            continue
+        probe = _value_probe(field_value.text)
+        if probe is None:
+            continue
+        found = [match.start() for match in probe.finditer(token_index.haystack)]
+        if len(found) != 1:
+            continue
+        confirmed = _fuzzy_match_field_value(
+            token_index, field_value, config,
+            search_start=found[0],
+            search_end=found[0] + _value_span(field_value.text),
+        )
+        if confirmed is not None:
+            yield index, found[0]
+
+
+def _longest_increasing(anchors: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """The longest run of anchors whose page order follows the document's.
+
+    An anchor that contradicts the others is a value whose opening words happen
+    to be unique somewhere it does not belong, so it is dropped rather than
+    allowed to drag the values around it with it.
+    """
+    if not anchors:
+        return []
+    best = [1] * len(anchors)
+    prior: List[Optional[int]] = [None] * len(anchors)
+    for i in range(1, len(anchors)):
+        for j in range(i):
+            if anchors[j][1] < anchors[i][1] and best[j] + 1 > best[i]:
+                best[i], prior[i] = best[j] + 1, j
+    index: Optional[int] = max(range(len(anchors)), key=lambda i: best[i])
+    out = []
+    while index is not None:
+        out.append(anchors[index])
+        index = prior[index]
+    return out[::-1]
+
+
+def _expected_windows(
+    token_index: '_TokenIndex',
+    field_values: Sequence[JatsFieldValue],
+    config: AlignmentConfig,
+) -> Dict[int, Tuple[int, int]]:
+    """Where each value is expected, from the anchors either side of it."""
+    anchors = _longest_increasing(
+        list(_iter_anchor_positions(token_index, field_values, config))
+    )
+    # An anchor is placed at its own position.  Its opening words occur once in
+    # the page and the whole of it matches there, so the search has nothing left
+    # to decide -- and left to decide it can prefer an earlier, poorer match: the
+    # byline on the title page over the correspondence line the value came from.
+    windows: Dict[int, Tuple[int, int]] = {
+        index: (position, position + _value_span(field_values[index].text))
+        for index, position in anchors
+    }
+    if len(anchors) < 2:
+        return windows
+    # Of the rest, only the values that need placing.  A value whose opening
+    # words occur nowhere has nothing for a window to choose between; steering
+    # it only disturbs what the floors already get right.
+    for (before_index, before), (after_index, after) in zip(anchors, anchors[1:]):
+        for index in range(before_index + 1, after_index):
+            probe = _value_probe(field_values[index].text)
+            if probe is None:
+                continue
+            low = max(0, before - _EXPECTED_WINDOW_SLACK)
+            high = after + _EXPECTED_WINDOW_SLACK
+            spots = [match.start() for match in probe.finditer(token_index.haystack)]
+            # Only where the value is ambiguous and one of its occurrences is
+            # in the window.  Steering it somewhere its text does not appear
+            # would only trade a wrong match for a worse one.
+            if len(spots) > 1 and any(low <= spot < high for spot in spots):
+                windows[index] = (low, high)
+    return windows
 
 
 def _get_unmasked_segments(
@@ -1276,12 +1395,21 @@ class LayoutDocumentJatsAligner:
         # End of the previous match of each distinct post-body value text.
         post_body_text_end: Dict[str, int] = {}
 
-        for fv in field_values:
+        expected_window = _expected_windows(token_index, field_values, self.config)
+        for value_index, fv in enumerate(field_values):
             search_start, search_end = _search_range(
                 fv, last_match_end, body_floor, body_content_end,
                 front_matter_end, keywords_floor, reference_floor,
                 parent_match_by_field, post_body_text_end,
             )
+            window = expected_window.get(value_index)
+            if window is not None:
+                # Where the anchors either side say this value belongs.  The
+                # floors describe where a value cannot have been; this says
+                # where it should be, which is the better question when the
+                # document's order and the page's disagree.
+                search_start = window[0]
+                search_end = window[1] if window[1] > window[0] + 1 else None
             masked = (
                 sub_field_masked_ranges.get(fv.field_name)
                 if fv.sub_field_name is not None
@@ -1328,7 +1456,15 @@ class LayoutDocumentJatsAligner:
             # within the preferred region, fall back to a global search.  Sub-field
             # containment (search_end set because sub_field_name is not None) is a
             # hard constraint and does not get this fallback.
-            if match_range is None and search_end is not None and fv.sub_field_name is None:
+            # A window is not relaxed this way: it says where the value belongs
+            # rather than where it cannot have been, so widening it would undo
+            # the only thing holding an ambiguous value in place.
+            if (
+                match_range is None
+                and search_end is not None
+                and fv.sub_field_name is None
+                and window is None
+            ):
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config, search_start=0, search_end=None,
                 )
@@ -1345,6 +1481,7 @@ class LayoutDocumentJatsAligner:
                 and fv.sub_field_name is None
                 and fv.field_name in _BODY_CONTENT_FIELDS
                 and search_start > retry_floor
+                and window is None
             ):
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config,

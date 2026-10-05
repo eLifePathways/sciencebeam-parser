@@ -115,12 +115,45 @@ class TestMajorityVoteLabeling:
 
 
 class TestCoordinateBasedDetection:
-    def test_line_at_top_of_page_becomes_headnote(self):
-        line = _make_line('Running', 'header', y=20.0)  # 20/1000 = 2% < 8%
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)
+    @staticmethod
+    def _two_pages(*top_lines: LayoutLine) -> LayoutDocument:
+        """A page each, with the given line at the top of it."""
+        return LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[line])],
+                meta=_make_page_meta(page_number=page_number, height=1000.0),
+            )
+            for page_number, line in enumerate(top_lines, 1)
+        ])
+
+    def test_a_line_repeated_at_the_top_of_pages_becomes_headnote(self):
+        # 20/1000 = 2% < 8%, and a running header is what runs across pages.
+        lines = [
+            _make_line('Running', 'header', y=20.0, page_number=page_number)
+            for page_number in (1, 2)
+        ]
+        doc = self._two_pages(*lines)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
-        assert labels[id(line)] == SEG_HEADNOTE
+        assert [labels[id(line)] for line in lines] == [SEG_HEADNOTE, SEG_HEADNOTE]
+
+    def test_a_line_printed_once_at_the_top_is_not_a_headnote(self):
+        caption = _make_line('Table', '6:', 'results', y=20.0, page_number=1)
+        other = _make_line('Running', 'header', y=20.0, page_number=2)
+        doc = self._two_pages(caption, other)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        assert labels[id(caption)] != SEG_HEADNOTE
+
+    def test_a_page_number_at_the_top_becomes_page(self):
+        numbers = [
+            _make_line(str(page_number), y=20.0, page_number=page_number)
+            for page_number in (1, 2)
+        ]
+        doc = self._two_pages(*numbers)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        assert [labels[id(line)] for line in numbers] == [SEG_PAGE, SEG_PAGE]
 
     def test_line_in_middle_of_page_is_not_headnote(self):
         line = _make_line('Normal', 'content', y=500.0)  # 50% of page
@@ -183,16 +216,26 @@ class TestGapMerge:
 
 
 class TestGapMergeAcrossPageFurniture:
-    """A page break interrupts a region; the deposit boilerplate below one ends it."""
+    """A page break interrupts a region without ending it, footer and all."""
 
     def _make_doc(self, middle_text: str):
         first = _make_line('Smith,', 'J.', '(2020).', 'A', 'title', page_number=1)
         middle = _make_line(*middle_text.split(), y=950.0, page_number=1)
         gap = _make_line('and', 'the', 'rest', 'of', 'it', page_number=2)
         last = _make_line('Jones,', 'K.', '(2021).', 'Another', page_number=2)
+        # The foot of the second page too: a running foot is what repeats, and
+        # that is what tells it apart from a line the margin rules took by
+        # accident.
+        trailing = _make_line(*middle_text.split(), y=950.0, page_number=2)
         doc = LayoutDocument(pages=[
-            LayoutPage(blocks=[LayoutBlock(lines=[first, middle])], meta=_make_page_meta(1)),
-            LayoutPage(blocks=[LayoutBlock(lines=[gap, last])], meta=_make_page_meta(2)),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[first]), LayoutBlock(lines=[middle])],
+                meta=_make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[gap, last]), LayoutBlock(lines=[trailing])],
+                meta=_make_page_meta(2),
+            ),
         ])
         lines = list(doc.iter_all_lines())
         annotated = _annotate(doc, {
@@ -207,11 +250,11 @@ class TestGapMergeAcrossPageFurniture:
         assert labels.get(id(middle)) == SEG_PAGE
         assert labels.get(id(gap)) == SEG_REFERENCES
 
-    def test_a_footer_between_two_reference_lines_closes_the_gap(self):
+    def test_a_footer_between_two_reference_lines_is_stepped_over(self):
         doc, annotated, middle, gap = self._make_doc('Powered by TCPDF')
         labels = _derive_labels(doc, annotated)
         assert labels.get(id(middle)) == SEG_FOOTNOTE
-        assert labels.get(id(gap)) == SEG_BODY
+        assert labels.get(id(gap)) == SEG_REFERENCES
 
 
 class TestReclaimRepeatedHeadnote:
@@ -402,14 +445,22 @@ class TestFrontMatterBoundary:
     """The reference list bounds the front matter; a line index stands in for it."""
 
     def _make_doc(self, front_after_references: bool):
-        title = _make_line('A', 'title', 'of', 'the', 'paper')
-        filler = [_make_line('body', f'line{index}') for index in range(100)]
-        grant = _make_line('Grant', 'information:', 'funded', 'by', 'a', 'grant')
-        reference = _make_line('Smith,', 'J.', '(2020).', 'A', 'reference')
-        lines = (
-            [title] + filler + [reference, grant] if front_after_references
-            else [title] + filler + [grant, reference]
+        texts = (
+            [('A', 'title', 'of', 'the', 'paper')]
+            + [('body', f'line{index}') for index in range(100)]
+            + ([('Smith,', 'J.', '(2020).', 'A', 'reference'),
+                ('Grant', 'information:', 'funded', 'by', 'a', 'grant')]
+               if front_after_references
+               else [('Grant', 'information:', 'funded', 'by', 'a', 'grant'),
+                     ('Smith,', 'J.', '(2020).', 'A', 'reference')])
         )
+        # One row per line, down the text area of the page, as a page sets them.
+        lines = [
+            _make_line(*text, y=100.0 + 5.0 * row) for row, text in enumerate(texts)
+        ]
+        title = lines[0]
+        grant = lines[-1] if front_after_references else lines[-2]
+        reference = lines[-2] if front_after_references else lines[-1]
         doc = _make_doc_with_page(LayoutBlock(lines=lines))
         index_of = {id(line): i for i, line in enumerate(lines)}
         annotated = _annotate(doc, {

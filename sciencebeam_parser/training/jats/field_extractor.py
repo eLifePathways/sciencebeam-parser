@@ -1,5 +1,9 @@
+import re
+import unicodedata
 from itertools import chain
-from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
+from typing import (
+    Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
+)
 from dataclasses import dataclass
 
 from lxml import etree
@@ -19,9 +23,247 @@ class JatsFieldValue:
     exact_only: bool = False
 
 
-# A data-availability section says so structurally; matching on its title would
-# have to guess at "Data availability", "Software availability" and the rest.
 _AVAILABILITY_SEC = '@sec-type="data-availability"'
+
+# Publishers that do not set `sec-type` still give the section one of a handful
+# of headings, and only ever as a top-level section.
+_AVAILABILITY_TITLES = frozenset({
+    'data availability',
+    'software availability',
+    'code availability',
+    'data and software availability',
+    'availability of data',
+    'availability of data and material',
+    'availability of data and materials',
+})
+
+
+def _fold(text: str) -> str:
+    """Lower-cased and stripped of accents, so one spelling stands for all."""
+    stripped = unicodedata.normalize('NFKD', text.lower().replace('\u2019', "'"))
+    return ''.join(c for c in stripped if not unicodedata.combining(c))
+
+
+def _normalised_section_title(el: etree._Element) -> str:
+    title_el = el.find('title')
+    if title_el is None:
+        return ''
+    return re.sub(r'\s+statement$', '', _fold(_element_text(title_el)).strip(' .:'))
+
+
+_CONTRIBUTION_SEC = (
+    '@sec-type="author-contributions"'
+    ' or @sec-type="author-contribution"'
+    ' or @sec-type="contributions"'
+)
+
+_CONFLICT_SEC = (
+    '@sec-type="conflict"'
+    ' or @sec-type="COI-statement"'
+    ' or @sec-type="coi-statement"'
+)
+
+_CONFLICT_TITLES = frozenset({
+    'conflict of interest',
+    'conflicts of interest',
+    'competing interests',
+    'declaration of competing interest',
+    'conflito de interesse',
+    'conflitos de interesse',
+    'conflicto de intereses',
+    'conflictos de interes',
+})
+
+_FUNDING_SEC = '@sec-type="funding"'
+
+_FUNDING_TITLES = frozenset({
+    'funding',
+    'funding information',
+    'grant information',
+    'financial support',
+    'financial disclosure',
+    'suporte financeiro',
+    'apoio financeiro',
+    'fonte de financiamento',
+    'financiamiento',
+    'apoyo financiero',
+})
+
+# A footnote group is the other place the publisher puts these.  `fn-type` is
+# meant to say which, but is only sometimes set and is sometimes set wrong --
+# one preprint files its conflict-of-interest declaration under "con" -- so a
+# heading set in bold decides first, in this order.  Only a bold heading: a
+# numbered page footnote opening "1 This project has received funding from"
+# names no statement, it just mentions one.
+_FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ('conflict', ('conflict', 'conflito', 'conflicto', 'competing interest')),
+    ('funding', (
+        'funding', 'financial support', 'financial disclosure', 'grant',
+        'suporte financeiro', 'apoio financeiro', 'fonte de financiamento',
+        'financiamiento', 'apoyo financiero',
+    )),
+    ('contribution', ('contribution', 'contribuicao', 'contribucion',
+                      'colabora', 'authorship')),
+    ('acknowledgement', ('acknowledg', 'agradecimento', 'agradecimiento')),
+)
+
+_FN_KIND_BY_TYPE = {
+    'con': 'contribution',
+    'conflict': 'conflict',
+    'coi-statement': 'conflict',
+    'COI-statement': 'conflict',
+    'financial-disclosure': 'funding',
+    'supported-by': 'funding',
+}
+
+_FN_HEADING_LENGTH = 80
+
+
+def _get_fn_kind(el: etree._Element) -> Optional[str]:
+    bold = el.find('.//bold')
+    if bold is not None:
+        heading = _fold(_element_text(bold))[:_FN_HEADING_LENGTH]
+        for kind, keywords in _FN_KIND_KEYWORDS:
+            if any(keyword in heading for keyword in keywords):
+                return kind
+    return _FN_KIND_BY_TYPE.get(el.get('fn-type') or '')
+
+
+_CONTRIBUTION_TITLES = frozenset({
+    'author contributions',
+    "authors' contributions",
+    'author contribution',
+    "author's contribution",
+    'contributions of authors',
+    'credit authorship contribution',
+    'colaboradores',
+    'colaboracao',
+    'colaboracoes',
+    'contribuicao dos autores',
+    'contribuicoes dos autores',
+    'contribucion de los autores',
+    'contribuciones de los autores',
+})
+
+
+def _get_sections(
+    root: etree._Element,
+    sec_type_predicate: str,
+    titles: FrozenSet[str],
+    fn_kind: Optional[str] = None,
+) -> Set[etree._Element]:
+    """Sections of one kind, however the JATS happens to say so."""
+    sections = set(root.xpath(f'//sec[{sec_type_predicate}]'))
+    for el in root.xpath('(body|back)/sec[not(@sec-type)]'):
+        if _normalised_section_title(el) in titles:
+            sections.add(el)
+    if fn_kind is not None:
+        for el in root.xpath('back//fn'):
+            if _get_fn_kind(el) == fn_kind:
+                sections.add(el)
+    return sections
+
+
+def _get_availability_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(root, _AVAILABILITY_SEC, _AVAILABILITY_TITLES)
+
+
+def _get_contribution_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(
+        root, _CONTRIBUTION_SEC, _CONTRIBUTION_TITLES, 'contribution'
+    )
+
+
+def _get_conflict_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(root, _CONFLICT_SEC, _CONFLICT_TITLES, 'conflict')
+
+
+def _get_funding_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(root, _FUNDING_SEC, _FUNDING_TITLES, 'funding')
+
+
+def _is_bold_heading(el: etree._Element) -> bool:
+    """Whether a paragraph is nothing but a bold heading.
+
+    A footnote states its kind in bold, sometimes as a paragraph of its own and
+    sometimes opening the paragraph it belongs to.  Only the first is a title;
+    the second is the text, heading and all.
+    """
+    paragraph = el.getparent() if el.tag == 'bold' else el
+    if paragraph is None:
+        return False
+    bold = paragraph.find('.//bold')
+    text = _element_text(paragraph)
+    return bool(text) and bold is not None and text == _element_text(bold)
+
+
+def _is_within(el: etree._Element, elements: Set[etree._Element]) -> bool:
+    return any(ancestor in elements for ancestor in el.iterancestors()) or el in elements
+
+
+class _LabelledSections(NamedTuple):
+    """The sections of the body or back matter the model has its own label for."""
+    availability: Set[etree._Element]
+    contribution: Set[etree._Element]
+    conflict: Set[etree._Element]
+    funding: Set[etree._Element]
+    acknowledgement: Set[etree._Element]
+    footnote: Set[etree._Element]
+
+    @staticmethod
+    def of(root: etree._Element) -> '_LabelledSections':
+        return _LabelledSections(
+            availability=_get_availability_sections(root),
+            contribution=_get_contribution_sections(root),
+            conflict=_get_conflict_sections(root),
+            funding=_get_funding_sections(root),
+            acknowledgement={
+                el for el in root.xpath('back//fn')
+                if _get_fn_kind(el) == 'acknowledgement'
+            },
+            footnote=set(root.xpath('back//fn')),
+        )
+
+    def _kind(self, el: etree._Element) -> Optional[str]:
+        for kind in (
+            'availability', 'contribution', 'conflict', 'funding',
+            'acknowledgement', 'footnote',
+        ):
+            if _is_within(el, getattr(self, kind)):
+                return kind
+        return None
+
+    def title_field(self, el: etree._Element, default: str) -> str:
+        kind = self._kind(el)
+        return default if kind is None else _TITLE_FIELD_BY_KIND[kind]
+
+    def paragraph_field(self, el: etree._Element, default: str) -> str:
+        kind = self._kind(el)
+        return default if kind is None else _PARAGRAPH_FIELD_BY_KIND[kind]
+
+    def claims(self, el: etree._Element) -> bool:
+        return self._kind(el) is not None
+
+
+_TITLE_FIELD_BY_KIND = {
+    'availability': JatsFieldNames.AVAILABILITY_SECTION_TITLE,
+    'contribution': JatsFieldNames.CONTRIBUTION_SECTION_TITLE,
+    'conflict': JatsFieldNames.CONFLICT_SECTION_TITLE,
+    'funding': JatsFieldNames.FUNDING_SECTION_TITLE,
+    'acknowledgement': JatsFieldNames.ACK_SECTION_TITLE,
+    # A footnote that names no statement is a numbered page footnote, and the
+    # number it opens with is not a heading.
+    'footnote': JatsFieldNames.BACK_FOOTNOTE,
+}
+
+_PARAGRAPH_FIELD_BY_KIND = {
+    'availability': JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
+    'contribution': JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+    'conflict': JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+    'funding': JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
+    'acknowledgement': JatsFieldNames.ACK_SECTION_PARAGRAPH,
+    'footnote': JatsFieldNames.BACK_FOOTNOTE,
+}
 
 
 def _element_text(el: etree._Element) -> str:
@@ -343,6 +585,14 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.COPYRIGHT)
 
+    def _iter_front_notes_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """`<front>/<notes>` is what a versioned article says changed since the
+        previous version, printed in the front matter, boxed."""
+        for el in root.xpath('front/notes/*'):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.ARTICLE_NOTES)
+
     def _iter_front_contrib_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         # Per GROBID annotation guidelines, all author tokens in the byline (including
         # affiliation markers and separating punctuation) are labelled <author>.
@@ -403,6 +653,8 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_NOTES)
 
+        yield from self._iter_front_notes_values(root)
+
         for el in root.xpath('front/article-meta/fpage | front/article-meta/lpage'):
             text = _element_text(el)
             if text:
@@ -420,18 +672,25 @@ class JatsFieldExtractor:
         # body_content_end advances past the early paragraphs before they are matched.
         position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
         entries: List[Tuple[int, JatsFieldValue]] = []
+        labelled = _LabelledSections.of(root)
 
         for el in body.xpath('.//sec/title'):
             text = _element_text(el)
             if text:
                 entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.BODY_SECTION_TITLE)))
+                    text=text,
+                    field_name=labelled.title_field(
+                        el, JatsFieldNames.BODY_SECTION_TITLE
+                    ))))
 
         for el in body.xpath('.//p[not(ancestor::fig) and not(ancestor::table-wrap)]'):
             text = _element_text(el)
             if text:
                 entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.BODY_SECTION_PARAGRAPH)))
+                    text=text,
+                    field_name=labelled.paragraph_field(
+                        el, JatsFieldNames.BODY_SECTION_PARAGRAPH
+                    ))))
 
         for el in body.xpath('.//fig'):
             children = el.xpath('./label') + el.xpath('./caption')
@@ -524,33 +783,32 @@ class JatsFieldExtractor:
         # A data-availability section is back matter the model has its own label
         # for, so it is taken out of the generic sweep rather than labelled
         # `<annex>` with everything else that follows the body.
-        for el in root.xpath(f'back//sec[{_AVAILABILITY_SEC}]//title'):
-            text = _element_text(el)
-            if text:
-                entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.AVAILABILITY_SECTION_TITLE)))
+        labelled = _LabelledSections.of(root)
 
-        for el in root.xpath(f'back//sec[{_AVAILABILITY_SEC}]//p'):
+        for el in root.xpath('back//sec//title | back//fn//bold'):
             text = _element_text(el)
-            if text:
+            if text and labelled.claims(el) and (el.tag != 'bold' or _is_bold_heading(el)):
                 entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH)))
+                    text=text, field_name=labelled.title_field(el, ''))))
 
-        for el in root.xpath(
-            f'back//sec[not(ancestor::ack)][not(ancestor-or-self::sec[{_AVAILABILITY_SEC}])]/title'
-        ):
+        for el in root.xpath('back//sec//p | back//fn//p'):
             text = _element_text(el)
-            if text:
+            if text and labelled.claims(el) and not _is_bold_heading(el):
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=labelled.paragraph_field(el, ''))))
+
+        for el in root.xpath('back//sec[not(ancestor::ack)]/title'):
+            text = _element_text(el)
+            if text and not labelled.claims(el):
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.BACK_SECTION_TITLE)))
 
         for el in root.xpath(
-            f'back//sec[not(ancestor::ack)][not(ancestor-or-self::sec[{_AVAILABILITY_SEC}])]'
-            '/p[not(ancestor::ack)]'
+            'back//sec[not(ancestor::ack)]/p[not(ancestor::ack)]'
             ' | back//p[not(ancestor::sec) and not(ancestor::ack)]'
         ):
             text = _element_text(el)
-            if text:
+            if text and not labelled.claims(el):
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.BACK_SECTION_PARAGRAPH)))
 
