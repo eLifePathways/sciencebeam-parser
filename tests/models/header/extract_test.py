@@ -13,6 +13,7 @@ from sciencebeam_parser.document.layout_document import (
 )
 
 from sciencebeam_parser.models.header.extract import (
+    AbstractsMode,
     HeaderSemanticExtractor,
     _split_trailing_title_punct,
     get_cleaned_abstract_text,
@@ -37,6 +38,13 @@ LONG_ABSTRACT_2 = ' '.join(['second variant text'] * 20)
 ENGLISH_ABSTRACT_1 = (
     'This study reports on the effects of the intervention that was carried out in a'
     ' sample of adolescents, and on the data that were collected from the participants.'
+)
+
+UNKNOWN_LANGUAGE_ABSTRACT_1 = ' '.join(['Leishmania mexicana'] * 15)
+
+ENGLISH_ABSTRACT_2 = (
+    'Background the incidence of the disease has risen steadily over the past decade and'
+    ' the data were collected from the national registry by the research team.'
 )
 
 PORTUGUESE_ABSTRACT_1 = (
@@ -161,52 +169,66 @@ class TestHeaderSemanticExtractor:
         LOGGER.debug('front: %s', front)
         assert front.get_text_by_type(SemanticTitle) == TITLE_1
 
-    def test_should_add_additional_abstract_as_further_abstract(self):
-        semantic_content_list = list(
-            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
-                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_1)),
-                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_2))
-            ])
-        )
-        front = SemanticFront(semantic_content_list)
-        LOGGER.debug('front: %s', front)
+    def _abstracts(self, texts, abstracts_mode=None):
+        kwargs = {} if abstracts_mode is None else {'abstracts_mode': abstracts_mode}
+        front = SemanticFront(list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                [('<abstract>', LayoutBlock.for_text(text)) for text in texts],
+                **kwargs
+            )
+        ))
+        return list(front.iter_by_type(SemanticAbstract))
+
+    def test_should_keep_only_the_first_abstract_by_default(self):
+        abstracts = self._abstracts([LONG_ABSTRACT_1, LONG_ABSTRACT_2])
         assert [
-            join_layout_tokens(list(semantic_abstract.merged_block.iter_all_tokens()))
-            for semantic_abstract in front.iter_by_type(SemanticAbstract)
+            join_layout_tokens(list(abstract.merged_block.iter_all_tokens()))
+            for abstract in abstracts
+        ] == [LONG_ABSTRACT_1]
+
+    def test_should_not_declare_a_language_by_default(self):
+        abstracts = self._abstracts([ENGLISH_ABSTRACT_1])
+        assert [abstract.language for abstract in abstracts] == [None]
+
+    def test_should_add_additional_abstract_as_further_abstract(self):
+        abstracts = self._abstracts(
+            [LONG_ABSTRACT_1, LONG_ABSTRACT_2], AbstractsMode.VARIANTS
+        )
+        assert [
+            join_layout_tokens(list(abstract.merged_block.iter_all_tokens()))
+            for abstract in abstracts
         ] == [LONG_ABSTRACT_1, LONG_ABSTRACT_2]
 
     def test_should_ignore_additional_abstract_much_shorter_than_the_first(self):
-        semantic_content_list = list(
-            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
-                ('<abstract>', LayoutBlock.for_text(LONG_ABSTRACT_1)),
-                ('<abstract>', LayoutBlock.for_text('other'))
-            ])
-        )
-        front = SemanticFront(semantic_content_list)
-        LOGGER.debug('front: %s', front)
-        assert len(list(front.iter_by_type(SemanticAbstract))) == 1
+        abstracts = self._abstracts([LONG_ABSTRACT_1, 'other'], AbstractsMode.VARIANTS)
+        assert len(abstracts) == 1
 
     def test_should_detect_the_language_of_each_abstract(self):
-        semantic_content_list = list(
-            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
-                ('<abstract>', LayoutBlock.for_text(ENGLISH_ABSTRACT_1)),
-                ('<abstract>', LayoutBlock.for_text(PORTUGUESE_ABSTRACT_1))
-            ])
+        abstracts = self._abstracts(
+            [ENGLISH_ABSTRACT_1, PORTUGUESE_ABSTRACT_1], AbstractsMode.VARIANTS
         )
-        front = SemanticFront(semantic_content_list)
-        assert [
-            semantic_abstract.language
-            for semantic_abstract in front.iter_by_type(SemanticAbstract)
-        ] == ['en', 'pt']
+        assert [abstract.language for abstract in abstracts] == ['en', 'pt']
 
     def test_should_leave_the_language_unset_where_it_cannot_tell(self):
-        semantic_content_list = list(
-            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
-                ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
-            ])
+        abstracts = self._abstracts([ABSTRACT_1], AbstractsMode.VARIANTS)
+        assert [abstract.language for abstract in abstracts] == [None]
+
+    def test_should_merge_abstracts_sharing_a_language(self):
+        abstracts = self._abstracts(
+            [ENGLISH_ABSTRACT_1, PORTUGUESE_ABSTRACT_1, ENGLISH_ABSTRACT_2],
+            AbstractsMode.MERGED_BY_LANGUAGE
         )
-        front = SemanticFront(semantic_content_list)
-        assert next(front.iter_by_type(SemanticAbstract)).language is None
+        assert [abstract.language for abstract in abstracts] == ['en', 'pt']
+        merged_english = abstracts[0].get_text()
+        assert ENGLISH_ABSTRACT_1 in merged_english
+        assert ENGLISH_ABSTRACT_2 in merged_english
+
+    def test_should_keep_an_abstract_of_unknown_language_on_its_own_when_merging(self):
+        abstracts = self._abstracts(
+            [ENGLISH_ABSTRACT_1, UNKNOWN_LANGUAGE_ABSTRACT_1, ENGLISH_ABSTRACT_2],
+            AbstractsMode.MERGED_BY_LANGUAGE
+        )
+        assert [abstract.language for abstract in abstracts] == ['en', None]
 
     def test_should_add_raw_authors(self):
         semantic_content_list = list(

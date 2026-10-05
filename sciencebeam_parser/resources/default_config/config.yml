@@ -93,6 +93,11 @@ lookup:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/places/location.txt
 processors:
   fulltext:
+    # Which abstracts reach the output where the header model labels more than one
+    # region as the abstract. `first` keeps the first and leaves the rest as notes.
+    # `variants` emits the others as further abstracts too, each declaring the language
+    # of its own text. `merged_by_language` joins those sharing a language into one.
+    abstracts_mode: 'first'
     noise_filter:
       enabled: true
       repetition_fraction: 0.5

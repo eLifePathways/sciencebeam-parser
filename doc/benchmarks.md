@@ -121,7 +121,9 @@ comparison report, a block counts how often the credited one was a translation,
 per corpus: a run that reads the translation of every multilingual paper scores
 like one that reads the article's own, and that block is where it shows.
 
-`abstract_language` scores the declaration rather than the text. The two sides
+`abstract_language` scores the declaration rather than the text, and is empty
+unless the run's profile sets `abstracts_mode` to `variants` or
+`merged_by_language`: the shipped default declares no language. The two sides
 are paired by the abstract's text, since neither the order nor the count can be
 relied on, and a gold abstract declaring no language is left out of the
 comparison rather than counted as a miss: `biorxiv`, `ore` and `pkp` declare

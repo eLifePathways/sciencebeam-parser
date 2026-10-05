@@ -1,6 +1,7 @@
 import logging
 import re
-from typing import AbstractSet, Iterable, Mapping, Optional, Tuple
+from collections import OrderedDict
+from typing import AbstractSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from sciencebeam_parser.document.semantic_document import (
     SemanticContentWrapper,
@@ -65,15 +66,63 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
 MIN_ABSTRACT_VARIANT_LENGTH_RATIO = 0.15
 
 
+class AbstractsMode:
+    """Which abstracts reach the output where the model labels more than one."""
+
+    FIRST = 'first'
+    VARIANTS = 'variants'
+    MERGED_BY_LANGUAGE = 'merged_by_language'
+
+
+ABSTRACTS_MODES = (AbstractsMode.FIRST, AbstractsMode.VARIANTS, AbstractsMode.MERGED_BY_LANGUAGE)
+
+DEFAULT_ABSTRACTS_MODE = AbstractsMode.FIRST
+
+
 def _get_token_count(layout_block: LayoutBlock) -> int:
     return sum(1 for _ in layout_block.iter_all_tokens())
 
 
-def get_semantic_abstract_for_layout_block(layout_block: LayoutBlock) -> SemanticAbstract:
+def get_semantic_abstract_for_layout_block(
+    layout_block: LayoutBlock,
+    with_language: bool = True
+) -> SemanticAbstract:
     return SemanticAbstract(
         layout_block=layout_block,
-        language=detect_language(str(LayoutTokensText(layout_block)))
+        language=detect_language(str(LayoutTokensText(layout_block))) if with_language else None
     )
+
+
+def merge_abstracts_by_language(
+    semantic_abstracts: Sequence[SemanticAbstract]
+) -> List[SemanticAbstract]:
+    """One abstract per language, in the order each language first appeared.
+
+    An abstract whose language could not be told is left on its own: there is nothing to
+    group it by, and guessing which group it belongs to is what detection declined to do.
+    """
+    blocks_by_language: "OrderedDict[str, List[LayoutBlock]]" = OrderedDict()
+    order: List[Tuple[Optional[str], Optional[SemanticAbstract]]] = []
+    for semantic_abstract in semantic_abstracts:
+        language = semantic_abstract.language
+        if not language:
+            order.append((None, semantic_abstract))
+            continue
+        if language not in blocks_by_language:
+            blocks_by_language[language] = []
+            order.append((language, None))
+        blocks_by_language[language].append(semantic_abstract.merged_block)
+    merged: List[SemanticAbstract] = []
+    for language, existing_abstract in order:
+        if language is None:
+            assert existing_abstract is not None
+            merged.append(existing_abstract)
+            continue
+        merged.append(SemanticAbstract(
+            layout_block=LayoutBlock.merge_blocks(blocks_by_language[language]),
+            language=language
+        ))
+    return merged
 
 
 def is_abstract_variant(
@@ -119,15 +168,19 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
     def __init__(self):
         super().__init__(semantic_content_class_by_tag=SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG)
 
-    def iter_semantic_content_for_entity_blocks(
+    def iter_semantic_content_for_entity_blocks(  # noqa pylint: disable=too-many-branches,too-many-locals
         self,
         entity_tokens: Iterable[Tuple[str, LayoutBlock]],
+        abstracts_mode: str = DEFAULT_ABSTRACTS_MODE,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
         entity_tokens = list(entity_tokens)
         LOGGER.debug('entity_tokens: %s', entity_tokens)
+        carry_variants = abstracts_mode != AbstractsMode.FIRST
+        merge_by_language = abstracts_mode == AbstractsMode.MERGED_BY_LANGUAGE
         has_title: bool = False
         primary_abstract_block: Optional[LayoutBlock] = None
+        semantic_abstracts: List[SemanticAbstract] = []
         aff_address: Optional[SemanticRawAffiliationAddress] = None
         next_previous_label: str = ''
         for name, layout_block in entity_tokens:
@@ -143,12 +196,19 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                     layout_block
                 )
                 assert abstract_layout_block is not None
-                if primary_abstract_block is None:
-                    yield get_semantic_abstract_for_layout_block(abstract_layout_block)
-                    primary_abstract_block = abstract_layout_block
-                    continue
-                if is_abstract_variant(abstract_layout_block, primary_abstract_block):
-                    yield get_semantic_abstract_for_layout_block(abstract_layout_block)
+                if primary_abstract_block is None or (
+                    carry_variants
+                    and is_abstract_variant(abstract_layout_block, primary_abstract_block)
+                ):
+                    semantic_abstract = get_semantic_abstract_for_layout_block(
+                        abstract_layout_block, with_language=carry_variants
+                    )
+                    if primary_abstract_block is None:
+                        primary_abstract_block = abstract_layout_block
+                    if merge_by_language:
+                        semantic_abstracts.append(semantic_abstract)
+                    else:
+                        yield semantic_abstract
                     continue
             if name in {'<affiliation>', '<address>'}:
                 if (
@@ -172,3 +232,4 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
             )
         if aff_address is not None:
             yield aff_address
+        yield from merge_abstracts_by_language(semantic_abstracts)

@@ -42,11 +42,12 @@ class HeaderModel(Model):
     def update_semantic_document_with_entity_blocks(
         self,
         document: SemanticDocument,
-        entity_tokens: Iterable[Tuple[str, LayoutBlock]]
+        entity_tokens: Iterable[Tuple[str, LayoutBlock]],
+        **kwargs
     ):
         semantic_content_iterable = (
             self.get_semantic_extractor()
-            .iter_semantic_content_for_entity_blocks(entity_tokens)
+            .iter_semantic_content_for_entity_blocks(entity_tokens, **kwargs)
         )
         front = document.front
         for semantic_content in semantic_content_iterable:
