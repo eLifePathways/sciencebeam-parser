@@ -1,5 +1,8 @@
+import re
 from itertools import chain
-from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
+from typing import (
+    Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
+)
 from dataclasses import dataclass
 
 from lxml import etree
@@ -19,9 +22,95 @@ class JatsFieldValue:
     exact_only: bool = False
 
 
-# A data-availability section says so structurally; matching on its title would
-# have to guess at "Data availability", "Software availability" and the rest.
 _AVAILABILITY_SEC = '@sec-type="data-availability"'
+
+# Publishers that do not set `sec-type` still give the section one of a handful
+# of headings, and only ever as a top-level section.
+_AVAILABILITY_TITLES = frozenset({
+    'data availability',
+    'software availability',
+    'code availability',
+    'data and software availability',
+    'availability of data',
+    'availability of data and material',
+    'availability of data and materials',
+})
+
+
+def _normalised_section_title(el: etree._Element) -> str:
+    title_el = el.find('title')
+    if title_el is None:
+        return ''
+    return re.sub(r'\s+statement$', '', _element_text(title_el).lower().strip(' .:'))
+
+
+_CONTRIBUTION_SEC = (
+    '@sec-type="author-contributions"'
+    ' or @sec-type="author-contribution"'
+    ' or @sec-type="contributions"'
+)
+
+_CONTRIBUTION_TITLES = frozenset({
+    'author contributions',
+    "authors' contributions",
+    'author contribution',
+    "author's contribution",
+    'contributions of authors',
+    'credit authorship contribution',
+})
+
+
+def _get_sections(
+    root: etree._Element, sec_type_predicate: str, titles: FrozenSet[str]
+) -> Set[etree._Element]:
+    """Sections of one kind, whether `sec-type` says so or only the heading does."""
+    sections = set(root.xpath(f'//sec[{sec_type_predicate}]'))
+    for el in root.xpath('(body|back)/sec[not(@sec-type)]'):
+        if _normalised_section_title(el) in titles:
+            sections.add(el)
+    return sections
+
+
+def _get_availability_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(root, _AVAILABILITY_SEC, _AVAILABILITY_TITLES)
+
+
+def _get_contribution_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(root, _CONTRIBUTION_SEC, _CONTRIBUTION_TITLES)
+
+
+def _is_within(el: etree._Element, elements: Set[etree._Element]) -> bool:
+    return any(ancestor in elements for ancestor in el.iterancestors()) or el in elements
+
+
+class _LabelledSections(NamedTuple):
+    """The sections of the body or back matter the model has its own label for."""
+    availability: Set[etree._Element]
+    contribution: Set[etree._Element]
+
+    @staticmethod
+    def of(root: etree._Element) -> '_LabelledSections':
+        return _LabelledSections(
+            availability=_get_availability_sections(root),
+            contribution=_get_contribution_sections(root),
+        )
+
+    def title_field(self, el: etree._Element, default: str) -> str:
+        if _is_within(el, self.availability):
+            return JatsFieldNames.AVAILABILITY_SECTION_TITLE
+        if _is_within(el, self.contribution):
+            return JatsFieldNames.CONTRIBUTION_SECTION_TITLE
+        return default
+
+    def paragraph_field(self, el: etree._Element, default: str) -> str:
+        if _is_within(el, self.availability):
+            return JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH
+        if _is_within(el, self.contribution):
+            return JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH
+        return default
+
+    def claims(self, el: etree._Element) -> bool:
+        return _is_within(el, self.availability) or _is_within(el, self.contribution)
 
 
 def _element_text(el: etree._Element) -> str:
@@ -343,6 +432,14 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.COPYRIGHT)
 
+    def _iter_front_notes_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """`<front>/<notes>` is what a versioned article says changed since the
+        previous version, printed in the front matter, boxed."""
+        for el in root.xpath('front/notes/*'):
+            text = _element_text(el)
+            if text:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.ARTICLE_NOTES)
+
     def _iter_front_contrib_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         # Per GROBID annotation guidelines, all author tokens in the byline (including
         # affiliation markers and separating punctuation) are labelled <author>.
@@ -403,6 +500,8 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_NOTES)
 
+        yield from self._iter_front_notes_values(root)
+
         for el in root.xpath('front/article-meta/fpage | front/article-meta/lpage'):
             text = _element_text(el)
             if text:
@@ -420,18 +519,25 @@ class JatsFieldExtractor:
         # body_content_end advances past the early paragraphs before they are matched.
         position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
         entries: List[Tuple[int, JatsFieldValue]] = []
+        labelled = _LabelledSections.of(root)
 
         for el in body.xpath('.//sec/title'):
             text = _element_text(el)
             if text:
                 entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.BODY_SECTION_TITLE)))
+                    text=text,
+                    field_name=labelled.title_field(
+                        el, JatsFieldNames.BODY_SECTION_TITLE
+                    ))))
 
         for el in body.xpath('.//p[not(ancestor::fig) and not(ancestor::table-wrap)]'):
             text = _element_text(el)
             if text:
                 entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.BODY_SECTION_PARAGRAPH)))
+                    text=text,
+                    field_name=labelled.paragraph_field(
+                        el, JatsFieldNames.BODY_SECTION_PARAGRAPH
+                    ))))
 
         for el in body.xpath('.//fig'):
             children = el.xpath('./label') + el.xpath('./caption')
@@ -524,33 +630,32 @@ class JatsFieldExtractor:
         # A data-availability section is back matter the model has its own label
         # for, so it is taken out of the generic sweep rather than labelled
         # `<annex>` with everything else that follows the body.
-        for el in root.xpath(f'back//sec[{_AVAILABILITY_SEC}]//title'):
-            text = _element_text(el)
-            if text:
-                entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.AVAILABILITY_SECTION_TITLE)))
+        labelled = _LabelledSections.of(root)
 
-        for el in root.xpath(f'back//sec[{_AVAILABILITY_SEC}]//p'):
+        for el in root.xpath('back//sec//title'):
             text = _element_text(el)
-            if text:
+            if text and labelled.claims(el):
                 entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH)))
+                    text=text, field_name=labelled.title_field(el, ''))))
 
-        for el in root.xpath(
-            f'back//sec[not(ancestor::ack)][not(ancestor-or-self::sec[{_AVAILABILITY_SEC}])]/title'
-        ):
+        for el in root.xpath('back//sec//p'):
             text = _element_text(el)
-            if text:
+            if text and labelled.claims(el):
+                entries.append((position[el], JatsFieldValue(
+                    text=text, field_name=labelled.paragraph_field(el, ''))))
+
+        for el in root.xpath('back//sec[not(ancestor::ack)]/title'):
+            text = _element_text(el)
+            if text and not labelled.claims(el):
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.BACK_SECTION_TITLE)))
 
         for el in root.xpath(
-            f'back//sec[not(ancestor::ack)][not(ancestor-or-self::sec[{_AVAILABILITY_SEC}])]'
-            '/p[not(ancestor::ack)]'
+            'back//sec[not(ancestor::ack)]/p[not(ancestor::ack)]'
             ' | back//p[not(ancestor::sec) and not(ancestor::ack)]'
         ):
             text = _element_text(el)
-            if text:
+            if text and not labelled.claims(el):
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.BACK_SECTION_PARAGRAPH)))
 

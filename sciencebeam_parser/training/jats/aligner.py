@@ -473,6 +473,11 @@ def _value_probe(text: str) -> Optional['re.Pattern']:
     return re.compile(r'[^a-z0-9]+'.join(re.escape(word) for word in words))
 
 
+def _value_span(text: str) -> int:
+    """How much page a value can take up, allowing for what it is printed with."""
+    return len(normalize_for_alignment(text)) * 2 + 200
+
+
 def _iter_anchor_positions(
     token_index: '_TokenIndex',
     field_values: Sequence[JatsFieldValue],
@@ -497,7 +502,7 @@ def _iter_anchor_positions(
         confirmed = _fuzzy_match_field_value(
             token_index, field_value, config,
             search_start=found[0],
-            search_end=found[0] + len(normalize_for_alignment(field_value.text)) * 2 + 200,
+            search_end=found[0] + _value_span(field_value.text),
         )
         if confirmed is not None:
             yield index, found[0]
@@ -535,13 +540,19 @@ def _expected_windows(
     anchors = _longest_increasing(
         list(_iter_anchor_positions(token_index, field_values, config))
     )
+    # An anchor is placed at its own position.  Its opening words occur once in
+    # the page and the whole of it matches there, so the search has nothing left
+    # to decide -- and left to decide it can prefer an earlier, poorer match: the
+    # byline on the title page over the correspondence line the value came from.
+    windows: Dict[int, Tuple[int, int]] = {
+        index: (position, position + _value_span(field_values[index].text))
+        for index, position in anchors
+    }
     if len(anchors) < 2:
-        return {}
-    # Only the values that need placing.  A value whose opening words occur
-    # once is already where it has to be, and one that occurs nowhere has
-    # nothing for a window to choose between; steering either only disturbs
-    # what the floors already get right.
-    windows: Dict[int, Tuple[int, int]] = {}
+        return windows
+    # Of the rest, only the values that need placing.  A value whose opening
+    # words occur nowhere has nothing for a window to choose between; steering
+    # it only disturbs what the floors already get right.
     for (before_index, before), (after_index, after) in zip(anchors, anchors[1:]):
         for index in range(before_index + 1, after_index):
             probe = _value_probe(field_values[index].text)

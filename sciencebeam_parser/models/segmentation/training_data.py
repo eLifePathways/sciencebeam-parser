@@ -44,6 +44,7 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
     '<annex>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="annex"]'],
     '<availability>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="availability"]'],
     '<review>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="review"]'],
+    '<contribution>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="contribution"]'],
     '<acknowledgement>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="acknowledgement"]'],
 }
 

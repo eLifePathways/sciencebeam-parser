@@ -2,7 +2,7 @@ import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Mapping, Optional, Set
+from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Set
 
 from sciencebeam_parser.document.layout_document import (
     LayoutDocument,
@@ -27,6 +27,7 @@ SEG_PAGE = '<page>'
 SEG_HEADNOTE = '<headnote>'
 SEG_FOOTNOTE = '<footnote>'
 SEG_REVIEW = '<review>'
+SEG_CONTRIBUTION = '<contribution>'
 
 # Fraction of page height: lines above this → headnote, below this → footnote candidate
 _HEADNOTE_Y_RATIO = 0.08
@@ -404,37 +405,102 @@ def _reclassify_page_foot_notes(
         _grow_run_over_matching_type(seg_lines, run, SEG_FOOTNOTE)
 
 
-def _extend_front_to_page_end(
+_REFERENCE_HEADINGS = frozenset({
+    'reference', 'references', 'reference list', 'references cited',
+    'literature cited', 'works cited',
+    'bibliography', 'bibliographie', 'bibliografia', 'bibliografía',
+    'referencia', 'referencias', 'referências', 'references bibliographiques',
+    'referencias bibliograficas', 'referencias bibliográficas',
+    'referencia bibliograficas', 'referências bibliográficas',
+    'referencias bibliografias', 'bibliografia referencias',
+    'literatur', 'literaturverzeichnis',
+})
+
+_HEADING_NOISE_PATTERN = re.compile(r'[^a-z\u00c0-\u024f ]+')
+
+
+def _normalised_heading(text: str) -> str:
+    return ' '.join(_HEADING_NOISE_PATTERN.sub(' ', text.lower()).split())
+
+
+def _claim_region_heading(
     seg_lines: List[_SegLine],
+    label: str,
+    headings: FrozenSet[str],
     annotated: JatsAnnotatedLayoutDocument,
 ) -> None:
-    """Take the notices the front matter closes with on its own page.
+    """Take the printed heading a region is introduced by.
 
-    A first page can end with lines the JATS does not carry -- which gateway or
-    collection the article belongs to -- set apart from the block above them, so
-    neither the gap merge nor a match in the same type reaches them.  They are
-    front matter by position: nothing evidenced stands between them and the
-    body, and the body starts on the page after.
-
-    Bounded to the page the front matter ends on, because a paper whose body
-    starts on that same page has nothing unevidenced between the two and this
-    walks over nothing.
+    Most JATS gives `<ref-list>` no `<title>`, so the "References" the page
+    prints above the list has nothing to match and the list starts one line too
+    late.  The heading is only claimed where it sits directly above the region
+    and nothing else has a claim on it.
     """
-    last = max(
-        (index for index, sl in enumerate(seg_lines) if sl.seg_label == SEG_FRONT),
-        default=None,
-    )
-    if last is None:
-        return
-    page_number = _get_page_number(seg_lines[last])
-    for seg_line in seg_lines[last + 1:]:
-        if _get_page_number(seg_line) != page_number:
-            break
-        if seg_line.seg_label in _FURNITURE_LABELS:
+    for run in _iter_label_runs(seg_lines, label):
+        index = run[0] - 1
+        if index < 0:
             continue
+        seg_line = seg_lines[index]
         if seg_line.seg_label is not None or _is_grounded(seg_line, annotated):
-            break
-        seg_line.seg_label = SEG_FRONT
+            continue
+        if _normalised_heading(seg_line.text) in headings:
+            seg_line.seg_label = label
+
+
+def _get_running_texts(seg_lines: List[_SegLine]) -> Set[str]:
+    """The lines printed on most of the pages: running heads and feet.
+
+    Most of the pages, not merely more than one: a reference list repeats
+    "Publisher Full Text" under every entry that has one, and that is part of
+    the list rather than furniture around it.
+    """
+    pages_by_text: Dict[str, Set[int]] = {}
+    page_numbers: Set[int] = set()
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is None or not seg_line.text.strip():
+            continue
+        page_numbers.add(page_number)
+        pages_by_text.setdefault(seg_line.text, set()).add(page_number)
+    threshold = len(page_numbers) / 2
+    return {text for text, pages in pages_by_text.items() if len(pages) > threshold}
+
+
+def _extend_region_to_page_end(
+    seg_lines: List[_SegLine],
+    label: str,
+    annotated: JatsAnnotatedLayoutDocument,
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+    config: SegmentationConfig,
+) -> None:
+    """Run each region on to the end of the page over what nothing else claims.
+
+    A reference list prints link labels -- "Publisher Full Text" and the rest --
+    that the JATS does not carry, so the last one on a page is left over with the
+    region on one side only and the gap merge cannot reach it.  A first page ends
+    the same way, with which gateway or collection the article belongs to.
+
+    Bounded to the page the run ends on and stopped by anything evidenced, so it
+    only takes what is already inside the run's own page.  A running foot is
+    stepped over rather than taken, the same way the gap merge steps over a
+    running head.  Per run, because an article that records what changed since
+    its previous version carries front matter on a later page too.
+    """
+    running = _get_running_texts(seg_lines)
+    for run in _iter_label_runs(seg_lines, label):
+        page_number = _get_page_number(seg_lines[run[-1]])
+        for seg_line in seg_lines[run[-1] + 1:]:
+            if _get_page_number(seg_line) != page_number:
+                break
+            if seg_line.seg_label in _FURNITURE_LABELS:
+                continue
+            if seg_line.seg_label is not None or _is_grounded(seg_line, annotated):
+                break
+            if _is_in_footer_zone(seg_line, page_meta_by_number, config):
+                break
+            if seg_line.text in running or _is_valid_page_number_candidate(seg_line.text):
+                continue
+            seg_line.seg_label = label
 
 
 def _is_in_header_zone(
@@ -615,6 +681,9 @@ class SegmentationLabelDeriver:
             seg_lines, self.config.page_header_max_first_line_index
         )
         _release_furniture_inside_references(seg_lines)
+        _claim_region_heading(
+            seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated
+        )
         # `<review>` is the peer-review sub-articles, which print as one run at the end
         # of the document.  Its values are short, repeated checklist fragments in
         # an order the page does not follow, so the aligner places only some of
@@ -634,6 +703,10 @@ class SegmentationLabelDeriver:
         for tail_label in (SEG_ANNEX, SEG_REVIEW):
             _extend_region_to_page_start(seg_lines, tail_label, annotated)
 
+        _extend_region_to_page_end(
+            seg_lines, SEG_REFERENCES, annotated, page_meta_by_number, self.config
+        )
+
         _reclassify_page_foot_notes(seg_lines, page_meta_by_number, self.config)
 
         # The front matter ends in lines the renderer composes -- how to cite,
@@ -642,7 +715,9 @@ class SegmentationLabelDeriver:
         # reach them.  They are set in the same type as the block above them.
         for front_run in list(_iter_label_runs(seg_lines, SEG_FRONT)):
             _grow_run_over_matching_type(seg_lines, front_run, SEG_FRONT)
-        _extend_front_to_page_end(seg_lines, annotated)
+        _extend_region_to_page_end(
+            seg_lines, SEG_FRONT, annotated, page_meta_by_number, self.config
+        )
 
         # After the merge, not before: a line the merge uses as the anchor of a
         # region may itself be a running header, and taking it back first leaves
