@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import logging
 import re
 from collections import Counter
@@ -65,6 +66,7 @@ class SegmentationConfig:
 class _SegLine:
     layout_line: LayoutLine
     line_index: int
+    block_index: int = -1
     seg_label: Optional[str] = None
 
     @property
@@ -75,6 +77,20 @@ class _SegLine:
     def first_token(self) -> Optional[LayoutToken]:
         tokens = self.layout_line.tokens
         return tokens[0] if tokens else None
+
+
+def _build_seg_lines(layout_document: LayoutDocument) -> List[_SegLine]:
+    """One record per line, in reading order, each knowing the block it is set in."""
+    seg_lines: List[_SegLine] = []
+    block_index = 0
+    for page in layout_document.pages:
+        for block in page.blocks:
+            for line in block.lines:
+                seg_lines.append(_SegLine(
+                    layout_line=line, line_index=len(seg_lines), block_index=block_index,
+                ))
+            block_index += 1
+    return seg_lines
 
 
 def _majority_vote_label(
@@ -151,12 +167,34 @@ def _tag_by_coordinates(
     page_meta_by_number: Mapping[int, LayoutPageMeta],
     config: SegmentationConfig,
 ) -> None:
-    """Use vertical position to label headnotes and footnotes for untagged lines."""
+    """Use vertical position to label headnotes and footnotes for untagged lines.
+
+    The margin is read from the block, not the line alone: a column of body text
+    whose last line crosses into the footer zone is still body, because the rest
+    of its block sits above the zone.  A running foot is a block of its own and
+    lies in the zone entirely.
+    """
+    y_ratio_by_line = {
+        id(seg_line): _get_line_y_ratio(seg_line, page_meta_by_number)
+        for seg_line in seg_lines
+    }
+
+    def is_in_margin(y_ratio: Optional[float]) -> bool:
+        return y_ratio is not None and (
+            y_ratio < config.headnote_y_ratio or y_ratio > config.footnote_y_ratio
+        )
+
+    block_is_margin: Dict[int, bool] = {}
+    for seg_line in seg_lines:
+        block_is_margin[seg_line.block_index] = (
+            block_is_margin.get(seg_line.block_index, True)
+            and is_in_margin(y_ratio_by_line[id(seg_line)])
+        )
     for seg_line in seg_lines:
         if seg_line.seg_label is not None:
             continue
-        y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
-        if y_ratio is None:
+        y_ratio = y_ratio_by_line[id(seg_line)]
+        if y_ratio is None or not block_is_margin.get(seg_line.block_index, True):
             continue
         if y_ratio < config.headnote_y_ratio:
             seg_line.seg_label = SEG_HEADNOTE
@@ -392,9 +430,18 @@ _FURNITURE_LABELS = {SEG_HEADNOTE, SEG_FOOTNOTE, SEG_PAGE}
 def _enclosing_label(
     seg_lines: List[_SegLine], index: int, step: int
 ) -> Optional[str]:
-    """The label of the nearest line either side that is not page furniture."""
+    """The region the nearest labelled line either side belongs to.
+
+    Page furniture is read over, and so is a line nothing has claimed yet: an
+    unlabelled line says no more about which region encloses this one than a
+    running header does.
+    """
     position = index + step
-    while 0 <= position < len(seg_lines) and seg_lines[position].seg_label in _FURNITURE_LABELS:
+    while (
+        0 <= position < len(seg_lines)
+        and (seg_lines[position].seg_label is None
+             or seg_lines[position].seg_label in _FURNITURE_LABELS)
+    ):
         position += step
     if not 0 <= position < len(seg_lines):
         return None
@@ -890,10 +937,7 @@ class SegmentationLabelDeriver:
         Uses `LayoutLineMeta.line_id` as the key so callers can look up labels
         without holding LayoutLine references.
         """
-        seg_lines = [
-            _SegLine(layout_line=line, line_index=idx)
-            for idx, line in enumerate(layout_document.iter_all_lines())
-        ]
+        seg_lines = _build_seg_lines(layout_document)
 
         # ── Tier 1: majority-vote from JATS token labels ──
         for sl in seg_lines:

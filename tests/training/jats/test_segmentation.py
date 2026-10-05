@@ -190,9 +190,19 @@ class TestGapMergeAcrossPageFurniture:
         middle = _make_line(*middle_text.split(), y=950.0, page_number=1)
         gap = _make_line('and', 'the', 'rest', 'of', 'it', page_number=2)
         last = _make_line('Jones,', 'K.', '(2021).', 'Another', page_number=2)
+        # The foot of the second page too: a running foot is what repeats, and
+        # that is what tells it apart from a line the margin rules took by
+        # accident.
+        trailing = _make_line(*middle_text.split(), y=950.0, page_number=2)
         doc = LayoutDocument(pages=[
-            LayoutPage(blocks=[LayoutBlock(lines=[first, middle])], meta=_make_page_meta(1)),
-            LayoutPage(blocks=[LayoutBlock(lines=[gap, last])], meta=_make_page_meta(2)),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[first]), LayoutBlock(lines=[middle])],
+                meta=_make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[gap, last]), LayoutBlock(lines=[trailing])],
+                meta=_make_page_meta(2),
+            ),
         ])
         lines = list(doc.iter_all_lines())
         annotated = _annotate(doc, {
@@ -411,8 +421,10 @@ class TestFrontMatterBoundary:
                else [('Grant', 'information:', 'funded', 'by', 'a', 'grant'),
                      ('Smith,', 'J.', '(2020).', 'A', 'reference')])
         )
-        # One row per line, down the page, as a page sets them.
-        lines = [_make_line(*text, y=float(row)) for row, text in enumerate(texts, 1)]
+        # One row per line, down the text area of the page, as a page sets them.
+        lines = [
+            _make_line(*text, y=100.0 + 5.0 * row) for row, text in enumerate(texts)
+        ]
         title = lines[0]
         grant = lines[-1] if front_after_references else lines[-2]
         reference = lines[-2] if front_after_references else lines[-1]
