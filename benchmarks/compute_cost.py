@@ -120,28 +120,49 @@ def _percentile_ms(sorted_values: List[int], fraction: float) -> int:
     return sorted_values[rank - 1]
 
 
+RUN_ENTRY_TYPE = "run"
+
+
+def run_manifest_entry(
+    run_started_at: str,
+    concurrency: int,
+    n_processed: int,
+    elapsed_s: float,
+    machine: Dict[str, Any],
+) -> Dict[str, Any]:
+    """What one invocation of the predictor cost, as a manifest line.
+
+    In the manifest rather than beside it, because the manifest is what the
+    predictions store carries: a set of predictions assembled over several
+    invocations then arrives with each one's own measurement, and the whole set
+    can be reported on without the run that scores it having generated any of it.
+    Every reader of the manifest selects on `status` or on a document's keys, so a
+    line with neither is already ignored by all of them.
+    """
+    return {
+        "type": RUN_ENTRY_TYPE,
+        "started_at": run_started_at,
+        "concurrency": concurrency,
+        "n_processed": n_processed,
+        "elapsed_s": elapsed_s,
+        "machine": machine,
+    }
+
+
 def aggregate_latency_ms(
-    manifest_entries: List[dict],
-    corpora: Optional[List[str]] = None,
-    run_started_at: Optional[str] = None,
+    manifest_entries: List[dict], corpora: Optional[List[str]] = None
 ) -> Optional[Dict[str, int]]:
     """How long a document waited, as a distribution.
 
     Over documents that got a prediction: a request that timed out took the client
     timeout rather than that long to answer, and one outlier moves a mean over
     sixty documents, which is why the median and p90 are reported instead.
-
-    Over one invocation's documents where the run record names it. A run generates
-    only what the predictions store lacked, and the manifest it starts from was
-    copied with them, so a median over all of it blends another machine's run on
-    another day into this one's.
     """
     durations = sorted(
         entry["elapsed_ms"] for entry in manifest_entries
         if entry.get("status") == "ok"
         and isinstance(entry.get("elapsed_ms"), int)
         and (corpora is None or entry.get("corpus") in corpora)
-        and (run_started_at is None or entry.get("run_started_at") == run_started_at)
     )
     if not durations:
         return None
@@ -150,3 +171,69 @@ def aggregate_latency_ms(
         "median": _percentile_ms(durations, 0.5),
         "p90": _percentile_ms(durations, 0.9),
     }
+
+
+def _distinct(values: List[Any]) -> List[Any]:
+    return sorted({value for value in values if value is not None})
+
+
+def _distinct_machines(machines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    distinct = {
+        (machine.get("cpu_model"), machine.get("cpu_count"))
+        for machine in machines
+        if machine.get("cpu_model") or machine.get("cpu_count")
+    }
+    return [
+        {
+            **({"cpu_model": cpu_model} if cpu_model else {}),
+            **({"cpu_count": cpu_count} if cpu_count else {}),
+        }
+        for cpu_model, cpu_count in sorted(
+            distinct, key=lambda pair: (pair[0] or "", pair[1] or 0)
+        )
+    ]
+
+
+def aggregate_cost(
+    manifest_entries: List[dict], corpora: Optional[List[str]] = None
+) -> Optional[Dict[str, Any]]:
+    """What producing these predictions cost, over every invocation that made any.
+
+    A set of predictions is assembled over as many invocations as it took, each
+    recorded where it happened, so the whole set is reported on rather than the
+    last top-up. Latency is per document and so covers the corpora asked for;
+    throughput and CPU are per invocation and so cover whatever that invocation
+    generated, which may reach wider than the corpora being scored.
+
+    The CPU figure is summed only over the invocations that recorded one, with the
+    documents those invocations processed, so a set part of which was generated
+    against a remote parser states a rate over the part that was measured rather
+    than one diluted by the part that was not.
+    """
+    runs = [entry for entry in manifest_entries if entry.get("type") == RUN_ENTRY_TYPE]
+    latency = aggregate_latency_ms(manifest_entries, corpora)
+    if not runs and not latency:
+        return None
+
+    cost: Dict[str, Any] = {}
+    if latency:
+        cost["latency_ms"] = latency
+    if not runs:
+        return cost
+
+    measured = [run for run in runs if (run.get("machine") or {}).get("cpu_seconds")]
+    cost.update({
+        "n_runs": len(runs),
+        "n_processed": sum(run.get("n_processed") or 0 for run in runs),
+        "elapsed_s": round(sum(run.get("elapsed_s") or 0.0 for run in runs), 1),
+        "concurrency": _distinct([run.get("concurrency") for run in runs]),
+        # Kept paired, since a core count belongs to the machine beside it and a
+        # set measured on two of them has no single one to report.
+        "machines": _distinct_machines([run.get("machine") or {} for run in runs]),
+    })
+    if measured:
+        cost["cpu_seconds"] = round(
+            sum(run["machine"]["cpu_seconds"] for run in measured), 1
+        )
+        cost["cpu_n_processed"] = sum(run.get("n_processed") or 0 for run in measured)
+    return cost

@@ -239,26 +239,29 @@ def _fmt_ms(value: int) -> str:
     return f"{value / 1000:.1f}s" if value >= 1000 else f"{value}ms"
 
 
-def _throughput_bullet(run_record: dict) -> List[str]:
-    """Documents an hour, over what this invocation processed.
+def _throughput_bullet(cost: dict) -> List[str]:
+    """Documents an hour, over every invocation that generated any of them.
 
-    `n_records` counts the manifest, which a resumed run inherits from an earlier
-    invocation, so a run recorded before this was counted states nothing rather
-    than a rate computed from someone else's documents.
+    A set assembled over several invocations states what all of them took
+    together; one assembled entirely from the predictions store states nothing,
+    having generated nothing.
     """
-    n_processed = run_record.get("n_processed")
-    elapsed_s = run_record.get("elapsed_s")
+    n_processed = cost.get("n_processed")
+    elapsed_s = cost.get("elapsed_s")
     if not n_processed or not elapsed_s:
         return []
     bullet = f"{n_processed:,} docs in {format_duration(elapsed_s)}"
-    concurrency = run_record.get("concurrency")
+    n_runs = cost.get("n_runs") or 1
+    if n_runs > 1:
+        bullet += f" over {n_runs} runs"
+    concurrency = cost.get("concurrency") or []
     if concurrency:
-        bullet += f" at concurrency {concurrency}"
+        bullet += " at concurrency " + "/".join(str(value) for value in concurrency)
     return [f"{bullet} — {n_processed / elapsed_s * 3600:,.0f} docs/hour"]
 
 
-def _latency_bullet(summary: dict) -> List[str]:
-    latency = summary.get("latency_ms") or {}
+def _latency_bullet(cost: dict) -> List[str]:
+    latency = cost.get("latency_ms") or {}
     if not latency.get("median"):
         return []
     return [
@@ -267,33 +270,39 @@ def _latency_bullet(summary: dict) -> List[str]:
     ]
 
 
-def _cpu_bullets(run_record: dict) -> List[str]:
-    machine = run_record.get("machine") or {}
-    cpu_seconds = machine.get("cpu_seconds")
+def _machine_label(machine: dict) -> str:
     cpu_count = machine.get("cpu_count")
-    n_processed = run_record.get("n_processed")
-    elapsed_s = run_record.get("elapsed_s")
+    return ", ".join(filter(None, [
+        machine.get("cpu_model"), f"{cpu_count} cores" if cpu_count else "",
+    ]))
+
+
+def _cpu_bullets(cost: dict) -> List[str]:
+    cpu_seconds = cost.get("cpu_seconds")
+    cpu_n_processed = cost.get("cpu_n_processed") or 0
+    n_processed = cost.get("n_processed") or 0
+    machines = cost.get("machines") or []
     bullets = []
-    if cpu_seconds and n_processed:
-        bullet = f"{cpu_seconds / n_processed:.1f} CPU-seconds per document"
-        if elapsed_s:
-            busy_cores = cpu_seconds / elapsed_s
+    if cpu_seconds and cpu_n_processed:
+        bullet = f"{cpu_seconds / cpu_n_processed:.1f} CPU-seconds per document"
+        # Only part of a set is measured where another part was generated against a
+        # parser on another host, and a rate over all of it would understate it.
+        if cpu_n_processed < n_processed:
+            bullet += f" over the {cpu_n_processed:,} of {n_processed:,} measured"
+        elif cost.get("elapsed_s") and len(machines) == 1:
+            # How much of one machine the run kept busy. Nothing to say of a set
+            # measured on two, where the figure would average different machines.
+            busy_cores = cpu_seconds / cost["elapsed_s"]
+            cpu_count = machines[0].get("cpu_count")
             bullet += f", {busy_cores:.1f}"
             bullet += f" of {cpu_count} cores busy" if cpu_count else " cores busy"
         bullets.append(bullet)
-    if machine.get("cpu_model"):
-        bullets.append(
-            machine["cpu_model"] + (f", {cpu_count} cores" if cpu_count else "")
-        )
+    bullets += [_machine_label(machine) for machine in machines if _machine_label(machine)]
     return bullets
 
 
-def _cost_bullets(summary: dict, run_record: dict) -> List[str]:
-    return (
-        _throughput_bullet(run_record)
-        + _latency_bullet(summary)
-        + _cpu_bullets(run_record)
-    )
+def _cost_bullets(cost: dict) -> List[str]:
+    return _throughput_bullet(cost) + _latency_bullet(cost) + _cpu_bullets(cost)
 
 
 def _render_cost_lines(labeled_bullets: List[Tuple[str, List[str]]]) -> List[str]:
@@ -306,34 +315,33 @@ def _render_cost_lines(labeled_bullets: List[Tuple[str, List[str]]]) -> List[str
     return lines
 
 
-def _incomparable_cost_note(labeled_run_records: List[Tuple[str, dict]]) -> List[str]:
-    """Call out variants measured on different hardware or at different concurrency.
+def _incomparable_cost_note(labeled_costs: List[Tuple[str, dict]]) -> List[str]:
+    """Call out predictions measured on different hardware or at different concurrency.
 
-    Both make a timing delta between columns a property of the measurement rather
-    than of the parser, and a run compared against a stored baseline from another
-    day is exactly where that happens unnoticed. A column that states neither is
-    one of those stored runs, so an unrecorded value counts as a difference rather
-    than being passed over.
+    Both make a timing delta a property of the measurement rather than of the
+    parser, and it is as easy to happen within one column — a set topped up months
+    later on another machine — as between two. A column that states neither was
+    generated before this was recorded, which is the same problem.
     """
-    if len(labeled_run_records) < 2:
-        return []
     differing = []
-    for name, values in (
-        ("CPU", [
-            (run_record.get("machine") or {}).get("cpu_model") or "unrecorded"
-            for _, run_record in labeled_run_records
+    for name, values_of in (
+        ("CPU", lambda cost: [
+            machine.get("cpu_model") for machine in (cost.get("machines") or [])
         ]),
-        ("concurrency", [
-            str(run_record.get("concurrency") or "unrecorded")
-            for _, run_record in labeled_run_records
-        ]),
+        ("concurrency", lambda cost: cost.get("concurrency") or []),
     ):
-        if len(set(values)) > 1:
-            differing.append(f"{name} ({', '.join(values)})")
+        stated = [
+            [str(value) for value in values_of(cost) if value] or ["unrecorded"]
+            for _, cost in labeled_costs
+        ]
+        if len({value for values in stated for value in values}) > 1:
+            differing.append(
+                f"{name} ({', '.join('/'.join(values) for values in stated)})"
+            )
     if not differing:
         return []
     return [
-        "> ⚠️ **Measured differently**: these runs differ in "
+        "> ⚠️ **Measured differently**: these predictions differ in "
         + " and ".join(differing)
         + ". Timing deltas between them reflect that as well as the parser.",
         "",
@@ -342,19 +350,15 @@ def _incomparable_cost_note(labeled_run_records: List[Tuple[str, dict]]) -> List
 
 def _render_cost_section(
     labeled_summaries: List[Tuple[str, dict]],
-    labeled_run_records: List[Tuple[str, Optional[dict]]],
     note: str,
 ) -> List[str]:
-    """Empty unless something was recorded, so a report over stored predictions
-    alone is unchanged."""
-    records = [record for _, record in labeled_run_records]
-    stated = [
-        (label, summary, records[index] or {} if index < len(records) else {})
-        for index, (label, summary) in enumerate(labeled_summaries)
+    """Empty unless something was recorded, so a report over predictions generated
+    before this was is unchanged."""
+    labeled_costs = [
+        (label, summary.get("cost") or {}) for label, summary in labeled_summaries
     ]
     measured = [
-        (label, run_record, _cost_bullets(summary, run_record))
-        for label, summary, run_record in stated
+        (label, cost, _cost_bullets(cost)) for label, cost in labeled_costs
     ]
     measured = [entry for entry in measured if entry[2]]
     if not measured:
@@ -365,7 +369,7 @@ def _render_cost_section(
         "",
         note,
         "",
-        *_incomparable_cost_note([(label, record) for label, record, _ in measured]),
+        *_incomparable_cost_note([(label, cost) for label, cost, _ in measured]),
         *_render_cost_lines([(label, bullets) for label, _, bullets in measured]),
         "",
         "</details>",
@@ -815,15 +819,14 @@ def _render_comparison_report(
         lines += [*usage_lines, ""]
 
     cost_lines = _render_cost_section(
-        labeled_summaries, labeled_run_records or [],
-        "What these runs took, and on what. CPU is the whole machine's busy time"
-        " over the run, so it includes the benchmark client and anything else the"
-        " host was doing, and it is absent where the parser ran on another host."
-        " All three cover the documents the run generated rather than every"
-        " document scored, since a run generates only what the predictions store"
-        " lacked. Latency is over the ones that got a prediction; throughput and"
-        " CPU per document are over every one attempted, retries included, since"
-        " the machine paid for those too.",
+        labeled_summaries,
+        "What producing these predictions took, and on what, over every run that"
+        " generated any of them rather than only the one that scored them. CPU is"
+        " the whole machine's busy time, so it includes the benchmark client and"
+        " anything else the host was doing, and it is absent where the parser ran"
+        " on another host. Latency is over the documents that got a prediction;"
+        " throughput and CPU per document are over every document those runs"
+        " processed, retries included, since the machine paid for those too.",
     )
     if cost_lines:
         lines += [*cost_lines, ""]

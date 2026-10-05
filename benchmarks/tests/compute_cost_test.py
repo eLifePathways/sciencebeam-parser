@@ -7,10 +7,12 @@ import pytest
 
 from benchmarks import compute_cost
 from benchmarks.compute_cost import (
+    aggregate_cost,
     aggregate_latency_ms,
     get_machine_record,
     is_local_parser_url,
     read_busy_cpu_seconds,
+    run_manifest_entry,
     start_cpu_measurement,
 )
 
@@ -129,28 +131,91 @@ class TestAggregateLatencyMs:
             "n": 1, "median": 100, "p90": 100
         }
 
-    def test_should_cover_only_the_invocation_the_run_record_names(self):
-        entries = [
-            _entry(record_id="stored", elapsed_ms=9000),
-            {
-                **_entry(record_id="fresh", elapsed_ms=100),
-                "run_started_at": INVOCATION,
-            },
-        ]
-        assert aggregate_latency_ms(
-            entries, run_started_at=INVOCATION
-        ) == {"n": 1, "median": 100, "p90": 100}
 
-    def test_should_cover_every_entry_where_no_invocation_is_named(self):
-        entries = [
-            _entry(record_id="stored", elapsed_ms=9000),
-            {
-                **_entry(record_id="fresh", elapsed_ms=100),
-                "run_started_at": INVOCATION,
-            },
-        ]
-        assert (aggregate_latency_ms(entries) or {})["n"] == 2
+def _run_entry(
+    started_at: str = INVOCATION,
+    concurrency: int = 4,
+    n_processed: int = 10,
+    elapsed_s: float = 100.0,
+    cpu_seconds: Optional[float] = 300.0,
+    cpu_model: Optional[str] = "AMD EPYC 7763",
+) -> dict:
+    machine: dict = {"cpu_count": 4}
+    if cpu_model is not None:
+        machine["cpu_model"] = cpu_model
+    if cpu_seconds is not None:
+        machine["cpu_seconds"] = cpu_seconds
+    return run_manifest_entry(
+        run_started_at=started_at, concurrency=concurrency, n_processed=n_processed,
+        elapsed_s=elapsed_s, machine=machine,
+    )
 
-    def test_should_report_nothing_where_the_invocation_generated_nothing(self):
-        entries = [_entry(record_id="stored", elapsed_ms=9000)]
-        assert aggregate_latency_ms(entries, run_started_at=INVOCATION) is None
+
+class TestRunManifestEntry:
+    def test_should_be_ignored_by_every_reader_that_selects_documents(self):
+        entry = _run_entry()
+        assert entry.get("status") is None
+        assert entry.get("corpus") is None
+        assert entry.get("record_id") is None
+
+
+class TestAggregateCost:
+    def _cost(self, entries: list) -> dict:
+        cost = aggregate_cost(entries)
+        assert cost is not None
+        return cost
+
+    def test_should_return_none_for_an_empty_manifest(self):
+        assert aggregate_cost([]) is None
+
+    def test_should_report_latency_alone_where_no_run_recorded_itself(self):
+        cost = self._cost([_entry(elapsed_ms=400)])
+        assert cost == {"latency_ms": {"n": 1, "median": 400, "p90": 400}}
+
+    def test_should_sum_every_run_that_generated_any_of_the_documents(self):
+        cost = self._cost([
+            _entry(record_id="doc1", elapsed_ms=100),
+            _run_entry(n_processed=10, elapsed_s=100.0, cpu_seconds=300.0),
+            _run_entry(started_at="2026-10-06T10:00:00+00:00", n_processed=5,
+                       elapsed_s=50.0, cpu_seconds=150.0),
+        ])
+        assert cost["n_runs"] == 2
+        assert cost["n_processed"] == 15
+        assert cost["elapsed_s"] == 150.0
+        assert cost["cpu_seconds"] == 450.0
+        assert cost["cpu_n_processed"] == 15
+
+    def test_should_report_latency_over_every_document_whichever_run_made_it(self):
+        cost = self._cost([
+            _entry(record_id="stored", elapsed_ms=900),
+            _entry(record_id="fresh", elapsed_ms=100),
+            _run_entry(n_processed=1),
+        ])
+        assert cost["latency_ms"]["n"] == 2
+
+    def test_should_cover_cpu_only_over_the_runs_that_measured_it(self):
+        cost = self._cost([
+            _run_entry(n_processed=10, cpu_seconds=300.0),
+            _run_entry(started_at="2026-10-06T10:00:00+00:00", n_processed=5,
+                       cpu_seconds=None),
+        ])
+        assert cost["n_processed"] == 15
+        assert cost["cpu_seconds"] == 300.0
+        assert cost["cpu_n_processed"] == 10
+
+    def test_should_omit_cpu_where_no_run_measured_it(self):
+        cost = self._cost([_run_entry(cpu_seconds=None)])
+        assert "cpu_seconds" not in cost
+        assert cost["n_processed"] == 10
+
+    def test_should_collect_the_machines_and_concurrencies_it_was_measured_at(self):
+        cost = self._cost([
+            _run_entry(concurrency=4, cpu_model="AMD EPYC 7763"),
+            _run_entry(started_at="2026-10-06T10:00:00+00:00", concurrency=2,
+                       cpu_model="Intel Xeon Platinum 8370C"),
+        ])
+        assert cost["concurrency"] == [2, 4]
+        assert cost["machines"] == [
+            {"cpu_model": "AMD EPYC 7763", "cpu_count": 4},
+            {"cpu_model": "Intel Xeon Platinum 8370C", "cpu_count": 4},
+        ]

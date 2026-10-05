@@ -447,8 +447,10 @@ class TestRunPredictRetryPasses:
         return json.loads((run_dir / "run.json").read_text())
 
     def _manifest(self, tmp_path: Path) -> list:
+        """The documents, without the record the invocation makes of itself."""
         path = tmp_path / "run" / "predictions" / "manifest.jsonl"
-        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        entries = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        return [entry for entry in entries if entry.get("record_id")]
 
     def test_should_recover_a_document_that_fails_once_and_report_it(self, tmp_path: Path):
         run_record = self._run(tmp_path, _mock_client_failing_then_ok(1), retry_passes=2)
@@ -601,23 +603,42 @@ class TestRunPredictCostRecord:
         assert resumed["n_records"] == 1
         assert resumed["n_processed"] == 0
 
+    def _manifest(self, tmp_path: Path) -> list:
+        path = tmp_path / "run" / "predictions" / "manifest.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
     def test_should_stamp_what_this_invocation_wrote(self, tmp_path: Path):
         run_record = self._run(tmp_path, _mock_client())
-        entries = [
-            json.loads(line) for line
-            in (tmp_path / "run" / "predictions" / "manifest.jsonl").read_text().splitlines()
-            if line.strip()
-        ]
-        assert [entry["run_started_at"] for entry in entries] == [run_record["started_at"]]
+        documents = [e for e in self._manifest(tmp_path) if e.get("record_id")]
+        assert [e["run_started_at"] for e in documents] == [run_record["started_at"]]
 
-    def test_should_not_claim_documents_an_earlier_invocation_wrote(self, tmp_path: Path):
+    def test_should_record_what_the_invocation_cost_beside_its_documents(
+        self, tmp_path: Path
+    ):
+        run_record = self._run(tmp_path, _mock_client())
+        runs = [e for e in self._manifest(tmp_path) if e.get("type") == "run"]
+        assert len(runs) == 1
+        assert runs[0]["started_at"] == run_record["started_at"]
+        assert runs[0]["n_processed"] == 1
+        assert runs[0]["concurrency"] == run_record["concurrency"]
+        assert runs[0]["machine"]["cpu_count"] > 0
+
+    def test_should_record_each_invocation_that_generated_something(
+        self, tmp_path: Path
+    ):
+        records = [_make_record(tmp_path, record_id="doc1")]
+        self._run(tmp_path, _mock_client(), records=records)
+        records.append(_make_record(tmp_path, record_id="doc2"))
+        self._run(tmp_path, _mock_client(), records=records)
+        runs = [e for e in self._manifest(tmp_path) if e.get("type") == "run"]
+        assert [run["n_processed"] for run in runs] == [1, 1]
+        assert len({run["started_at"] for run in runs}) == 2
+
+    def test_should_record_no_run_where_the_invocation_generated_nothing(
+        self, tmp_path: Path
+    ):
         records = [_make_record(tmp_path)]
-        first = self._run(tmp_path, _mock_client(), records=records)
-        second = self._run(tmp_path, _mock_client(), records=records)
-        assert second["started_at"] != first["started_at"]
-        entries = [
-            json.loads(line) for line
-            in (tmp_path / "run" / "predictions" / "manifest.jsonl").read_text().splitlines()
-            if line.strip()
-        ]
-        assert [entry["run_started_at"] for entry in entries] == [first["started_at"]]
+        self._run(tmp_path, _mock_client(), records=records)
+        self._run(tmp_path, _mock_client(), records=records)
+        runs = [e for e in self._manifest(tmp_path) if e.get("type") == "run"]
+        assert len(runs) == 1

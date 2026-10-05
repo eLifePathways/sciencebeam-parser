@@ -87,30 +87,34 @@ Three numbers, beside the scores, for the variants that record them:
 - **latency** — what one document waited, as a median and a p90 over the
   documents that got a prediction. A request that timed out took the client
   timeout rather than that long to answer, so it is left out.
-- **throughput** — documents an hour, over what that invocation processed and
-  at the concurrency it resolved to. `--concurrency 0` resolves to the core
-  count of the machine running the client, so the resolved value is recorded
-  with the number.
-- **CPU-seconds per document** — the machine's busy time over the run, divided
-  by the documents it processed, retries included.
+- **throughput** — documents an hour, at the concurrency they were generated
+  at. `--concurrency 0` resolves to the core count of the machine running the
+  client, so the resolved value is recorded with the number.
+- **CPU-seconds per document** — the machine's busy time while generating
+  them, divided by the documents processed, retries included.
 
 The CPU figure is the whole machine (`/proc/stat`), not the parser alone: the
 work is spread across a persistent wapiti process, in-process torch threads and
 subprocesses, and no measure taken inside the parser sees all of it. So it
 includes the benchmark client, and anything else the host was doing, and it is
 recorded only where the parser ran on the same machine — a run against a remote
-`--parser-url` records none.
+`--parser-url` records none. Where only part of a set was measured that way, the
+rate is stated over the part that was.
 
-All three cover the documents the run generated, not every document scored: a
-run fetches what the predictions store already has and asks the parser only for
-what is missing, so a top-up measures the top-up. Each manifest entry is stamped
-with the invocation that wrote it, which is what keeps a stored run's timings
-out of this one's.
+All three cover every run that generated any of the predictions, not only the
+run that scored them. A run fetches what the predictions store has and asks the
+parser only for what is missing, so a set is usually assembled over several
+invocations, and may be assembled on several machines. Each invocation appends
+its own record to `manifest.jsonl` — what it processed, how long it took, at
+what concurrency, on what machine — beside the documents it produced, and each
+document entry is stamped with the invocation that wrote it. The store carries
+the manifest, so those records arrive with the predictions. Every other reader
+of the manifest selects on `status` or on a document's keys, so a line with
+neither is ignored by all of them.
 
-The CPU model and core count are recorded with every run. The report warns when
-the columns it is comparing were measured on different hardware or at different
-concurrency, since a timing delta between them is then partly a property of the
-measurement.
+The report names what the set was measured on, and warns when the runs behind
+one column, or the columns being compared, differ in hardware or concurrency,
+since a timing delta is then partly a property of the measurement.
 
 ## Where the gold does not record a field
 

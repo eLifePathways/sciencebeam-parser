@@ -441,7 +441,30 @@ class TestRunScoreLlmUsage:
             }
             for index, elapsed_ms in enumerate([1000, 2000, 3000, 4000, 60000])
         ])
-        assert summary["latency_ms"] == {"n": 5, "median": 3000, "p90": 60000}
+        assert summary["cost"]["latency_ms"] == {"n": 5, "median": 3000, "p90": 60000}
+
+    def test_should_aggregate_what_every_run_in_the_manifest_cost(self, tmp_path: Path):
+        summary = self._run(tmp_path, [
+            {
+                "corpus": "biorxiv", "record_id": "doc1", "status": "ok",
+                "elapsed_ms": 1000,
+            },
+            {
+                "type": "run", "started_at": "2026-10-05T10:00:00.1+00:00",
+                "concurrency": 4, "n_processed": 40, "elapsed_s": 400.0,
+                "machine": {"cpu_model": "AMD EPYC 7763", "cpu_count": 4,
+                            "cpu_seconds": 1200.0},
+            },
+            {
+                "type": "run", "started_at": "2026-10-06T10:00:00.1+00:00",
+                "concurrency": 4, "n_processed": 20, "elapsed_s": 200.0,
+                "machine": {"cpu_model": "AMD EPYC 7763", "cpu_count": 4,
+                            "cpu_seconds": 600.0},
+            },
+        ])
+        assert summary["cost"]["n_runs"] == 2
+        assert summary["cost"]["n_processed"] == 60
+        assert summary["cost"]["cpu_seconds"] == 1800.0
 
     def test_should_leave_the_summary_unchanged_without_a_prediction(self, tmp_path: Path):
         summary = self._run(tmp_path, [
@@ -450,7 +473,7 @@ class TestRunScoreLlmUsage:
                 "elapsed_ms": 60000,
             },
         ])
-        assert "latency_ms" not in summary
+        assert "cost" not in summary
 
 
 GOLD_JATS_1 = b"""<article>

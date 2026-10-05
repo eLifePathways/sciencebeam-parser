@@ -18,6 +18,7 @@ from sciencebeam_parser.models.llm.usage import USAGE_HEADER_NAME
 from benchmarks.compute_cost import (
     format_duration,
     get_machine_record,
+    run_manifest_entry,
     start_cpu_measurement,
 )
 from benchmarks.fetch import fetch_data, resolved_sources
@@ -304,6 +305,20 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
         n_processed += pass_ok + pass_err
 
     n_ok, n_err, n_recovered = _summarise_manifest(run_dir, records)
+    elapsed_s = round(time.monotonic() - t_start, 1)
+    machine = get_machine_record(busy_cpu_at_start)
+
+    # Beside the documents it produced, so that a set assembled over several
+    # invocations arrives from the predictions store with each one's measurement.
+    # Nothing to say where this invocation generated nothing.
+    if n_processed:
+        _append_manifest(run_dir, run_manifest_entry(
+            run_started_at=run_started_at,
+            concurrency=resolved_concurrency,
+            n_processed=n_processed,
+            elapsed_s=elapsed_s,
+            machine=machine,
+        ))
 
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "run.json").write_text(json.dumps({
@@ -335,15 +350,15 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
         # run inherits documents an earlier invocation paid for, and a throughput
         # computed from it would be a fiction.
         "n_processed": n_processed,
-        "elapsed_s": round(time.monotonic() - t_start, 1),
+        "elapsed_s": elapsed_s,
         # The whole machine over the run window, the benchmark client included, and
         # without a CPU figure at all where the parser ran on another host.
-        "machine": get_machine_record(busy_cpu_at_start),
+        "machine": machine,
     }, indent=2))
 
     LOGGER.info(
         "done  ok=%d  err=%d  recovered=%d  elapsed=%.1fs",
-        n_ok, n_err, n_recovered, time.monotonic() - t_start,
+        n_ok, n_err, n_recovered, elapsed_s,
     )
 
 

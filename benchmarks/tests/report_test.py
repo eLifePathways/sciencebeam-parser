@@ -765,108 +765,129 @@ class TestDifferentlyScoredNote:
         assert "Scored differently between runs" not in report
 
 
-def _run_record(
-    n_processed: int = 60,
-    elapsed_s: float = 600.0,
-    concurrency: int = 4,
+def _cost(
+    n_processed: Optional[int] = 60,
+    elapsed_s: Optional[float] = 600.0,
+    n_runs: int = 1,
+    concurrency: Optional[list] = None,
     cpu_seconds: Optional[float] = 1800.0,
-    cpu_model: Optional[str] = "AMD EPYC 7763",
-    cpu_count: Optional[int] = 4,
+    cpu_n_processed: Optional[int] = None,
+    machines: Optional[list] = None,
+    median: int = 2400,
+    p90: int = 9100,
 ) -> dict:
-    machine: dict = {}
-    if cpu_model is not None:
-        machine["cpu_model"] = cpu_model
-    if cpu_count is not None:
-        machine["cpu_count"] = cpu_count
+    cost: dict = {"latency_ms": {"n": 60, "median": median, "p90": p90}}
+    if n_processed is not None:
+        cost.update({
+            "n_runs": n_runs,
+            "n_processed": n_processed,
+            "elapsed_s": elapsed_s,
+            "concurrency": [4] if concurrency is None else concurrency,
+            "machines": (
+                [{"cpu_model": "AMD EPYC 7763", "cpu_count": 4}]
+                if machines is None else machines
+            ),
+        })
     if cpu_seconds is not None:
-        machine["cpu_seconds"] = cpu_seconds
-    return {
-        "n_processed": n_processed,
-        "elapsed_s": elapsed_s,
-        "concurrency": concurrency,
-        "machine": machine,
-    }
+        cost["cpu_seconds"] = cpu_seconds
+        cost["cpu_n_processed"] = (
+            n_processed if cpu_n_processed is None else cpu_n_processed
+        )
+    return cost
 
 
-def _summary_with_latency(f1: float = 0.85, median: int = 2400, p90: int = 9100) -> dict:
-    return {**_title_summary(f1), "latency_ms": {"n": 60, "median": median, "p90": p90}}
+def _summary_with_cost(f1: float = 0.85, cost: Optional[dict] = None) -> dict:
+    return {**_title_summary(f1), "cost": _cost() if cost is None else cost}
 
 
 class TestComputeCostSection:
-    def _report(self, *labeled_run_records, summary: Optional[dict] = None) -> str:
-        summary = summary if summary is not None else _summary_with_latency()
+    def _report(self, *labeled_costs) -> str:
         return _render_comparison_report(
-            [(label, summary) for label, _ in labeled_run_records],
-            list(labeled_run_records),
+            [(label, _summary_with_cost(cost=cost)) for label, cost in labeled_costs]
         )
 
-    def test_should_be_absent_without_any_run_record(self):
+    def test_should_be_absent_where_nothing_was_recorded(self):
         assert "Compute cost" not in _render_comparison_report([("SB", _title_summary(0.85))])
 
-    def test_should_be_absent_where_nothing_was_recorded(self):
-        report = self._report(("SB", {}), summary=_title_summary(0.85))
-        assert "Compute cost" not in report
+    def test_should_be_collapsible(self):
+        report = self._report(("SB", _cost()))
+        assert "<summary><b>Compute cost</b></summary>" in report
+        assert report.count("<details>") == report.count("</details>")
 
     def test_should_report_throughput_at_the_concurrency_it_was_measured_at(self):
-        report = self._report(("SB", _run_record()))
-        assert "60 docs in 10m00s at concurrency 4 — 360 docs/hour" in report
+        assert "60 docs in 10m00s at concurrency 4 — 360 docs/hour" in self._report(
+            ("SB", _cost())
+        )
 
     def test_should_report_latency_as_a_distribution(self):
-        report = self._report(("SB", _run_record()))
-        assert "2.4s median latency, 9.1s p90 over 60 docs" in report
+        assert "2.4s median latency, 9.1s p90 over 60 docs" in self._report(("SB", _cost()))
 
     def test_should_report_cpu_per_document_and_the_cores_it_used(self):
-        report = self._report(("SB", _run_record()))
+        report = self._report(("SB", _cost()))
         assert "30.0 CPU-seconds per document, 3.0 of 4 cores busy" in report
         assert "AMD EPYC 7763, 4 cores" in report
 
-    def test_should_omit_cpu_where_the_parser_ran_elsewhere(self):
-        report = self._report(("SB", _run_record(cpu_seconds=None)))
+    def test_should_state_how_many_runs_produced_the_predictions(self):
+        report = self._report(("SB", _cost(n_runs=3, n_processed=60, elapsed_s=600.0)))
+        assert "60 docs in 10m00s over 3 runs at concurrency 4" in report
+
+    def test_should_report_cpu_over_the_part_of_the_set_that_was_measured(self):
+        report = self._report(
+            ("SB", _cost(n_processed=60, cpu_seconds=900.0, cpu_n_processed=30))
+        )
+        assert "30.0 CPU-seconds per document over the 30 of 60 measured" in report
+
+    def test_should_omit_cpu_where_no_run_measured_it(self):
+        report = self._report(("SB", _cost(cpu_seconds=None)))
         assert "CPU-seconds per document" not in report
         assert "360 docs/hour" in report
 
-    def test_should_omit_throughput_for_a_run_recorded_before_it_was_counted(self):
-        record = _run_record()
-        del record["n_processed"]
-        report = self._report(("SB", record))
+    def test_should_report_latency_alone_for_predictions_that_came_from_the_store(self):
+        report = self._report(
+            ("stored", {"latency_ms": {"n": 12, "median": 900, "p90": 2100}})
+        )
+        assert "900ms median latency" in report
         assert "docs/hour" not in report
         assert "CPU-seconds per document" not in report
-        assert "AMD EPYC 7763" in report
 
     def test_should_warn_where_variants_ran_on_different_cpus(self):
         report = self._report(
-            ("GROBID", _run_record(cpu_model="Intel Xeon Platinum 8370C")),
-            ("SB", _run_record(cpu_model="AMD EPYC 7763")),
+            ("GROBID", _cost(machines=[
+                {"cpu_model": "Intel Xeon Platinum 8370C", "cpu_count": 4}
+            ])),
+            ("SB", _cost()),
         )
-        assert "Measured differently" in report
         assert "CPU (Intel Xeon Platinum 8370C, AMD EPYC 7763)" in report
 
-    def test_should_warn_where_variants_ran_at_different_concurrency(self):
+    def test_should_not_claim_busy_cores_for_a_set_measured_on_two_machines(self):
         report = self._report(
-            ("GROBID", _run_record(concurrency=2)), ("SB", _run_record(concurrency=4))
+            ("SB", _cost(n_runs=2, machines=[
+                {"cpu_model": "AMD EPYC 7763", "cpu_count": 4},
+                {"cpu_model": "Intel Xeon Platinum 8370C", "cpu_count": 12},
+            ]))
         )
-        assert "concurrency (2, 4)" in report
+        assert "30.0 CPU-seconds per document" in report
+        assert "cores busy" not in report
+        assert "AMD EPYC 7763, 4 cores" in report
+        assert "Intel Xeon Platinum 8370C, 12 cores" in report
 
-    def test_should_not_warn_where_the_measurement_matched(self):
-        report = self._report(("GROBID", _run_record()), ("SB", _run_record()))
-        assert "Measured differently" not in report
+    def test_should_warn_where_one_set_was_itself_measured_on_two_machines(self):
+        report = self._report(
+            ("SB", _cost(n_runs=2, machines=[
+                {"cpu_model": "AMD EPYC 7763", "cpu_count": 4},
+                {"cpu_model": "Intel Xeon Platinum 8370C", "cpu_count": 12},
+            ]))
+        )
+        assert "Measured differently" in report
+        assert "CPU (AMD EPYC 7763/Intel Xeon Platinum 8370C)" in report
 
     def test_should_warn_where_a_variant_states_no_machine(self):
-        report = _render_comparison_report(
-            [("stored", _summary_with_latency()), ("SB", _summary_with_latency())],
-            [("stored", None), ("SB", _run_record())],
+        report = self._report(
+            ("stored", {"latency_ms": {"n": 12, "median": 900, "p90": 2100}}),
+            ("SB", _cost()),
         )
         assert "CPU (unrecorded, AMD EPYC 7763)" in report
 
-    def test_should_report_a_stored_variants_latency_without_inventing_the_rest(self):
-        report = _render_comparison_report(
-            [("stored", _summary_with_latency())], [("stored", None)],
-        )
-        assert "2.4s median latency" in report
-        assert "docs/hour" not in report
-        assert "CPU-seconds per document" not in report
-
-    def test_should_be_collapsible(self):
-        report = self._report(("SB", _run_record()))
-        assert "<summary><b>Compute cost</b></summary>" in report
-        assert report.count("<details>") == report.count("</details>")
+    def test_should_not_warn_where_the_measurement_matched(self):
+        report = self._report(("GROBID", _cost()), ("SB", _cost()))
+        assert "Measured differently" not in report

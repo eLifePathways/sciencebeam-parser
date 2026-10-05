@@ -33,7 +33,7 @@ from benchmarks.gold_presence import (
     summarise_gold_presence,
 )
 from benchmarks.judge_setup import prepare_judge
-from benchmarks.compute_cost import aggregate_latency_ms
+from benchmarks.compute_cost import aggregate_cost
 from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
 from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
 from benchmarks.variant_match import (
@@ -502,10 +502,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
 
     manifest_entries = read_manifest_entries(run_dir)
     llm_usage = aggregate_llm_usage(manifest_entries, corpora)
-    latency_ms = aggregate_latency_ms(
-        manifest_entries, list(corpora),
-        run_started_at=(run_record or {}).get("started_at"),
-    )
+    cost = aggregate_cost(manifest_entries, list(corpora))
 
     (run_dir / "summary.json").write_text(json.dumps({
         "fields": field_names,
@@ -518,7 +515,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         },
         "corpora": corpus_results,
         **({"llm_usage": llm_usage} if llm_usage else {}),
-        **({"latency_ms": latency_ms} if latency_ms else {}),
+        **({"cost": cost} if cost else {}),
     }, indent=2))
 
     report = _render_report(corpus_results, field_names, field_scoring_types, run_record)
