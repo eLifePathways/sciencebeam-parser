@@ -337,6 +337,47 @@ def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
             seg_line.seg_label = SEG_COVER
 
 
+_APPENDIX_HEADING_PATTERN = re.compile(
+    r'^\s*(ap[\u00eae]ndices?|appendix|appendices|anexos?|annexe?s?)\b',
+    re.IGNORECASE,
+)
+
+_APPENDIX_HEADING_MAX_LENGTH = 80
+
+
+def _claim_appendix_region(seg_lines: List[_SegLine]) -> None:
+    """Open an annex where the page prints an appendix heading.
+
+    A paper can print an appendix the JATS does not carry -- the section is
+    declared as supplementary material and its text lives only in the PDF -- so
+    nothing grounds it and it falls to the body.  GROBID's own corpus labels a
+    printed appendix heading `<annex>` 69 times, before the reference list as
+    often as after, so where it prints does not decide it.
+
+    The heading has to be unclaimed, which is what keeps a sentence that merely
+    mentions an appendix out: that sentence belongs to a paragraph the JATS
+    carries, so it is already labelled.  The annex then runs on over what
+    nothing else claims, and stops at whatever does.
+    """
+    index = 0
+    while index < len(seg_lines):
+        seg_line = seg_lines[index]
+        if (
+            seg_line.seg_label is not None
+            or len(seg_line.text) > _APPENDIX_HEADING_MAX_LENGTH
+            or not _APPENDIX_HEADING_PATTERN.match(seg_line.text)
+        ):
+            index += 1
+            continue
+        for following in seg_lines[index:]:
+            if following.seg_label in _FURNITURE_LABELS:
+                continue
+            if following.seg_label is not None:
+                break
+            following.seg_label = SEG_ANNEX
+        index += 1
+
+
 _PUBLICATION_DATE_PATTERN = re.compile(
     r'^\s*(recebido|aprovado|aceito|submetido|revisado|enviado'
     r'|recibido|aceptado|presentado'
@@ -1010,6 +1051,7 @@ class SegmentationLabelDeriver:
         # the lines after it with nothing to bridge from.
         _reclaim_repeated_headnotes(seg_lines, page_meta_by_number, self.config)
 
+        _claim_appendix_region(seg_lines)
         _tag_publication_dates(seg_lines)
         _claim_lines_sharing_a_row(seg_lines, page_meta_by_number)
 
