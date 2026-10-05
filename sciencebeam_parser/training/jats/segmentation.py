@@ -323,6 +323,67 @@ def _tag_publication_dates(seg_lines: List[_SegLine]) -> None:
             seg_line.seg_label = SEG_FRONT
 
 
+_SAME_ROW_Y_TOLERANCE = 3.0
+
+# A column gutter runs to about two fifths of the page; a badge sits a fraction
+# of that from the text it belongs to.  Anything further across the row is in
+# the next column and says nothing about this line.
+_SAME_ROW_MAX_X_GAP_RATIO = 0.15
+
+
+def _get_line_position(seg_line: _SegLine) -> Optional[Tuple[float, float]]:
+    token = seg_line.first_token
+    if token is None or token.coordinates is None or not token.coordinates:
+        return None
+    return token.coordinates.x, token.coordinates.y
+
+
+def _claim_lines_sharing_a_row(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+) -> None:
+    """Give a line to the region it is printed beside.
+
+    A revised article carries a "REVISED" badge in the corner of the box that
+    says what changed.  The badge is a block of its own, so the reading order
+    puts it at the foot of the page, far from the box -- but it prints on the
+    same row as that box's heading, which says where it belongs whatever order
+    it is read in.
+
+    Beside, not merely level with: the other column of a two-column page is on
+    the same rows throughout and belongs to whatever it belongs to.
+    """
+    rows: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None and _get_line_position(seg_line) is not None:
+            rows.setdefault(page_number, []).append(seg_line)
+    for page_number, page_lines in rows.items():
+        page_meta = page_meta_by_number.get(page_number)
+        if page_meta is None or page_meta.coordinates is None or not page_meta.coordinates:
+            continue
+        max_x_gap = page_meta.coordinates.width * _SAME_ROW_MAX_X_GAP_RATIO
+        for seg_line in page_lines:
+            if seg_line.seg_label is not None:
+                continue
+            x, y = _get_line_position(seg_line)  # type: ignore[misc]
+            beside = sorted(
+                (
+                    (abs(position[0] - x), other.seg_label)
+                    for other, position in (
+                        (o, _get_line_position(o)) for o in page_lines
+                    )
+                    if other.seg_label is not None
+                    and other.seg_label not in _FURNITURE_LABELS
+                    and position is not None
+                    and abs(position[1] - y) <= _SAME_ROW_Y_TOLERANCE
+                ),
+                key=lambda entry: entry[0],
+            )
+            if beside and beside[0][0] <= max_x_gap:
+                seg_line.seg_label = beside[0][1]
+
+
 _FOOTNOTE_MARKER_MAX_LINES = 2
 
 _FURNITURE_LABELS = {SEG_HEADNOTE, SEG_FOOTNOTE, SEG_PAGE}
@@ -906,6 +967,7 @@ class SegmentationLabelDeriver:
         _reclaim_repeated_headnotes(seg_lines, page_meta_by_number, self.config)
 
         _tag_publication_dates(seg_lines)
+        _claim_lines_sharing_a_row(seg_lines, page_meta_by_number)
 
         # ── Default remaining untagged lines → body ──
         for sl in seg_lines:

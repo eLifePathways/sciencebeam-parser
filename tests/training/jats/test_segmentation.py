@@ -402,14 +402,20 @@ class TestFrontMatterBoundary:
     """The reference list bounds the front matter; a line index stands in for it."""
 
     def _make_doc(self, front_after_references: bool):
-        title = _make_line('A', 'title', 'of', 'the', 'paper')
-        filler = [_make_line('body', f'line{index}') for index in range(100)]
-        grant = _make_line('Grant', 'information:', 'funded', 'by', 'a', 'grant')
-        reference = _make_line('Smith,', 'J.', '(2020).', 'A', 'reference')
-        lines = (
-            [title] + filler + [reference, grant] if front_after_references
-            else [title] + filler + [grant, reference]
+        texts = (
+            [('A', 'title', 'of', 'the', 'paper')]
+            + [('body', f'line{index}') for index in range(100)]
+            + ([('Smith,', 'J.', '(2020).', 'A', 'reference'),
+                ('Grant', 'information:', 'funded', 'by', 'a', 'grant')]
+               if front_after_references
+               else [('Grant', 'information:', 'funded', 'by', 'a', 'grant'),
+                     ('Smith,', 'J.', '(2020).', 'A', 'reference')])
         )
+        # One row per line, down the page, as a page sets them.
+        lines = [_make_line(*text, y=float(row)) for row, text in enumerate(texts, 1)]
+        title = lines[0]
+        grant = lines[-1] if front_after_references else lines[-2]
+        reference = lines[-2] if front_after_references else lines[-1]
         doc = _make_doc_with_page(LayoutBlock(lines=lines))
         index_of = {id(line): i for i, line in enumerate(lines)}
         annotated = _annotate(doc, {
