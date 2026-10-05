@@ -865,3 +865,8 @@ class TestComputeCostSection:
         assert "2.4s median latency" in report
         assert "docs/hour" not in report
         assert "CPU-seconds per document" not in report
+
+    def test_should_be_collapsible(self):
+        report = self._report(("SB", _run_record()))
+        assert "<summary><b>Compute cost</b></summary>" in report
+        assert report.count("<details>") == report.count("</details>")

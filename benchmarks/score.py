@@ -502,7 +502,10 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
 
     manifest_entries = read_manifest_entries(run_dir)
     llm_usage = aggregate_llm_usage(manifest_entries, corpora)
-    latency_ms = aggregate_latency_ms(manifest_entries, list(corpora))
+    latency_ms = aggregate_latency_ms(
+        manifest_entries, list(corpora),
+        run_started_at=(run_record or {}).get("started_at"),
+    )
 
     (run_dir / "summary.json").write_text(json.dumps({
         "fields": field_names,

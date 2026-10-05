@@ -15,6 +15,9 @@ from benchmarks.compute_cost import (
 )
 
 
+INVOCATION = "2026-10-05T10:00:00.123456+00:00"
+
+
 def _entry(
     corpus: str = "biorxiv",
     record_id: str = "doc1",
@@ -125,3 +128,29 @@ class TestAggregateLatencyMs:
         assert aggregate_latency_ms(entries, ["biorxiv"]) == {
             "n": 1, "median": 100, "p90": 100
         }
+
+    def test_should_cover_only_the_invocation_the_run_record_names(self):
+        entries = [
+            _entry(record_id="stored", elapsed_ms=9000),
+            {
+                **_entry(record_id="fresh", elapsed_ms=100),
+                "run_started_at": INVOCATION,
+            },
+        ]
+        assert aggregate_latency_ms(
+            entries, run_started_at=INVOCATION
+        ) == {"n": 1, "median": 100, "p90": 100}
+
+    def test_should_cover_every_entry_where_no_invocation_is_named(self):
+        entries = [
+            _entry(record_id="stored", elapsed_ms=9000),
+            {
+                **_entry(record_id="fresh", elapsed_ms=100),
+                "run_started_at": INVOCATION,
+            },
+        ]
+        assert (aggregate_latency_ms(entries) or {})["n"] == 2
+
+    def test_should_report_nothing_where_the_invocation_generated_nothing(self):
+        entries = [_entry(record_id="stored", elapsed_ms=9000)]
+        assert aggregate_latency_ms(entries, run_started_at=INVOCATION) is None

@@ -121,19 +121,27 @@ def _percentile_ms(sorted_values: List[int], fraction: float) -> int:
 
 
 def aggregate_latency_ms(
-    manifest_entries: List[dict], corpora: Optional[List[str]] = None
+    manifest_entries: List[dict],
+    corpora: Optional[List[str]] = None,
+    run_started_at: Optional[str] = None,
 ) -> Optional[Dict[str, int]]:
     """How long a document waited, as a distribution.
 
     Over documents that got a prediction: a request that timed out took the client
     timeout rather than that long to answer, and one outlier moves a mean over
     sixty documents, which is why the median and p90 are reported instead.
+
+    Over one invocation's documents where the run record names it. A run generates
+    only what the predictions store lacked, and the manifest it starts from was
+    copied with them, so a median over all of it blends another machine's run on
+    another day into this one's.
     """
     durations = sorted(
         entry["elapsed_ms"] for entry in manifest_entries
         if entry.get("status") == "ok"
         and isinstance(entry.get("elapsed_ms"), int)
         and (corpora is None or entry.get("corpus") in corpora)
+        and (run_started_at is None or entry.get("run_started_at") == run_started_at)
     )
     if not durations:
         return None

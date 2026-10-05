@@ -360,10 +360,15 @@ def _render_cost_section(
     if not measured:
         return []
     return [
+        "<details>",
+        "<summary><b>Compute cost</b></summary>",
+        "",
         note,
         "",
         *_incomparable_cost_note([(label, record) for label, record, _ in measured]),
         *_render_cost_lines([(label, bullets) for label, _, bullets in measured]),
+        "",
+        "</details>",
     ]
 
 
@@ -811,12 +816,14 @@ def _render_comparison_report(
 
     cost_lines = _render_cost_section(
         labeled_summaries, labeled_run_records or [],
-        "### Compute cost\n\nWhat these runs took, and on what. CPU is the whole"
-        " machine's busy time over the run, so it includes the benchmark client and"
-        " anything else the host was doing, and it is absent where the parser ran on"
-        " another host. Latency is over documents that got a prediction; throughput"
-        " and CPU per document are over every document the run processed, retries"
-        " included, since the machine paid for those too.",
+        "What these runs took, and on what. CPU is the whole machine's busy time"
+        " over the run, so it includes the benchmark client and anything else the"
+        " host was doing, and it is absent where the parser ran on another host."
+        " All three cover the documents the run generated rather than every"
+        " document scored, since a run generates only what the predictions store"
+        " lacked. Latency is over the ones that got a prediction; throughput and"
+        " CPU per document are over every one attempted, retries included, since"
+        " the machine paid for those too.",
     )
     if cost_lines:
         lines += [*cost_lines, ""]

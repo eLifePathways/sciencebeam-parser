@@ -101,6 +101,12 @@ includes the benchmark client, and anything else the host was doing, and it is
 recorded only where the parser ran on the same machine — a run against a remote
 `--parser-url` records none.
 
+All three cover the documents the run generated, not every document scored: a
+run fetches what the predictions store already has and asks the parser only for
+what is missing, so a top-up measures the top-up. Each manifest entry is stamped
+with the invocation that wrote it, which is what keeps a stored run's timings
+out of this one's.
+
 The CPU model and core count are recorded with every run. The report warns when
 the columns it is comparing were measured on different hardware or at different
 concurrency, since a timing delta between them is then partly a property of the

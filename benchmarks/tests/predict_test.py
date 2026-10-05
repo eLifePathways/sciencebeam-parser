@@ -600,3 +600,24 @@ class TestRunPredictCostRecord:
         resumed = self._run(tmp_path, _mock_client(), records=records)
         assert resumed["n_records"] == 1
         assert resumed["n_processed"] == 0
+
+    def test_should_stamp_what_this_invocation_wrote(self, tmp_path: Path):
+        run_record = self._run(tmp_path, _mock_client())
+        entries = [
+            json.loads(line) for line
+            in (tmp_path / "run" / "predictions" / "manifest.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        assert [entry["run_started_at"] for entry in entries] == [run_record["started_at"]]
+
+    def test_should_not_claim_documents_an_earlier_invocation_wrote(self, tmp_path: Path):
+        records = [_make_record(tmp_path)]
+        first = self._run(tmp_path, _mock_client(), records=records)
+        second = self._run(tmp_path, _mock_client(), records=records)
+        assert second["started_at"] != first["started_at"]
+        entries = [
+            json.loads(line) for line
+            in (tmp_path / "run" / "predictions" / "manifest.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        assert [entry["run_started_at"] for entry in entries] == [first["started_at"]]
