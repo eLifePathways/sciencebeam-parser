@@ -11,7 +11,11 @@ from lxml import etree
 from lxml.builder import ElementMaker
 
 from sciencebeam_parser.utils.xml import get_text_content
-from sciencebeam_parser.document.semantic_document import SemanticDocument
+from sciencebeam_parser.document.layout_document import LayoutBlock
+from sciencebeam_parser.document.semantic_document import (
+    SemanticDocument,
+    SemanticSectionTypes
+)
 from sciencebeam_parser.document.tei.attribution import DocumentAttribution
 from sciencebeam_parser.document.tei_document import get_tei_for_semantic_document
 from sciencebeam_parser.transformers.xslt import XsltTransformerWrapper
@@ -993,6 +997,61 @@ class TestTeiToJatsXslt:
             ))
             assert _get_text(jats, 'body/sec/title') == VALUE_1
             assert _get_text(jats, 'body/sec/p') == VALUE_2
+
+        def test_should_extract_acknowledgement_head_and_p_without_inner_div_as_ack(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(back=TEI_E.back(
+                    TEI_E.div(
+                        {'type': 'acknowledgement'},
+                        TEI_E.head(VALUE_1),
+                        TEI_E.p(VALUE_2)
+                    )
+                )),
+                {
+                    'acknowledgement_target': 'ack'
+                }
+            ))
+            assert _get_text(jats, 'back/ack/sec/title') == VALUE_1
+            assert _get_text(jats, 'back/ack/sec/p') == VALUE_2
+
+        def test_should_extract_acknowledgement_head_and_p_without_inner_div_as_body(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(back=TEI_E.back(
+                    TEI_E.div(
+                        {'type': 'acknowledgement'},
+                        TEI_E.head(VALUE_1),
+                        TEI_E.p(VALUE_2)
+                    )
+                )),
+                {
+                    'acknowledgement_target': 'body'
+                }
+            ))
+            assert _get_text(jats, 'body/sec/title') == VALUE_1
+            assert _get_text(jats, 'body/sec/p') == VALUE_2
+
+        def test_should_extract_the_acknowledgement_the_parser_produced(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            semantic_document = SemanticDocument()
+            section = semantic_document.back_section.add_new_section(
+                SemanticSectionTypes.ACKNOWLEDGEMENT
+            )
+            section.add_heading_block(LayoutBlock.for_text(VALUE_1))
+            section.add_new_paragraph().add_block_content(LayoutBlock.for_text(VALUE_2))
+            tei_document = get_tei_for_semantic_document(semantic_document)
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                tei_document.root,
+                {
+                    'acknowledgement_target': 'ack'
+                }
+            ))
+            assert _get_text(jats, 'back/ack/sec/title') == VALUE_1
+            assert _get_text(jats, 'back/ack/sec/p') == VALUE_2
 
         def test_should_extract_annex_head_and_p_divs_as_back_section(
             self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn

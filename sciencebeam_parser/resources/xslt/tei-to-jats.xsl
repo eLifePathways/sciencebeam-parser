@@ -23,7 +23,8 @@
       <body>
         <xsl:apply-templates select="tei:TEI/tei:text/tei:body"/>
         <xsl:if test="$acknowledgement_target = 'body'">
-          <xsl:apply-templates select="tei:TEI/tei:text/tei:back/tei:div[@type='acknowledgement']/tei:div"/>
+          <xsl:apply-templates select="tei:TEI/tei:text/tei:back/tei:div[@type='acknowledgement']/tei:div
+            | tei:TEI/tei:text/tei:back/tei:div[@type='acknowledgement'][not(tei:div)]"/>
         </xsl:if>
         <xsl:if test="$annex_target = 'body'">
           <xsl:for-each select="tei:TEI/tei:text/tei:back/tei:div[@type='annex']">
@@ -259,7 +260,8 @@
     <xsl:if test="$acknowledgement_target = 'ack'">
       <xsl:if test="tei:div[@type='acknowledgement']">
         <ack>
-          <xsl:apply-templates select="tei:div[@type='acknowledgement']/tei:div"/>
+          <xsl:apply-templates select="tei:div[@type='acknowledgement']/tei:div
+            | tei:div[@type='acknowledgement'][not(tei:div)]"/>
         </ack>
       </xsl:if>
     </xsl:if>
