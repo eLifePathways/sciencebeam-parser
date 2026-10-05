@@ -28,6 +28,7 @@ class JatsFieldNames:
     AVAILABILITY_SECTION_PARAGRAPH = 'availability_section_paragraph'
     FUNDING_SECTION_TITLE = 'funding_section_title'
     FUNDING_SECTION_PARAGRAPH = 'funding_section_paragraph'
+    BACK_FOOTNOTE = 'back_footnote'
     CONFLICT_SECTION_TITLE = 'conflict_section_title'
     CONFLICT_SECTION_PARAGRAPH = 'conflict_section_paragraph'
     CONTRIBUTION_SECTION_TITLE = 'contribution_section_title'
@@ -95,6 +96,7 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH: '<availability>',
     JatsFieldNames.FUNDING_SECTION_TITLE:          '<funding>',
     JatsFieldNames.FUNDING_SECTION_PARAGRAPH:      '<funding>',
+    JatsFieldNames.BACK_FOOTNOTE:                  '<footnote>',
     JatsFieldNames.CONFLICT_SECTION_TITLE:         '<conflict>',
     JatsFieldNames.CONFLICT_SECTION_PARAGRAPH:     '<conflict>',
     JatsFieldNames.CONTRIBUTION_SECTION_TITLE:     '<contribution>',

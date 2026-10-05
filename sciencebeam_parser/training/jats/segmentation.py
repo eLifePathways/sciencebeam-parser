@@ -299,6 +299,32 @@ def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
             seg_line.seg_label = SEG_COVER
 
 
+_PUBLICATION_DATE_PATTERN = re.compile(
+    r'^\s*(recebido|aprovado|aceito|submetido|revisado|enviado'
+    r'|recibido|aceptado|presentado'
+    r'|received|accepted|submitted|posted|revised|published)\b'
+    r'[^0-9]{0,30}[0-9][0-9/.\u2013-]*\s*(\([^)]*\))?\s*$',
+    re.IGNORECASE,
+)
+
+
+def _tag_publication_dates(seg_lines: List[_SegLine]) -> None:
+    """Take a line that is nothing but a date the article was received or posted.
+
+    These print wherever the publisher puts them -- a title page, a deposit
+    page, or a block of their own after the reference list -- and no JATS field
+    carries the ones printed at the end, so they were falling to the body.  They
+    are part of the bibliographic record, which GROBID allows to be several
+    areas in several places.  The whole line has to be the date: a sentence that
+    mentions one is prose.
+    """
+    for seg_line in seg_lines:
+        if seg_line.seg_label is None and _PUBLICATION_DATE_PATTERN.match(seg_line.text):
+            seg_line.seg_label = SEG_FRONT
+
+
+_FOOTNOTE_MARKER_MAX_LINES = 2
+
 _FURNITURE_LABELS = {SEG_HEADNOTE, SEG_FOOTNOTE, SEG_PAGE}
 
 
@@ -721,6 +747,37 @@ def _clear_front_beyond_threshold(
             sl.seg_label = None
 
 
+def _bridge_footnote_block(seg_lines: List[_SegLine]) -> None:
+    """Keep a note's marker with the note.
+
+    A numbered footnote prints its number on a line of its own when the note
+    wraps, and the JATS runs number and text together, so the number matches
+    nothing.  The gap merge cannot reach it: it treats a footnote as furniture
+    to step over rather than as a region to bridge.
+
+    A marker is a line or two, so only a gap that short is bridged.  A page can
+    carry notes at its head and foot with an appendix between them, and that is
+    not one note.
+    """
+    index = 0
+    while index < len(seg_lines):
+        if seg_lines[index].seg_label is not None:
+            index += 1
+            continue
+        end = index
+        while end < len(seg_lines) and seg_lines[end].seg_label is None:
+            end += 1
+        gap = seg_lines[index:end]
+        sides = [seg_lines[index - 1] if index else None,
+                 seg_lines[end] if end < len(seg_lines) else None]
+        enclosed = all(sl is not None and sl.seg_label == SEG_FOOTNOTE for sl in sides)
+        pages = {_get_page_number(sl) for sl in gap + sides if sl is not None}
+        if enclosed and len(gap) <= _FOOTNOTE_MARKER_MAX_LINES and len(pages) == 1:
+            for seg_line in gap:
+                seg_line.seg_label = SEG_FOOTNOTE
+        index = end + 1
+
+
 def _merge_gap_lines(
     seg_lines: List[_SegLine],
     enabled_labels: Set[str],
@@ -728,14 +785,15 @@ def _merge_gap_lines(
 ) -> None:
     """Assign untagged gap lines to the surrounding region.
 
-    A running header or a page number interrupts a region without ending it, so
-    it is stepped over rather than closing the gap.  A footer is not: it carries
-    the deposit boilerplate that ends a cover page.
+    Page furniture interrupts a region without ending it, so it is stepped over
+    rather than closing the gap.  That includes the running foot: a reference
+    broken across a page break resumes under one, and the deposit boilerplate
+    that a footer used to stand in for is now a cover page in its own right.
     """
     candidate_gap: List[_SegLine] = []
     prev_label: Optional[str] = SEG_FRONT
     for sl in seg_lines:
-        if sl.seg_label in (SEG_HEADNOTE, SEG_PAGE):
+        if sl.seg_label in _FURNITURE_LABELS:
             continue
         if sl.seg_label is not None:
             if prev_label == sl.seg_label and sl.seg_label in enabled_labels:
@@ -806,6 +864,7 @@ class SegmentationLabelDeriver:
         # them; bridging the gaps between those it does place, and running the
         # region to the end, recovers the rest without asking the aligner for
         # per-fragment precision it cannot give.
+        _bridge_footnote_block(seg_lines)
         _merge_gap_lines(
             seg_lines,
             enabled_labels={
@@ -845,6 +904,8 @@ class SegmentationLabelDeriver:
         # region may itself be a running header, and taking it back first leaves
         # the lines after it with nothing to bridge from.
         _reclaim_repeated_headnotes(seg_lines, page_meta_by_number, self.config)
+
+        _tag_publication_dates(seg_lines)
 
         # ── Default remaining untagged lines → body ──
         for sl in seg_lines:

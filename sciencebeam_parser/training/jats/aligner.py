@@ -87,6 +87,7 @@ _BODY_CONTENT_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
     JatsFieldNames.FUNDING_SECTION_TITLE,
     JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
+    JatsFieldNames.BACK_FOOTNOTE,
 })
 
 # Reference fields use a dedicated floor so that appendix/body content matched

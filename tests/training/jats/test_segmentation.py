@@ -183,7 +183,7 @@ class TestGapMerge:
 
 
 class TestGapMergeAcrossPageFurniture:
-    """A page break interrupts a region; the deposit boilerplate below one ends it."""
+    """A page break interrupts a region without ending it, footer and all."""
 
     def _make_doc(self, middle_text: str):
         first = _make_line('Smith,', 'J.', '(2020).', 'A', 'title', page_number=1)
@@ -207,11 +207,11 @@ class TestGapMergeAcrossPageFurniture:
         assert labels.get(id(middle)) == SEG_PAGE
         assert labels.get(id(gap)) == SEG_REFERENCES
 
-    def test_a_footer_between_two_reference_lines_closes_the_gap(self):
+    def test_a_footer_between_two_reference_lines_is_stepped_over(self):
         doc, annotated, middle, gap = self._make_doc('Powered by TCPDF')
         labels = _derive_labels(doc, annotated)
         assert labels.get(id(middle)) == SEG_FOOTNOTE
-        assert labels.get(id(gap)) == SEG_BODY
+        assert labels.get(id(gap)) == SEG_REFERENCES
 
 
 class TestReclaimRepeatedHeadnote:

@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from itertools import chain
 from typing import (
     Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
@@ -37,11 +38,17 @@ _AVAILABILITY_TITLES = frozenset({
 })
 
 
+def _fold(text: str) -> str:
+    """Lower-cased and stripped of accents, so one spelling stands for all."""
+    stripped = unicodedata.normalize('NFKD', text.lower().replace('\u2019', "'"))
+    return ''.join(c for c in stripped if not unicodedata.combining(c))
+
+
 def _normalised_section_title(el: etree._Element) -> str:
     title_el = el.find('title')
     if title_el is None:
         return ''
-    return re.sub(r'\s+statement$', '', _element_text(title_el).lower().strip(' .:'))
+    return re.sub(r'\s+statement$', '', _fold(_element_text(title_el)).strip(' .:'))
 
 
 _CONTRIBUTION_SEC = (
@@ -95,8 +102,9 @@ _FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
         'suporte financeiro', 'apoio financeiro', 'fonte de financiamento',
         'financiamiento', 'apoyo financiero',
     )),
-    ('contribution', ('contribution', 'contribu\u00e7\u00e3o', 'contribucion',
-                      'contribuci\u00f3n', 'authorship')),
+    ('contribution', ('contribution', 'contribuicao', 'contribucion',
+                      'colabora', 'authorship')),
+    ('acknowledgement', ('acknowledg', 'agradecimento', 'agradecimiento')),
 )
 
 _FN_KIND_BY_TYPE = {
@@ -114,7 +122,7 @@ _FN_HEADING_LENGTH = 80
 def _get_fn_kind(el: etree._Element) -> Optional[str]:
     bold = el.find('.//bold')
     if bold is not None:
-        heading = _element_text(bold)[:_FN_HEADING_LENGTH].lower()
+        heading = _fold(_element_text(bold))[:_FN_HEADING_LENGTH]
         for kind, keywords in _FN_KIND_KEYWORDS:
             if any(keyword in heading for keyword in keywords):
                 return kind
@@ -128,6 +136,13 @@ _CONTRIBUTION_TITLES = frozenset({
     "author's contribution",
     'contributions of authors',
     'credit authorship contribution',
+    'colaboradores',
+    'colaboracao',
+    'colaboracoes',
+    'contribuicao dos autores',
+    'contribuicoes dos autores',
+    'contribucion de los autores',
+    'contribuciones de los autores',
 })
 
 
@@ -167,6 +182,21 @@ def _get_funding_sections(root: etree._Element) -> Set[etree._Element]:
     return _get_sections(root, _FUNDING_SEC, _FUNDING_TITLES, 'funding')
 
 
+def _is_bold_heading(el: etree._Element) -> bool:
+    """Whether a paragraph is nothing but a bold heading.
+
+    A footnote states its kind in bold, sometimes as a paragraph of its own and
+    sometimes opening the paragraph it belongs to.  Only the first is a title;
+    the second is the text, heading and all.
+    """
+    paragraph = el.getparent() if el.tag == 'bold' else el
+    if paragraph is None:
+        return False
+    bold = paragraph.find('.//bold')
+    text = _element_text(paragraph)
+    return bool(text) and bold is not None and text == _element_text(bold)
+
+
 def _is_within(el: etree._Element, elements: Set[etree._Element]) -> bool:
     return any(ancestor in elements for ancestor in el.iterancestors()) or el in elements
 
@@ -177,6 +207,8 @@ class _LabelledSections(NamedTuple):
     contribution: Set[etree._Element]
     conflict: Set[etree._Element]
     funding: Set[etree._Element]
+    acknowledgement: Set[etree._Element]
+    footnote: Set[etree._Element]
 
     @staticmethod
     def of(root: etree._Element) -> '_LabelledSections':
@@ -185,10 +217,18 @@ class _LabelledSections(NamedTuple):
             contribution=_get_contribution_sections(root),
             conflict=_get_conflict_sections(root),
             funding=_get_funding_sections(root),
+            acknowledgement={
+                el for el in root.xpath('back//fn')
+                if _get_fn_kind(el) == 'acknowledgement'
+            },
+            footnote=set(root.xpath('back//fn')),
         )
 
     def _kind(self, el: etree._Element) -> Optional[str]:
-        for kind in ('availability', 'contribution', 'conflict', 'funding'):
+        for kind in (
+            'availability', 'contribution', 'conflict', 'funding',
+            'acknowledgement', 'footnote',
+        ):
             if _is_within(el, getattr(self, kind)):
                 return kind
         return None
@@ -210,6 +250,10 @@ _TITLE_FIELD_BY_KIND = {
     'contribution': JatsFieldNames.CONTRIBUTION_SECTION_TITLE,
     'conflict': JatsFieldNames.CONFLICT_SECTION_TITLE,
     'funding': JatsFieldNames.FUNDING_SECTION_TITLE,
+    'acknowledgement': JatsFieldNames.ACK_SECTION_TITLE,
+    # A footnote that names no statement is a numbered page footnote, and the
+    # number it opens with is not a heading.
+    'footnote': JatsFieldNames.BACK_FOOTNOTE,
 }
 
 _PARAGRAPH_FIELD_BY_KIND = {
@@ -217,6 +261,8 @@ _PARAGRAPH_FIELD_BY_KIND = {
     'contribution': JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
     'conflict': JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
     'funding': JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
+    'acknowledgement': JatsFieldNames.ACK_SECTION_PARAGRAPH,
+    'footnote': JatsFieldNames.BACK_FOOTNOTE,
 }
 
 
@@ -739,15 +785,15 @@ class JatsFieldExtractor:
         # `<annex>` with everything else that follows the body.
         labelled = _LabelledSections.of(root)
 
-        for el in root.xpath('back//sec//title | back//fn/p[not(normalize-space(text()))]/bold'):
+        for el in root.xpath('back//sec//title | back//fn//bold'):
             text = _element_text(el)
-            if text and labelled.claims(el):
+            if text and labelled.claims(el) and (el.tag != 'bold' or _is_bold_heading(el)):
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=labelled.title_field(el, ''))))
 
-        for el in root.xpath('back//sec//p | back//fn//p[normalize-space(text())]'):
+        for el in root.xpath('back//sec//p | back//fn//p'):
             text = _element_text(el)
-            if text and labelled.claims(el):
+            if text and labelled.claims(el) and not _is_bold_heading(el):
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=labelled.paragraph_field(el, ''))))
 
