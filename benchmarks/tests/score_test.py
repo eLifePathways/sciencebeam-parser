@@ -433,6 +433,25 @@ class TestRunScoreLlmUsage:
         ])
         assert "llm_usage" not in summary
 
+    def test_should_aggregate_latency_from_the_manifest(self, tmp_path: Path):
+        summary = self._run(tmp_path, [
+            {
+                "corpus": "biorxiv", "record_id": f"doc{index}", "status": "ok",
+                "elapsed_ms": elapsed_ms,
+            }
+            for index, elapsed_ms in enumerate([1000, 2000, 3000, 4000, 60000])
+        ])
+        assert summary["latency_ms"] == {"n": 5, "median": 3000, "p90": 60000}
+
+    def test_should_leave_the_summary_unchanged_without_a_prediction(self, tmp_path: Path):
+        summary = self._run(tmp_path, [
+            {
+                "corpus": "biorxiv", "record_id": "doc1", "status": "error",
+                "elapsed_ms": 60000,
+            },
+        ])
+        assert "latency_ms" not in summary
+
 
 GOLD_JATS_1 = b"""<article>
   <front>

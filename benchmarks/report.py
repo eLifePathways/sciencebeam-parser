@@ -14,6 +14,7 @@ from benchmarks.gold_presence import (
     merge_presence,
     produced_row,
 )
+from benchmarks.compute_cost import format_duration
 from benchmarks.llm_usage import usage_for_corpora
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
@@ -231,6 +232,138 @@ def _render_usage_section(
         note + _cached_input_note(labeled_usage) + _replayed_note(labeled_usage),
         "",
         *_render_usage_lines(labeled_usage),
+    ]
+
+
+def _fmt_ms(value: int) -> str:
+    return f"{value / 1000:.1f}s" if value >= 1000 else f"{value}ms"
+
+
+def _throughput_bullet(run_record: dict) -> List[str]:
+    """Documents an hour, over what this invocation processed.
+
+    `n_records` counts the manifest, which a resumed run inherits from an earlier
+    invocation, so a run recorded before this was counted states nothing rather
+    than a rate computed from someone else's documents.
+    """
+    n_processed = run_record.get("n_processed")
+    elapsed_s = run_record.get("elapsed_s")
+    if not n_processed or not elapsed_s:
+        return []
+    bullet = f"{n_processed:,} docs in {format_duration(elapsed_s)}"
+    concurrency = run_record.get("concurrency")
+    if concurrency:
+        bullet += f" at concurrency {concurrency}"
+    return [f"{bullet} — {n_processed / elapsed_s * 3600:,.0f} docs/hour"]
+
+
+def _latency_bullet(summary: dict) -> List[str]:
+    latency = summary.get("latency_ms") or {}
+    if not latency.get("median"):
+        return []
+    return [
+        f"{_fmt_ms(latency['median'])} median latency, {_fmt_ms(latency['p90'])} p90"
+        f" over {latency.get('n', 0):,} docs"
+    ]
+
+
+def _cpu_bullets(run_record: dict) -> List[str]:
+    machine = run_record.get("machine") or {}
+    cpu_seconds = machine.get("cpu_seconds")
+    cpu_count = machine.get("cpu_count")
+    n_processed = run_record.get("n_processed")
+    elapsed_s = run_record.get("elapsed_s")
+    bullets = []
+    if cpu_seconds and n_processed:
+        bullet = f"{cpu_seconds / n_processed:.1f} CPU-seconds per document"
+        if elapsed_s:
+            busy_cores = cpu_seconds / elapsed_s
+            bullet += f", {busy_cores:.1f}"
+            bullet += f" of {cpu_count} cores busy" if cpu_count else " cores busy"
+        bullets.append(bullet)
+    if machine.get("cpu_model"):
+        bullets.append(
+            machine["cpu_model"] + (f", {cpu_count} cores" if cpu_count else "")
+        )
+    return bullets
+
+
+def _cost_bullets(summary: dict, run_record: dict) -> List[str]:
+    return (
+        _throughput_bullet(run_record)
+        + _latency_bullet(summary)
+        + _cpu_bullets(run_record)
+    )
+
+
+def _render_cost_lines(labeled_bullets: List[Tuple[str, List[str]]]) -> List[str]:
+    lines: List[str] = []
+    for label, bullets in labeled_bullets:
+        if lines:
+            lines.append("")
+        lines.append(f"**{label}**")
+        lines += [f"* {bullet}" for bullet in bullets]
+    return lines
+
+
+def _incomparable_cost_note(labeled_run_records: List[Tuple[str, dict]]) -> List[str]:
+    """Call out variants measured on different hardware or at different concurrency.
+
+    Both make a timing delta between columns a property of the measurement rather
+    than of the parser, and a run compared against a stored baseline from another
+    day is exactly where that happens unnoticed. A column that states neither is
+    one of those stored runs, so an unrecorded value counts as a difference rather
+    than being passed over.
+    """
+    if len(labeled_run_records) < 2:
+        return []
+    differing = []
+    for name, values in (
+        ("CPU", [
+            (run_record.get("machine") or {}).get("cpu_model") or "unrecorded"
+            for _, run_record in labeled_run_records
+        ]),
+        ("concurrency", [
+            str(run_record.get("concurrency") or "unrecorded")
+            for _, run_record in labeled_run_records
+        ]),
+    ):
+        if len(set(values)) > 1:
+            differing.append(f"{name} ({', '.join(values)})")
+    if not differing:
+        return []
+    return [
+        "> ⚠️ **Measured differently**: these runs differ in "
+        + " and ".join(differing)
+        + ". Timing deltas between them reflect that as well as the parser.",
+        "",
+    ]
+
+
+def _render_cost_section(
+    labeled_summaries: List[Tuple[str, dict]],
+    labeled_run_records: List[Tuple[str, Optional[dict]]],
+    note: str,
+) -> List[str]:
+    """Empty unless something was recorded, so a report over stored predictions
+    alone is unchanged."""
+    records = [record for _, record in labeled_run_records]
+    stated = [
+        (label, summary, records[index] or {} if index < len(records) else {})
+        for index, (label, summary) in enumerate(labeled_summaries)
+    ]
+    measured = [
+        (label, run_record, _cost_bullets(summary, run_record))
+        for label, summary, run_record in stated
+    ]
+    measured = [entry for entry in measured if entry[2]]
+    if not measured:
+        return []
+    return [
+        note,
+        "",
+        *_incomparable_cost_note([(label, record) for label, record, _ in measured]),
+        *_render_cost_lines([(label, bullets) for label, _, bullets in measured]),
     ]
 
 
@@ -675,6 +808,18 @@ def _render_comparison_report(
     )
     if usage_lines:
         lines += [*usage_lines, ""]
+
+    cost_lines = _render_cost_section(
+        labeled_summaries, labeled_run_records or [],
+        "### Compute cost\n\nWhat these runs took, and on what. CPU is the whole"
+        " machine's busy time over the run, so it includes the benchmark client and"
+        " anything else the host was doing, and it is absent where the parser ran on"
+        " another host. Latency is over documents that got a prediction; throughput"
+        " and CPU per document are over every document the run processed, retries"
+        " included, since the machine paid for those too.",
+    )
+    if cost_lines:
+        lines += [*cost_lines, ""]
 
     for corpus in corpora:
         n_primary = primary_summary.get("corpora", {}).get(corpus, {}).get("n", 0)

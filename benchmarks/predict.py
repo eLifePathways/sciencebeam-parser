@@ -14,6 +14,11 @@ import yaml
 
 from sciencebeam_parser.models.llm.usage import USAGE_HEADER_NAME
 
+from benchmarks.compute_cost import (
+    format_duration,
+    get_machine_record,
+    start_cpu_measurement,
+)
 from benchmarks.fetch import fetch_data, resolved_sources
 
 LOGGER = logging.getLogger(__name__)
@@ -104,14 +109,6 @@ def _llm_usage_entry(response: Optional[httpx.Response]) -> Dict[str, Any]:
         return {}
 
 
-def _format_eta(seconds: float) -> str:
-    if seconds >= 3600:
-        return f"{seconds / 3600:.1f}h"
-    if seconds >= 60:
-        return f"{int(seconds) // 60}m{int(seconds) % 60:02d}s"
-    return f"{seconds:.0f}s"
-
-
 class _Progress:
     def __init__(self, total: int) -> None:
         self.total = total
@@ -138,7 +135,7 @@ class _Progress:
         done = self.completed
         rate = done / elapsed if elapsed > 0 else 0.0
         remaining = self.total - done
-        eta = _format_eta(remaining / rate) if rate > 0 else "?"
+        eta = format_duration(remaining / rate) if rate > 0 else "?"
         LOGGER.info(
             "[%d/%d] %s/%s %s %dms | %.1f doc/s | ~%s left",
             done, self.total, corpus, record_id, status, elapsed_ms, rate, eta,
@@ -264,9 +261,11 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
     sources = resolved_sources(config, split, include)
 
     t_start = time.monotonic()
+    busy_cpu_at_start = start_cpu_measurement(parser_url)
     timeout = config.get("parser", {}).get("timeout_seconds", 60)
     resolved_concurrency = _resolve_concurrency(concurrency)
     passes = max(1, retry_passes)
+    n_processed = 0
 
     # A later pass asks again for what is still missing, which is a different
     # question from the engine's own retries: those spend their backoff inside one
@@ -285,12 +284,13 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
                 "Retry pass %d of %d over %d document(s) without a prediction",
                 pass_index, passes, len(remaining),
             )
-        asyncio.run(
+        pass_ok, pass_err = asyncio.run(
             _run_predict_async(
                 records, done, run_dir, parser_url, timeout,
                 resolved_concurrency, pass_index, profile,
             )
         )
+        n_processed += pass_ok + pass_err
 
     n_ok, n_err, n_recovered = _summarise_manifest(run_dir, records)
 
@@ -314,7 +314,19 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
         # means nothing failed or nothing was retried.
         "n_recovered": n_recovered,
         "retry_passes": passes,
+        # What the concurrency resolved to, since the default is the core count of
+        # whichever machine ran the client. A throughput without it is not a number
+        # another run can be compared against.
+        "concurrency": resolved_concurrency,
+        # Documents this invocation asked for, which is what the elapsed time and
+        # the CPU figure below cover. `n_records` counts the manifest, so a resumed
+        # run inherits documents an earlier invocation paid for, and a throughput
+        # computed from it would be a fiction.
+        "n_processed": n_processed,
         "elapsed_s": round(time.monotonic() - t_start, 1),
+        # The whole machine over the run window, the benchmark client included, and
+        # without a CPU figure at all where the parser ran on another host.
+        "machine": get_machine_record(busy_cpu_at_start),
     }, indent=2))
 
     LOGGER.info(

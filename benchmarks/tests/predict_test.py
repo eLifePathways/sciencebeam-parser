@@ -11,9 +11,9 @@ import httpx
 
 from sciencebeam_parser.models.llm.usage import USAGE_HEADER_NAME
 
+from benchmarks.compute_cost import format_duration
 from benchmarks.predict import (
     _append_manifest,
-    _format_eta,
     _llm_usage_entry,
     _load_done,
     _Progress,
@@ -103,21 +103,21 @@ class TestResolveConcurrency:
         assert _resolve_concurrency(0) == expected
 
 
-class TestFormatEta:
+class TestFormatDuration:
     def test_seconds(self):
-        assert _format_eta(45.0) == "45s"
+        assert format_duration(45.0) == "45s"
 
     def test_minutes(self):
-        assert _format_eta(90.0) == "1m30s"
+        assert format_duration(90.0) == "1m30s"
 
     def test_hours(self):
-        assert _format_eta(7200.0) == "2.0h"
+        assert format_duration(7200.0) == "2.0h"
 
     def test_boundary_one_minute(self):
-        assert _format_eta(60.0) == "1m00s"
+        assert format_duration(60.0) == "1m00s"
 
     def test_boundary_one_hour(self):
-        assert _format_eta(3600.0) == "1.0h"
+        assert format_duration(3600.0) == "1.0h"
 
 
 class TestProgress:
@@ -535,3 +535,68 @@ class TestRequestedProfile:
         client = _mock_client()
         self._run(tmp_path, client, None)
         assert client.post.call_args.kwargs["params"] is None
+
+
+class TestRunPredictCostRecord:
+    def _run(
+        self,
+        tmp_path: Path,
+        client: AsyncMock,
+        parser_url: str = "http://localhost:8080",
+        concurrency: int = 1,
+        records: Optional[list] = None,
+    ) -> dict:
+        records = records if records is not None else [_make_record(tmp_path)]
+        run_dir = tmp_path / "run"
+        with patch("benchmarks.predict.fetch_data", return_value=records), \
+                patch("benchmarks.predict.resolved_sources", return_value={"biorxiv": {}}), \
+                patch("benchmarks.predict.httpx.AsyncClient", return_value=client):
+            run_predict(
+                config={"fields": ["title"]}, mode="smoke", split="train",
+                data_dir=tmp_path / "data", run_dir=run_dir,
+                parser_url=parser_url, parser_image=None,
+                profile=None, concurrency=concurrency,
+            )
+        return json.loads((run_dir / "run.json").read_text())
+
+    def test_should_record_the_resolved_concurrency(self, tmp_path: Path):
+        run_record = self._run(tmp_path, _mock_client(), concurrency=0)
+        assert run_record["concurrency"] == _resolve_concurrency(0)
+
+    def test_should_record_the_machine_it_ran_on(self, tmp_path: Path):
+        machine = self._run(tmp_path, _mock_client())["machine"]
+        assert machine["cpu_count"] > 0
+        assert machine["cpu_seconds"] >= 0
+
+    def test_should_record_no_cpu_figure_where_the_parser_ran_elsewhere(
+        self, tmp_path: Path
+    ):
+        machine = self._run(
+            tmp_path, _mock_client(), parser_url="http://parser.example:8080"
+        )["machine"]
+        assert "cpu_seconds" not in machine
+        assert machine["cpu_count"] > 0
+
+    def test_should_count_the_documents_this_invocation_processed(self, tmp_path: Path):
+        records = [
+            _make_record(tmp_path, record_id="doc1"),
+            _make_record(tmp_path, record_id="doc2"),
+        ]
+        run_record = self._run(tmp_path, _mock_client(), records=records)
+        assert run_record["n_processed"] == 2
+
+    def test_should_count_a_failed_document_the_machine_still_paid_for(
+        self, tmp_path: Path
+    ):
+        run_record = self._run(tmp_path, _mock_client_http_error())
+        assert run_record["n_records"] == 0
+        assert run_record["n_processed"] == 1
+
+    def test_should_not_count_documents_an_earlier_invocation_processed(
+        self, tmp_path: Path
+    ):
+        records = [_make_record(tmp_path)]
+        self._run(tmp_path, _mock_client(), records=records)
+        resumed = self._run(tmp_path, _mock_client(), records=records)
+        assert resumed["n_records"] == 1
+        assert resumed["n_processed"] == 0

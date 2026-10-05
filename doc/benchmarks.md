@@ -80,6 +80,32 @@ with no prediction — and calls out a comparison whose columns cover different
 documents, since a delta across unequal sets reflects which documents each
 column covered as well as how it performed.
 
+## Compute cost
+
+Three numbers, beside the scores, for the variants that record them:
+
+- **latency** — what one document waited, as a median and a p90 over the
+  documents that got a prediction. A request that timed out took the client
+  timeout rather than that long to answer, so it is left out.
+- **throughput** — documents an hour, over what that invocation processed and
+  at the concurrency it resolved to. `--concurrency 0` resolves to the core
+  count of the machine running the client, so the resolved value is recorded
+  with the number.
+- **CPU-seconds per document** — the machine's busy time over the run, divided
+  by the documents it processed, retries included.
+
+The CPU figure is the whole machine (`/proc/stat`), not the parser alone: the
+work is spread across a persistent wapiti process, in-process torch threads and
+subprocesses, and no measure taken inside the parser sees all of it. So it
+includes the benchmark client, and anything else the host was doing, and it is
+recorded only where the parser ran on the same machine — a run against a remote
+`--parser-url` records none.
+
+The CPU model and core count are recorded with every run. The report warns when
+the columns it is comparing were measured on different hardware or at different
+concurrency, since a timing delta between them is then partly a property of the
+measurement.
+
 ## Where the gold does not record a field
 
 Whether a publisher records an acknowledgement or marks its body sections is a
