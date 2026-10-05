@@ -45,6 +45,8 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
     '<availability>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="availability"]'],
     '<review>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="review"]'],
     '<contribution>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="contribution"]'],
+    '<conflict>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="conflict"]'],
+    '<funding>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="funding"]'],
     '<acknowledgement>': ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="acknowledgement"]'],
 }
 

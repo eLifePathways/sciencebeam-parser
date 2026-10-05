@@ -2,7 +2,9 @@ import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Set
+from typing import (
+    Dict, FrozenSet, Iterator, List, Mapping, Optional, Set, Tuple
+)
 
 from sciencebeam_parser.document.layout_document import (
     LayoutDocument,
@@ -28,6 +30,8 @@ SEG_HEADNOTE = '<headnote>'
 SEG_FOOTNOTE = '<footnote>'
 SEG_REVIEW = '<review>'
 SEG_CONTRIBUTION = '<contribution>'
+SEG_CONFLICT = '<conflict>'
+SEG_FUNDING = '<funding>'
 
 # Fraction of page height: lines above this → headnote, below this → footnote candidate
 _HEADNOTE_Y_RATIO = 0.08
@@ -186,6 +190,58 @@ def _tag_headnotes_by_text_repetition(
         for sl in seg_lines:
             if sl.text == text and sl.seg_label is None:
                 sl.seg_label = SEG_HEADNOTE
+
+
+_RUNNING_FOOT_MIN_Y_RATIO = 0.5
+_RUNNING_FOOT_Y_TOLERANCE = 0.01
+
+
+def _tag_running_feet_by_repetition(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+) -> None:
+    """Take the foot a document prints on most of its pages, wherever it sits.
+
+    The footer zone is a fixed share of the page, and a foot set a little above
+    it falls outside -- taking the page number beside it with it.  Printing in
+    the same place on most of the pages says the same thing the zone does, and
+    says it without a threshold to fall the wrong side of.
+    """
+    placed = [
+        (seg_line, page_number, y_ratio)
+        for seg_line, page_number, y_ratio in (
+            (
+                seg_line,
+                _get_page_number(seg_line),
+                _get_line_y_ratio(seg_line, page_meta_by_number),
+            )
+            for seg_line in seg_lines
+        )
+        if page_number is not None and y_ratio is not None and seg_line.text.strip()
+    ]
+    rows: Dict[str, List[Tuple[_SegLine, int, float]]] = {}
+    for seg_line, page_number, y_ratio in placed:
+        rows.setdefault(seg_line.text, []).append((seg_line, page_number, y_ratio))
+    threshold = len({page_number for _, page_number, _ in placed}) / 2
+    feet: Dict[int, float] = {}
+    for text, occurrences in rows.items():
+        if len({page for _, page, _ in occurrences}) <= threshold:
+            continue
+        if not _is_valid_headnote_candidate(text, len(occurrences)):
+            continue
+        if any(y < _RUNNING_FOOT_MIN_Y_RATIO for _, _, y in occurrences):
+            continue
+        for seg_line, page_number, y_ratio in occurrences:
+            if seg_line.seg_label is None:
+                seg_line.seg_label = SEG_FOOTNOTE
+            feet[page_number] = y_ratio
+    for seg_line, page_number, y_ratio in placed:
+        if seg_line.seg_label is not None or page_number not in feet:
+            continue
+        if abs(y_ratio - feet[page_number]) > _RUNNING_FOOT_Y_TOLERANCE:
+            continue
+        if _is_valid_page_number_candidate(seg_line.text):
+            seg_line.seg_label = SEG_PAGE
 
 
 _FURNITURE_LABELS = {SEG_HEADNOTE, SEG_FOOTNOTE, SEG_PAGE}
@@ -680,6 +736,7 @@ class SegmentationLabelDeriver:
         _tag_headnotes_by_text_repetition(
             seg_lines, self.config.page_header_max_first_line_index
         )
+        _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
         _release_furniture_inside_references(seg_lines)
         _claim_region_heading(
             seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated

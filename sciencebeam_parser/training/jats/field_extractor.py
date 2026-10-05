@@ -50,6 +50,77 @@ _CONTRIBUTION_SEC = (
     ' or @sec-type="contributions"'
 )
 
+_CONFLICT_SEC = (
+    '@sec-type="conflict"'
+    ' or @sec-type="COI-statement"'
+    ' or @sec-type="coi-statement"'
+)
+
+_CONFLICT_TITLES = frozenset({
+    'conflict of interest',
+    'conflicts of interest',
+    'competing interests',
+    'declaration of competing interest',
+    'conflito de interesse',
+    'conflitos de interesse',
+    'conflicto de intereses',
+    'conflictos de interes',
+})
+
+_FUNDING_SEC = '@sec-type="funding"'
+
+_FUNDING_TITLES = frozenset({
+    'funding',
+    'funding information',
+    'grant information',
+    'financial support',
+    'financial disclosure',
+    'suporte financeiro',
+    'apoio financeiro',
+    'fonte de financiamento',
+    'financiamiento',
+    'apoyo financiero',
+})
+
+# A footnote group is the other place the publisher puts these.  `fn-type` is
+# meant to say which, but is only sometimes set and is sometimes set wrong --
+# one preprint files its conflict-of-interest declaration under "con" -- so a
+# heading set in bold decides first, in this order.  Only a bold heading: a
+# numbered page footnote opening "1 This project has received funding from"
+# names no statement, it just mentions one.
+_FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ('conflict', ('conflict', 'conflito', 'conflicto', 'competing interest')),
+    ('funding', (
+        'funding', 'financial support', 'financial disclosure', 'grant',
+        'suporte financeiro', 'apoio financeiro', 'fonte de financiamento',
+        'financiamiento', 'apoyo financiero',
+    )),
+    ('contribution', ('contribution', 'contribu\u00e7\u00e3o', 'contribucion',
+                      'contribuci\u00f3n', 'authorship')),
+)
+
+_FN_KIND_BY_TYPE = {
+    'con': 'contribution',
+    'conflict': 'conflict',
+    'coi-statement': 'conflict',
+    'COI-statement': 'conflict',
+    'financial-disclosure': 'funding',
+    'supported-by': 'funding',
+}
+
+_FN_HEADING_LENGTH = 80
+
+
+def _get_fn_kind(el: etree._Element) -> Optional[str]:
+    bold = el.find('.//bold')
+    if bold is not None:
+        heading = _element_text(bold)[:_FN_HEADING_LENGTH].lower()
+        for kind, keywords in _FN_KIND_KEYWORDS:
+            if any(keyword in heading for keyword in keywords):
+                return kind
+    return _FN_KIND_BY_TYPE.get(el.get('fn-type') or '')
+
+
 _CONTRIBUTION_TITLES = frozenset({
     'author contributions',
     "authors' contributions",
@@ -61,13 +132,20 @@ _CONTRIBUTION_TITLES = frozenset({
 
 
 def _get_sections(
-    root: etree._Element, sec_type_predicate: str, titles: FrozenSet[str]
+    root: etree._Element,
+    sec_type_predicate: str,
+    titles: FrozenSet[str],
+    fn_kind: Optional[str] = None,
 ) -> Set[etree._Element]:
-    """Sections of one kind, whether `sec-type` says so or only the heading does."""
+    """Sections of one kind, however the JATS happens to say so."""
     sections = set(root.xpath(f'//sec[{sec_type_predicate}]'))
     for el in root.xpath('(body|back)/sec[not(@sec-type)]'):
         if _normalised_section_title(el) in titles:
             sections.add(el)
+    if fn_kind is not None:
+        for el in root.xpath('back//fn'):
+            if _get_fn_kind(el) == fn_kind:
+                sections.add(el)
     return sections
 
 
@@ -76,7 +154,17 @@ def _get_availability_sections(root: etree._Element) -> Set[etree._Element]:
 
 
 def _get_contribution_sections(root: etree._Element) -> Set[etree._Element]:
-    return _get_sections(root, _CONTRIBUTION_SEC, _CONTRIBUTION_TITLES)
+    return _get_sections(
+        root, _CONTRIBUTION_SEC, _CONTRIBUTION_TITLES, 'contribution'
+    )
+
+
+def _get_conflict_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(root, _CONFLICT_SEC, _CONFLICT_TITLES, 'conflict')
+
+
+def _get_funding_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(root, _FUNDING_SEC, _FUNDING_TITLES, 'funding')
 
 
 def _is_within(el: etree._Element, elements: Set[etree._Element]) -> bool:
@@ -87,30 +175,49 @@ class _LabelledSections(NamedTuple):
     """The sections of the body or back matter the model has its own label for."""
     availability: Set[etree._Element]
     contribution: Set[etree._Element]
+    conflict: Set[etree._Element]
+    funding: Set[etree._Element]
 
     @staticmethod
     def of(root: etree._Element) -> '_LabelledSections':
         return _LabelledSections(
             availability=_get_availability_sections(root),
             contribution=_get_contribution_sections(root),
+            conflict=_get_conflict_sections(root),
+            funding=_get_funding_sections(root),
         )
 
+    def _kind(self, el: etree._Element) -> Optional[str]:
+        for kind in ('availability', 'contribution', 'conflict', 'funding'):
+            if _is_within(el, getattr(self, kind)):
+                return kind
+        return None
+
     def title_field(self, el: etree._Element, default: str) -> str:
-        if _is_within(el, self.availability):
-            return JatsFieldNames.AVAILABILITY_SECTION_TITLE
-        if _is_within(el, self.contribution):
-            return JatsFieldNames.CONTRIBUTION_SECTION_TITLE
-        return default
+        kind = self._kind(el)
+        return default if kind is None else _TITLE_FIELD_BY_KIND[kind]
 
     def paragraph_field(self, el: etree._Element, default: str) -> str:
-        if _is_within(el, self.availability):
-            return JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH
-        if _is_within(el, self.contribution):
-            return JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH
-        return default
+        kind = self._kind(el)
+        return default if kind is None else _PARAGRAPH_FIELD_BY_KIND[kind]
 
     def claims(self, el: etree._Element) -> bool:
-        return _is_within(el, self.availability) or _is_within(el, self.contribution)
+        return self._kind(el) is not None
+
+
+_TITLE_FIELD_BY_KIND = {
+    'availability': JatsFieldNames.AVAILABILITY_SECTION_TITLE,
+    'contribution': JatsFieldNames.CONTRIBUTION_SECTION_TITLE,
+    'conflict': JatsFieldNames.CONFLICT_SECTION_TITLE,
+    'funding': JatsFieldNames.FUNDING_SECTION_TITLE,
+}
+
+_PARAGRAPH_FIELD_BY_KIND = {
+    'availability': JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
+    'contribution': JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+    'conflict': JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+    'funding': JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
+}
 
 
 def _element_text(el: etree._Element) -> str:
@@ -632,13 +739,13 @@ class JatsFieldExtractor:
         # `<annex>` with everything else that follows the body.
         labelled = _LabelledSections.of(root)
 
-        for el in root.xpath('back//sec//title'):
+        for el in root.xpath('back//sec//title | back//fn/p[not(normalize-space(text()))]/bold'):
             text = _element_text(el)
             if text and labelled.claims(el):
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=labelled.title_field(el, ''))))
 
-        for el in root.xpath('back//sec//p'):
+        for el in root.xpath('back//sec//p | back//fn//p[normalize-space(text())]'):
             text = _element_text(el)
             if text and labelled.claims(el):
                 entries.append((position[el], JatsFieldValue(
