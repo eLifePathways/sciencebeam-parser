@@ -99,7 +99,10 @@ SOURCE_TRAINING_SPLIT ?= train
 # A comparison file under benchmarks/comparisons/, by name. It names its own
 # variants, so the only thing it needs from here is where to resolve them.
 COMPARISON ?=
-COMPARISON_OUT ?= $(BENCHMARK_RUN)/comparison-$(COMPARISON).md
+# Deliberately not under BENCHMARK_RUNS: the runs are an input and may be read from
+# another checkout, while what a comparison produces belongs in the tree being worked in.
+COMPARISON_OUT_DIR ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+COMPARISON_OUT ?= $(COMPARISON_OUT_DIR)/comparison-$(COMPARISON).md
 # Where a comparison's named variants are resolved from. A git worktree has no
 # benchmarks/runs of its own -- it is gitignored and stays in the checkout that
 # produced it -- so point this at that checkout when comparing from one.
@@ -306,7 +309,7 @@ dev-comparison: .require-COMPARISON
 		$(ARGS)
 	@echo
 	@echo "Wrote $(COMPARISON_OUT)"
-	@ls $(dir $(COMPARISON_OUT))charts/*.png 2>/dev/null || true
+	@ls $(COMPARISON_OUT_DIR)/charts/*.png 2>/dev/null || true
 
 
 # The end-to-end one: fetches each named variant's predictions from the store, scores
@@ -322,10 +325,14 @@ dev-comparison-with-baselines: .require-COMPARISON
 		--runs $(BENCHMARK_RUNS) \
 		--comparison $(COMPARISON) \
 		--comparison-only \
+		--comparison-out $(COMPARISON_OUT_DIR) \
 		--concurrency $(BENCHMARK_CONCURRENCY) \
 		$(if $(BENCHMARK_PREDICTIONS_REPO),--predictions-repo $(BENCHMARK_PREDICTIONS_REPO),) \
 		$(if $(COMPARISON_CURRENT_RUN),--current-run $(COMPARISON_CURRENT_RUN),) \
 		$(ARGS)
+	@echo
+	@echo "Wrote $(COMPARISON_OUT)"
+	@ls $(COMPARISON_OUT_DIR)/charts/*.png 2>/dev/null || true
 
 
 dev-comparisons-list:

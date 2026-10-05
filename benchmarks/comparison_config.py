@@ -74,23 +74,37 @@ def _parse_variant(entry: Any, index: int) -> VariantSpec:
         entry, ("label", "tool", "version", "profile", "current", "summary"),
         f"variants[{index}]",
     )
-    label = entry.get("label")
-    if not label:
-        raise SelectionError(f"variants[{index}] needs a label")
     current = bool(entry.get("current"))
     summary = entry.get("summary")
     tool, version = entry.get("tool"), entry.get("version")
     named = bool(tool and version)
     if sum([current, bool(summary), named]) != 1:
         raise SelectionError(
-            f"variant {label!r} needs exactly one of: current: true, a summary path,"
+            f"variants[{index}] needs exactly one of: current: true, a summary path,"
             " or both tool and version"
         )
+    profile = entry.get("profile", "default")
+    label = entry.get("label") or _default_label(tool, version, profile, current, summary)
     return VariantSpec(
-        label=label, tool=tool, version=version,
-        profile=entry.get("profile", "default"),
+        label=label, tool=tool, version=version, profile=profile,
         current=current, summary=summary,
     )
+
+
+def _default_label(
+    tool: Optional[str], version: Optional[str], profile: str,
+    current: bool, summary: Optional[str],
+) -> str:
+    """What a column is called when the file does not say.
+
+    Carries the profile, because two columns of one version differing only by profile is
+    the comparison this exists for, and a label that drops it makes them indistinguishable.
+    """
+    if current:
+        return f"this run ({profile})" if profile != "default" else "this run"
+    if tool and version:
+        return f"{tool} {version} ({profile})"
+    return Path(str(summary)).parent.name or str(summary)
 
 
 def _parse_row(entry: Any, index: int) -> RowSpec:

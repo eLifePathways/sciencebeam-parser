@@ -171,7 +171,10 @@ store holds, so it compares what CI compares without a parser or a benchmark run
 `reference-models` adds the run under test, so it needs one — `COMPARISON_CURRENT_RUN`
 says where its summary is. `make dev-comparisons-list` names them. `BENCHMARK_DATA` and
 `BENCHMARK_RUNS` say where the gold and the runs are, which a git worktree needs since
-neither is in one: both are gitignored and stay in the checkout that produced them.
+neither is in one: both are gitignored and stay in the checkout that produced them. The
+comparison itself is written to `COMPARISON_OUT_DIR`, which stays in the tree being worked
+in rather than following `BENCHMARK_RUNS` — the runs are an input and may be read from
+elsewhere.
 `COMPARISON_CURRENT_RUN` points a `current: true` variant at a run directory. A comparison compares runs
 that have already been scored, so it fails until they have been — naming each variant
 it could not find and listing the baselines that *are* there. A git worktree has no
@@ -181,6 +184,11 @@ comparison's variants against `benchmarks/runs` for `BENCHMARK_SPLIT`, writes
 `comparison-<name>.md` into `BENCHMARK_RUN` and prints where the charts went; the
 underlying command is `python -m benchmarks.report --comparison <name>`, which takes
 `--runs`, `--split` and `--current-run` directly.
+
+`label` is optional. Left out, a column is named for its tool, version and profile —
+`sciencebeam-parser main (llm_all)` — which is what tells two profiles of one version
+apart. Set it where that runs long, since it is the column heading and the chart's legend
+entry; keep the profile in it.
 
 A variant is **named rather than pointed at** — by `tool`, `version` and `profile`,
 the way the predictions store holds it — so a checked-in file carries no run id and

@@ -39,9 +39,30 @@ variants:
         with pytest.raises(SelectionError, match="at least two variants"):
             _parse("variants:\n  - {label: a, current: true}\n")
 
-    def test_should_need_a_label(self):
-        with pytest.raises(SelectionError, match="needs a label"):
-            _parse("variants:\n  - {current: true}\n  - {current: true}\n")
+    def test_should_name_a_column_for_its_coordinates_without_a_label(self):
+        config = _parse("""
+variants:
+  - {tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {tool: sciencebeam-parser, version: main, profile: llm_all}
+""")
+        assert [v.label for v in config.variants] == [
+            "sciencebeam-parser main (grobid_crf)",
+            "sciencebeam-parser main (llm_all)",
+        ]
+
+    def test_should_name_the_run_under_test_by_its_profile(self):
+        config = _parse(
+            "variants:\n  - {current: true, profile: llm_all}\n"
+            "  - {tool: grobid, version: 1}\n"
+        )
+        assert config.variants[0].label == "this run (llm_all)"
+
+    def test_should_keep_a_label_that_was_given(self):
+        config = _parse(
+            "variants:\n  - {label: mine, tool: grobid, version: 1}\n"
+            "  - {current: true}\n"
+        )
+        assert config.variants[0].label == "mine"
 
     def test_should_reject_a_variant_naming_nothing(self):
         with pytest.raises(SelectionError, match="exactly one of"):

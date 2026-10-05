@@ -81,7 +81,7 @@ def render_chart(spec: ChartSpec, out_dir: Path, prefix: str = "") -> Path:
     figure.patch.set_facecolor(SURFACE)
     axes.set_facecolor(SURFACE)
 
-    _draw_bars(axes, spec)
+    labels = _draw_bars(axes, spec)
     _style_axes(axes, spec, n_groups)
     axes.legend(
         loc="upper left", bbox_to_anchor=(0, -0.14), ncol=min(n_series, 4),
@@ -90,6 +90,7 @@ def render_chart(spec: ChartSpec, out_dir: Path, prefix: str = "") -> Path:
     figure.suptitle(spec.title, x=0.012, y=0.98, ha="left", fontsize=11,
                     color=TEXT_PRIMARY, fontweight="medium")
     axes.set_title(spec.caption, loc="left", fontsize=8.5, color=TEXT_SECONDARY, pad=10)
+    _drop_colliding_labels(figure, labels)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{prefix}{spec.filename}"
@@ -103,13 +104,13 @@ def render_chart(spec: ChartSpec, out_dir: Path, prefix: str = "") -> Path:
     return path
 
 
-def _draw_bars(axes, spec: ChartSpec) -> None:
+def _draw_bars(axes, spec: ChartSpec) -> List:
     n_groups = len(spec.corpora)
     n_series = len(spec.series)
     # A 2px gap at this dpi, so adjacent bars read as separate marks rather than a block.
     slot = 0.6 / n_series
     bar_width = max(slot - 2 / DPI, slot * 0.6)
-    label_values = n_series * n_groups <= 21
+    labels = []
     for index, (label, row) in enumerate(zip(spec.series, spec.values)):
         offsets = (
             position + (index - (n_series - 1) / 2) * slot
@@ -122,13 +123,41 @@ def _draw_bars(axes, spec: ChartSpec) -> None:
             [x for x, _ in drawn], [value for _, value in drawn],
             width=bar_width, label=label, color=SERIES_COLOURS[index], linewidth=0,
         )
-        if not label_values:
-            continue
-        for x, value in drawn:
+        labels += [
             axes.text(
                 x, value + 0.015, f"{value:.3f}", ha="center", va="bottom",
                 fontsize=6.5, color=TEXT_SECONDARY,
             )
+            for x, value in drawn
+        ]
+    return labels
+
+
+def _drop_colliding_labels(figure, labels: List) -> int:
+    """All of them or none, measured rather than guessed from a count.
+
+    Two numbers running into each other are worse than no numbers, and keeping only the
+    ones that happen to fit would read as a selection rather than as the space available.
+    The table beside the chart carries every value either way.
+    """
+    if not labels:
+        return 0
+    figure.canvas.draw()
+    renderer = figure.canvas.get_renderer()
+    boxes = sorted(
+        (label.get_window_extent(renderer) for label in labels),
+        key=lambda box: box.x0,
+    )
+    crowded = any(
+        later.x0 - earlier.x1 < 2
+        for earlier, later in zip(boxes, boxes[1:])
+        if abs(later.y0 - earlier.y0) < earlier.height
+    )
+    if not crowded:
+        return len(labels)
+    for label in labels:
+        label.remove()
+    return 0
 
 
 def _style_axes(axes, spec: ChartSpec, n_groups: int) -> None:

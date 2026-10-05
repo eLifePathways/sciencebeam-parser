@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from benchmarks.report_charts import SERIES_COLOURS, ChartSpec, chart_markdown, render_chart
+from benchmarks.report_charts import (
+    DPI,
+    SERIES_COLOURS,
+    ChartSpec,
+    _draw_bars,
+    _drop_colliding_labels,
+    chart_markdown,
+    render_chart,
+)
 
 
 def _spec(
@@ -86,3 +94,37 @@ class TestRenderChart:
         )
         with pytest.raises(ValueError, match="distinguishable"):
             render_chart(spec, tmp_path)
+
+
+class TestCrowdedLabels:
+    """Two numbers running into each other are worse than no numbers."""
+
+    def _spec(self, n_series: int, n_corpora: int) -> ChartSpec:
+        corpora = tuple(f"corpus_{index}" for index in range(n_corpora))
+        return ChartSpec(
+            field="reference_title", method="levenshtein", scope="all", n_docs=60,
+            corpora=corpora,
+            series=tuple(f"run {index}" for index in range(n_series)),
+            values=tuple(
+                tuple(0.5 + 0.01 * index for _ in corpora) for index in range(n_series)
+            ),
+        )
+
+    def _surviving_labels(self, spec: ChartSpec) -> int:
+        import matplotlib  # pylint: disable=import-outside-toplevel
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
+        figure, axes = plt.subplots(figsize=(7.0, 4.0), dpi=DPI)
+        labels = _draw_bars(axes, spec)
+        kept = _drop_colliding_labels(figure, labels)
+        plt.close(figure)
+        return kept
+
+    def test_should_keep_every_label_where_they_fit(self):
+        assert self._surviving_labels(self._spec(2, 2)) == 4
+
+    def test_should_drop_them_all_where_three_series_meet_six_corpora(self):
+        assert self._surviving_labels(self._spec(3, 6)) == 0
+
+    def test_should_still_draw_the_crowded_chart(self, tmp_path):
+        assert render_chart(self._spec(3, 6), tmp_path).read_bytes().startswith(b"\x89PNG")

@@ -3,10 +3,13 @@
 # sciencebeam-eval-predictions and it compares what CI compares.
 #
 # The last variant is the primary, so deltas are measured against sciencebeam-parser.
+# `label` is optional: left out, a column is named for its tool, version and profile,
+# which is what tells two profiles of one version apart. Set it where that runs long --
+# it is the column heading and the chart's legend entry, so it wants to stay short.
 variants:
-  - {label: grobid 0.9.0, tool: grobid, version: 0.9.0-crf, profile: default}
-  - {label: grobid 0.9.1, tool: grobid, version: 0.9.1-crf, profile: default}
-  - {label: sciencebeam-parser, tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {label: grobid 0.9.0 (default), tool: grobid, version: 0.9.0-crf, profile: default}
+  - {label: grobid 0.9.1 (default), tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: parser main (grobid_crf), tool: sciencebeam-parser, version: main, profile: grobid_crf}
 
 rows:
   - {field: title, method: levenshtein, type: string}

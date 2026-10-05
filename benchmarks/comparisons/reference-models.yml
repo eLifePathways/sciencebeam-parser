@@ -1,10 +1,12 @@
 # A worked example: the reference-extraction question, over the corpora where the
 # difference has shown up. Variants are named the way the predictions store names them,
 # so this file holds no run id and resolves against whichever run is at hand.
+# `label` is optional: left out, a column is named for its tool, version and profile.
+# It is the column heading and the chart's legend entry, so keep it short.
 variants:
-  - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
-  - {label: main, tool: sciencebeam-parser, version: main, profile: grobid_crf}
-  - {label: this run, current: true}
+  - {label: grobid 0.9.1 (default), tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: parser main (grobid_crf), tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {current: true}
 
 rows:
   - {field: reference_title, method: levenshtein, type: partial_list}

@@ -488,6 +488,13 @@ def main(argv=None) -> None:
         "--current-run", default=None, metavar="DIR",
         help="The run directory a comparison's `current: true` variant refers to",
     )
+    parser.add_argument(
+        "--comparison-out", default=None, metavar="DIR",
+        help=(
+            "Where to write the comparison and its charts. Defaults beside the runs,"
+            " which is the wrong place when those are read from somewhere else"
+        ),
+    )
     parser.add_argument("--baseline-only", action="store_true")
     parser.add_argument(
         "--push-current", action="store_true",
@@ -521,6 +528,7 @@ def main(argv=None) -> None:
                 store=store,
                 comparison=args.comparison,
                 current_run=Path(args.current_run) if args.current_run else None,
+                out_dir=Path(args.comparison_out) if args.comparison_out else None,
                 concurrency=args.concurrency,
                 include=args.include_corpus,
                 chart_prefix=args.chart_prefix,
