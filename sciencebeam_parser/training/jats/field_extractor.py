@@ -74,6 +74,29 @@ _CONFLICT_TITLES = frozenset({
     'conflictos de interes',
 })
 
+_ETHICS_SEC = '@sec-type="ethics"' + " or @sec-type='ethics-statement'"
+
+# GROBID has no label of its own for these; its corpus files an ethics or
+# approval statement under `<div type="annex">` 60 times against 3 as body, and
+# an article prints one beside its availability statement, not in its argument.
+_ETHICS_TITLES = frozenset({
+    'ethics',
+    'ethics and consent',
+    'ethics approval',
+    'ethics approval and consent to participate',
+    'ethical approval',
+    'ethical considerations',
+    'ethical statement',
+    'ethics statement',
+    'consent',
+    'institutional review board',
+    'aspectos eticos',
+    'consideracoes eticas',
+    'consideraciones eticas',
+    'comite de etica',
+    'aprovacao do cep',
+})
+
 _FUNDING_SEC = '@sec-type="funding"'
 
 _FUNDING_TITLES = frozenset({
@@ -182,6 +205,10 @@ def _get_funding_sections(root: etree._Element) -> Set[etree._Element]:
     return _get_sections(root, _FUNDING_SEC, _FUNDING_TITLES, 'funding')
 
 
+def _get_ethics_sections(root: etree._Element) -> Set[etree._Element]:
+    return _get_sections(root, _ETHICS_SEC, _ETHICS_TITLES)
+
+
 def _is_bold_heading(el: etree._Element) -> bool:
     """Whether a paragraph is nothing but a bold heading.
 
@@ -208,6 +235,7 @@ class _LabelledSections(NamedTuple):
     conflict: Set[etree._Element]
     funding: Set[etree._Element]
     acknowledgement: Set[etree._Element]
+    ethics: Set[etree._Element]
     footnote: Set[etree._Element]
 
     @staticmethod
@@ -221,13 +249,14 @@ class _LabelledSections(NamedTuple):
                 el for el in root.xpath('back//fn')
                 if _get_fn_kind(el) == 'acknowledgement'
             },
+            ethics=_get_ethics_sections(root),
             footnote=set(root.xpath('back//fn')),
         )
 
     def _kind(self, el: etree._Element) -> Optional[str]:
         for kind in (
             'availability', 'contribution', 'conflict', 'funding',
-            'acknowledgement', 'footnote',
+            'acknowledgement', 'ethics', 'footnote',
         ):
             if _is_within(el, getattr(self, kind)):
                 return kind
@@ -251,6 +280,7 @@ _TITLE_FIELD_BY_KIND = {
     'conflict': JatsFieldNames.CONFLICT_SECTION_TITLE,
     'funding': JatsFieldNames.FUNDING_SECTION_TITLE,
     'acknowledgement': JatsFieldNames.ACK_SECTION_TITLE,
+    'ethics': JatsFieldNames.BACK_SECTION_TITLE,
     # A footnote that names no statement is a numbered page footnote, and the
     # number it opens with is not a heading.
     'footnote': JatsFieldNames.BACK_FOOTNOTE,
@@ -262,6 +292,7 @@ _PARAGRAPH_FIELD_BY_KIND = {
     'conflict': JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
     'funding': JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
     'acknowledgement': JatsFieldNames.ACK_SECTION_PARAGRAPH,
+    'ethics': JatsFieldNames.BACK_SECTION_PARAGRAPH,
     'footnote': JatsFieldNames.BACK_FOOTNOTE,
 }
 
