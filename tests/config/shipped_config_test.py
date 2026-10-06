@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,6 +8,7 @@ import yaml
 
 from sciencebeam_parser.app.profiles import ProfileRegistry
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.processors.fulltext.models import SEQUENCE_MODEL_CLASS_BY_NAME
 
 
@@ -55,8 +56,32 @@ def get_shipped_config() -> dict:
     return yaml.safe_load(CONFIG_PATH.read_text(encoding='utf-8'))
 
 
-def get_resolved_models(profile_name: str) -> dict:
+def get_resolved_models(profile_name: Optional[str]) -> dict:
     return AppConfig(get_shipped_config()).resolve_profile(profile_name)['models']
+
+
+def get_fulltext_processor_config(profile_name: Optional[str]) -> FullTextProcessorConfig:
+    return FullTextProcessorConfig.from_app_config(
+        AppConfig(get_shipped_config()).resolve_profile(profile_name)
+    )
+
+
+ABSTRACT_VARIANTS_PROFILE = 'abstract_variants'
+
+
+class TestAbstractVariantsProfile:
+    """It exists to be compared with the default, so one setting may differ and no other."""
+
+    def test_should_differ_from_the_default_profile_in_abstracts_mode_only(self):
+        default_config = get_fulltext_processor_config(None)
+        variant_config = get_fulltext_processor_config(ABSTRACT_VARIANTS_PROFILE)
+        assert variant_config.abstracts_mode != default_config.abstracts_mode
+        assert variant_config._replace(  # pylint: disable=protected-access
+            abstracts_mode=default_config.abstracts_mode
+        ) == default_config
+
+    def test_should_serve_the_models_the_default_profile_serves(self):
+        assert get_resolved_models(ABSTRACT_VARIANTS_PROFILE) == get_resolved_models(None)
 
 
 class TestShippedCombinedProfiles:
