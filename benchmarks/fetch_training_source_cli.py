@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from benchmarks.fetch import fetch_training_source
+from benchmarks.training_source_config import DEFAULT_CONFIG
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,8 +17,11 @@ def main(argv=None):
     )
     parser.add_argument(
         "--config",
-        default="benchmarks/training-source.yml",
-        help="Path to training-source config YAML (default: benchmarks/training-source.yml)",
+        default=DEFAULT_CONFIG,
+        help=(
+            "Path to the training-source config in the generated repo"
+            f" (default: {DEFAULT_CONFIG})"
+        ),
     )
     parser.add_argument(
         "--mode",

@@ -56,7 +56,15 @@ def _config_file(tmp_path: Path) -> Path:
     return config_file
 
 
+def _make_source_trees(tmp_path: Path) -> None:
+    """What a fetch would have left on disk for the declared pairs."""
+    for mode, corpora in [("smoke", ["ore", "scielo"]), ("medium", ["ore"])]:
+        for corpus in corpora:
+            (tmp_path / "source" / mode / "train" / corpus).mkdir(parents=True)
+
+
 def _run(config_file: Path, tmp_path: Path, *extra: str):
+    _make_source_trees(tmp_path)
     with patch(
         "benchmarks.regenerate_training_data_cli.fetch_training_source"
     ) as mock_fetch, patch(
@@ -234,6 +242,8 @@ class TestRegenerate:
     def test_a_failed_group_exits_non_zero_and_the_rest_still_run(
         self, config_file: Path, tmp_path: Path
     ):
+        _make_source_trees(tmp_path)
+
         def _side_effect(argv):
             if "citation" in argv:
                 raise RuntimeError("boom")
@@ -278,3 +288,32 @@ class TestOneCorpusPerRun:
             ("ore", "segmentation"),
             ("scielo", "segmentation"),
         ]
+
+
+class TestMissingSource:
+    def test_does_not_clear_a_pair_it_cannot_rebuild(
+        self, config_file: Path, tmp_path: Path
+    ):
+        """Clearing comes first, so a missing source must stop before it.
+
+        Otherwise a rebuild against a source tree that was never fetched empties
+        every declared pair and generates nothing into them.
+        """
+        existing = tmp_path / "out" / "train" / "ore" / "citation" / "corpus"
+        existing.mkdir(parents=True)
+        (existing / "kept.tei.xml").write_text("<x/>", encoding="utf-8")
+
+        with patch(
+            "benchmarks.regenerate_training_data_cli.generate_training_data_main"
+        ) as mock_generate:
+            with pytest.raises(SystemExit) as exc_info:
+                main([
+                    "--config", str(config_file),
+                    "--source-root", str(tmp_path / "never-fetched"),
+                    "--output-path", str(tmp_path / "out"),
+                    "--skip-fetch",
+                ])
+
+        assert exc_info.value.code == 1
+        assert (existing / "kept.tei.xml").is_file()
+        mock_generate.assert_not_called()

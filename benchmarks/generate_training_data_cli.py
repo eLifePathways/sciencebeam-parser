@@ -22,6 +22,7 @@ from sciencebeam_parser.training.cli.generate_data import (
 )
 
 from benchmarks.training_records import read_source_manifest
+from benchmarks.training_source_config import DEFAULT_CONFIG
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--config",
-        default="benchmarks/training-source.yml",
+        default=DEFAULT_CONFIG,
         help="Path to training-source config YAML",
     )
     parser.add_argument(

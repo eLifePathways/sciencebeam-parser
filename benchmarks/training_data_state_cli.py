@@ -24,6 +24,7 @@ import yaml
 
 from benchmarks.training_intent import get_declared_pairs
 from benchmarks.training_records import PAIR_RECORD_FILENAME
+from benchmarks.training_source_config import DEFAULT_CONFIG
 
 LOGGER = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="List the generated corpus against the modes the config declares."
     )
-    parser.add_argument("--config", default="benchmarks/training-source.yml")
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument(
         "--training-data",
         required=True,

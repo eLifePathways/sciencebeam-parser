@@ -77,9 +77,6 @@ TRAINING_DATA_NUM_WORKERS ?= 1
 # Per-document timeout in seconds; 0 disables. Skips outlier PDFs (e.g. 73-page, 38 MB)
 # that cause the JATS aligner to run for many minutes.
 TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
-# Models to generate training data for (space-separated). Override to add more.
-TRAINING_DATA_MODELS ?= segmentation header affiliation-address reference-segmenter citation
-
 # Where dev-generate-delft-training-data writes, and which model it converts.
 # It converts one model at a time, because the delft CLI takes one model's paths.
 DELFT_TRAINING_DATA_OUTPUT ?= $(TRAINING_DATA_OUTPUT)/delft
@@ -89,7 +86,8 @@ DELFT_TRAINING_DATA_MODEL ?= segmentation
 # TRAINING_DATA_OUTPUT must point to a checkout of the output repo; create a
 # symlink at data/generated-training-data or override the variable directly:
 #   make dev-generate-training-data TRAINING_DATA_OUTPUT=/path/to/output-repo
-SOURCE_TRAINING_CONFIG ?= benchmarks/training-source.yml
+# The config lives in the generated data repo, beside the corpus it describes.
+SOURCE_TRAINING_CONFIG ?= $(TRAINING_DATA_OUTPUT)/training-source.yml
 SOURCE_TRAINING_MODE ?= smoke
 # One source tree per mode, since a corpus may want two of them: its references at
 # medium and its segmentation at smoke are two fetches and two generation runs.
@@ -331,6 +329,9 @@ dev-fetch-training-source:
 		--output-path $(SOURCE_TRAINING_DATA)
 
 
+## Generate one source tree for every CC-BY corpus, with no reference to what is
+## declared. dev-regenerate-training-data is the target that follows the config;
+## this one is for a deliberate, narrowed run (ARGS="--corpus ore --models header").
 dev-generate-training-data:
 	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
 		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
@@ -345,7 +346,6 @@ dev-generate-training-data:
 		--split $(SOURCE_TRAINING_SPLIT) \
 		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
 		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
-		--models $(TRAINING_DATA_MODELS) \
 		--debug \
 		$(ARGS)
 

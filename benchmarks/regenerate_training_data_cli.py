@@ -30,6 +30,7 @@ from benchmarks.training_intent import (
     group_by_corpus_and_mode,
     validate_intent,
 )
+from benchmarks.training_source_config import DEFAULT_CONFIG
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +38,14 @@ LOGGER = logging.getLogger(__name__)
 # whether it was reviewed, what is wrong with it -- outlives the data it judged
 # and is not something a machine step may remove.
 MACHINE_WRITTEN_ENTRIES = ("corpus", "quality", "quality.jsonl", "provenance.json")
+
+
+class SourceMissingError(FileNotFoundError):
+    """A corpus to rebuild whose source documents are not on disk.
+
+    Rebuilding clears a pair before it fills it, so a missing source has to stop
+    the pair being cleared rather than leave it empty and report a skip.
+    """
 
 
 def select_pairs(
@@ -96,6 +105,12 @@ def _generate_group(  # pylint: disable=too-many-arguments,too-many-positional-a
     output_path: Path,
     extra_argv: Sequence[str],
 ) -> None:
+    corpus_source = source_root / mode / split / corpus
+    if not corpus_source.is_dir():
+        raise SourceMissingError(
+            f"no source data for {corpus!r} at mode {mode!r}: {corpus_source}."
+            f" Fetch it, or run without --skip-fetch"
+        )
     for model in models:
         clear_pair(output_path / split / corpus / model)
     generate_training_data_main([
@@ -114,7 +129,7 @@ def _parse_args(argv: Optional[Sequence[str]]) -> Tuple[argparse.Namespace, List
         description="Rebuild the generated corpus from the declared modes.",
         epilog="Any additional arguments are forwarded to generate_data.",
     )
-    parser.add_argument("--config", default="benchmarks/training-source.yml")
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument(
         "--source-root",
         required=True,
