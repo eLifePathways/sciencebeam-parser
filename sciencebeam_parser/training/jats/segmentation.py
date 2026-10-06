@@ -38,12 +38,6 @@ SEG_FUNDING = '<funding>'
 # Fraction of page height: lines above this → headnote, below this → footnote candidate
 _HEADNOTE_Y_RATIO = 0.08
 _FOOTNOTE_Y_RATIO = 0.92
-# A block of notes starts higher up the page than a single footer line does, so
-# it needs a mark of its own.  Measured over both corpora, every run of back
-# matter whose middle line falls below this is a numbered note block and none of
-# the sections that follow a body reach it.
-_FOOTNOTE_BLOCK_Y_RATIO = 0.65
-
 # Line index threshold: front blocks starting beyond this are cleared.
 # ORE papers have a second front-matter page (author roles, competing interests,
 # grant info, copyright) that can start at line ~60+, so the threshold is set high
@@ -59,7 +53,6 @@ class SegmentationConfig:
     page_header_max_first_line_index: int = _DEFAULT_PAGE_HEADER_MAX_FIRST_LINE_INDEX
     headnote_y_ratio: float = _HEADNOTE_Y_RATIO
     footnote_y_ratio: float = _FOOTNOTE_Y_RATIO
-    footnote_block_y_ratio: float = _FOOTNOTE_BLOCK_Y_RATIO
 
 
 @dataclass
@@ -304,6 +297,8 @@ _DEPOSIT_NOTICE_PATTERNS = (
         r'|estado\s+d(a\s+publica[\u00e7c][\u00e3a]o|e\s+la\s+publicaci[\u00f3o]n))\s*:',
         re.IGNORECASE,
     ),
+    # The same line, shortened: "Estado: El preprint no ha sido enviado ...".
+    re.compile(r'^\s*estado\s*:.*\bpreprint\b', re.IGNORECASE),
     re.compile(
         r'sob\s+as\s+seguintes\s+condi[\u00e7c][\u00f5o]es'
         r'|bajo\s+las\s+siguientes\s+condiciones'
@@ -328,9 +323,13 @@ def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
     a page of licence terms is bibliographic data.
 
     The page is recognised by the notice the server opens it with, and only
-    where nothing on it has already been read as part of the article.  It is
-    not always the first page: one preprint carries two, and others print the
-    conditions at the end instead.
+    where nothing on it has already been read as part of the article's own
+    narrative.  A back-matter statement matching here does not count: the
+    conditions restate what the article declares, so a conflict-of-interest
+    field matches the publisher's wording and would otherwise keep the page
+    that wording belongs to from being recognised.  It is not always the first
+    page: one preprint carries two, and others print the conditions at the end
+    instead.
     """
     pages: Dict[int, List[_SegLine]] = {}
     for seg_line in seg_lines:
@@ -341,13 +340,50 @@ def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
         first = next((sl for sl in page_lines if sl.text.strip()), None)
         if first is None or not _is_deposit_notice(first.text):
             continue
-        if any(
-            sl.seg_label not in (None, SEG_FRONT) and sl.seg_label not in _FURNITURE_LABELS
-            for sl in page_lines
-        ):
+        if any(sl.seg_label in _ARTICLE_CONTENT_LABELS for sl in page_lines):
             continue
         for seg_line in page_lines:
             seg_line.seg_label = SEG_COVER
+
+
+_AMENDMENTS_OPENING_PATTERN = re.compile(r'^\s*Amendments\s+from\s+Version\b', re.IGNORECASE)
+_AMENDMENTS_CLOSING_PATTERN = re.compile(
+    r'^\s*Any\s+further\s+responses\s+from\s+the\s+reviewers', re.IGNORECASE
+)
+_AMENDMENTS_MAX_LINES = 60
+
+
+def _claim_amendments_box(seg_lines: List[_SegLine]) -> None:
+    """Take the box a revised article says what changed in.
+
+    The box is the publisher's, and it opens and closes with the publisher's
+    own words, the same in every revised article.  The JATS carries it in
+    `<front>/<notes>`, but not always the version the PDF prints -- one article
+    describes one set of changes in its notes and another on its page -- and
+    then nothing grounds it and it reads as the article's argument.
+
+    Both ends have to be found: the opening line alone would run into whatever
+    follows it on a page that does not close the box.  Between them the box
+    takes a line the body matched as well as one nothing claimed, because the
+    box paraphrases the article and a sentence of it can match the article's
+    own -- and a body paragraph cannot be inside the box.
+    """
+    for index, seg_line in enumerate(seg_lines):
+        if not _AMENDMENTS_OPENING_PATTERN.match(seg_line.text):
+            continue
+        end = next(
+            (
+                position
+                for position in range(index, min(len(seg_lines), index + _AMENDMENTS_MAX_LINES))
+                if _AMENDMENTS_CLOSING_PATTERN.match(seg_lines[position].text)
+            ),
+            None,
+        )
+        if end is None:
+            continue
+        for seg_line_in_box in seg_lines[index:end + 2]:
+            if seg_line_in_box.seg_label in (None, SEG_BODY):
+                seg_line_in_box.seg_label = SEG_FRONT
 
 
 _APPENDIX_HEADING_PATTERN = re.compile(
@@ -422,6 +458,9 @@ _SAME_ROW_Y_TOLERANCE = 3.0
 # the next column and says nothing about this line.
 _SAME_ROW_MAX_X_GAP_RATIO = 0.15
 
+# Wide enough for an indent, far short of a column gutter.
+_SAME_COLUMN_MAX_X_GAP = 90.0
+
 
 def _get_line_position(seg_line: _SegLine) -> Optional[Tuple[float, float]]:
     token = seg_line.first_token
@@ -479,6 +518,11 @@ def _claim_lines_sharing_a_row(
 _FOOTNOTE_MARKER_MAX_LINES = 2
 
 _FURNITURE_LABELS = {SEG_HEADNOTE, SEG_FOOTNOTE, SEG_PAGE}
+
+# The article's own narrative, as against anything a cover page restates.
+_ARTICLE_CONTENT_LABELS = {
+    SEG_BODY, SEG_REFERENCES, SEG_REVIEW, SEG_ANNEX, SEG_ACKNOWLEDGEMENT,
+}
 
 
 def _enclosing_label(
@@ -539,6 +583,53 @@ def _release_furniture_inside_references(seg_lines: List[_SegLine]) -> None:
     ]
     for seg_line in released:
         seg_line.seg_label = None
+
+
+_ENCLOSED_RUN_MAX_LINES = 10
+
+_MAROONED_RUN_MAX_LINES = 4
+
+
+def _release_references_inside_availability(seg_lines: List[_SegLine]) -> None:
+    """Give the availability section back the datasets it cites.
+
+    A data-availability statement names the datasets it describes, and the JATS
+    lists those among the references, so the reference matcher claims them.  On
+    the page they are set inside the availability block, between the heading
+    and the description of what the dataset contains, and that is the region
+    they belong to.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_REFERENCES):
+        if len(run) > _ENCLOSED_RUN_MAX_LINES:
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_AVAILABILITY
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = SEG_AVAILABILITY
+
+
+def _release_references_inside_body(seg_lines: List[_SegLine]) -> None:
+    """Take back a reference that matched a citation in the argument.
+
+    A bibliography entry and the inline citation of it share their distinctive
+    words -- an author and a year -- so a long entry can match the handful of
+    words a sentence spends naming it.  The reference list is one region at the
+    end of the document, so a short run of it marooned in the body is that
+    mistake rather than a second list.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_REFERENCES):
+        if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_BODY
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = None
 
 
 def _reclaim_repeated_headnotes(
@@ -667,44 +758,23 @@ def _grow_run_over_matching_type(
         # three sizes.  What carries across the edge is the line beside it.
         page_number = _get_page_number(seg_lines[edge])
         edge_size = _get_line_font_size(seg_lines[edge])
-        if edge_size is None:
+        edge_position = _get_line_position(seg_lines[edge])
+        if edge_size is None or edge_position is None:
             continue
         position = edge + step
         while 0 <= position < len(seg_lines):
             seg_line = seg_lines[position]
+            line_position = _get_line_position(seg_line)
             if (
                 seg_line.seg_label is not None
                 or _get_page_number(seg_line) != page_number
                 or _get_line_font_size(seg_line) != edge_size
+                or line_position is None
+                or abs(line_position[0] - edge_position[0]) > _SAME_COLUMN_MAX_X_GAP
             ):
                 break
             seg_line.seg_label = label
             position += step
-
-
-def _reclassify_page_foot_notes(
-    seg_lines: List[_SegLine],
-    page_meta_by_number: Mapping[int, LayoutPageMeta],
-    config: SegmentationConfig,
-) -> None:
-    """A note printed under the body of a page is a footnote, not an annex.
-
-    An essay's numbered notes are back matter in the JATS and an appendix is too,
-    so the field they come from cannot separate them; where they print can.  A
-    run sitting in the lower part of its page is the block under the body, set
-    once per page, rather than a section that follows the body and runs on.
-    """
-    for run in list(_iter_label_runs(seg_lines, SEG_ANNEX)):
-        ratios = sorted(
-            ratio for ratio in (
-                _get_line_y_ratio(seg_lines[i], page_meta_by_number) for i in run
-            ) if ratio is not None
-        )
-        if not ratios or ratios[len(ratios) // 2] <= config.footnote_block_y_ratio:
-            continue
-        for index in run:
-            seg_lines[index].seg_label = SEG_FOOTNOTE
-        _grow_run_over_matching_type(seg_lines, run, SEG_FOOTNOTE)
 
 
 _REFERENCE_HEADINGS = frozenset({
@@ -782,8 +852,9 @@ def _extend_region_to_page_end(
     region on one side only and the gap merge cannot reach it.  A first page ends
     the same way, with which gateway or collection the article belongs to.
 
-    Bounded to the page the run ends on and stopped by anything evidenced, so it
-    only takes what is already inside the run's own page.  A running foot is
+    Bounded to the page the run ends on, to the column the run is set in, and
+    stopped by anything evidenced, so it only takes what is already inside the
+    run's own column of its own page.  A running foot is
     stepped over rather than taken, the same way the gap merge steps over a
     running head.  Per run, because an article that records what changed since
     its previous version carries front matter on a later page too.
@@ -791,8 +862,15 @@ def _extend_region_to_page_end(
     running = _get_running_texts(seg_lines)
     for run in _iter_label_runs(seg_lines, label):
         page_number = _get_page_number(seg_lines[run[-1]])
+        edge_position = _get_line_position(seg_lines[run[-1]])
         for seg_line in seg_lines[run[-1] + 1:]:
             if _get_page_number(seg_line) != page_number:
+                break
+            position = _get_line_position(seg_line)
+            if (
+                edge_position is not None and position is not None
+                and abs(position[0] - edge_position[0]) > _SAME_COLUMN_MAX_X_GAP
+            ):
                 break
             if seg_line.seg_label in _FURNITURE_LABELS:
                 continue
@@ -1043,11 +1121,13 @@ class SegmentationLabelDeriver:
         # so left unevidenced here.
         _extend_region_to_page_start(seg_lines, SEG_FRONT, annotated)
 
-        _extend_region_to_page_end(
-            seg_lines, SEG_REFERENCES, annotated, page_meta_by_number, self.config
-        )
+        _release_references_inside_availability(seg_lines)
+        _release_references_inside_body(seg_lines)
 
-        _reclassify_page_foot_notes(seg_lines, page_meta_by_number, self.config)
+        for page_end_label in (SEG_REFERENCES, SEG_AVAILABILITY):
+            _extend_region_to_page_end(
+                seg_lines, page_end_label, annotated, page_meta_by_number, self.config
+            )
 
         # The front matter ends in lines the renderer composes -- how to cite,
         # first published -- which no JATS field carries, so they sit at the end
@@ -1064,6 +1144,7 @@ class SegmentationLabelDeriver:
         # the lines after it with nothing to bridge from.
         _reclaim_repeated_headnotes(seg_lines, page_meta_by_number, self.config)
 
+        _claim_amendments_box(seg_lines)
         _claim_appendix_region(seg_lines)
         _tag_publication_dates(seg_lines)
         _claim_lines_sharing_a_row(seg_lines, page_meta_by_number)

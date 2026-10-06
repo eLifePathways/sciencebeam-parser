@@ -310,31 +310,42 @@ class TestRegionStartsAtThePageTop:
 
 
 class TestPageFootNotes:
-    """Back matter printed under the body of a page is a note, not an appendix."""
+    """A numbered note says what it is; where it prints does not decide it."""
 
-    def _make_doc(self, note_y: float):
+    def _make_doc(self, field_name: str, note_y: float):
         body = _make_line('The', 'argument', 'continues', y=300.0, page_number=1)
         note = _make_line('1', 'Marks,', 'Robert', 'B.', 'Exhausting', 'the', 'Earth',
                           y=note_y, page_number=1)
         later = _make_line('More', 'of', 'the', 'argument', y=300.0, page_number=2)
         doc = LayoutDocument(pages=[
-            LayoutPage(blocks=[LayoutBlock(lines=[body, note])], meta=_make_page_meta(1)),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[body]), LayoutBlock(lines=[note])],
+                meta=_make_page_meta(1),
+            ),
             LayoutPage(blocks=[LayoutBlock(lines=[later])], meta=_make_page_meta(2)),
         ])
         lines = list(doc.iter_all_lines())
         annotated = _annotate(doc, {
             lines.index(body): JatsFieldNames.BODY_SECTION_PARAGRAPH,
-            lines.index(note): JatsFieldNames.BACK_SECTION_PARAGRAPH,
+            lines.index(note): field_name,
             lines.index(later): JatsFieldNames.BODY_SECTION_PARAGRAPH,
         })
         return doc, annotated, note
 
-    def test_a_note_low_on_the_page_is_a_footnote(self):
-        doc, annotated, note = self._make_doc(note_y=780.0)
+    def test_a_numbered_note_is_a_footnote_low_on_the_page(self):
+        doc, annotated, note = self._make_doc(JatsFieldNames.BACK_FOOTNOTE, note_y=780.0)
         assert _derive_labels(doc, annotated)[id(note)] == SEG_FOOTNOTE
 
-    def test_back_matter_higher_up_stays_an_annex(self):
-        doc, annotated, note = self._make_doc(note_y=420.0)
+    def test_a_numbered_note_is_a_footnote_higher_up_too(self):
+        doc, annotated, note = self._make_doc(JatsFieldNames.BACK_FOOTNOTE, note_y=420.0)
+        assert _derive_labels(doc, annotated)[id(note)] == SEG_FOOTNOTE
+
+    def test_a_named_back_section_stays_an_annex_low_on_the_page(self):
+        # An ethics statement prints wherever the article ends, which can be the
+        # foot of a page, and it is not a note.
+        doc, annotated, note = self._make_doc(
+            JatsFieldNames.BACK_SECTION_PARAGRAPH, note_y=780.0
+        )
         assert _derive_labels(doc, annotated)[id(note)] == SEG_ANNEX
 
 
