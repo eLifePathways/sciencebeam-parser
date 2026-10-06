@@ -107,13 +107,14 @@ class TestClearPair:
         pair = tmp_path / "segmentation"
         (pair / "corpus" / "tei").mkdir(parents=True)
         (pair / "corpus" / "tei" / "a.tei.xml").write_text("<x/>", encoding="utf-8")
-        (pair / "quality.jsonl").write_text("{}\n", encoding="utf-8")
+        (pair / "quality").mkdir()
+        (pair / "quality" / "a.segmentation.quality.json").write_text("{}", encoding="utf-8")
         (pair / "provenance.json").write_text("{}\n", encoding="utf-8")
 
         clear_pair(pair)
 
         assert not (pair / "corpus").exists()
-        assert not (pair / "quality.jsonl").exists()
+        assert not (pair / "quality").exists()
         assert not (pair / "provenance.json").exists()
 
     def test_leaves_what_a_person_wrote(self, tmp_path: Path):

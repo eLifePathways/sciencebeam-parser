@@ -21,9 +21,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import yaml
 
 from sciencebeam_parser.training.cli.generate_data import get_enabled_model_names
+from sciencebeam_parser.training.quality.record import QUALITY_RECORD_DIRECTORY_NAME
 
 from benchmarks.fetch import fetch_training_source
 from benchmarks.generate_training_data_cli import main as generate_training_data_main
+from benchmarks.training_records import PAIR_RECORD_FILENAME
 from benchmarks.training_intent import (
     PairIntent,
     get_declared_pairs,
@@ -34,10 +36,15 @@ from benchmarks.training_source_config import DEFAULT_CONFIG
 
 LOGGER = logging.getLogger(__name__)
 
-# What a rebuild of a pair replaces. A record a person wrote about the data --
-# whether it was reviewed, what is wrong with it -- outlives the data it judged
-# and is not something a machine step may remove.
-MACHINE_WRITTEN_ENTRIES = ("corpus", "quality", "quality.jsonl", "provenance.json")
+# What a rebuild of a pair replaces: the training data, what measures it, and the
+# record of where it came from. A record a person wrote about the data -- whether
+# it was reviewed, what is wrong with it -- outlives the data it judged and is not
+# something a machine step may remove.
+MACHINE_WRITTEN_ENTRIES = (
+    "corpus",
+    QUALITY_RECORD_DIRECTORY_NAME,
+    PAIR_RECORD_FILENAME,
+)
 
 
 class SourceMissingError(FileNotFoundError):
