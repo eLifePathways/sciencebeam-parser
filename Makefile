@@ -321,6 +321,8 @@ dev-benchmark-with-baselines:
 		$(ARGS)
 
 
+## Fetch one mode's source documents. dev-regenerate-training-data does this for
+## every mode the config declares, so this is for working on a single tree.
 dev-fetch-training-source:
 	$(PYTHON) -m benchmarks.fetch_training_source_cli \
 		--config $(SOURCE_TRAINING_CONFIG) \
@@ -329,9 +331,10 @@ dev-fetch-training-source:
 		--output-path $(SOURCE_TRAINING_DATA)
 
 
-## Generate one source tree for every CC-BY corpus, with no reference to what is
-## declared. dev-regenerate-training-data is the target that follows the config;
-## this one is for a deliberate, narrowed run (ARGS="--corpus ore --models header").
+## Generate from the one source tree at SOURCE_TRAINING_MODE, for the models the
+## config declares. It neither fetches nor clears, and it takes no notice of which
+## mode each model is declared at -- it generates from the tree it is given.
+## Use dev-regenerate-training-data unless that is what you want.
 dev-generate-training-data:
 	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
 		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
@@ -350,7 +353,9 @@ dev-generate-training-data:
 		$(ARGS)
 
 
-## Rebuild every corpus and model the config declares, at the mode it declares.
+## The declared rebuild, and the one to reach for: fetches each mode the config
+## declares and rebuilds each declared pair at it, clearing the pair first so that
+## a lowered mode takes effect.
 ## Usage: make dev-regenerate-training-data [ARGS="--corpus ore --model segmentation"]
 dev-regenerate-training-data:
 	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
