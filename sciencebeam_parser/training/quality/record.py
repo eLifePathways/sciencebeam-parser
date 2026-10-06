@@ -1,20 +1,22 @@
 """The per-document quality record a generated corpus carries.
 
-One file per model, one row per source document, written as the run proceeds and
-whether the document succeeded or not: a document that produced no output at all
-is invisible to anything that iterates generated files, and is the case this
-record exists to make visible.
+One file per source document and model, written as the run proceeds and whether
+the document succeeded or not: a document that produced no output at all is
+invisible to anything that iterates generated files, and is the case this record
+exists to make visible.
 
 The record is per model because generation is run per model -- a corpus holds one
 model's data at one document set and another model's at a different one, so a
 record covering a whole corpus would describe the last run rather than the data
-beside it.
+beside it. It is per document because a run is routinely narrowed to one of them,
+and a record covering only what the run touched drops exactly the documents it
+exists for.
 """
 import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import IO, Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from sciencebeam_parser.utils.io import auto_uploading_output_file
 
@@ -22,7 +24,8 @@ from sciencebeam_parser.utils.io import auto_uploading_output_file
 LOGGER = logging.getLogger(__name__)
 
 
-QUALITY_RECORD_FILENAME = 'quality.jsonl'
+QUALITY_RECORD_DIRECTORY_NAME = 'quality'
+QUALITY_RECORD_FILENAME_SUFFIX = '.quality.json'
 
 
 class DocumentStatus:
@@ -38,15 +41,38 @@ class JatsStatus:
     UNREADABLE = 'unreadable'
 
 
-def get_quality_record_file_path(
+def get_quality_record_filename(document_id: str, model_name: str) -> str:
+    return document_id + '.' + model_name + QUALITY_RECORD_FILENAME_SUFFIX
+
+
+def get_quality_record_directory_path(
     output_path: str,
     model_name: str,
     use_directory_structure: bool
 ) -> str:
-    """Where a model's record goes, following the layout of its training data."""
+    """Where a model's records go, following the layout of its training data.
+
+    With the directory structure it is a sibling of the model's `corpus`: the
+    training data and what measures it are cleared together and a judgement about
+    them is not, so the two are separate directories rather than one.
+    """
     if use_directory_structure:
-        return os.path.join(output_path, model_name, QUALITY_RECORD_FILENAME)
-    return os.path.join(output_path, model_name + '.' + QUALITY_RECORD_FILENAME)
+        return os.path.join(output_path, model_name, QUALITY_RECORD_DIRECTORY_NAME)
+    return output_path
+
+
+def get_quality_record_file_path(
+    output_path: str,
+    model_name: str,
+    document_id: str,
+    use_directory_structure: bool
+) -> str:
+    return os.path.join(
+        get_quality_record_directory_path(
+            output_path, model_name, use_directory_structure
+        ),
+        get_quality_record_filename(document_id, model_name)
+    )
 
 
 @dataclass
@@ -150,10 +176,12 @@ def get_failed_document_quality_record(
 
 
 class QualityRecordWriter:
-    """Append records as JSON lines, one file per model, flushing each line.
+    """Write a record per document and model as each document finishes.
 
     The writer runs in the parent process, which knows the document set the run
-    was asked for -- a worker that timed out or died cannot report itself.
+    was asked for -- a worker that timed out or died cannot report itself. Each
+    record is its own file, so a run covering part of a corpus leaves the records
+    of the documents it did not touch exactly as they were.
     """
     def __init__(
         self,
@@ -164,34 +192,36 @@ class QualityRecordWriter:
         self.output_path = output_path
         self.model_names = list(model_names)
         self.use_directory_structure = use_directory_structure
-        self._file_context_by_model: Dict[str, Any] = {}
-        self._file_by_model: Dict[str, IO] = {}
         self.written_count = 0
 
     def __enter__(self) -> 'QualityRecordWriter':
         for model_name in self.model_names:
-            file_path = get_quality_record_file_path(
-                self.output_path, model_name, self.use_directory_structure
+            LOGGER.info(
+                'writing quality records to: %r',
+                get_quality_record_directory_path(
+                    self.output_path, model_name, self.use_directory_structure
+                )
             )
-            LOGGER.info('writing quality record to: %r', file_path)
-            file_context = auto_uploading_output_file(
-                file_path, mode='w', encoding='utf-8'
-            )
-            self._file_context_by_model[model_name] = file_context
-            self._file_by_model[model_name] = file_context.__enter__()
         return self
 
     def __exit__(self, *args) -> None:
-        for file_context in self._file_context_by_model.values():
-            file_context.__exit__(*args)
-        self._file_context_by_model.clear()
-        self._file_by_model.clear()
+        pass
 
     def write(self, record: DocumentQualityRecord) -> None:
         for model_name, json_dict in record.to_json_dict_by_model(
             self.model_names
         ).items():
-            output_file = self._file_by_model[model_name]
-            output_file.write(json.dumps(json_dict, sort_keys=True) + '\n')
-            output_file.flush()
+            file_path = get_quality_record_file_path(
+                self.output_path,
+                model_name,
+                record.document_id,
+                self.use_directory_structure
+            )
+            LOGGER.debug('writing quality record to: %r', file_path)
+            with auto_uploading_output_file(
+                file_path, mode='w', encoding='utf-8'
+            ) as output_file:
+                output_file.write(
+                    json.dumps(json_dict, indent=2, sort_keys=True) + '\n'
+                )
         self.written_count += 1

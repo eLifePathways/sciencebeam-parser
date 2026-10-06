@@ -361,7 +361,7 @@ dev-generate-delft-training-data:
 			--model-name $(DELFT_TRAINING_DATA_MODEL) \
 			--tei-source-path "$$model_dir/corpus/tei/*.tei.xml*" \
 			--raw-source-path "$$model_dir/corpus/raw" \
-			--quality-record-path "$$model_dir/quality.jsonl" \
+			--quality-record-path "$$model_dir/quality/*.quality.json" \
 			--delft-output-path \
 			"$(DELFT_TRAINING_DATA_OUTPUT)/$$corpus-$(DELFT_TRAINING_DATA_MODEL).data" \
 			$(ARGS) || exit 1; \

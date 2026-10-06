@@ -13,6 +13,10 @@ from sciencebeam_parser.training.quality.record import (
 )
 
 
+def _read_record(file_path) -> dict:
+    return json.loads(file_path.read_text(encoding='utf-8'))
+
+
 DOCUMENT_ID_1 = 'document1'
 SOURCE_FILENAME_1 = '/source/document1.pdf'
 REFERENCE_SEGMENTER = 'reference-segmenter'
@@ -30,15 +34,15 @@ def _record_for_models(*models: ModelQualityRecord) -> DocumentQualityRecord:
 
 
 class TestGetQualityRecordFilePath:
-    def test_should_use_a_directory_per_model(self):
+    def test_should_use_a_records_directory_beside_the_model_data(self):
         assert get_quality_record_file_path(
-            '/output', REFERENCE_SEGMENTER, use_directory_structure=True
-        ) == '/output/reference-segmenter/quality.jsonl'
+            '/output', REFERENCE_SEGMENTER, DOCUMENT_ID_1, use_directory_structure=True
+        ) == '/output/reference-segmenter/quality/document1.reference-segmenter.quality.json'
 
-    def test_should_stay_flat_without_the_directory_structure(self):
+    def test_should_keep_the_same_filename_without_the_directory_structure(self):
         assert get_quality_record_file_path(
-            '/output', REFERENCE_SEGMENTER, use_directory_structure=False
-        ) == '/output/reference-segmenter.quality.jsonl'
+            '/output', REFERENCE_SEGMENTER, DOCUMENT_ID_1, use_directory_structure=False
+        ) == '/output/document1.reference-segmenter.quality.json'
 
 
 class TestDocumentQualityRecord:
@@ -141,14 +145,13 @@ class TestQualityRecordWriter:
             ))
             assert writer.written_count == 1
         for model_name, expected_count in [(REFERENCE_SEGMENTER, 2), ('citation', 3)]:
-            lines = (
-                tmp_path / model_name / 'quality.jsonl'
-            ).read_text(encoding='utf-8').splitlines()
-            assert [json.loads(line)['entity_element_count'] for line in lines] == [
-                expected_count
-            ]
+            json_dict = _read_record(
+                tmp_path / model_name / 'quality'
+                / f'{DOCUMENT_ID_1}.{model_name}.quality.json'
+            )
+            assert json_dict['entity_element_count'] == expected_count
 
-    def test_should_write_one_line_per_document(self, tmp_path: Path):
+    def test_should_write_one_file_per_document(self, tmp_path: Path):
         with QualityRecordWriter(
             str(tmp_path), model_names=[REFERENCE_SEGMENTER]
         ) as writer:
@@ -160,14 +163,41 @@ class TestQualityRecordWriter:
                         ModelQualityRecord(model_name=REFERENCE_SEGMENTER, written=True)
                     ],
                 ))
-        lines = (
-            tmp_path / REFERENCE_SEGMENTER / 'quality.jsonl'
-        ).read_text(encoding='utf-8').splitlines()
-        assert [json.loads(line)['document_id'] for line in lines] == [
-            'document1', 'document2'
+        records_path = tmp_path / REFERENCE_SEGMENTER / 'quality'
+        assert sorted(path.name for path in records_path.glob('*.json')) == [
+            f'document1.{REFERENCE_SEGMENTER}.quality.json',
+            f'document2.{REFERENCE_SEGMENTER}.quality.json',
         ]
 
-    def test_should_flush_each_record_so_an_interrupted_run_keeps_what_it_had(
+    def test_should_leave_the_records_a_run_did_not_cover_untouched(
+        self, tmp_path: Path
+    ):
+        def _write(document_id: str, entity_element_count: int) -> None:
+            with QualityRecordWriter(
+                str(tmp_path), model_names=[REFERENCE_SEGMENTER]
+            ) as writer:
+                writer.write(DocumentQualityRecord(
+                    document_id=document_id,
+                    source_filename=f'/source/{document_id}.pdf',
+                    models=[ModelQualityRecord(
+                        model_name=REFERENCE_SEGMENTER,
+                        written=True,
+                        entity_element_count=entity_element_count,
+                    )],
+                ))
+
+        _write('document1', 12)
+        _write('document2', 34)
+        _write('document2', 56)
+        records_path = tmp_path / REFERENCE_SEGMENTER / 'quality'
+        assert _read_record(
+            records_path / f'document1.{REFERENCE_SEGMENTER}.quality.json'
+        )['entity_element_count'] == 12
+        assert _read_record(
+            records_path / f'document2.{REFERENCE_SEGMENTER}.quality.json'
+        )['entity_element_count'] == 56
+
+    def test_should_write_each_record_so_an_interrupted_run_keeps_what_it_had(
         self, tmp_path: Path
     ):
         with QualityRecordWriter(
@@ -180,8 +210,48 @@ class TestQualityRecordWriter:
                     ModelQualityRecord(model_name=REFERENCE_SEGMENTER, written=True)
                 ],
             ))
-            record_file_path = tmp_path / REFERENCE_SEGMENTER / 'quality.jsonl'
-            assert len(record_file_path.read_text(encoding='utf-8').splitlines()) == 1
+            assert _read_record(
+                tmp_path / REFERENCE_SEGMENTER / 'quality'
+                / f'{DOCUMENT_ID_1}.{REFERENCE_SEGMENTER}.quality.json'
+            )['document_id'] == DOCUMENT_ID_1
+
+    def test_should_write_a_record_the_diff_can_be_read_from(self, tmp_path: Path):
+        with QualityRecordWriter(
+            str(tmp_path), model_names=[REFERENCE_SEGMENTER]
+        ) as writer:
+            writer.write(_record_for_models(ModelQualityRecord(
+                model_name=REFERENCE_SEGMENTER, written=True, entity_element_count=2
+            )))
+        text = (
+            tmp_path / REFERENCE_SEGMENTER / 'quality'
+            / f'{DOCUMENT_ID_1}.{REFERENCE_SEGMENTER}.quality.json'
+        ).read_text(encoding='utf-8')
+        assert text.endswith('\n')
+        assert text.splitlines()[0] == '{'
+        assert [
+            line.strip().split(':')[0]
+            for line in text.splitlines()
+            if line.startswith('  "')
+        ] == sorted(
+            line.strip().split(':')[0]
+            for line in text.splitlines()
+            if line.startswith('  "')
+        )
+
+    def test_should_write_the_records_flat_without_the_directory_structure(
+        self, tmp_path: Path
+    ):
+        with QualityRecordWriter(
+            str(tmp_path),
+            model_names=[REFERENCE_SEGMENTER],
+            use_directory_structure=False
+        ) as writer:
+            writer.write(_record_for_models(ModelQualityRecord(
+                model_name=REFERENCE_SEGMENTER, written=True, entity_element_count=2
+            )))
+        assert _read_record(
+            tmp_path / f'{DOCUMENT_ID_1}.{REFERENCE_SEGMENTER}.quality.json'
+        )['entity_element_count'] == 2
 
 
 class TestSourceFilename:
