@@ -73,6 +73,11 @@ _BODY_CONTENT_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.BODY_SECTION_PARAGRAPH,
     JatsFieldNames.BODY_FIGURE,
     JatsFieldNames.BODY_TABLE,
+    # A float prints with the body or after it, never inside the front matter.
+    # Unconstrained, a table caption matches a sentence of the abstract and the
+    # majority vote hands that line to the body.
+    JatsFieldNames.FLOAT_FIGURE,
+    JatsFieldNames.FLOAT_TABLE,
     JatsFieldNames.ACK_SECTION_TITLE,
     JatsFieldNames.ACK_SECTION_PARAGRAPH,
     JatsFieldNames.APPENDIX_GROUP_TITLE,
