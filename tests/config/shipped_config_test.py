@@ -66,7 +66,7 @@ def get_fulltext_processor_config(profile_name: Optional[str]) -> FullTextProces
     )
 
 
-ABSTRACT_VARIANTS_PROFILE = 'abstract_variants'
+ABSTRACT_VARIANTS_PROFILE = 'grobid_crf_abstract_variants'
 
 
 class TestAbstractVariantsProfile:

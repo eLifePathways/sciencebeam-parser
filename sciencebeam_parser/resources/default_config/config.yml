@@ -334,7 +334,7 @@ profiles:
   # The default profile with one setting changed, so that comparing the two measures
   # `abstracts_mode` and nothing else. Its models and its noise filter are restated
   # rather than inherited: a profile overlays the base config, not another profile.
-  abstract_variants:
+  grobid_crf_abstract_variants:
     sequence_models: grobid_crf_0_9_0
     processors:
       fulltext:
