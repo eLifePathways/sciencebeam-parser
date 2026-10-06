@@ -12,10 +12,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
+from benchmarks.report_cost import COMPUTE_METRICS
 from benchmarks.report_grid import (
     SCOPE_ALL,
     SCOPE_GOLD,
     ChartConfig,
+    ComputeChartConfig,
     Selection,
     SelectionError,
 )
@@ -50,6 +52,8 @@ class ComparisonConfig:
     rows: Tuple[RowSpec, ...] = ()
     corpora: Optional[Tuple[str, ...]] = None
     charts: Tuple[ChartConfig, ...] = dataclass_field(default_factory=tuple)
+    compute_charts: Tuple[ComputeChartConfig, ...] = dataclass_field(
+        default_factory=tuple)
     name: str = "comparison"
 
 
@@ -129,8 +133,10 @@ def _parse_row(entry: Any, index: int) -> RowSpec:
     )
 
 
-def _parse_chart(entry: Any, index: int) -> ChartConfig:
+def _parse_chart(entry: Any, index: int):
     entry = _require_mapping(entry, f"charts[{index}]")
+    if "compute" in entry:
+        return _parse_compute_chart(entry, index)
     _unknown_keys(entry, ("row", "title", "corpora"), f"charts[{index}]")
     row = _require_mapping(entry.get("row", {}), f"charts[{index}].row")
     _unknown_keys(row, ("field", "method", "scope"), f"charts[{index}].row")
@@ -150,6 +156,17 @@ def _parse_chart(entry: Any, index: int) -> ChartConfig:
     )
 
 
+def _parse_compute_chart(entry: dict, index: int) -> ComputeChartConfig:
+    _unknown_keys(entry, ("compute", "title"), f"charts[{index}]")
+    metric = entry["compute"]
+    if metric not in COMPUTE_METRICS:
+        raise SelectionError(
+            f"charts[{index}] asks for compute {metric!r};"
+            + " known: " + ", ".join(repr(name) for name in sorted(COMPUTE_METRICS))
+        )
+    return ComputeChartConfig(metric=metric, title=entry.get("title"))
+
+
 def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:
     data = _require_mapping(data, "comparison file")
     _unknown_keys(data, ("variants", "rows", "corpora", "charts"), "comparison file")
@@ -157,6 +174,10 @@ def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:
     if len(variants) < 2:
         raise SelectionError("a comparison needs at least two variants")
     corpora = data.get("corpora")
+    parsed = [
+        _parse_chart(entry, index)
+        for index, entry in enumerate(data.get("charts") or [])
+    ]
     return ComparisonConfig(
         name=name,
         variants=tuple(
@@ -167,8 +188,10 @@ def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:
         ),
         corpora=tuple(corpora) if corpora else None,
         charts=tuple(
-            _parse_chart(entry, index)
-            for index, entry in enumerate(data.get("charts") or [])
+            chart for chart in parsed if isinstance(chart, ChartConfig)
+        ),
+        compute_charts=tuple(
+            chart for chart in parsed if isinstance(chart, ComputeChartConfig)
         ),
     )
 
@@ -332,4 +355,5 @@ def to_selection(config: ComparisonConfig) -> Selection:
         row_filter=row_filter(config),
         expected_types=expected_types(config) or None,
         chart_configs=config.charts,
+        compute_charts=config.compute_charts,
     )

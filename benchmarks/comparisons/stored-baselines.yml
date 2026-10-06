@@ -25,3 +25,5 @@ charts:
     title: Reference titles by corpus
   - row: {field: title, method: levenshtein}
     title: Document titles by corpus
+  - {compute: cpu_seconds_per_doc}
+  - {compute: latency_median}

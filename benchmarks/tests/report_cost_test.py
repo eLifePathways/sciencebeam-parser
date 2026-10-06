@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Optional
 
+import pytest
+
 from benchmarks.report import _render_comparison_report
+from benchmarks.report_cost import COMPUTE_METRICS, compute_metric
 
 
 def _title_summary(f1: float, method: str = "levenshtein") -> dict:
@@ -151,3 +154,33 @@ class TestComputeCostSection:
     def test_should_not_warn_where_the_measurement_matched(self):
         report = self._report(("GROBID", _cost()), ("SB", _cost()))
         assert "Measured differently" not in report
+
+
+class TestComputeMetric:
+    _COST = {
+        "cpu_seconds": 1200.0, "cpu_n_predicted": 60,
+        "latency_ms": {"median": 2400, "p90": 9100},
+        "n_predicted": 60, "elapsed_s": 1800.0,
+    }
+
+    def test_should_divide_cpu_seconds_by_the_documents_it_measured(self):
+        assert compute_metric(self._COST, "cpu_seconds_per_doc") == 20.0
+
+    def test_should_report_latency_in_seconds(self):
+        assert compute_metric(self._COST, "latency_median") == 2.4
+        assert compute_metric(self._COST, "latency_p90") == 9.1
+
+    def test_should_report_throughput_an_hour(self):
+        assert compute_metric(self._COST, "docs_per_hour") == 120.0
+
+    def test_should_give_nothing_where_the_run_recorded_nothing(self):
+        assert all(
+            compute_metric({}, metric) is None for metric in COMPUTE_METRICS
+        )
+
+    def test_should_give_nothing_rather_than_zero_for_an_unmeasured_part(self):
+        assert compute_metric({"cpu_seconds": 10.0}, "cpu_seconds_per_doc") is None
+
+    def test_should_reject_a_metric_it_does_not_know(self):
+        with pytest.raises(ValueError, match="nope"):
+            compute_metric(self._COST, "nope")

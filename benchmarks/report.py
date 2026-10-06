@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from benchmarks.comparison_config import load_comparison, resolve_variants, to_selection
-from benchmarks.report_charts import ChartOutput, chart_markdown, chart_specs, render_charts
+from benchmarks.report_charts import (
+    ChartOutput,
+    chart_markdown,
+    chart_specs,
+    compute_chart_specs,
+    render_charts,
+    render_compute_charts,
+)
 from benchmarks.report_grid import (
     GridRow,
     Selection,
@@ -29,7 +36,7 @@ from benchmarks.gold_presence import (
     produced_row,
 )
 from benchmarks.llm_usage import usage_for_corpora
-from benchmarks.report_cost import _render_cost_section
+from benchmarks.report_cost import render_cost_section
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
     concatenation_row,
@@ -698,6 +705,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
 
     # A single corpus puts one group of bars on the axis, which says nothing the table
     # does not.
+    chart_lines: List[str] = []
     if (selection.charts or selection.chart_configs) and len(common) > 1:
         specs = chart_specs(
             selection, [label for label, _ in labeled_summaries],
@@ -705,7 +713,23 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
         )
         if charts.out_dir is not None:
             render_charts(specs, charts.out_dir, charts.prefix)
-        lines += chart_markdown(specs, charts.rel_dir, charts.prefix, charts.base_url)
+        chart_lines += chart_markdown(
+            specs, charts.rel_dir, charts.prefix, charts.base_url
+        )[2:]
+    if selection.compute_charts:
+        # What a run spent, which has no corpus axis and so no two-corpus floor.
+        compute_specs = compute_chart_specs(selection, [
+            (label, summary.get("cost") or {}) for label, summary in labeled_summaries
+        ])
+        if charts.out_dir is not None:
+            compute_specs = render_compute_charts(
+                compute_specs, charts.out_dir, charts.prefix
+            )
+        chart_lines += chart_markdown(
+            compute_specs, charts.rel_dir, charts.prefix, charts.base_url
+        )[2:]
+    if chart_lines:
+        lines += ["### Charts", "", *chart_lines]
 
     usage_lines = _render_usage_section(
         labeled_summaries, corpora,
@@ -718,7 +742,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     if usage_lines:
         lines += [*usage_lines, ""]
 
-    cost_lines = _render_cost_section(
+    cost_lines = render_cost_section(
         labeled_summaries,
         "What producing these predictions took, and on what, over every run that"
         " generated any of them rather than only the one that scored them. CPU is"

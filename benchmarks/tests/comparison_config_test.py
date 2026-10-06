@@ -256,3 +256,44 @@ class TestAvailableBaselines:
     def test_should_skip_a_baseline_that_was_never_scored(self, tmp_path):
         (tmp_path / "baselines/grobid/0.9.0-crf/default/train").mkdir(parents=True)
         assert not available_baselines(tmp_path)
+
+
+class TestComputeCharts:
+    def test_should_parse_a_compute_chart(self):
+        config = _parse(TWO_VARIANTS + "charts:\n  - {compute: cpu_seconds_per_doc}\n")
+        assert [c.metric for c in config.compute_charts] == ["cpu_seconds_per_doc"]
+
+    def test_should_keep_score_and_compute_charts_apart(self):
+        config = _parse(
+            TWO_VARIANTS
+            + "charts:\n  - {row: {field: title, method: exact}}\n"
+            + "  - {compute: latency_median}\n"
+        )
+        assert (len(config.charts), len(config.compute_charts)) == (1, 1)
+
+    def test_should_carry_a_title(self):
+        config = _parse(
+            TWO_VARIANTS + "charts:\n  - {compute: docs_per_hour, title: How fast}\n"
+        )
+        assert config.compute_charts[0].title == "How fast"
+
+    def test_should_reject_an_unknown_metric(self):
+        with pytest.raises(SelectionError, match="cpu_secs"):
+            _parse(TWO_VARIANTS + "charts:\n  - {compute: cpu_secs}\n")
+
+    def test_should_name_the_known_metrics_in_the_error(self):
+        with pytest.raises(SelectionError, match="latency_median"):
+            _parse(TWO_VARIANTS + "charts:\n  - {compute: nope}\n")
+
+    def test_should_reject_an_unknown_key_beside_compute(self):
+        with pytest.raises(SelectionError, match="corpora"):
+            _parse(
+                TWO_VARIANTS
+                + "charts:\n  - {compute: latency_median, corpora: [biorxiv]}\n"
+            )
+
+    def test_should_reach_the_selection(self):
+        selection = to_selection(
+            _parse(TWO_VARIANTS + "charts:\n  - {compute: latency_p90}\n")
+        )
+        assert [c.metric for c in selection.compute_charts] == ["latency_p90"]

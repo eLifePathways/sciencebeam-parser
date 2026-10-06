@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 
+from benchmarks.report_cost import COMPUTE_METRICS
 from benchmarks.report_grid import ChartConfig, GridRow, Selection, SelectionError
 
 # Validated as a set for adjacent marks in both colour-vision and normal-vision terms;
@@ -31,6 +32,16 @@ SCOPE_CAPTIONS = {
     "all": "over all {n} documents",
     "gold": "over the {n} documents whose gold records it",
 }
+
+
+class LinkableChart(Protocol):
+    """All the markdown needs of a chart: what it is called and what it says."""
+
+    @property
+    def filename(self) -> str: ...
+
+    @property
+    def alt_text(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -189,7 +200,7 @@ def render_charts(
 
 
 def chart_markdown(
-    specs: Sequence[ChartSpec], rel_dir: str, prefix: str = "", base_url: str = ""
+    specs: Sequence[LinkableChart], rel_dir: str, prefix: str = "", base_url: str = ""
 ) -> List[str]:
     """The section that links the images.
 
@@ -205,6 +216,16 @@ def chart_markdown(
         src = base_url.rstrip("/") + "/" + name if base_url else f"{rel_dir}/{name}"
         lines += [f"![{spec.alt_text}]({src})", ""]
     return lines
+
+
+def render_compute_charts(
+    specs: Sequence[ComputeChartSpec], out_dir: Path, prefix: str = ""
+) -> List[ComputeChartSpec]:
+    """The specs that produced an image, so the report links only those."""
+    return [
+        spec for spec in specs
+        if render_compute_chart(spec, out_dir, prefix) is not None
+    ]
 
 
 @dataclass(frozen=True)
@@ -299,3 +320,124 @@ def chart_specs(
         for chart in declared
     ]
     return [spec for spec in specs if spec is not None]
+
+
+@dataclass(frozen=True)
+class ComputeChartSpec:
+    """What a run spent, one bar per variant.
+
+    A different shape from a score chart: one number per variant rather than one per
+    corpus, so the variants go on the axis and there is no second dimension to colour.
+    Each keeps the colour it has as a series elsewhere, so the two read as one set.
+    """
+    metric: str
+    series: Tuple[str, ...]
+    values: Tuple[Optional[float], ...]
+    title_override: Optional[str] = None
+
+    @property
+    def filename(self) -> str:
+        return f"compute-{self.metric}.png"
+
+    @property
+    def axis_label(self) -> str:
+        return COMPUTE_METRICS[self.metric][1]
+
+    @property
+    def title(self) -> str:
+        return self.title_override or COMPUTE_METRICS[self.metric][0]
+
+    @property
+    def alt_text(self) -> str:
+        return f"{self.title}, {self.axis_label}, one bar per variant"
+
+
+def _compute_value_format(largest: float) -> str:
+    return "{:,.0f}" if largest >= 100 else "{:,.1f}"
+
+
+def render_compute_chart(
+    spec: ComputeChartSpec, out_dir: Path, prefix: str = ""
+) -> Optional[Path]:
+    """Nothing to draw until two variants recorded the figure.
+
+    One bar is a number with a rectangle around it, and the cost section states it
+    already. The figure only became a thing runs record recently, so a comparison of
+    older stored predictions regularly has just the one.
+    """
+    drawn = [
+        (label, value)
+        for label, value, in zip(spec.series, spec.values) if value is not None
+    ]
+    if len(drawn) < 2:
+        return None
+    import matplotlib  # pylint: disable=import-outside-toplevel
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
+
+    figure, axes = plt.subplots(
+        figsize=(8.0, max(2.2, 0.52 * len(drawn) + 1.4)), dpi=DPI,
+    )
+    figure.patch.set_facecolor(SURFACE)
+    axes.set_facecolor(SURFACE)
+
+    # Top to bottom in the order the comparison declares its variants, and each keeps
+    # the colour it carries as a series in the score charts.
+    positions = list(range(len(drawn)))[::-1]
+    colours = [
+        SERIES_COLOURS[index % len(SERIES_COLOURS)]
+        for index, value in enumerate(spec.values) if value is not None
+    ]
+    axes.barh(
+        positions, [value for _, value in drawn],
+        height=0.58, color=colours, linewidth=0,
+    )
+    largest = max(value for _, value in drawn)
+    template = _compute_value_format(largest)
+    for position, (_, value) in zip(positions, drawn):
+        axes.text(
+            value + largest * 0.015, position, template.format(value),
+            va="center", ha="left", fontsize=7.5, color=TEXT_SECONDARY,
+        )
+
+    _style_compute_axes(axes, spec, positions, [label for label, _ in drawn], largest)
+    figure.suptitle(spec.title, x=0.012, y=0.985, ha="left", fontsize=11,
+                    color=TEXT_PRIMARY, fontweight="medium")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{prefix}{spec.filename}"
+    figure.savefig(
+        path, dpi=DPI, facecolor=SURFACE, bbox_inches="tight", pad_inches=0.22,
+        metadata={"Software": None, "Creation Time": None},
+    )
+    plt.close(figure)
+    return path
+
+
+def _style_compute_axes(axes, spec, positions, labels, largest: float) -> None:
+    axes.set_yticks(positions)
+    axes.set_yticklabels(labels, fontsize=8, color=TEXT_SECONDARY)
+    axes.set_xlabel(spec.axis_label, fontsize=8.5, color=TEXT_SECONDARY)
+    axes.set_xlim(0, largest * 1.16)
+    axes.tick_params(axis="both", length=0, colors=TEXT_SECONDARY, labelsize=8)
+    axes.set_axisbelow(True)
+    axes.grid(axis="x", color=GRID, linewidth=0.8)
+    axes.grid(axis="y", visible=False)
+    for side in ("top", "right", "left"):
+        axes.spines[side].set_visible(False)
+    axes.spines["bottom"].set_color(GRID)
+
+
+def compute_chart_specs(
+    selection: Selection, labeled_costs: Sequence[Tuple[str, dict]]
+) -> List[ComputeChartSpec]:
+    from benchmarks.report_cost import compute_metric  # pylint: disable=import-outside-toplevel
+    return [
+        ComputeChartSpec(
+            metric=chart.metric,
+            series=tuple(label for label, _ in labeled_costs),
+            values=tuple(compute_metric(cost, chart.metric) for _, cost in labeled_costs),
+            title_override=chart.title,
+        )
+        for chart in selection.compute_charts
+    ]

@@ -144,6 +144,7 @@ charts:
   - row: {field: reference_title, method: levenshtein}
     title: Reference titles by corpus
     corpora: [biorxiv, pkp]               # optional; the table's corpora otherwise
+  - {compute: cpu_seconds_per_doc}        # what it spent, rather than what it scored
 ```
 
 ```sh
@@ -202,7 +203,14 @@ variant produced a value the gold has none of. `type` is **asserted, not selecte
 summary gives a field exactly one scoring type, so naming it catches a run that re-typed
 the field instead of comparing across the change.
 
-A **chart** names one row and draws it as a grouped bar chart, variants as series and
+A **chart** is either a score row or a compute figure. `compute:` takes
+`cpu_seconds_per_doc`, `latency_median`, `latency_p90` or `docs_per_hour`, and draws one
+bar per variant — the same numbers the Compute cost section states as text. Each variant
+keeps the colour it has as a series in the score charts, so the two read as one set, and
+nothing is drawn until two variants recorded the figure: one bar is a number with a
+rectangle around it, and runs that predate the measurement record none.
+
+A score **chart** names one row and draws it as a grouped bar chart, variants as series and
 corpora along the axis. It reads the same cells the table does, and a variant that
 scored nothing for a corpus leaves a gap there rather than a bar at zero. Charts are
 written to `charts/` beside the report.

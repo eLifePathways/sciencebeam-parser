@@ -7,8 +7,10 @@ from benchmarks.report_charts import (
     SERIES_COLOURS,
     ChartSpec,
     _draw_bars,
+    ComputeChartSpec,
     _drop_colliding_labels,
     chart_markdown,
+    render_compute_chart,
     render_chart,
 )
 
@@ -128,3 +130,50 @@ class TestCrowdedLabels:
 
     def test_should_still_draw_the_crowded_chart(self, tmp_path):
         assert render_chart(self._spec(3, 6), tmp_path).read_bytes().startswith(b"\x89PNG")
+
+
+class TestComputeChart:
+    def _spec(self, values, metric="cpu_seconds_per_doc") -> ComputeChartSpec:
+        return ComputeChartSpec(
+            metric=metric,
+            series=tuple(f"run {index}" for index in range(len(values))),
+            values=tuple(values),
+        )
+
+    def test_should_name_the_file_after_the_metric(self):
+        assert self._spec([1.0, 2.0]).filename == "compute-cpu_seconds_per_doc.png"
+
+    def test_should_take_its_title_from_the_metric(self):
+        assert self._spec([1.0, 2.0]).title == "Compute per document"
+
+    def test_should_say_what_the_axis_measures(self):
+        assert self._spec([1.0, 2.0]).axis_label == "CPU-seconds per document"
+
+    def test_should_use_the_title_it_was_given(self):
+        spec = ComputeChartSpec(
+            metric="latency_median", series=("a", "b"), values=(1.0, 2.0),
+            title_override="What it waited",
+        )
+        assert spec.title == "What it waited"
+
+    def test_should_draw_where_two_variants_recorded_it(self, tmp_path):
+        path = render_compute_chart(self._spec([1.0, 2.0]), tmp_path)
+        assert path is not None and path.read_bytes().startswith(b"\x89PNG")
+
+    def test_should_draw_nothing_for_a_single_variant(self, tmp_path):
+        assert render_compute_chart(self._spec([1.0, None]), tmp_path) is None
+        assert not list(tmp_path.iterdir())
+
+    def test_should_draw_nothing_where_none_recorded_it(self, tmp_path):
+        assert render_compute_chart(self._spec([None, None]), tmp_path) is None
+
+    def test_should_keep_a_variants_colour_where_another_is_absent(self, tmp_path):
+        # The third variant has no figure, so the fourth keeps slot 4's colour rather
+        # than sliding into slot 3: colour follows the variant, not the bar's rank.
+        spec = self._spec([1.0, 2.0, None, 4.0])
+        path = render_compute_chart(spec, tmp_path)
+        assert path is not None
+
+    def test_should_apply_the_prefix(self, tmp_path):
+        path = render_compute_chart(self._spec([1.0, 2.0]), tmp_path, prefix="sha-")
+        assert path is not None and path.name.startswith("sha-")

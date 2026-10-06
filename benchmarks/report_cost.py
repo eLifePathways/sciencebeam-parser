@@ -5,7 +5,7 @@ because a timing delta is partly a property of the measurement rather than of th
 """
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from benchmarks.compute_cost import format_duration
 
@@ -127,7 +127,7 @@ def _incomparable_cost_note(labeled_costs: List[Tuple[str, dict]]) -> List[str]:
     ]
 
 
-def _render_cost_section(
+def render_cost_section(
     labeled_summaries: List[Tuple[str, dict]],
     note: str,
 ) -> List[str]:
@@ -153,3 +153,33 @@ def _render_cost_section(
         "",
         "</details>",
     ]
+
+
+# What a compute chart can draw, and what its axis says. Each reads the same record the
+# bullets above are written from, so a chart cannot state a figure the text does not.
+COMPUTE_METRICS: Dict[str, Tuple[str, str]] = {
+    "cpu_seconds_per_doc": ("Compute per document", "CPU-seconds per document"),
+    "latency_median": ("Median latency", "seconds per document"),
+    "latency_p90": ("p90 latency", "seconds per document"),
+    "docs_per_hour": ("Throughput", "documents per hour"),
+}
+
+
+def compute_metric(cost: dict, metric: str) -> Optional[float]:
+    """One variant's figure, or nothing where the run did not record it.
+
+    Nothing rather than zero: a run that predates this measurement and one that spent
+    no time are different claims, and only the second is a number.
+    """
+    latency = cost.get("latency_ms") or {}
+    if metric == "cpu_seconds_per_doc":
+        seconds, documents = cost.get("cpu_seconds"), cost.get("cpu_n_predicted")
+        return seconds / documents if seconds and documents else None
+    if metric == "latency_median":
+        return latency["median"] / 1000 if latency.get("median") else None
+    if metric == "latency_p90":
+        return latency["p90"] / 1000 if latency.get("p90") else None
+    if metric == "docs_per_hour":
+        predicted, elapsed = cost.get("n_predicted"), cost.get("elapsed_s")
+        return predicted / elapsed * 3600 if predicted and elapsed else None
+    raise ValueError(f"Unknown compute metric {metric!r}")

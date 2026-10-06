@@ -77,6 +77,13 @@ class ChartConfig:
 
 
 @dataclass(frozen=True)
+class ComputeChartConfig:
+    """A declared chart of what a run spent rather than what it scored."""
+    metric: str
+    title: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class Selection:
     """What the reader asked to see, as opposed to what was scored."""
     fields: Optional[Tuple[str, ...]] = None
@@ -92,12 +99,14 @@ class Selection:
     expected_types: Optional[Dict[str, str]] = None
     # Charts named one at a time, as a comparison file declares them.
     chart_configs: Tuple[ChartConfig, ...] = ()
+    compute_charts: Tuple[ComputeChartConfig, ...] = ()
 
     @property
     def is_empty(self) -> bool:
         return not (
             self.fields or self.methods or self.corpora or self.charts
             or self.chart_methods or self.row_filter or self.chart_configs
+            or self.compute_charts
         )
 
 
