@@ -7,7 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from benchmarks.generate_training_data_cli import clear_pair, main, select_pairs
+from benchmarks.generate_training_data_cli import (
+    discard_stash,
+    main,
+    restore_unproduced_documents,
+    select_pairs,
+    stash_pair,
+)
 from benchmarks.training_intent import PairIntent
 
 CONFIG = """\
@@ -102,33 +108,100 @@ class TestSelectPairs:
         assert select_pairs(self.PAIRS, ["ore"], ["citation"]) == [self.PAIRS[1]]
 
 
-class TestClearPair:
-    def test_removes_what_generation_wrote(self, tmp_path: Path):
+class TestStashAndRestore:
+    def _pair_with(self, tmp_path: Path, *document_ids: str) -> Path:
         pair = tmp_path / "segmentation"
         (pair / "corpus" / "tei").mkdir(parents=True)
-        (pair / "corpus" / "tei" / "a.tei.xml").write_text("<x/>", encoding="utf-8")
-        (pair / "quality").mkdir()
-        (pair / "quality" / "a.segmentation.quality.json").write_text("{}", encoding="utf-8")
+        (pair / "quality").mkdir(parents=True)
+        for document_id in document_ids:
+            (pair / "corpus" / "tei" / f"{document_id}.segmentation.tei.xml").write_text(
+                "<x/>", encoding="utf-8"
+            )
+            (pair / "quality" / f"{document_id}.segmentation.quality.json").write_text(
+                "{}", encoding="utf-8"
+            )
         (pair / "provenance.json").write_text("{}\n", encoding="utf-8")
+        return pair
 
-        clear_pair(pair)
+    def test_stashing_takes_the_pair_out_of_the_way(self, tmp_path: Path):
+        pair = self._pair_with(tmp_path, "a")
+        stash = stash_pair(pair)
+        assert stash is not None
 
         assert not (pair / "corpus").exists()
         assert not (pair / "quality").exists()
         assert not (pair / "provenance.json").exists()
+        assert (stash / "corpus" / "tei" / "a.segmentation.tei.xml").is_file()
 
-    def test_leaves_what_a_person_wrote(self, tmp_path: Path):
-        pair = tmp_path / "segmentation"
-        (pair / "verdicts").mkdir(parents=True)
+    def test_stashing_leaves_what_a_person_wrote(self, tmp_path: Path):
+        pair = self._pair_with(tmp_path, "a")
+        (pair / "verdicts").mkdir()
         (pair / "verdicts" / "a.json").write_text("{}", encoding="utf-8")
-        (pair / "corpus").mkdir()
 
-        clear_pair(pair)
+        stash_pair(pair)
 
         assert (pair / "verdicts" / "a.json").is_file()
 
-    def test_is_quiet_about_a_pair_that_does_not_exist_yet(self, tmp_path: Path):
-        clear_pair(tmp_path / "never-generated")
+    def test_restores_a_document_the_run_did_not_produce(self, tmp_path: Path):
+        """A timeout, an error or a source row that has gone all look the same here.
+
+        The rebuild cleared the pair before it ran, so without this the document
+        is deleted and never written again -- data that was good and may have been
+        reviewed.
+        """
+        pair = self._pair_with(tmp_path, "made", "failed")
+        stash = stash_pair(pair)
+        (pair / "corpus" / "tei").mkdir(parents=True)
+        (pair / "corpus" / "tei" / "made.segmentation.tei.xml").write_text(
+            "<new/>", encoding="utf-8"
+        )
+
+        restored = restore_unproduced_documents(pair, stash, ["made", "failed"])
+
+        assert restored == ["failed"]
+        assert (pair / "corpus" / "tei" / "failed.segmentation.tei.xml").is_file()
+        assert (pair / "quality" / "failed.segmentation.quality.json").is_file()
+        assert (pair / "corpus" / "tei" / "made.segmentation.tei.xml").read_text(
+            encoding="utf-8"
+        ) == "<new/>"
+
+    def test_does_not_restore_a_document_the_mode_no_longer_names(self, tmp_path: Path):
+        pair = self._pair_with(tmp_path, "kept", "dropped")
+        stash = stash_pair(pair)
+        (pair / "corpus" / "tei").mkdir(parents=True)
+        (pair / "corpus" / "tei" / "kept.segmentation.tei.xml").write_text(
+            "<new/>", encoding="utf-8"
+        )
+
+        restored = restore_unproduced_documents(pair, stash, ["kept"])
+
+        assert not restored
+        assert not (pair / "corpus" / "tei" / "dropped.segmentation.tei.xml").exists()
+
+    def test_a_document_is_not_restored_by_one_whose_id_starts_the_same(
+        self, tmp_path: Path
+    ):
+        pair = self._pair_with(tmp_path, "2-114_v1", "2-114_v10")
+        stash = stash_pair(pair)
+        (pair / "corpus" / "tei").mkdir(parents=True)
+
+        restored = restore_unproduced_documents(pair, stash, ["2-114_v1"])
+
+        assert restored == ["2-114_v1"]
+        assert not (pair / "corpus" / "tei" / "2-114_v10.segmentation.tei.xml").exists()
+
+    def test_discarding_removes_the_stash(self, tmp_path: Path):
+        pair = self._pair_with(tmp_path, "a")
+        stash = stash_pair(pair)
+        assert stash is not None
+
+        discard_stash(stash)
+
+        assert not stash.exists()
+
+    def test_a_pair_that_does_not_exist_yet_stashes_nothing(self, tmp_path: Path):
+        assert stash_pair(tmp_path / "never-generated") is None
+        assert not restore_unproduced_documents(tmp_path, None, ["a"])
 
 
 class TestRegenerate:
@@ -318,60 +391,3 @@ class TestMissingSource:
         assert exc_info.value.code == 1
         assert (existing / "kept.tei.xml").is_file()
         mock_generate.assert_not_called()
-
-
-class TestKeepingWhatCannotBeRebuilt:
-    def test_keeps_the_data_of_a_document_whose_source_has_gone(self, tmp_path: Path):
-        """A rebuild is not a reason to lose a document the dataset stopped carrying.
-
-        It cannot be generated again, so clearing the pair would be the only thing
-        that removed it -- and it may have been reviewed.
-        """
-        pair = tmp_path / "segmentation"
-        (pair / "corpus" / "tei").mkdir(parents=True)
-        (pair / "corpus" / "tei" / "gone.segmentation.tei.xml").write_text(
-            "<x/>", encoding="utf-8"
-        )
-        (pair / "corpus" / "tei" / "here.segmentation.tei.xml").write_text(
-            "<x/>", encoding="utf-8"
-        )
-        (pair / "quality").mkdir()
-        (pair / "quality" / "gone.segmentation.quality.json").write_text(
-            "{}", encoding="utf-8"
-        )
-        (pair / "quality" / "here.segmentation.quality.json").write_text(
-            "{}", encoding="utf-8"
-        )
-
-        clear_pair(pair, ["gone"])
-
-        assert (pair / "corpus" / "tei" / "gone.segmentation.tei.xml").is_file()
-        assert (pair / "quality" / "gone.segmentation.quality.json").is_file()
-        assert not (pair / "corpus" / "tei" / "here.segmentation.tei.xml").exists()
-        assert not (pair / "quality" / "here.segmentation.quality.json").exists()
-
-    def test_clears_everything_when_nothing_has_gone(self, tmp_path: Path):
-        pair = tmp_path / "segmentation"
-        (pair / "corpus" / "tei").mkdir(parents=True)
-        (pair / "corpus" / "tei" / "a.segmentation.tei.xml").write_text("<x/>", encoding="utf-8")
-
-        clear_pair(pair, [])
-
-        assert not (pair / "corpus").exists()
-
-    def test_a_document_is_not_kept_by_another_whose_id_starts_the_same(
-        self, tmp_path: Path
-    ):
-        pair = tmp_path / "segmentation"
-        (pair / "corpus" / "tei").mkdir(parents=True)
-        (pair / "corpus" / "tei" / "2-114_v1.segmentation.tei.xml").write_text(
-            "<x/>", encoding="utf-8"
-        )
-        (pair / "corpus" / "tei" / "2-114_v10.segmentation.tei.xml").write_text(
-            "<x/>", encoding="utf-8"
-        )
-
-        clear_pair(pair, ["2-114_v1"])
-
-        assert (pair / "corpus" / "tei" / "2-114_v1.segmentation.tei.xml").is_file()
-        assert not (pair / "corpus" / "tei" / "2-114_v10.segmentation.tei.xml").exists()

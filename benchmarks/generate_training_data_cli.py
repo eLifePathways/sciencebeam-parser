@@ -49,6 +49,10 @@ MACHINE_WRITTEN_ENTRIES = (
     PAIR_RECORD_FILENAME,
 )
 
+# Where a rebuild holds a pair while it replaces it. Untracked, so a run that
+# dies leaves it in the working tree to be seen rather than losing the pair.
+REBUILD_STASH_NAME = ".rebuild-stash"
+
 
 class SourceMissingError(FileNotFoundError):
     """A corpus to rebuild whose source documents are not on disk.
@@ -74,39 +78,68 @@ def select_pairs(
     ]
 
 
-def clear_pair(pair_dir: Path, keep_document_ids: Sequence[str] = ()) -> None:
-    """Remove what a previous run generated, leaving anything a person wrote.
+def stash_pair(pair_dir: Path) -> Optional[Path]:
+    """Move what the rebuild is about to replace aside, rather than deleting it.
 
-    Clearing is what makes a declaration that was lowered take effect: generation
-    overwrites the documents it produces and has no opinion about the ones a
-    larger mode left behind.
+    Clearing first is what makes a lowered declaration take effect, but a document
+    the run then fails to produce -- a timeout, an error, a source row that has
+    gone -- would be deleted by it and never written again. Moving instead means
+    the rebuild can put back whatever it turns out not to have produced.
 
-    `keep_document_ids` are documents the rebuild cannot produce again because
-    their source row has gone. Their data is kept rather than cleared, because the
-    rebuild is not a reason to lose a document the dataset stopped carrying -- that
-    is a decision, and it may have been reviewed.
+    What a person wrote beside the pair is not touched, here or anywhere.
     """
-    keep_prefixes = tuple(f"{document_id}." for document_id in keep_document_ids)
+    stash = pair_dir / REBUILD_STASH_NAME
+    if stash.exists():
+        shutil.rmtree(stash)
+    stashed = False
     for name in MACHINE_WRITTEN_ENTRIES:
         entry = pair_dir / name
-        if entry.is_dir():
-            _remove_tree_except(entry, keep_prefixes)
-        elif entry.exists():
-            entry.unlink()
+        if not entry.exists():
+            continue
+        stash.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(entry), str(stash / name))
+        stashed = True
+    return stash if stashed else None
 
 
-def _remove_tree_except(directory: Path, keep_prefixes: Sequence[str]) -> None:
-    if not keep_prefixes:
-        shutil.rmtree(directory)
-        return
-    for path in sorted(directory.rglob("*"), key=lambda p: -len(p.parts)):
-        if path.is_dir():
-            if not any(path.iterdir()):
-                path.rmdir()
-        elif not path.name.startswith(tuple(keep_prefixes)):
-            path.unlink()
-    if directory.is_dir() and not any(directory.iterdir()):
-        directory.rmdir()
+def _document_files(root: Path, document_id: str) -> List[Path]:
+    prefix = f"{document_id}."
+    return [
+        path
+        for path in root.rglob(f"{document_id}.*")
+        if path.is_file() and path.name.startswith(prefix)
+    ]
+
+
+def restore_unproduced_documents(
+    pair_dir: Path, stash: Optional[Path], document_ids: Sequence[str]
+) -> List[str]:
+    """Put back every document the rebuild was asked for and did not produce.
+
+    A document outside the mode's selection is not offered here, so lowering a
+    declaration still drops what it no longer names. What comes back is only what
+    was asked for and could not be made again.
+    """
+    if stash is None or not stash.is_dir():
+        return []
+    restored = []
+    for document_id in document_ids:
+        if _document_files(pair_dir / "corpus", document_id):
+            continue
+        files = _document_files(stash, document_id)
+        if not files:
+            continue
+        for path in files:
+            target = pair_dir / path.relative_to(stash)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(target))
+        restored.append(document_id)
+    return restored
+
+
+def discard_stash(stash: Optional[Path]) -> None:
+    if stash is not None and stash.is_dir():
+        shutil.rmtree(stash)
 
 
 def _fetch_modes(
@@ -145,9 +178,9 @@ def _generate_group(  # pylint: disable=too-many-arguments,too-many-positional-a
             f"no source data for {corpus!r} at mode {mode!r}: {corpus_source}."
             f" Fetch it, or run without --skip-fetch"
         )
-    keep = _documents_that_cannot_be_rebuilt(corpus_source)
-    for model in models:
-        clear_pair(output_path / split / corpus / model, keep)
+    asked_for = _documents_asked_for(corpus_source)
+    pair_dirs = [output_path / split / corpus / model for model in models]
+    stashes = [stash_pair(pair_dir) for pair_dir in pair_dirs]
     generate_from_tree_main([
         "--config", config_path,
         "--source-data", str(source_root / mode),
@@ -157,12 +190,24 @@ def _generate_group(  # pylint: disable=too-many-arguments,too-many-positional-a
         "--models", *models,
         *extra_argv,
     ])
+    for pair_dir, stash in zip(pair_dirs, stashes):
+        restored = restore_unproduced_documents(pair_dir, stash, asked_for)
+        if restored:
+            LOGGER.warning(
+                "%s: kept %d document(s) this run did not produce: %s",
+                pair_dir.name,
+                len(restored),
+                ", ".join(restored),
+            )
+        discard_stash(stash)
 
 
-def _documents_that_cannot_be_rebuilt(corpus_source: Path) -> List[str]:
-    """Documents the mode still names whose source row is gone from the dataset."""
+def _documents_asked_for(corpus_source: Path) -> List[str]:
+    """Every document the mode names, whether or not its source can still be read."""
     manifest = read_source_manifest(corpus_source)
-    return list(manifest.missing_document_ids) if manifest else []
+    if manifest is None:
+        return []
+    return list(manifest.selected_document_ids) + list(manifest.missing_document_ids)
 
 
 def _parse_args(argv: Optional[Sequence[str]]) -> Tuple[argparse.Namespace, List[str]]:
