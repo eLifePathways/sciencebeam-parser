@@ -111,6 +111,14 @@ citation/quality/PPR459453.citation.quality.json
   `reference-segmenter` and `citation`, and absent for a model whose labels mark
   regions rather than repeated entities. `written: false` is a model that found no
   entities and so wrote no file at all.
+- `labelled_content_hash` is over the labels the document carries and the text
+  each one covers, and is present for a model that writes a span record. It
+  changes when a label, the text under it, a line break or an element boundary
+  moves, and not when the same content is written to a different file format or
+  lands elsewhere on the page. It can be recomputed from the span record beside
+  it; `get_labelled_content_hash` states the recipe. The leading `v1` is the
+  recipe's version, so a corpus pinned under an older one reads as pinned
+  differently rather than as unrecognisable.
 - `label_counts` is per citation label, over references rather than occurrences:
   `jats` counts references whose JATS carries a sub-field for that label, `marked`
   counts references the training data marks it in. The two differ legitimately —
