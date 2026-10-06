@@ -80,9 +80,13 @@ from sciencebeam_parser.training.quality.counting import (
     count_entity_elements,
     count_segmentation_lines
 )
-from sciencebeam_parser.training.lines.record import (
-    format_lines_record,
-    iter_labelled_lines
+from sciencebeam_parser.utils.xml_writer import TracedItem
+from sciencebeam_parser.training.spans.record import (
+    check_spans_against_tei,
+    format_spans_record,
+    get_model_labels,
+    iter_labelled_spans,
+    iter_tei_line_texts
 )
 from sciencebeam_parser.training.quality.record import (
     DocumentQualityRecord,
@@ -493,11 +497,11 @@ class AbstractModelTrainingDataGenerator(ABC):
             document_context.source_name + self.get_pre_file_path_suffix() + suffix
         )
 
-    def get_lines_filename_suffix(self) -> Optional[str]:
-        """The per-line record's suffix, or None for a model that writes none."""
+    def get_spans_filename_suffix(self) -> Optional[str]:
+        """The per-span record's suffix, or None for a model that writes none."""
         return None
 
-    def get_lines_sub_directory(self) -> Optional[str]:
+    def get_spans_sub_directory(self) -> Optional[str]:
         return None
 
     @abstractmethod
@@ -545,10 +549,10 @@ class AbstractModelTrainingDataGenerator(ABC):
             document_context=document_context,
             sub_directory=tei_training_data_generator.get_default_data_sub_directory()
         )
-        lines_file_path = self._get_file_path_with_suffix(
-            self.get_lines_filename_suffix(),
+        spans_file_path = self._get_file_path_with_suffix(
+            self.get_spans_filename_suffix(),
             document_context=document_context,
-            sub_directory=self.get_lines_sub_directory()
+            sub_directory=self.get_spans_sub_directory()
         )
         assert tei_file_path
         model_data_list_list = list(self.iter_model_data_list(
@@ -564,12 +568,21 @@ class AbstractModelTrainingDataGenerator(ABC):
                     0 if self.model_name in ENTITY_ELEMENT_NAME_BY_MODEL else None
                 ),
             )
-        training_tei_root = (
-            tei_training_data_generator
-            .get_training_tei_xml_for_multiple_model_data_iterables(
-                model_data_list_list
+        trace: Sequence[TracedItem] = []
+        if spans_file_path:
+            assert isinstance(tei_training_data_generator, AbstractTeiTrainingDataGenerator)
+            training_tei_root, trace = (
+                tei_training_data_generator.get_training_tei_xml_and_trace(
+                    model_data_list_list
+                )
             )
-        )
+        else:
+            training_tei_root = (
+                tei_training_data_generator
+                .get_training_tei_xml_for_multiple_model_data_iterables(
+                    model_data_list_list
+                )
+            )
         LOGGER.info('writing training tei to: %r', tei_file_path)
         write_bytes(
             tei_file_path,
@@ -584,25 +597,36 @@ class AbstractModelTrainingDataGenerator(ABC):
                 ),
                 encoding='utf-8'
             )
-        if lines_file_path:
+        if spans_file_path:
             assert isinstance(tei_training_data_generator, AbstractTeiTrainingDataGenerator)
-            LOGGER.info('writing line record to: %r', lines_file_path)
+            element_path_by_label = (
+                tei_training_data_generator.training_xml_element_path_by_label
+            )
+            root_element_path = (
+                tei_training_data_generator.root_training_xml_element_path
+            )
+            spans = list(iter_labelled_spans(
+                trace=trace,
+                training_xml_element_path_by_label=element_path_by_label,
+                root_training_xml_element_path=root_element_path
+            ))
+            check_spans_against_tei(
+                document_id=document_context.source_name,
+                spans=spans,
+                tei_line_texts=list(iter_tei_line_texts(
+                    training_tei_root=training_tei_root,
+                    root_training_xml_element_path=root_element_path
+                ))
+            )
+            LOGGER.info('writing span record to: %r', spans_file_path)
             write_text(
-                lines_file_path,
-                format_lines_record(
+                spans_file_path,
+                format_spans_record(
                     document_id=document_context.source_name,
                     model_name=self.model_name,
                     layout_document=layout_document,
-                    model_data_list_list=model_data_list_list,
-                    labelled_lines=list(iter_labelled_lines(
-                        training_tei_root=training_tei_root,
-                        root_training_xml_element_path=(
-                            tei_training_data_generator.root_training_xml_element_path
-                        ),
-                        training_xml_element_path_by_label=(
-                            tei_training_data_generator.training_xml_element_path_by_label
-                        )
-                    ))
+                    spans=spans,
+                    labels=get_model_labels(element_path_by_label, root_element_path)
                 ),
                 encoding='utf-8'
             )
@@ -675,14 +699,14 @@ class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenera
 
 class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'segmentation'
-    LINES_FILENAME_SUFFIX = '.segmentation.lines.jsonl'
-    LINES_SUB_DIRECTORY = 'segmentation/corpus/lines'
+    SPANS_FILENAME_SUFFIX = '.segmentation.spans.jsonl'
+    SPANS_SUB_DIRECTORY = 'segmentation/corpus/spans'
 
-    def get_lines_filename_suffix(self) -> Optional[str]:
-        return SegmentationModelTrainingDataGenerator.LINES_FILENAME_SUFFIX
+    def get_spans_filename_suffix(self) -> Optional[str]:
+        return SegmentationModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
 
-    def get_lines_sub_directory(self) -> Optional[str]:
-        return SegmentationModelTrainingDataGenerator.LINES_SUB_DIRECTORY
+    def get_spans_sub_directory(self) -> Optional[str]:
+        return SegmentationModelTrainingDataGenerator.SPANS_SUB_DIRECTORY
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.segmentation_model
@@ -719,6 +743,14 @@ class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
 
 class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'header'
+    SPANS_FILENAME_SUFFIX = '.header.spans.jsonl'
+    SPANS_SUB_DIRECTORY = 'header/corpus/spans'
+
+    def get_spans_filename_suffix(self) -> Optional[str]:
+        return HeaderModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+
+    def get_spans_sub_directory(self) -> Optional[str]:
+        return HeaderModelTrainingDataGenerator.SPANS_SUB_DIRECTORY
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.header_model

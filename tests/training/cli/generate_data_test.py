@@ -697,7 +697,7 @@ class TestMain:
         )
         assert get_text_content_list(xml_root.xpath('text/front'))
 
-    def test_should_write_one_line_record_row_per_segmentation_line(
+    def test_should_write_one_span_record_row_per_segmentation_line(
         self,
         tmp_path: Path,
         sample_layout_document: SampleLayoutDocument,
@@ -713,10 +713,10 @@ class TestMain:
             f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
             f'--output-path={output_path}'
         ])
-        lines_path = _get_expected_file_path_with_suffix(
-            output_path / 'segmentation' / 'corpus' / 'lines',
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'segmentation' / 'corpus' / 'spans',
             MINIMAL_EXAMPLE_PDF,
-            SegmentationModelTrainingDataGenerator.LINES_FILENAME_SUFFIX
+            SegmentationModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
         )
         tei_path = _get_expected_file_path_with_suffix(
             output_path / 'segmentation' / 'corpus' / 'tei',
@@ -728,21 +728,25 @@ class TestMain:
             MINIMAL_EXAMPLE_PDF,
             SegmentationTeiTrainingDataGenerator().get_default_data_filename_suffix()
         )
-        assert lines_path.exists()
+        assert spans_path.exists()
         json_dicts = [
             json.loads(line)
-            for line in lines_path.read_text(encoding='utf-8').splitlines()
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
         ]
         line_break_count = len(etree.parse(str(tei_path)).getroot().xpath('//lb'))
         raw_row_count = len(raw_path.read_text(encoding='utf-8').splitlines())
         assert line_break_count > 0
-        assert json_dicts[0]['line_count'] == len(json_dicts) - 1
+        assert json_dicts[0]['span_count'] == len(json_dicts) - 1
         assert json_dicts[0]['line_count'] == line_break_count
         assert json_dicts[0]['line_count'] == raw_row_count
+        assert json_dicts[0]['span_count'] == json_dicts[0]['line_count']
+        assert [json_dict['line'] for json_dict in json_dicts[1:]] == list(
+            range(1, 1 + json_dicts[0]['line_count'])
+        )
         assert all('label' in json_dict for json_dict in json_dicts[1:])
         assert all('text' in json_dict for json_dict in json_dicts[1:])
 
-    def test_should_not_write_a_line_record_for_another_model(
+    def test_should_write_a_span_record_for_the_header_model(
         self,
         tmp_path: Path,
         sample_layout_document: SampleLayoutDocument,
@@ -758,7 +762,44 @@ class TestMain:
             f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
             f'--output-path={output_path}'
         ])
-        assert not (output_path / 'header' / 'corpus' / 'lines').exists()
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'header' / 'corpus' / 'spans',
+            MINIMAL_EXAMPLE_PDF,
+            HeaderModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        tei_path = _get_expected_file_path_with_suffix(
+            output_path / 'header' / 'corpus' / 'tei',
+            MINIMAL_EXAMPLE_PDF,
+            HeaderTeiTrainingDataGenerator().get_default_tei_filename_suffix()
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        assert json_dicts[0]['model'] == 'header'
+        assert json_dicts[0]['line_count'] == len(
+            etree.parse(str(tei_path)).getroot().xpath('//lb')
+        )
+        assert json_dicts[0]['labels']
+        assert json_dicts[0]['span_count'] == len(json_dicts) - 1
+
+    def test_should_not_write_a_span_record_for_another_model(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        assert not (output_path / 'citation' / 'corpus' / 'spans').exists()
 
     def test_should_add_gz_suffix_if_enabled(
         self,
