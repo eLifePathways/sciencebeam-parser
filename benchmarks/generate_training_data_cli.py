@@ -12,7 +12,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import yaml
 
@@ -21,10 +21,24 @@ from sciencebeam_parser.training.cli.generate_data import (
     main as generate_data_main,
 )
 
+from benchmarks.training_intent import get_declared_pairs
 from benchmarks.training_records import read_source_manifest
 from benchmarks.training_source_config import DEFAULT_CONFIG
 
 LOGGER = logging.getLogger(__name__)
+
+
+def get_declared_models_by_corpus(cfg: dict) -> Dict[str, List[str]]:
+    """The models each corpus declares, whatever mode it declares them at.
+
+    This is what generating without `--models` covers: the config is the only
+    statement of which models are wanted, so a run that is not told otherwise
+    produces those rather than every model there is.
+    """
+    declared: Dict[str, List[str]] = {}
+    for pair in get_declared_pairs(cfg):
+        declared.setdefault(pair.corpus, []).append(pair.model)
+    return declared
 
 
 def write_pair_records(
@@ -81,7 +95,10 @@ def main(argv=None):
     parser.add_argument(
         "--models",
         nargs="+",
-        help="Models to generate for (default: every model generate_data produces)",
+        help=(
+            "Models to generate for (default: the ones the config declares for each"
+            " corpus, or every model generate_data produces if it declares none)"
+        ),
     )
     parser.add_argument(
         "--corpus",
@@ -108,6 +125,8 @@ def main(argv=None):
             sys.exit(1)
         corpora = [corpus for corpus in corpora if corpus in set(args.corpus)]
 
+    declared_by_corpus = get_declared_models_by_corpus(cfg)
+
     errors = []
     for corpus in corpora:
         corpus_source = Path(args.source_data) / args.split / corpus
@@ -120,12 +139,13 @@ def main(argv=None):
         corpus_output = Path(args.output_path) / args.split / corpus
         LOGGER.info("Generating training data for corpus %r -> %s", corpus, corpus_output)
 
+        model_names = args.models or declared_by_corpus.get(corpus)
         corpus_argv = [
             "--source-path", str(corpus_source / "*.pdf"),
             "--source-xml-path", str(corpus_source / "*.jats.xml"),
             "--output-path", str(corpus_output),
             "--use-directory-structure",
-            *(["--models", *args.models] if args.models else []),
+            *(["--models", *model_names] if model_names else []),
             *extra_argv,
         ]
         try:
@@ -134,7 +154,7 @@ def main(argv=None):
             LOGGER.exception("Failed to generate training data for corpus %r", corpus)
             errors.append(corpus)
             continue
-        write_pair_records(corpus_source, corpus_output, args.models)
+        write_pair_records(corpus_source, corpus_output, model_names)
 
     if errors:
         LOGGER.error("Generation failed for corpora: %s", ", ".join(errors))

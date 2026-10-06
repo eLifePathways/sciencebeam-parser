@@ -344,3 +344,77 @@ class TestCorpusNarrowing:
 
         assert exc_info.value.code == 1
         mock_gen.assert_not_called()
+
+
+DECLARING_CONFIG = """\
+cc_by_corpora: ['ore', 'scielo']
+generate:
+  ore:
+    segmentation: smoke
+    citation: medium
+    affiliation-address: none
+"""
+
+
+class TestDefaultModels:
+    def _config(self, path: Path) -> Path:
+        config_file = path / "training-source.yml"
+        config_file.write_text(DECLARING_CONFIG, encoding="utf-8")
+        return config_file
+
+    def test_generates_what_the_config_declares_when_no_models_are_named(
+        self, tmp_path: Path
+    ):
+        """Without this, the only default left is every model generate_data has.
+
+        A corpus that declares three models would get figure, fulltext, table and
+        the name models too -- data nothing asked for, in a repo that is reviewed
+        by reading its diffs.
+        """
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _write_manifest(_make_corpus_dir(source, "train", "ore"))
+
+        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
+            main([
+                "--config", str(self._config(tmp_path)),
+                "--source-data", str(source),
+                "--output-path", str(output),
+            ])
+
+        argv = mock_gen.call_args.args[0]
+        assert argv[argv.index("--models") + 1:] == ["segmentation", "citation"]
+
+    def test_named_models_still_win(self, tmp_path: Path):
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _write_manifest(_make_corpus_dir(source, "train", "ore"))
+
+        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
+            main([
+                "--config", str(self._config(tmp_path)),
+                "--source-data", str(source),
+                "--output-path", str(output),
+                "--models", "header",
+            ])
+
+        argv = mock_gen.call_args.args[0]
+        assert argv[argv.index("--models") + 1:] == ["header"]
+
+    def test_a_corpus_declaring_nothing_falls_back_to_every_model(self, tmp_path: Path):
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _write_manifest(_make_corpus_dir(source, "train", "scielo"))
+
+        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
+            main([
+                "--config", str(self._config(tmp_path)),
+                "--source-data", str(source),
+                "--output-path", str(output),
+                "--corpus", "scielo",
+            ])
+
+        assert "--models" not in mock_gen.call_args.args[0]
