@@ -300,9 +300,3 @@ baselines:
     version: qwen3.5-9b-rl-v5full-s20
     profile: default
     generate: false
-  # Mid-training checkpoint, kept for reference; its scores describe neither the
-  # model nor the approach.
-  # - tool: jats-agentic-annotation
-  #   version: qwen3.5-9b-teacher-distill-v1
-  #   profile: default
-  #   generate: false
