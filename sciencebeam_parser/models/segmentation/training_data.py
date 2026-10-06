@@ -1,5 +1,5 @@
 import logging
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 from lxml.builder import ElementMaker
 
@@ -102,9 +102,10 @@ class SegmentationTeiTrainingDataGenerator(AbstractTeiTrainingDataGenerator):
     def write_xml_line_for_layout_tokens(
         self,
         xml_writer: XmlTreeWriter,
-        layout_tokens: Iterable[LayoutToken]
+        layout_tokens: Iterable[LayoutToken],
+        source: Optional[LayoutModelData] = None
     ):
-        xml_writer.append_text(join_layout_tokens(layout_tokens))
+        xml_writer.append_text(join_layout_tokens(layout_tokens), source=source)
         xml_writer.append(TEI_E('lb'))
 
     def write_xml_for_model_data_iterable(
@@ -132,7 +133,8 @@ class SegmentationTeiTrainingDataGenerator(AbstractTeiTrainingDataGenerator):
             ):
                 self.write_xml_line_for_layout_tokens(
                     xml_writer,
-                    layout_line.tokens
+                    layout_line.tokens,
+                    source=model_data
                 )
                 pending_whitespace = '\n'
         xml_writer.require_path(default_path)

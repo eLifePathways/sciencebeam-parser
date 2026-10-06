@@ -6,7 +6,11 @@ from typing import Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tupl
 from lxml import etree
 from lxml.builder import ElementMaker
 
-from sciencebeam_parser.utils.xml_writer import XmlTreeWriter
+from sciencebeam_parser.utils.xml_writer import (
+    TracedItem,
+    TracingXmlTreeWriter,
+    XmlTreeWriter
+)
 from sciencebeam_parser.utils.labels import OTHER_LABELS, get_split_prefix_label
 from sciencebeam_parser.utils.tokenizer import get_tokenized_tokens
 from sciencebeam_parser.document.tei.common import TEI_E, TEI_NS_PREFIX, tei_xpath
@@ -310,7 +314,7 @@ class AbstractTeiTrainingDataGenerator(TeiTrainingDataGenerator):
                 xml_writer.append_text(pending_whitespace)
                 pending_whitespace = ''
                 xml_writer.require_path(xml_element_path)
-                xml_writer.append_text(layout_token.text)
+                xml_writer.append_text(layout_token.text, source=model_data)
                 pending_whitespace = layout_token.whitespace
                 prev_label = label
             elif isinstance(model_data_or_instruction, ResetExtractInstruction):
@@ -341,8 +345,8 @@ class AbstractTeiTrainingDataGenerator(TeiTrainingDataGenerator):
             )
         )
 
-    def _get_xml_writer(self) -> XmlTreeWriter:
-        return XmlTreeWriter(
+    def _get_xml_writer(self) -> TracingXmlTreeWriter:
+        return TracingXmlTreeWriter(
             self.element_maker(self.root_tag),
             element_maker=self.element_maker
         )
@@ -350,10 +354,16 @@ class AbstractTeiTrainingDataGenerator(TeiTrainingDataGenerator):
     def get_post_processed_xml_root(self, xml_root: etree.ElementBase):
         return xml_root
 
-    def get_training_tei_xml_for_multiple_model_data_iterables(
+    def get_training_tei_xml_and_trace(
         self,
         model_data_iterables: Iterable[Iterable[LayoutModelData]]
-    ) -> etree.ElementBase:
+    ) -> Tuple[etree.ElementBase, Sequence[TracedItem]]:
+        """The training TEI, with a record of what was written where.
+
+        The trace says which element instance each run of text went into and
+        which model data it came from, neither of which the finished tree can
+        answer.
+        """
         xml_writer = self._get_xml_writer()
         xml_writer.require_path(self.root_parent_training_xml_element_path)
         for model_data_iterable in model_data_iterables:
@@ -363,7 +373,13 @@ class AbstractTeiTrainingDataGenerator(TeiTrainingDataGenerator):
                 xml_writer,
                 model_data_iterable=model_data_iterable
             )
-        return self.get_post_processed_xml_root(xml_writer.root)
+        return self.get_post_processed_xml_root(xml_writer.root), xml_writer.trace
+
+    def get_training_tei_xml_for_multiple_model_data_iterables(
+        self,
+        model_data_iterables: Iterable[Iterable[LayoutModelData]]
+    ) -> etree.ElementBase:
+        return self.get_training_tei_xml_and_trace(model_data_iterables)[0]
 
     def get_training_tei_xml_for_model_data_iterable(
         self,
