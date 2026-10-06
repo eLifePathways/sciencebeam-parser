@@ -318,3 +318,60 @@ class TestMissingSource:
         assert exc_info.value.code == 1
         assert (existing / "kept.tei.xml").is_file()
         mock_generate.assert_not_called()
+
+
+class TestKeepingWhatCannotBeRebuilt:
+    def test_keeps_the_data_of_a_document_whose_source_has_gone(self, tmp_path: Path):
+        """A rebuild is not a reason to lose a document the dataset stopped carrying.
+
+        It cannot be generated again, so clearing the pair would be the only thing
+        that removed it -- and it may have been reviewed.
+        """
+        pair = tmp_path / "segmentation"
+        (pair / "corpus" / "tei").mkdir(parents=True)
+        (pair / "corpus" / "tei" / "gone.segmentation.tei.xml").write_text(
+            "<x/>", encoding="utf-8"
+        )
+        (pair / "corpus" / "tei" / "here.segmentation.tei.xml").write_text(
+            "<x/>", encoding="utf-8"
+        )
+        (pair / "quality").mkdir()
+        (pair / "quality" / "gone.segmentation.quality.json").write_text(
+            "{}", encoding="utf-8"
+        )
+        (pair / "quality" / "here.segmentation.quality.json").write_text(
+            "{}", encoding="utf-8"
+        )
+
+        clear_pair(pair, ["gone"])
+
+        assert (pair / "corpus" / "tei" / "gone.segmentation.tei.xml").is_file()
+        assert (pair / "quality" / "gone.segmentation.quality.json").is_file()
+        assert not (pair / "corpus" / "tei" / "here.segmentation.tei.xml").exists()
+        assert not (pair / "quality" / "here.segmentation.quality.json").exists()
+
+    def test_clears_everything_when_nothing_has_gone(self, tmp_path: Path):
+        pair = tmp_path / "segmentation"
+        (pair / "corpus" / "tei").mkdir(parents=True)
+        (pair / "corpus" / "tei" / "a.segmentation.tei.xml").write_text("<x/>", encoding="utf-8")
+
+        clear_pair(pair, [])
+
+        assert not (pair / "corpus").exists()
+
+    def test_a_document_is_not_kept_by_another_whose_id_starts_the_same(
+        self, tmp_path: Path
+    ):
+        pair = tmp_path / "segmentation"
+        (pair / "corpus" / "tei").mkdir(parents=True)
+        (pair / "corpus" / "tei" / "2-114_v1.segmentation.tei.xml").write_text(
+            "<x/>", encoding="utf-8"
+        )
+        (pair / "corpus" / "tei" / "2-114_v10.segmentation.tei.xml").write_text(
+            "<x/>", encoding="utf-8"
+        )
+
+        clear_pair(pair, ["2-114_v1"])
+
+        assert (pair / "corpus" / "tei" / "2-114_v1.segmentation.tei.xml").is_file()
+        assert not (pair / "corpus" / "tei" / "2-114_v10.segmentation.tei.xml").exists()

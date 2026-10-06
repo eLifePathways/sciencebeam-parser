@@ -94,9 +94,9 @@ def select_for_mode(
 ) -> ModeSelection:
     """The documents this mode names, topping the recorded list up if it is short.
 
-    `raw_n` is a floor rather than an exact count: a list longer than the mode asks
-    for is left alone, because shortening it would evict documents the corpus
-    already holds and may already have had reviewed.
+    What never shrinks is the recorded list: a mode smaller than it takes a shorter
+    prefix and leaves every id in place, so no document leaves the corpus and a
+    mode raised again later names the same ones it did before.
     """
     upstream = list(upstream_ids)
     upstream_set: Set[str] = set(upstream)
@@ -111,7 +111,7 @@ def select_for_mode(
     appended = candidates[: max(0, wanted - len(recorded))]
     grown = recorded + appended
 
-    prefix = grown if raw_n is None else grown[: max(raw_n, len(recorded))]
+    prefix = grown if raw_n is None else grown[:raw_n]
     missing = [document_id for document_id in prefix if document_id not in upstream_set]
     if missing:
         LOGGER.warning(

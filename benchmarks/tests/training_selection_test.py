@@ -46,11 +46,19 @@ class TestSelectForMode:
         assert list(raised.selection[:5]) == list(recorded)
         assert len(raised.appended) == 3
 
-    def test_lowering_a_mode_evicts_nothing(self):
+    def test_lowering_a_mode_takes_a_shorter_prefix_and_drops_no_id(self):
+        """The recorded list is what never shrinks, not each mode's slice of it.
+
+        A smaller mode generates fewer documents; none leaves the corpus, so
+        raising it again names the same ones it did before.
+        """
         recorded = select_for_mode([], UPSTREAM, 10, SEED).selection
         lowered = select_for_mode(recorded, UPSTREAM, 4, SEED)
         assert list(lowered.selection) == list(recorded)
-        assert list(lowered.present) == list(recorded)
+        assert list(lowered.present) == list(recorded[:4])
+
+        raised = select_for_mode(lowered.selection, UPSTREAM, 10, SEED)
+        assert list(raised.present) == list(recorded)
 
     def test_a_grown_dataset_adds_nothing_to_a_mode_already_met(self):
         recorded = select_for_mode([], UPSTREAM, 5, SEED).selection

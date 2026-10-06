@@ -25,7 +25,7 @@ from sciencebeam_parser.training.quality.record import QUALITY_RECORD_DIRECTORY_
 
 from benchmarks.fetch import fetch_training_source
 from benchmarks.generate_training_data_from_tree_cli import main as generate_from_tree_main
-from benchmarks.training_records import PAIR_RECORD_FILENAME
+from benchmarks.training_records import PAIR_RECORD_FILENAME, read_source_manifest
 from benchmarks.training_intent import (
     PairIntent,
     get_declared_pairs,
@@ -74,19 +74,39 @@ def select_pairs(
     ]
 
 
-def clear_pair(pair_dir: Path) -> None:
+def clear_pair(pair_dir: Path, keep_document_ids: Sequence[str] = ()) -> None:
     """Remove what a previous run generated, leaving anything a person wrote.
 
     Clearing is what makes a declaration that was lowered take effect: generation
     overwrites the documents it produces and has no opinion about the ones a
     larger mode left behind.
+
+    `keep_document_ids` are documents the rebuild cannot produce again because
+    their source row has gone. Their data is kept rather than cleared, because the
+    rebuild is not a reason to lose a document the dataset stopped carrying -- that
+    is a decision, and it may have been reviewed.
     """
+    keep_prefixes = tuple(f"{document_id}." for document_id in keep_document_ids)
     for name in MACHINE_WRITTEN_ENTRIES:
         entry = pair_dir / name
         if entry.is_dir():
-            shutil.rmtree(entry)
+            _remove_tree_except(entry, keep_prefixes)
         elif entry.exists():
             entry.unlink()
+
+
+def _remove_tree_except(directory: Path, keep_prefixes: Sequence[str]) -> None:
+    if not keep_prefixes:
+        shutil.rmtree(directory)
+        return
+    for path in sorted(directory.rglob("*"), key=lambda p: -len(p.parts)):
+        if path.is_dir():
+            if not any(path.iterdir()):
+                path.rmdir()
+        elif not path.name.startswith(tuple(keep_prefixes)):
+            path.unlink()
+    if directory.is_dir() and not any(directory.iterdir()):
+        directory.rmdir()
 
 
 def _fetch_modes(
@@ -125,8 +145,9 @@ def _generate_group(  # pylint: disable=too-many-arguments,too-many-positional-a
             f"no source data for {corpus!r} at mode {mode!r}: {corpus_source}."
             f" Fetch it, or run without --skip-fetch"
         )
+    keep = _documents_that_cannot_be_rebuilt(corpus_source)
     for model in models:
-        clear_pair(output_path / split / corpus / model)
+        clear_pair(output_path / split / corpus / model, keep)
     generate_from_tree_main([
         "--config", config_path,
         "--source-data", str(source_root / mode),
@@ -136,6 +157,12 @@ def _generate_group(  # pylint: disable=too-many-arguments,too-many-positional-a
         "--models", *models,
         *extra_argv,
     ])
+
+
+def _documents_that_cannot_be_rebuilt(corpus_source: Path) -> List[str]:
+    """Documents the mode still names whose source row is gone from the dataset."""
+    manifest = read_source_manifest(corpus_source)
+    return list(manifest.missing_document_ids) if manifest else []
 
 
 def _parse_args(argv: Optional[Sequence[str]]) -> Tuple[argparse.Namespace, List[str]]:
