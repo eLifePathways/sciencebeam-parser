@@ -32,6 +32,24 @@ from benchmarks.training_source_config import DEFAULT_CONFIG
 LOGGER = logging.getLogger(__name__)
 
 
+def get_source_paths(corpus_source: Path) -> List[str]:
+    """The documents to generate from: the ones the mode selected, where that is known.
+
+    The source tree is a cache that is only ever added to, so a glob of it answers
+    "what has ever been fetched here" rather than "what does this mode name" -- a
+    directory holding 17 documents for a mode that selects 10. The manifest names
+    the selection, and a tree assembled by hand has none, which is the case the
+    glob is still right for.
+    """
+    manifest = read_source_manifest(corpus_source)
+    if manifest is None or not manifest.selected_document_ids:
+        return [str(corpus_source / "*.pdf")]
+    return [
+        str(corpus_source / f"{document_id}.pdf")
+        for document_id in manifest.selected_document_ids
+    ]
+
+
 def get_declared_models_by_corpus(cfg: dict) -> Dict[str, List[str]]:
     """The models each corpus declares, whatever mode it declares them at.
 
@@ -145,7 +163,7 @@ def main(argv=None):
 
         model_names = args.models or declared_by_corpus.get(corpus)
         corpus_argv = [
-            "--source-path", str(corpus_source / "*.pdf"),
+            "--source-path", *get_source_paths(corpus_source),
             "--source-xml-path", str(corpus_source / "*.jats.xml"),
             "--output-path", str(corpus_output),
             "--use-directory-structure",

@@ -32,7 +32,10 @@ from benchmarks.training_intent import (
     group_by_corpus_and_mode,
     validate_intent,
 )
-from benchmarks.training_source_config import DEFAULT_CONFIG
+from benchmarks.training_source_config import (
+    DEFAULT_CONFIG,
+    get_default_selection_path,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -91,6 +94,7 @@ def _fetch_modes(
     split: str,
     source_root: Path,
     pairs: Sequence[PairIntent],
+    selection_dir: Path,
 ) -> None:
     corpora_by_mode: Dict[str, List[str]] = {}
     for pair in pairs:
@@ -99,7 +103,10 @@ def _fetch_modes(
             corpora.append(pair.corpus)
     for mode, corpora in corpora_by_mode.items():
         LOGGER.info("Fetching %s at mode %r", ", ".join(corpora), mode)
-        fetch_training_source(cfg, mode, split, source_root / mode, include=corpora)
+        fetch_training_source(
+            cfg, mode, split, source_root / mode,
+            include=corpora, selection_dir=selection_dir,
+        )
 
 
 def _generate_group(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -163,6 +170,13 @@ def _parse_args(argv: Optional[Sequence[str]]) -> Tuple[argparse.Namespace, List
         action="store_true",
         help="Generate from the source trees already on disk",
     )
+    parser.add_argument(
+        "--selection-path",
+        help=(
+            "Directory holding each corpus's recorded selection"
+            " (default: a selection directory beside the config)"
+        ),
+    )
     return parser.parse_known_args(argv)
 
 
@@ -185,7 +199,11 @@ def main(argv=None):
     source_root = Path(args.source_root)
     output_path = Path(args.output_path)
     if not args.skip_fetch:
-        _fetch_modes(cfg, args.split, source_root, pairs)
+        _fetch_modes(
+            cfg, args.split, source_root, pairs,
+            Path(args.selection_path) if args.selection_path
+            else get_default_selection_path(args.config),
+        )
 
     errors = []
     for (corpus, mode), models in group_by_corpus_and_mode(pairs).items():

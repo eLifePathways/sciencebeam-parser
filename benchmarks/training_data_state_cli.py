@@ -64,16 +64,40 @@ def _has_data(pair_dir: Path) -> bool:
     return corpus_dir.is_dir() and any(corpus_dir.iterdir())
 
 
-def _recorded_mode(pair_dir: Path) -> Optional[str]:
+def _read_record(pair_dir: Path) -> Optional[Dict[str, Any]]:
     record_path = pair_dir / PAIR_RECORD_FILENAME
     if not record_path.is_file():
         return None
     try:
-        record: Dict[str, Any] = json.loads(record_path.read_text(encoding="utf-8"))
+        return json.loads(record_path.read_text(encoding="utf-8"))
     except ValueError:
         LOGGER.warning("ignoring unreadable pair record: %s", record_path)
         return None
-    return record.get("mode")
+
+
+def _recorded_mode(pair_dir: Path) -> Optional[str]:
+    record = _read_record(pair_dir)
+    return record.get("mode") if record else None
+
+
+def get_missing_documents(root: Path, split: str) -> Dict[str, List[str]]:
+    """Documents a pair's selection names whose source row has gone, by pair.
+
+    They keep their place in the selection -- removing one would shift the next
+    document into the prefix and evict the one at the end -- so this is how they
+    are seen rather than inferred from a count that no longer adds up.
+    """
+    missing: Dict[str, List[str]] = {}
+    split_dir = root / split
+    if not split_dir.is_dir():
+        return missing
+    for corpus_dir in sorted(p for p in split_dir.iterdir() if p.is_dir()):
+        for pair_dir in sorted(p for p in corpus_dir.iterdir() if p.is_dir()):
+            record = _read_record(pair_dir)
+            gone = (record or {}).get("missing_document_ids") or []
+            if gone:
+                missing[f"{corpus_dir.name}/{pair_dir.name}"] = list(gone)
+    return missing
 
 
 def _declared_state(
@@ -156,8 +180,15 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    states = get_pair_states(cfg, Path(args.training_data), args.split)
+    root = Path(args.training_data)
+    states = get_pair_states(cfg, root, args.split)
     print(format_states(states))
+
+    missing = get_missing_documents(root, args.split)
+    if missing:
+        print("\nselected documents whose source has gone:")
+        for pair, document_ids in missing.items():
+            print(f"  {pair}: {', '.join(document_ids)}")
 
     if args.check and any(state.status in NEEDS_ATTENTION for state in states):
         sys.exit(1)

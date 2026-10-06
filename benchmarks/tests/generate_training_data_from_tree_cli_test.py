@@ -420,3 +420,50 @@ class TestDefaultModels:
             ])
 
         assert "--models" not in mock_gen.call_args.args[0]
+
+
+class TestSourceSelection:
+    def test_generates_the_documents_the_manifest_names(self, tmp_path: Path):
+        """The cache accumulates, so a glob of it is not what the mode selected.
+
+        smoke holds 17 documents on disk for a mode selecting 10; generating the
+        directory would put all 17 in a corpus that declares 10.
+        """
+        config = _write_config(tmp_path, ["ore"])
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        corpus_dir = _make_corpus_dir(source, "train", "ore")
+        for name in ["a", "b", "stray"]:
+            (corpus_dir / f"{name}.pdf").write_bytes(b"%PDF")
+        _write_manifest(corpus_dir)
+
+        with patch(GENERATE_DATA) as mock_gen:
+            main([
+                "--config", str(config),
+                "--source-data", str(source),
+                "--output-path", str(output),
+                "--models", "segmentation",
+            ])
+
+        argv = mock_gen.call_args.args[0]
+        paths = argv[argv.index("--source-path") + 1:argv.index("--source-xml-path")]
+        assert paths == [str(corpus_dir / "a.pdf"), str(corpus_dir / "b.pdf")]
+
+    def test_falls_back_to_the_directory_without_a_manifest(self, tmp_path: Path):
+        config = _write_config(tmp_path, ["ore"])
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        corpus_dir = _make_corpus_dir(source, "train", "ore")
+
+        with patch(GENERATE_DATA) as mock_gen:
+            main([
+                "--config", str(config),
+                "--source-data", str(source),
+                "--output-path", str(output),
+                "--models", "segmentation",
+            ])
+
+        argv = mock_gen.call_args.args[0]
+        assert argv[argv.index("--source-path") + 1] == str(corpus_dir / "*.pdf")

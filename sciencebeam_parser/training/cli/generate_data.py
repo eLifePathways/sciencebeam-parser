@@ -17,7 +17,8 @@ from typing import (
     NamedTuple,
     Optional,
     Sequence,
-    Tuple
+    Tuple,
+    Union
 )
 
 from lxml import etree
@@ -119,7 +120,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         '--source-path',
         type=str,
-        required=True
+        nargs='+',
+        required=True,
+        help=(
+            'Source documents, as file patterns or paths. More than one is how a'
+            ' caller names the documents it selected rather than everything a'
+            ' directory happens to hold.'
+        )
     )
     parser.add_argument(
         '--output-path',
@@ -1628,11 +1635,17 @@ def generate_training_data_for_source_filename(
 
 
 def get_source_file_list_or_fail(
-    source_path_pattern: str
+    source_path_patterns: Union[str, Sequence[str]]
 ) -> Sequence[str]:
-    source_file_list = list(glob(source_path_pattern))
+    if isinstance(source_path_patterns, str):
+        source_path_patterns = [source_path_patterns]
+    source_file_list: List[str] = []
+    for source_path_pattern in source_path_patterns:
+        source_file_list.extend(glob(source_path_pattern))
     if not source_file_list:
-        raise FileNotFoundError('no files found for file pattern: %r' % source_path_pattern)
+        raise FileNotFoundError(
+            'no files found for file pattern(s): %r' % list(source_path_patterns)
+        )
     return source_file_list
 
 

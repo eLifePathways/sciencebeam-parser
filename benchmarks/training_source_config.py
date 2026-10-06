@@ -10,4 +10,17 @@ anything else is passed with `--config`.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+from benchmarks.training_selection import SELECTION_DIRECTORY_NAME
+
 DEFAULT_CONFIG = "data/generated-training-data/training-source.yml"
+
+
+def get_default_selection_path(config_path: str) -> Path:
+    """Where a corpus's recorded selection sits, relative to the config.
+
+    Beside it, because the selection is what the declaration names: both describe
+    the corpus and both are committed with it.
+    """
+    return Path(config_path).parent / SELECTION_DIRECTORY_NAME

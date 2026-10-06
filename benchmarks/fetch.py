@@ -16,6 +16,7 @@ from typing import (
 )
 
 from benchmarks.corpus_source import (
+    CorpusConfigError,
     CorpusSource,
     RepoReader,
     iter_partitioned_rows,
@@ -26,6 +27,12 @@ from benchmarks.corpus_source import (
 )
 from benchmarks.sampling import positional_ids, stratified_ids
 from benchmarks.training_records import SourceManifest
+from benchmarks.training_selection import (
+    ModeSelection,
+    read_selection,
+    select_for_mode,
+    write_selection,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -131,6 +138,39 @@ def _record_id_of(raw_id: str) -> str:
     return raw_id.replace("/", "_")
 
 
+def _select_recorded_ids(
+    reader: RepoReader,
+    source: CorpusSource,
+    raw_n: Optional[int],
+    seed: int,
+    split: str,
+    selection_dir: Path,
+) -> ModeSelection:
+    """The documents this mode names, from the list the corpus carries.
+
+    Recorded against the id the corpus stores, so that what is written here is the
+    same string the dataset uses rather than the filename it is materialised under.
+    """
+    if source.is_stratified:
+        raise CorpusConfigError(
+            f"corpus {source.corpus!r} is stratified, and a recorded selection "
+            f"keeps one order per corpus rather than one per stratum. Generating "
+            f"from a stratified corpus needs that settled first"
+        )
+    recorded = read_selection(selection_dir, split, source.corpus)
+    result = select_for_mode(recorded, read_all_ids(reader, source), raw_n, seed)
+    if list(result.selection) != recorded:
+        file_path = write_selection(
+            selection_dir, split, source.corpus, result.selection
+        )
+        LOGGER.info(
+            "Appended %d document(s) to the selection: %s",
+            len(result.appended),
+            file_path,
+        )
+    return result
+
+
 def _materialise(
     reader: RepoReader,
     source: CorpusSource,
@@ -213,6 +253,7 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     with_pdf: bool,
     include: Optional[Iterable[str]] = None,
     write_manifest: bool = False,
+    selection_dir: Optional[Path] = None,
 ) -> List[Dict[str, str]]:
     """Materialise gold XML, and PDFs when asked, for each corpus of one split.
 
@@ -244,6 +285,7 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 corpus_dir=data_dir / split / source.corpus,
                 with_pdf=with_pdf,
                 write_manifest=write_manifest,
+                selection_dir=selection_dir,
             )
         )
     return records
@@ -259,6 +301,7 @@ def _fetch_corpus(  # pylint: disable=too-many-arguments,too-many-positional-arg
     with_pdf: bool,
     split: str = "train",
     write_manifest: bool = False,
+    selection_dir: Optional[Path] = None,
 ) -> List[Dict[str, str]]:
     LOGGER.info(
         "Fetching corpus %r from %s (mode=%s, n=%s)",
@@ -267,12 +310,20 @@ def _fetch_corpus(  # pylint: disable=too-many-arguments,too-many-positional-arg
         mode,
         raw_n if raw_n is not None else "all",
     )
-    picked, by_stratum = _select_ids(reader, source, raw_n, seed)
+    mode_selection: Optional[ModeSelection] = None
+    if selection_dir is not None:
+        mode_selection = _select_recorded_ids(
+            reader, source, raw_n, seed, split, selection_dir
+        )
+        picked, by_stratum = list(mode_selection.present), None
+    else:
+        picked, by_stratum = _select_ids(reader, source, raw_n, seed)
     corpus_dir.mkdir(parents=True, exist_ok=True)
     records = _materialise(reader, source, picked, by_stratum, corpus_dir, with_pdf)
     if write_manifest:
         _write_source_manifest(
-            reader, source, mode, split, seed, raw_n, picked, corpus_dir
+            reader, source, mode, split, seed, raw_n, picked, corpus_dir,
+            mode_selection,
         )
     LOGGER.info(
         "Corpus %r: %d record(s) available in %s",
@@ -292,6 +343,7 @@ def _write_source_manifest(  # pylint: disable=too-many-arguments,too-many-posit
     raw_n: Optional[int],
     picked: Sequence[str],
     corpus_dir: Path,
+    mode_selection: Optional[ModeSelection] = None,
 ) -> None:
     """Leave what this fetch resolved beside the documents it wrote.
 
@@ -311,6 +363,9 @@ def _write_source_manifest(  # pylint: disable=too-many-arguments,too-many-posit
         commit=reader.resolve_commit(source),
         requested_document_count=raw_n,
         selected_document_ids=[_record_id_of(raw_id) for raw_id in picked],
+        missing_document_ids=[
+            _record_id_of(raw_id) for raw_id in (mode_selection.missing if mode_selection else ())
+        ],
     )
     file_path = manifest.write(corpus_dir)
     LOGGER.info("Wrote source manifest: %s", file_path)
@@ -351,6 +406,7 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
     split: str,
     data_dir: Path,
     include: Optional[Iterable[str]] = None,
+    selection_dir: Optional[Path] = None,
 ) -> List[Dict[str, str]]:
     """Fetch PDF + JATS XML for CC-BY corpora only.
 
@@ -379,6 +435,7 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
         with_pdf=True,
         include=in_split,
         write_manifest=True,
+        selection_dir=selection_dir,
     )
 
 

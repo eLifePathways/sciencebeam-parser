@@ -58,6 +58,7 @@ class SourceManifest:
     commit: Optional[str] = None
     requested_document_count: Optional[int] = None
     selected_document_ids: Sequence[str] = ()
+    missing_document_ids: Sequence[str] = ()
 
     @staticmethod
     def get_file_path(corpus_dir: Path) -> Path:
@@ -74,6 +75,7 @@ class SourceManifest:
             ),
             "requested_document_count": self.requested_document_count,
             "selected_document_ids": list(self.selected_document_ids),
+            "missing_document_ids": list(self.missing_document_ids),
         }
 
     def write(self, corpus_dir: Path) -> Path:
@@ -95,6 +97,7 @@ class SourceManifest:
             revision=self.revision,
             location=self.location,
             commit=self.commit,
+            missing_document_ids=list(self.missing_document_ids),
         )
 
 
@@ -111,6 +114,7 @@ class PairRecord:
     revision: str
     location: str
     commit: Optional[str] = None
+    missing_document_ids: Sequence[str] = ()
 
     @staticmethod
     def get_file_path(pair_dir: Path) -> Path:
@@ -126,6 +130,7 @@ class PairRecord:
             "dataset": _dataset_json(
                 self.repo_id, self.revision, self.commit, self.location
             ),
+            "missing_document_ids": list(self.missing_document_ids),
         }
 
     def write(self, pair_dir: Path) -> Path:
@@ -151,6 +156,7 @@ def _manifest_from_json(json_dict: Dict[str, Any]) -> SourceManifest:
         commit=dataset.get("commit"),
         requested_document_count=json_dict.get("requested_document_count"),
         selected_document_ids=json_dict.get("selected_document_ids") or (),
+        missing_document_ids=json_dict.get("missing_document_ids") or (),
     )
 
 

@@ -14,6 +14,7 @@ from benchmarks.training_data_state_cli import (
     OK,
     UNDECLARED,
     UNKNOWN,
+    get_missing_documents,
     get_pair_states,
     main,
 )
@@ -158,3 +159,36 @@ class TestMain:
             "--training-data", str(data),
             "--check",
         ])
+
+
+class TestMissingDocuments:
+    def test_lists_documents_whose_source_has_gone(self, tmp_path: Path):
+        pair_dir = _write_pair(tmp_path, "ore", "segmentation", "smoke")
+        record = json.loads((pair_dir / "provenance.json").read_text(encoding="utf-8"))
+        record["missing_document_ids"] = ["gone1", "gone2"]
+        (pair_dir / "provenance.json").write_text(json.dumps(record), encoding="utf-8")
+
+        assert get_missing_documents(tmp_path, SPLIT) == {
+            "ore/segmentation": ["gone1", "gone2"]
+        }
+
+    def test_says_nothing_when_every_selected_document_is_there(self, tmp_path: Path):
+        _write_pair(tmp_path, "ore", "segmentation", "smoke")
+        assert not get_missing_documents(tmp_path, SPLIT)
+
+    def test_main_prints_them_under_the_table(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ):
+        data = tmp_path / "data"
+        pair_dir = _write_pair(data, "ore", "segmentation", "smoke")
+        record = json.loads((pair_dir / "provenance.json").read_text(encoding="utf-8"))
+        record["missing_document_ids"] = ["gone1"]
+        (pair_dir / "provenance.json").write_text(json.dumps(record), encoding="utf-8")
+
+        config_file = tmp_path / "training-source.yml"
+        config_file.write_text(textwrap.dedent(CONFIG), encoding="utf-8")
+        main(["--config", str(config_file), "--training-data", str(data)])
+
+        out = capsys.readouterr().out
+        assert "whose source has gone" in out
+        assert "gone1" in out

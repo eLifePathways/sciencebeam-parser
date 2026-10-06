@@ -126,3 +126,54 @@ class TestSourceManifest:
             (out / "train" / "ore" / "source.json").read_text(encoding="utf-8")
         )
         assert "commit" not in manifest["dataset"]
+
+
+class TestRecordedSelection:
+    def test_records_what_the_mode_selected(self, repo: Path):
+        out = repo / "out"
+        selection = repo / "selection"
+        fetch_training_source(
+            _BASE_CONFIG, "smoke", "train", out, selection_dir=selection
+        )
+
+        recorded = (selection / "train" / "ore.txt").read_text(encoding="utf-8").split()
+        assert len(recorded) == 2
+        manifest = json.loads(
+            (out / "train" / "ore" / "source.json").read_text(encoding="utf-8")
+        )
+        assert sorted(manifest["selected_document_ids"]) == sorted(recorded)
+
+    def test_a_later_larger_mode_keeps_the_earlier_one(self, repo: Path):
+        out = repo / "out"
+        selection = repo / "selection"
+        fetch_training_source(
+            _BASE_CONFIG, "smoke", "train", out, selection_dir=selection
+        )
+        first = (selection / "train" / "ore.txt").read_text(encoding="utf-8").split()
+
+        fetch_training_source(
+            _BASE_CONFIG, "full", "train", out, selection_dir=selection
+        )
+        second = (selection / "train" / "ore.txt").read_text(encoding="utf-8").split()
+
+        assert second[:2] == first
+        assert len(second) == 5
+
+    def test_going_back_to_a_smaller_mode_evicts_nothing(self, repo: Path):
+        out = repo / "out"
+        selection = repo / "selection"
+        fetch_training_source(
+            _BASE_CONFIG, "full", "train", out, selection_dir=selection
+        )
+        full = (selection / "train" / "ore.txt").read_text(encoding="utf-8").split()
+
+        fetch_training_source(
+            _BASE_CONFIG, "smoke", "train", out, selection_dir=selection
+        )
+
+        assert (selection / "train" / "ore.txt").read_text(encoding="utf-8").split() == full
+
+    def test_without_a_selection_directory_nothing_is_recorded(self, repo: Path):
+        out = repo / "out"
+        fetch_training_source(_BASE_CONFIG, "smoke", "train", out)
+        assert not (repo / "selection").exists()
