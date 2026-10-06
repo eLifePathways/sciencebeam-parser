@@ -350,6 +350,58 @@ def get_block_status_with_blockstart_for_single_token(
     )
 
 
+# Which conventions a model's features were trained with: sciencebeam's own, or
+# those of GROBID's Java feature code, for a model GROBID trained.
+FEATURE_FLAVOUR_SCIENCEBEAM = 'sciencebeam'
+FEATURE_FLAVOUR_GROBID = 'grobid'
+FEATURE_FLAVOURS = (FEATURE_FLAVOUR_SCIENCEBEAM, FEATURE_FLAVOUR_GROBID)
+
+
+def validate_feature_flavour(feature_flavour: str) -> str:
+    if feature_flavour not in FEATURE_FLAVOURS:
+        raise ValueError(
+            f'unknown feature_flavour: {feature_flavour!r}, expected one of {FEATURE_FLAVOURS}'
+        )
+    return feature_flavour
+
+
+def _is_grobid_header_block_start(line_index: int, token_index: int) -> bool:
+    return line_index == 0 and token_index == 0
+
+
+def _is_grobid_header_block_end(
+    line_index: int, line_count: int, token_index: int, token_count: int
+) -> bool:
+    return line_index == line_count - 1 and token_index == token_count - 1
+
+
+def get_grobid_header_line_status(
+    line_index: int, line_count: int, token_index: int, token_count: int
+) -> str:
+    # GROBID HeaderParser: the first token of a block is LINESTART whatever the
+    # length of its line, and a line of a single token otherwise keeps LINESTART
+    # (only the block's last token takes LINEEND).
+    if _is_grobid_header_block_start(line_index, token_index):
+        return 'LINESTART'
+    if _is_grobid_header_block_end(line_index, line_count, token_index, token_count):
+        return 'LINEEND'
+    if token_index == 0:
+        return 'LINESTART'
+    if token_index == token_count - 1:
+        return 'LINEEND'
+    return 'LINEIN'
+
+
+def get_grobid_header_block_status(
+    line_index: int, line_count: int, token_index: int, token_count: int
+) -> str:
+    if _is_grobid_header_block_start(line_index, token_index):
+        return 'BLOCKSTART'
+    if _is_grobid_header_block_end(line_index, line_count, token_index, token_count):
+        return 'BLOCKEND'
+    return 'BLOCKIN'
+
+
 class RelativeFontSizeFeature:
     def __init__(self, layout_tokens: Iterable[LayoutToken]):
         font_sizes = [
@@ -694,6 +746,22 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
             line_index=self.line_index,
             line_count=self.line_count,
             line_status=self.get_line_status_with_linestart_for_single_token()
+        )
+
+    def get_grobid_header_line_status(self) -> str:
+        return get_grobid_header_line_status(
+            line_index=self.line_index,
+            line_count=self.line_count,
+            token_index=self.token_index,
+            token_count=self.token_count
+        )
+
+    def get_grobid_header_block_status(self) -> str:
+        return get_grobid_header_block_status(
+            line_index=self.line_index,
+            line_count=self.line_count,
+            token_index=self.token_index,
+            token_count=self.token_count
         )
 
     def get_dummy_page_status(self) -> str:
