@@ -26,6 +26,33 @@ Gold is JATS; predictions are TEI or JATS. sciencebeam-judge picks its field
 mapping from the root element, so both score through the same definitions — the
 extension is the only difference. Fields and methods are set in `eval.yml`.
 
+### Author–affiliation linking
+
+`affiliation_text` compares a document's affiliations as one flat list: it says
+how well they were extracted, and scores the same whether or not each is attached
+to the right author. `affiliation_linked` scores the attachment. Each gold author
+is paired with a predicted author by normalised surname, the forename initial
+breaking a tie, and the affiliations attached to the two are compared one to one.
+Precision, recall and F1 are over author–affiliation links, so an affiliation
+shared by five authors is five links.
+
+It follows GROBID's metric of the same name, and like it scores only an author
+whose gold link is explicit: an `xref` to the affiliation inside the `contrib`, or
+an `aff` nested in it. Publisher JATS often records the link by position alone,
+which says nothing a parser could be held to, so such an author is left out
+rather than counted as missed, and so is the predicted author paired with them.
+A document without an explicit link therefore adds nothing to the figure, in
+either direction, unless the prediction names an author the gold does not have.
+How many documents have one is `n_gold` under `gold_presence` in `summary.json`.
+
+Affiliations a parser extracted but attached to nobody are links it missed, not
+links it got wrong. A named author the gold does not have, carrying affiliations,
+is links it got wrong.
+
+The judge's mapping has no way to select a link, so the field is scored in
+[`benchmarks/affiliation_linking.py`](../benchmarks/affiliation_linking.py), by
+the same methods as the other fields.
+
 ## The predictions store
 
 `sciencebeam-eval-predictions`, a private repo written by CI, keyed

@@ -1,7 +1,7 @@
 import logging
 import re
 from itertools import zip_longest
-from typing import Mapping, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, List, Mapping, NamedTuple, Optional, Sequence, Tuple, Union
 
 from lxml import etree
 from lxml.builder import ElementMaker
@@ -115,7 +115,15 @@ class XmlTreeWriter:
     def root(self) -> etree.ElementBase:
         return self.current_element.getroottree().getroot()
 
-    def append_text(self, text: str):
+    def append_text(  # pylint: disable=unused-argument
+        self, text: str, source: Optional[Any] = None
+    ):
+        """Append text, optionally naming what it was written from.
+
+        The base writer ignores ``source``; a subclass recording what it wrote
+        uses it to say which text came from a token rather than from the
+        whitespace between two of them.
+        """
         _append_text(self.current_element, text)
 
     def append(self, element_or_text: Union[etree.ElementBase, str]):
@@ -139,3 +147,52 @@ class XmlTreeWriter:
         self.require_path(
             _get_common_path(self.current_path, required_path)
         )
+
+
+class TracedText(NamedTuple):
+    """Text appended to an element, and what it was written from."""
+    element: etree.ElementBase
+    path: Tuple[str, ...]
+    text: str
+    source: Optional[Any]
+
+
+class TracedElement(NamedTuple):
+    """An element appended as a child, such as a line break."""
+    element: etree.ElementBase
+    path: Tuple[str, ...]
+
+
+TracedItem = Union[TracedText, TracedElement]
+
+
+class TracingXmlTreeWriter(XmlTreeWriter):
+    """An `XmlTreeWriter` that records what it wrote and where it put it.
+
+    Reading the element path back out of the finished tree cannot say which of
+    two sibling elements of one name a run of text went into, and cannot pair
+    that run with the token it came from.  Recording both as they are written
+    can, which is what placing a label on the page needs.
+    """
+
+    def __init__(self, parent: etree.ElementBase, element_maker: ElementMaker):
+        super().__init__(parent, element_maker)
+        self.trace: List[TracedItem] = []
+
+    def append_text(self, text: str, source: Optional[Any] = None):
+        if text:
+            self.trace.append(TracedText(
+                element=self.current_element,
+                path=tuple(self.current_path),
+                text=text,
+                source=source
+            ))
+        super().append_text(text, source)
+
+    def append(self, element_or_text: Union[etree.ElementBase, str]):
+        if not isinstance(element_or_text, str):
+            self.trace.append(TracedElement(
+                element=element_or_text,
+                path=tuple(self.current_path)
+            ))
+        super().append(element_or_text)

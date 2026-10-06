@@ -77,11 +77,16 @@ from sciencebeam_parser.training.jats.field_extractor import (
 from sciencebeam_parser.training.quality.counting import (
     ENTITY_ELEMENT_NAME_BY_MODEL,
     count_citation_labels,
-    count_entity_elements
+    count_entity_elements,
+    count_segmentation_lines
 )
-from sciencebeam_parser.training.lines.record import (
-    format_lines_record,
-    iter_labelled_lines
+from sciencebeam_parser.utils.xml_writer import TracedItem
+from sciencebeam_parser.training.spans.record import (
+    check_spans_against_tei,
+    format_spans_record,
+    get_model_labels,
+    iter_labelled_spans,
+    iter_tei_line_texts
 )
 from sciencebeam_parser.training.quality.record import (
     DocumentQualityRecord,
@@ -180,6 +185,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             'Per-document time limit in seconds (0 = no limit). '
             'Documents that exceed this limit are skipped with a warning. '
             'Single-worker mode uses SIGALRM; multi-worker mode uses future timeout.'
+        )
+    )
+    parser.add_argument(
+        '--profile',
+        type=str,
+        default=None,
+        metavar='PROFILE',
+        help=(
+            'Resolve this configuration profile before generating, as the parser'
+            ' resolves it at serving. Without it the base configuration is used,'
+            ' which is not the same thing as the default profile.'
         )
     )
     parser.add_argument(
@@ -481,11 +497,11 @@ class AbstractModelTrainingDataGenerator(ABC):
             document_context.source_name + self.get_pre_file_path_suffix() + suffix
         )
 
-    def get_lines_filename_suffix(self) -> Optional[str]:
-        """The per-line record's suffix, or None for a model that writes none."""
+    def get_spans_filename_suffix(self) -> Optional[str]:
+        """The per-span record's suffix, or None for a model that writes none."""
         return None
 
-    def get_lines_sub_directory(self) -> Optional[str]:
+    def get_spans_sub_directory(self) -> Optional[str]:
         return None
 
     @abstractmethod
@@ -533,10 +549,10 @@ class AbstractModelTrainingDataGenerator(ABC):
             document_context=document_context,
             sub_directory=tei_training_data_generator.get_default_data_sub_directory()
         )
-        lines_file_path = self._get_file_path_with_suffix(
-            self.get_lines_filename_suffix(),
+        spans_file_path = self._get_file_path_with_suffix(
+            self.get_spans_filename_suffix(),
             document_context=document_context,
-            sub_directory=self.get_lines_sub_directory()
+            sub_directory=self.get_spans_sub_directory()
         )
         assert tei_file_path
         model_data_list_list = list(self.iter_model_data_list(
@@ -552,12 +568,21 @@ class AbstractModelTrainingDataGenerator(ABC):
                     0 if self.model_name in ENTITY_ELEMENT_NAME_BY_MODEL else None
                 ),
             )
-        training_tei_root = (
-            tei_training_data_generator
-            .get_training_tei_xml_for_multiple_model_data_iterables(
-                model_data_list_list
+        trace: Sequence[TracedItem] = []
+        if spans_file_path:
+            assert isinstance(tei_training_data_generator, AbstractTeiTrainingDataGenerator)
+            training_tei_root, trace = (
+                tei_training_data_generator.get_training_tei_xml_and_trace(
+                    model_data_list_list
+                )
             )
-        )
+        else:
+            training_tei_root = (
+                tei_training_data_generator
+                .get_training_tei_xml_for_multiple_model_data_iterables(
+                    model_data_list_list
+                )
+            )
         LOGGER.info('writing training tei to: %r', tei_file_path)
         write_bytes(
             tei_file_path,
@@ -572,25 +597,36 @@ class AbstractModelTrainingDataGenerator(ABC):
                 ),
                 encoding='utf-8'
             )
-        if lines_file_path:
+        if spans_file_path:
             assert isinstance(tei_training_data_generator, AbstractTeiTrainingDataGenerator)
-            LOGGER.info('writing line record to: %r', lines_file_path)
+            element_path_by_label = (
+                tei_training_data_generator.training_xml_element_path_by_label
+            )
+            root_element_path = (
+                tei_training_data_generator.root_training_xml_element_path
+            )
+            spans = list(iter_labelled_spans(
+                trace=trace,
+                training_xml_element_path_by_label=element_path_by_label,
+                root_training_xml_element_path=root_element_path
+            ))
+            check_spans_against_tei(
+                document_id=document_context.source_name,
+                spans=spans,
+                tei_line_texts=list(iter_tei_line_texts(
+                    training_tei_root=training_tei_root,
+                    root_training_xml_element_path=root_element_path
+                ))
+            )
+            LOGGER.info('writing span record to: %r', spans_file_path)
             write_text(
-                lines_file_path,
-                format_lines_record(
+                spans_file_path,
+                format_spans_record(
                     document_id=document_context.source_name,
                     model_name=self.model_name,
                     layout_document=layout_document,
-                    model_data_list_list=model_data_list_list,
-                    labelled_lines=list(iter_labelled_lines(
-                        training_tei_root=training_tei_root,
-                        root_training_xml_element_path=(
-                            tei_training_data_generator.root_training_xml_element_path
-                        ),
-                        training_xml_element_path_by_label=(
-                            tei_training_data_generator.training_xml_element_path_by_label
-                        )
-                    ))
+                    spans=spans,
+                    labels=get_model_labels(element_path_by_label, root_element_path)
                 ),
                 encoding='utf-8'
             )
@@ -663,14 +699,14 @@ class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenera
 
 class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'segmentation'
-    LINES_FILENAME_SUFFIX = '.segmentation.lines.jsonl'
-    LINES_SUB_DIRECTORY = 'segmentation/corpus/lines'
+    SPANS_FILENAME_SUFFIX = '.segmentation.spans.jsonl'
+    SPANS_SUB_DIRECTORY = 'segmentation/corpus/spans'
 
-    def get_lines_filename_suffix(self) -> Optional[str]:
-        return SegmentationModelTrainingDataGenerator.LINES_FILENAME_SUFFIX
+    def get_spans_filename_suffix(self) -> Optional[str]:
+        return SegmentationModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
 
-    def get_lines_sub_directory(self) -> Optional[str]:
-        return SegmentationModelTrainingDataGenerator.LINES_SUB_DIRECTORY
+    def get_spans_sub_directory(self) -> Optional[str]:
+        return SegmentationModelTrainingDataGenerator.SPANS_SUB_DIRECTORY
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.segmentation_model
@@ -681,6 +717,19 @@ class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
         document_context: TrainingDataDocumentContext
     ) -> Iterable[LayoutDocument]:
         return [layout_document]
+
+    def get_quality_label_counts(
+        self,
+        model_data_list_list: Sequence[Sequence[LayoutModelData]],
+        document_context: TrainingDataDocumentContext
+    ) -> Optional[Dict[str, Dict[str, int]]]:
+        # Regions occur once, so there is no cardinality to compare; what can be
+        # compared is how many lines each region holds and how many of them the
+        # JATS actually placed, against the sink that catches the rest.
+        annotated = document_context.jats_annotated_document
+        if annotated is None:
+            return None
+        return count_segmentation_lines(model_data_list_list, annotated)
 
     def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
         def fn(
@@ -694,6 +743,14 @@ class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
 
 class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'header'
+    SPANS_FILENAME_SUFFIX = '.header.spans.jsonl'
+    SPANS_SUB_DIRECTORY = 'header/corpus/spans'
+
+    def get_spans_filename_suffix(self) -> Optional[str]:
+        return HeaderModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+
+    def get_spans_sub_directory(self) -> Optional[str]:
+        return HeaderModelTrainingDataGenerator.SPANS_SUB_DIRECTORY
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.header_model
@@ -1616,9 +1673,51 @@ class _Progress:
 _worker_sciencebeam_parser: Optional[ScienceBeamParser] = None
 
 
-def _worker_init() -> None:
-    global _worker_sciencebeam_parser  # pylint: disable=global-statement
+def get_generation_config(profile_name: Optional[str]) -> AppConfig:
+    """The configuration a run generates under.
+
+    Choosing a profile means setting the one the parser will resolve, not merging
+    its overlay in here: `ScienceBeamParser` builds its models through a
+    `ProfileRegistry` that resolves the *default* profile against the
+    configuration it was handed, so a `models:` written here is resolved over and
+    has no effect.
+
+    Without a profile the configuration is left as it is, which is the default
+    profile rather than the `models:` block at the top level -- the same thing
+    serving uses.
+    """
     config = AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
+    if not profile_name:
+        return config
+    config.resolve_profile(profile_name)  # reject an unknown name here, not in a worker
+    return AppConfig({**config.props, 'profile': profile_name})
+
+
+def log_generation_config(
+    config: AppConfig,
+    enabled_models: Optional[frozenset]
+) -> None:
+    """State what the run generates under, per model, rather than only the profile's name.
+
+    The profile decides both the feature configuration a generator builds its
+    rows with and the models `--use-model` would pre-annotate with, and a corpus
+    is only reproducible if the run said which.
+
+    Reported after resolution, because the top-level `models:` block is not what
+    the parser uses and reporting it would describe a configuration that never
+    ran.
+    """
+    LOGGER.info('generation profile: %s', config.get_active_profile_name())
+    model_config_by_name = config.resolve_profile().props.get('models', {})
+    for model_name in get_enabled_model_names(enabled_models):
+        LOGGER.info(
+            '  %s: %r', model_name, model_config_by_name.get(model_name.replace('-', '_'), {})
+        )
+
+
+def _worker_init(profile_name: Optional[str] = None) -> None:
+    global _worker_sciencebeam_parser  # pylint: disable=global-statement
+    config = get_generation_config(profile_name)
     _worker_sciencebeam_parser = ScienceBeamParser.from_config(config)
 
 
@@ -1729,7 +1828,7 @@ def _run_serial(
 
     if document_timeout == 0:
         # No timeout needed — run inline without spawning a subprocess.
-        _worker_init()
+        _worker_init(args.profile)
         for source_filename in source_file_list:
             kwargs = {'source_filename': source_filename, **common_kwargs}
             t0 = time.monotonic()
@@ -1740,7 +1839,8 @@ def _run_serial(
             )
         return
 
-    pool = multiprocessing.Pool(1, initializer=_worker_init)  # pylint: disable=consider-using-with
+    # pylint: disable-next=consider-using-with
+    pool = multiprocessing.Pool(1, initializer=_worker_init, initargs=(args.profile,))
     try:
         for source_filename in source_file_list:
             kwargs = {'source_filename': source_filename, **common_kwargs}
@@ -1754,7 +1854,9 @@ def _run_serial(
                 pool.terminate()
                 pool.join()
                 # pylint: disable-next=consider-using-with
-                pool = multiprocessing.Pool(1, initializer=_worker_init)
+                pool = multiprocessing.Pool(
+                    1, initializer=_worker_init, initargs=(args.profile,)
+                )
             _write_quality_record(quality_writer, source_filename, worker_result)
             progress.record(
                 source_filename, ok=worker_result.ok, elapsed_s=time.monotonic() - t0
@@ -1789,7 +1891,9 @@ def _run_parallel_workers(
         'enabled_models': args.enabled_models,
     }
     # pylint: disable-next=consider-using-with
-    pool = multiprocessing.Pool(num_workers, initializer=_worker_init)
+    pool = multiprocessing.Pool(
+        num_workers, initializer=_worker_init, initargs=(args.profile,)
+    )
     work = [
         (sf, pool.apply_async(_worker_process, ({'source_filename': sf, **common_kwargs},)))
         for sf in source_file_list
@@ -1822,6 +1926,7 @@ def run(args: argparse.Namespace):
         xml_file_list = list(glob(args.source_xml_path))
         LOGGER.info('JATS XML files: %d', len(xml_file_list))
     args.enabled_models = frozenset(args.models) if args.models else None
+    log_generation_config(get_generation_config(args.profile), args.enabled_models)
     # Note: creating the directory may not be necessary, but provides early feedback
     makedirs(output_path, exist_ok=True)
     total = len(source_file_list)

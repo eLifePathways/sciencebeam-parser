@@ -180,6 +180,7 @@ fields:
   - abstract_language
   - author_full_names
   - affiliation_text
+  - affiliation_linked
   - keywords
   - body_section_titles
   - acknowledgement
@@ -203,6 +204,9 @@ scoring:
   #                  sits in its list, scored as a single string; records which gold value
   #                  it was (appropriate where several values are one right answer said
   #                  differently, rather than a set to reproduce)
+  #   linked       - affiliation_linked only, and not set here: each gold author is paired
+  #                  with a predicted one and the affiliations attached to both compared,
+  #                  counting author-affiliation links. See benchmarks/affiliation_linking.py
   #
   # Three readings of the same gold, from strictest to most lenient:
   #   abstract          - the article's own abstract on both sides; the headline, and
@@ -289,9 +293,10 @@ baselines:
     version: main
     profile: grobid_crf
     generate: false
-  # Not deployed yet: a run finds no stored predictions and skips it.
+  # Predictions stored in sciencebeam-eval-predictions (offline run of the RL step-20
+  # checkpoint on the benchmark markdown); no endpoint serves it yet.
   - tool: jats-agentic-annotation
-    version: qwen3.5-9b-rl-v13e-s50
+    version: qwen3.5-9b-rl-v5full-s20
     profile: default
     generate: false
   # Mid-training checkpoint, kept for reference; its scores describe neither the

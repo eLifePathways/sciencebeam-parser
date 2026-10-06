@@ -14,6 +14,10 @@ from lxml import etree as lxml_etree
 
 from sciencebeam_judge.parsing.xml import parse_xml
 
+from benchmarks.affiliation_linking import (
+    AFFILIATION_LINKED_FIELD,
+    extract_author_affiliations,
+)
 from benchmarks.judge_setup import prepare_judge
 from benchmarks.variant_match import matched_expected_index
 
@@ -72,9 +76,24 @@ def _load_doc_score(score_path: Path, field: str, method: str) -> Optional[float
     return _get_doc_score(data.get("fields", {}).get(field, {}), method)
 
 
+def _linked_affiliations_text(xml: bytes) -> Optional[str]:
+    """Each author with the affiliations linked to them, named as they are paired."""
+    return " | ".join(
+        f"{author.surname or '(no name)'} {author.given_initial}".strip()
+        + ": " + ("; ".join(author.affiliations) or "(none)")
+        for author in extract_author_affiliations(xml)
+    ) or None
+
+
 def _extract_field_values(xml_path: Path, field: str, xml_mapping: dict) -> List[str]:
     if not xml_path.exists():
         return []
+    if field == AFFILIATION_LINKED_FIELD:
+        # Not a field the judge's mapping selects, so there is nothing to ask it for. One
+        # value rather than one per author: the authors are compared together, and a
+        # list here is read as alternatives of which a prediction matched one.
+        text = _linked_affiliations_text(xml_path.read_bytes())
+        return [text] if text else []
     values = parse_xml(BytesIO(xml_path.read_bytes()), xml_mapping, fields=[field])
     return [str(value) for value in values.get(field, [])]
 

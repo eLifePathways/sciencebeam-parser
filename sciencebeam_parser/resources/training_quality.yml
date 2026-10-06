@@ -60,7 +60,17 @@ models:
 
   segmentation:
     cardinality: none
-    reason: labels mark regions of a document, which occur once rather than repeatedly
+    reason: >
+      labels mark regions of a document, which occur once rather than repeatedly.
+      The record carries lines per region instead, and how many of them a JATS
+      field grounded: `<body>` is the aligner's sink, so an ungrounded `<body>`
+      line is one the JATS had no opinion about rather than one it called body.
+    # No floor on the sink share yet.  It is high enough on the measured corpora
+    # that a floor near its level risks refusing most of a corpus through
+    # `max_excluded_ratio`, and one well above it may exclude nothing at all;
+    # which is true is readable from the record once a full corpus has one, and
+    # is not worth guessing before then.
+    label_floors: {}
   header:
     cardinality: none
     reason: labels mark fields of one header, so presence is what matters
