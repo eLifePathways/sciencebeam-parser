@@ -102,8 +102,14 @@ def _majority_vote_label(
 
 
 # A page number as it is printed: bare, or spelled out with a prefix and a total.
+# A page marker is sometimes set off from what precedes it in the running foot
+# ("Volpatto et al. | 3"), and sometimes gives the article's extent rather than
+# the page ("1-13").
 _PAGE_MARKER_PATTERN = re.compile(
-    r'^(p(age|ág(ina)?)?\.?\s*)?(?P<number>\d{1,4})(\s*(of|de|/)\s*\d{1,4})?$',
+    r'^[|\u2013\u2014\u00b7-]?\s*'
+    r'(p(age|\u00e1g(ina)?)?\.?\s*)?'
+    r'(?P<number>\d{1,4})'
+    r'(\s*(of|de|/|[\u2013\u2014-])\s*\d{1,4})?$',
     re.IGNORECASE,
 )
 
@@ -235,6 +241,46 @@ def _tag_headnotes_by_text_repetition(
         for sl in seg_lines:
             if sl.text == text and sl.seg_label is None:
                 sl.seg_label = SEG_HEADNOTE
+
+
+_PAGE_NUMBER_POSITION_PRECISION = 2
+
+
+def _tag_page_numbers_by_position(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+) -> None:
+    """Take the number a document sets in the same corner of most of its pages.
+
+    A page number differs on every page, so text repetition cannot find it, and
+    it is not always far enough into the margin for position alone to say.  What
+    repeats is where it is set: the same spot, page after page, in a line of its
+    own that reads as a number.  Two pages at least, since one page cannot show
+    a position repeating, and a number in the middle of a table is not one.
+    """
+    by_spot: Dict[Tuple[float, float], List[_SegLine]] = {}
+    page_numbers: Set[int] = set()
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+        if page_number is None or position is None or y_ratio is None:
+            continue
+        page_numbers.add(page_number)
+        if not _is_valid_page_number_candidate(seg_line.text):
+            continue
+        spot = (
+            round(position[0], -_PAGE_NUMBER_POSITION_PRECISION),
+            round(y_ratio, _PAGE_NUMBER_POSITION_PRECISION),
+        )
+        by_spot.setdefault(spot, []).append(seg_line)
+    threshold = max(len(page_numbers) / 2, 1)
+    for spot_lines in by_spot.values():
+        if len({_get_page_number(sl) for sl in spot_lines}) <= threshold:
+            continue
+        for seg_line in spot_lines:
+            if seg_line.seg_label is None:
+                seg_line.seg_label = SEG_PAGE
 
 
 _RUNNING_FOOT_MIN_Y_RATIO = 0.5
@@ -777,7 +823,9 @@ def _grow_run_over_matching_type(
             position += step
 
 
-_REFERENCE_HEADINGS = frozenset({
+# Compared without spaces, because the extractor splits a word where the page
+# hyphenates or kerns it -- "Refer ências" is one heading, not two words.
+_REFERENCE_HEADINGS = frozenset(heading.replace(' ', '') for heading in (
     'reference', 'references', 'reference list', 'references cited',
     'literature cited', 'works cited',
     'bibliography', 'bibliographie', 'bibliografia', 'bibliografía',
@@ -786,13 +834,13 @@ _REFERENCE_HEADINGS = frozenset({
     'referencia bibliograficas', 'referências bibliográficas',
     'referencias bibliografias', 'bibliografia referencias',
     'literatur', 'literaturverzeichnis',
-})
+))
 
 _HEADING_NOISE_PATTERN = re.compile(r'[^a-z\u00c0-\u024f ]+')
 
 
 def _normalised_heading(text: str) -> str:
-    return ' '.join(_HEADING_NOISE_PATTERN.sub(' ', text.lower()).split())
+    return ''.join(_HEADING_NOISE_PATTERN.sub(' ', text.lower()).split())
 
 
 def _claim_region_heading(
@@ -1091,6 +1139,7 @@ class SegmentationLabelDeriver:
             seg_lines, self.config.page_header_max_first_line_index
         )
         _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
+        _tag_page_numbers_by_position(seg_lines, page_meta_by_number)
         _release_furniture_inside_references(seg_lines)
         _claim_region_heading(
             seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated

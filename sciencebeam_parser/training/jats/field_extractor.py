@@ -120,14 +120,15 @@ _FUNDING_TITLES = frozenset({
 # names no statement, it just mentions one.
 _FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ('conflict', ('conflict', 'conflito', 'conflicto', 'competing interest')),
-    ('funding', (
-        'funding', 'financial support', 'financial disclosure', 'grant',
-        'suporte financeiro', 'apoio financeiro', 'fonte de financiamento',
-        'financiamiento', 'apoyo financiero',
-    )),
+    # One stem for financial / financiamiento / financiacion / financeiro;
+    # conflict is matched first, so "financial competing interests" is still a
+    # conflict.
+    ('funding', ('funding', 'financ', 'grant', 'apoyo financiero')),
     ('contribution', ('contribution', 'contribuicao', 'contribucion',
                       'colabora', 'authorship')),
     ('acknowledgement', ('acknowledg', 'agradecimento', 'agradecimiento')),
+    ('ethics', ('ethic', 'etico', 'etica', 'consent', 'comite de etica',
+                'institutional review')),
 )
 
 _FN_KIND_BY_TYPE = {
@@ -142,14 +143,44 @@ _FN_KIND_BY_TYPE = {
 _FN_HEADING_LENGTH = 80
 
 
-def _get_fn_kind(el: etree._Element) -> Optional[str]:
+def _match_fn_keywords(heading: str) -> Optional[str]:
+    folded = _fold(heading)[:_FN_HEADING_LENGTH]
+    for kind, keywords in _FN_KIND_KEYWORDS:
+        if any(keyword in folded for keyword in keywords):
+            return kind
+    return None
+
+
+def _get_fn_heading(el: etree._Element) -> Optional[str]:
+    """What the footnote calls itself, wherever the publisher wrote it.
+
+    Usually a bold line opening the note.  Sometimes the whole group carries
+    one title and each note under it is bare.  Failing both, the note's own
+    opening words serve -- unless it opens with its number, which is what a
+    numbered page note does and a statement never does: of the notes that
+    carry neither a bold heading nor an `fn-type`, 94 of 101 open with a digit.
+    """
     bold = el.find('.//bold')
     if bold is not None:
-        heading = _fold(_element_text(bold))[:_FN_HEADING_LENGTH]
-        for kind, keywords in _FN_KIND_KEYWORDS:
-            if any(keyword in heading for keyword in keywords):
-                return kind
-    return _FN_KIND_BY_TYPE.get(el.get('fn-type') or '')
+        return _element_text(bold)
+    group = el.getparent()
+    group_title = group.find('title') if group is not None else None
+    if (
+        group_title is not None
+        and _element_text(group_title)
+        and group.find('fn') is el
+    ):
+        # The title heads the note that follows it, not every note in the group:
+        # one group titled for its conflict statement also holds the citation.
+        return _element_text(group_title)
+    text = _element_text(el)
+    return None if re.match(r'^\d', text) else text
+
+
+def _get_fn_kind(el: etree._Element) -> Optional[str]:
+    heading = _get_fn_heading(el)
+    by_heading = _match_fn_keywords(heading) if heading else None
+    return by_heading or _FN_KIND_BY_TYPE.get(el.get('fn-type') or '')
 
 
 _CONTRIBUTION_TITLES = frozenset({
@@ -206,7 +237,7 @@ def _get_funding_sections(root: etree._Element) -> Set[etree._Element]:
 
 
 def _get_ethics_sections(root: etree._Element) -> Set[etree._Element]:
-    return _get_sections(root, _ETHICS_SEC, _ETHICS_TITLES)
+    return _get_sections(root, _ETHICS_SEC, _ETHICS_TITLES, 'ethics')
 
 
 def _is_bold_heading(el: etree._Element) -> bool:
@@ -787,17 +818,24 @@ class JatsFieldExtractor:
         position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
         entries: List[Tuple[int, JatsFieldValue]] = []
 
-        for el in root.xpath('//ack//title'):
-            text = _element_text(el)
-            if text:
-                entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.ACK_SECTION_TITLE)))
-
-        for el in root.xpath('//ack//p'):
-            text = _element_text(el)
-            if text:
-                entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.ACK_SECTION_PARAGRAPH)))
+        # A publisher files a funding statement under `<ack>` and lets its title
+        # say so, and the title is the better evidence of the two.
+        for ack in root.xpath('//ack'):
+            title_el = ack.find('title')
+            kind = (
+                _match_fn_keywords(_element_text(title_el))
+                if title_el is not None else None
+            ) or 'acknowledgement'
+            for el in ack.xpath('.//title'):
+                text = _element_text(el)
+                if text:
+                    entries.append((position[el], JatsFieldValue(
+                        text=text, field_name=_TITLE_FIELD_BY_KIND[kind])))
+            for el in ack.xpath('.//p'):
+                text = _element_text(el)
+                if text:
+                    entries.append((position[el], JatsFieldValue(
+                        text=text, field_name=_PARAGRAPH_FIELD_BY_KIND[kind])))
 
         for el in root.xpath('//app-group/title'):
             text = _element_text(el)
