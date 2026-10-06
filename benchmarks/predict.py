@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -14,6 +15,12 @@ import yaml
 
 from sciencebeam_parser.models.llm.usage import USAGE_HEADER_NAME
 
+from benchmarks.compute_cost import (
+    format_duration,
+    get_machine_record,
+    run_manifest_entry,
+    start_cpu_measurement,
+)
 from benchmarks.fetch import fetch_data, resolved_sources
 
 LOGGER = logging.getLogger(__name__)
@@ -104,14 +111,6 @@ def _llm_usage_entry(response: Optional[httpx.Response]) -> Dict[str, Any]:
         return {}
 
 
-def _format_eta(seconds: float) -> str:
-    if seconds >= 3600:
-        return f"{seconds / 3600:.1f}h"
-    if seconds >= 60:
-        return f"{int(seconds) // 60}m{int(seconds) % 60:02d}s"
-    return f"{seconds:.0f}s"
-
-
 class _Progress:
     def __init__(self, total: int) -> None:
         self.total = total
@@ -138,7 +137,7 @@ class _Progress:
         done = self.completed
         rate = done / elapsed if elapsed > 0 else 0.0
         remaining = self.total - done
-        eta = _format_eta(remaining / rate) if rate > 0 else "?"
+        eta = format_duration(remaining / rate) if rate > 0 else "?"
         LOGGER.info(
             "[%d/%d] %s/%s %s %dms | %.1f doc/s | ~%s left",
             done, self.total, corpus, record_id, status, elapsed_ms, rate, eta,
@@ -154,19 +153,24 @@ async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-pos
     concurrency: int,
     pass_index: int = 1,
     profile: Optional[str] = None,
+    run_started_at: Optional[str] = None,
 ) -> Tuple[int, int]:
     to_process = [
         r for r in records if (r["corpus"], r["record_id"]) not in done
     ]
-    skipped = len(records) - len(to_process)
-    if skipped:
-        LOGGER.info("Skipping %d already-cached documents", skipped)
+    if len(to_process) < len(records):
+        LOGGER.info(
+            "Skipping %d already-cached documents", len(records) - len(to_process)
+        )
     LOGGER.info(
         "Processing %d documents (concurrency=%d)", len(to_process), concurrency
     )
 
     progress = _Progress(len(to_process))
     sem = asyncio.Semaphore(concurrency)
+    # Stamped on what this invocation writes, so the entries `fetch` copied out of
+    # the predictions store stay distinguishable from them.
+    stamp = {"run_started_at": run_started_at} if run_started_at else {}
 
     async with httpx.AsyncClient() as client:
 
@@ -206,7 +210,7 @@ async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-pos
                     out_path.write_bytes(response.content)
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
-                        "status": "ok", "pass": pass_index,
+                        "status": "ok", "pass": pass_index, **stamp,
                         "elapsed_ms": elapsed_ms,
                         **_llm_usage_entry(response),
                     })
@@ -222,7 +226,7 @@ async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-pos
                         LOGGER.error("err %s/%s  %s", corpus, record_id, msg)
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
-                        "status": "error", "pass": pass_index,
+                        "status": "error", "pass": pass_index, **stamp,
                         # How long it took to fail separates a parser that answered
                         # with an error from one that was still working when the
                         # timeout took the request away.
@@ -235,7 +239,7 @@ async def _run_predict_async(  # pylint: disable=too-many-arguments,too-many-pos
                     msg = str(exc)
                     _append_manifest(run_dir, {
                         "corpus": corpus, "record_id": record_id,
-                        "status": "error", "pass": pass_index,
+                        "status": "error", "pass": pass_index, **stamp,
                         "elapsed_ms": round((time.monotonic() - t0) * 1000),
                         "error": msg,
                     })
@@ -264,9 +268,17 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
     sources = resolved_sources(config, split, include)
 
     t_start = time.monotonic()
+    # What separates this invocation's documents from the ones `fetch` copied out
+    # of the predictions store, which another machine timed on another day. To the
+    # microsecond, so that a top-up started seconds after the run it tops up is
+    # still a different invocation.
+    run_started_at = datetime.now(timezone.utc).isoformat()
+    busy_cpu_at_start = start_cpu_measurement(parser_url)
     timeout = config.get("parser", {}).get("timeout_seconds", 60)
     resolved_concurrency = _resolve_concurrency(concurrency)
     passes = max(1, retry_passes)
+    n_processed = 0
+    n_predicted = 0
 
     # A later pass asks again for what is still missing, which is a different
     # question from the engine's own retries: those spend their backoff inside one
@@ -285,14 +297,31 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
                 "Retry pass %d of %d over %d document(s) without a prediction",
                 pass_index, passes, len(remaining),
             )
-        asyncio.run(
+        pass_ok, pass_err = asyncio.run(
             _run_predict_async(
                 records, done, run_dir, parser_url, timeout,
-                resolved_concurrency, pass_index, profile,
+                resolved_concurrency, pass_index, profile, run_started_at,
             )
         )
+        n_processed += pass_ok + pass_err
+        n_predicted += pass_ok
 
     n_ok, n_err, n_recovered = _summarise_manifest(run_dir, records)
+    elapsed_s = round(time.monotonic() - t_start, 1)
+    machine = get_machine_record(busy_cpu_at_start)
+
+    # Beside the documents it produced, so that a set assembled over several
+    # invocations arrives from the predictions store with each one's measurement.
+    # Nothing to say where this invocation generated nothing.
+    if n_processed:
+        _append_manifest(run_dir, run_manifest_entry(
+            run_started_at=run_started_at,
+            concurrency=resolved_concurrency,
+            n_processed=n_processed,
+            n_predicted=n_predicted,
+            elapsed_s=elapsed_s,
+            machine=machine,
+        ))
 
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "run.json").write_text(json.dumps({
@@ -314,12 +343,26 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
         # means nothing failed or nothing was retried.
         "n_recovered": n_recovered,
         "retry_passes": passes,
-        "elapsed_s": round(time.monotonic() - t_start, 1),
+        # What the concurrency resolved to, since the default is the core count of
+        # whichever machine ran the client. A throughput without it is not a number
+        # another run can be compared against.
+        "concurrency": resolved_concurrency,
+        "started_at": run_started_at,
+        # Documents this invocation asked for, which is what the elapsed time and
+        # the CPU figure below cover. `n_records` counts the manifest, so a resumed
+        # run inherits documents an earlier invocation paid for, and a throughput
+        # computed from it would be a fiction.
+        "n_processed": n_processed,
+        "n_predicted": n_predicted,
+        "elapsed_s": elapsed_s,
+        # The whole machine over the run window, the benchmark client included, and
+        # without a CPU figure at all where the parser ran on another host.
+        "machine": machine,
     }, indent=2))
 
     LOGGER.info(
         "done  ok=%d  err=%d  recovered=%d  elapsed=%.1fs",
-        n_ok, n_err, n_recovered, time.monotonic() - t_start,
+        n_ok, n_err, n_recovered, elapsed_s,
     )
 
 
