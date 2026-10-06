@@ -93,6 +93,11 @@ lookup:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/places/location.txt
 processors:
   fulltext:
+    # Which abstracts reach the output where the header model labels more than one
+    # region as the abstract. `first` keeps the first and leaves the rest as notes.
+    # `variants` emits the others as further abstracts too, each declaring the language
+    # of its own text. `merged_by_language` joins those sharing a language into one.
+    abstracts_mode: 'first'
     noise_filter:
       enabled: true
       repetition_fraction: 0.5
@@ -326,6 +331,24 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+  # The default profile with one setting changed, so that comparing either with it
+  # measures `abstracts_mode` and nothing else. Their models and their noise filter are
+  # restated rather than inherited: a profile overlays the base config, not another
+  # profile.
+  grobid_crf_abstract_variants:
+    sequence_models: grobid_crf_0_9_0
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+        abstracts_mode: 'variants'
+  grobid_crf_abstract_merged_by_language:
+    sequence_models: grobid_crf_0_9_0
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+        abstracts_mode: 'merged_by_language'
   wapiti_grobid_only:
     sequence_models: wapiti_grobid_only
     processors:

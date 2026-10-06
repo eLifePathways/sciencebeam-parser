@@ -1,7 +1,7 @@
 # pylint: disable=too-many-lines
 import logging
 import os
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from typing_extensions import Protocol
 
@@ -28,6 +28,7 @@ TEI_NS = 'http://www.tei-c.org/ns/1.0'
 TEI_E = ElementMaker(namespace=TEI_NS, nsmap={'xml': 'xml', 'tei': TEI_NS})
 
 XML_ID = '{%s}id' % XML_NS
+XML_LANG = '{%s}lang' % XML_NS
 
 VALUE_1 = 'value 1'
 VALUE_2 = 'value 2'
@@ -115,14 +116,15 @@ def _tei_to_jats_xslt_fn():
     return wrapper
 
 
-def _tei(
+def _tei(  # pylint: disable=too-many-arguments
     titleStmt: Optional[etree.ElementBase] = None,
     biblStruct: Optional[etree.ElementBase] = None,
     authors: Optional[List[etree.ElementBase]] = None,
     body: Optional[etree.ElementBase] = None,
     back: Optional[etree.ElementBase] = None,
     references: Optional[List[etree.ElementBase]] = None,
-    application: Optional[etree.ElementBase] = None
+    application: Optional[etree.ElementBase] = None,
+    abstracts: Optional[List[Any]] = None
 ) -> etree.ElementBase:
     if authors is None:
         authors = []
@@ -155,6 +157,13 @@ def _tei(
         )
     )
     teiHeader = TEI_E.teiHeader(fileDesc)
+    if abstracts is not None:
+        teiHeader.append(TEI_E.profileDesc(*[
+            TEI_E.abstract(TEI_E.p(abstract[0]), **{XML_LANG: abstract[1]})
+            if isinstance(abstract, tuple)
+            else TEI_E.abstract(TEI_E.p(abstract))
+            for abstract in abstracts
+        ]))
     if application is not None:
         teiHeader.append(TEI_E.encodingDesc(TEI_E.appInfo(application)))
     return TEI_E.TEI(
@@ -384,6 +393,38 @@ class TestTeiToJatsXslt:
             assert jats.xpath(
                 'front/journal-meta/journal-title-group/journal-title'
             ) == []
+
+    class TestAbstract:
+        def test_should_translate_single_abstract(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(abstracts=[VALUE_1])))
+            assert [
+                get_text_content(node)
+                for node in jats.xpath('front/article-meta/abstract')
+            ] == [VALUE_1]
+
+        def test_should_keep_the_language_of_each_abstract(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(abstracts=[(VALUE_1, 'en'), (VALUE_2, 'pt')])
+            ))
+            assert [
+                node.attrib.get(XML_LANG)
+                for node in jats.xpath('front/article-meta/abstract')
+            ] == ['en', 'pt']
+
+        def test_should_not_add_a_language_the_tei_does_not_declare(
+                self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(abstracts=[VALUE_1])))
+            assert XML_LANG not in jats.xpath('front/article-meta/abstract')[0].attrib
+
+        def test_should_translate_further_abstract_as_further_abstract_element(
+                self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(abstracts=[VALUE_1, VALUE_2])
+            ))
+            assert [
+                get_text_content(node)
+                for node in jats.xpath('front/article-meta/abstract')
+            ] == [VALUE_1, VALUE_2]
 
     class TestArticleTitle:
         def test_should_translate_title(self, tei_to_jats_xslt_fn):
