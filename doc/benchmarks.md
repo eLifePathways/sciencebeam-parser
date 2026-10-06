@@ -124,11 +124,11 @@ like one that reads the article's own, and that block is where it shows.
 `abstract_language` scores the declaration rather than the text, and is empty
 unless the run's profile sets `abstracts_mode` to `variants` or
 `merged_by_language`: the shipped default declares no language. The
-`grobid_crf_abstract_variants` profile is the default with that one setting
-changed, so a run against it and a run against the default differ in nothing
-else. The two sides are paired by the abstract's text, since neither the order
-nor the count can be relied on, and a gold abstract declaring no language is
-left out of the
+`grobid_crf_abstract_variants` and `grobid_crf_abstract_merged_by_language`
+profiles are the default with that one setting changed, so a run against either
+and a run against the default differ in nothing else. The two sides are paired
+by the abstract's text, since neither the order nor the count can be relied on,
+and a gold abstract declaring no language is left out of the
 comparison rather than counted as a miss: `biorxiv`, `ore` and `pkp` declare
 none at all, and `scielo_br` and `scielo_preprints-jats` declare one on
 `<trans-abstract>` and not on the `<abstract>` beside it. Its denominator is

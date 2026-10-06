@@ -8,6 +8,7 @@ import yaml
 
 from sciencebeam_parser.app.profiles import ProfileRegistry
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.models.header.extract import ABSTRACTS_MODES
 from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.processors.fulltext.models import SEQUENCE_MODEL_CLASS_BY_NAME
 
@@ -66,22 +67,36 @@ def get_fulltext_processor_config(profile_name: Optional[str]) -> FullTextProces
     )
 
 
-ABSTRACT_VARIANTS_PROFILE = 'grobid_crf_abstract_variants'
+ABSTRACTS_MODE_PROFILES = [
+    'grobid_crf_abstract_variants',
+    'grobid_crf_abstract_merged_by_language'
+]
 
 
-class TestAbstractVariantsProfile:
-    """It exists to be compared with the default, so one setting may differ and no other."""
+class TestAbstractsModeProfiles:
+    """Each exists to be compared with the default, so one setting may differ and no other."""
 
-    def test_should_differ_from_the_default_profile_in_abstracts_mode_only(self):
+    @pytest.mark.parametrize('profile_name', ABSTRACTS_MODE_PROFILES)
+    def test_should_differ_from_the_default_profile_in_abstracts_mode_only(
+        self, profile_name: str
+    ):
         default_config = get_fulltext_processor_config(None)
-        variant_config = get_fulltext_processor_config(ABSTRACT_VARIANTS_PROFILE)
+        variant_config = get_fulltext_processor_config(profile_name)
         assert variant_config.abstracts_mode != default_config.abstracts_mode
         assert variant_config._replace(  # pylint: disable=protected-access
             abstracts_mode=default_config.abstracts_mode
         ) == default_config
 
-    def test_should_serve_the_models_the_default_profile_serves(self):
-        assert get_resolved_models(ABSTRACT_VARIANTS_PROFILE) == get_resolved_models(None)
+    @pytest.mark.parametrize('profile_name', ABSTRACTS_MODE_PROFILES)
+    def test_should_serve_the_models_the_default_profile_serves(self, profile_name: str):
+        assert get_resolved_models(profile_name) == get_resolved_models(None)
+
+    def test_should_cover_every_mode_other_than_the_default(self):
+        default_mode = get_fulltext_processor_config(None).abstracts_mode
+        assert {
+            get_fulltext_processor_config(name).abstracts_mode
+            for name in ABSTRACTS_MODE_PROFILES
+        } == set(ABSTRACTS_MODES) - {default_mode}
 
 
 class TestShippedCombinedProfiles:

@@ -331,9 +331,10 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-  # The default profile with one setting changed, so that comparing the two measures
-  # `abstracts_mode` and nothing else. Its models and its noise filter are restated
-  # rather than inherited: a profile overlays the base config, not another profile.
+  # The default profile with one setting changed, so that comparing either with it
+  # measures `abstracts_mode` and nothing else. Their models and their noise filter are
+  # restated rather than inherited: a profile overlays the base config, not another
+  # profile.
   grobid_crf_abstract_variants:
     sequence_models: grobid_crf_0_9_0
     processors:
@@ -341,6 +342,13 @@ profiles:
         noise_filter:
           enabled: false
         abstracts_mode: 'variants'
+  grobid_crf_abstract_merged_by_language:
+    sequence_models: grobid_crf_0_9_0
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+        abstracts_mode: 'merged_by_language'
   wapiti_grobid_only:
     sequence_models: wapiti_grobid_only
     processors:
