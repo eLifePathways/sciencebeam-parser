@@ -653,10 +653,13 @@ class TestQualityRecord:
     def test_should_join_the_record_generation_wrote(self, tmp_path: Path):
         tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
         self._write_reference_segmenter_tei(tei_source_path, 'document1', bibl_count=3)
-        generated_record_path = (
-            tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
+        generated_records_path = (
+            tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality'
         )
-        generated_record_path.write_text(json.dumps({
+        generated_records_path.mkdir(parents=True)
+        (
+            generated_records_path / 'document1.reference-segmenter.quality.json'
+        ).write_text(json.dumps({
             'document_id': 'document1',
             'model': 'reference-segmenter',
             'status': 'ok',
@@ -668,7 +671,7 @@ class TestQualityRecord:
         main([
             '--model-name=reference_segmenter',
             f'--tei-source-path={tei_source_path}/*.tei.xml',
-            f'--quality-record-path={generated_record_path}',
+            f'--quality-record-path={generated_records_path}/*.quality.json',
             f'--delft-output-path={output_path}'
         ])
         row = json.loads(
@@ -748,15 +751,18 @@ class TestQualityFilter:
             for child in (E('bibl', f'reference{index}', E('lb')), '\n')
         ])))))
 
-    def _write_generated_record(
-        self, record_path: Path, rows: Sequence[dict]
-    ) -> None:
-        record_path.parent.mkdir(parents=True, exist_ok=True)
-        record_path.write_text(
-            '\n'.join(json.dumps(row) for row in rows) + '\n', encoding='utf-8'
-        )
+    def _write_generated_records(
+        self, records_path: Path, rows: Sequence[dict]
+    ) -> str:
+        records_path.mkdir(parents=True, exist_ok=True)
+        for row in rows:
+            (
+                records_path
+                / f'{row["document_id"]}.reference-segmenter.quality.json'
+            ).write_text(json.dumps(row) + '\n', encoding='utf-8')
+        return str(records_path / '*.quality.json')
 
-    def _run(self, tmp_path: Path, tei_source_path: Path, record_path: Path, *extra):
+    def _run(self, tmp_path: Path, tei_source_path: Path, record_path: str, *extra):
         output_path = tmp_path / 'output.data'
         main([
             '--model-name=reference_segmenter',
@@ -773,8 +779,8 @@ class TestQualityFilter:
         self._write_tei(tei_source_path, 'truncated', bibl_count=2)
         for index in range(9):
             self._write_tei(tei_source_path, f'sound{index}', bibl_count=4)
-        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
-        self._write_generated_record(record_path, [
+        records_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality'
+        record_path = self._write_generated_records(records_path, [
             {
                 'document_id': 'truncated', 'written': True,
                 'jats': {'status': 'ok', 'reference_count': 45},
@@ -805,8 +811,8 @@ class TestQualityFilter:
     def test_should_keep_every_document_without_the_filter(self, tmp_path: Path):
         tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
         self._write_tei(tei_source_path, 'truncated', bibl_count=2)
-        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
-        self._write_generated_record(record_path, [{
+        records_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality'
+        record_path = self._write_generated_records(records_path, [{
             'document_id': 'truncated', 'written': True,
             'jats': {'status': 'ok', 'reference_count': 45},
             'entity_element_count': 2,
@@ -829,8 +835,8 @@ class TestQualityFilter:
         tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
         for index in range(3):
             self._write_tei(tei_source_path, f'truncated{index}', bibl_count=2)
-        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
-        self._write_generated_record(record_path, [
+        records_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality'
+        record_path = self._write_generated_records(records_path, [
             {
                 'document_id': f'truncated{index}', 'written': True,
                 'jats': {'status': 'ok', 'reference_count': 45},
@@ -849,8 +855,8 @@ class TestQualityFilter:
         tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
         for index in range(3):
             self._write_tei(tei_source_path, f'truncated{index}', bibl_count=2)
-        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
-        self._write_generated_record(record_path, [
+        records_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality'
+        record_path = self._write_generated_records(records_path, [
             {
                 'document_id': f'truncated{index}', 'written': True,
                 'jats': {'status': 'ok', 'reference_count': 45},
@@ -865,8 +871,8 @@ class TestQualityFilter:
         tei_source_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'corpus' / 'tei'
         for index in range(3):
             self._write_tei(tei_source_path, f'truncated{index}', bibl_count=2)
-        record_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality.jsonl'
-        self._write_generated_record(record_path, [
+        records_path = tmp_path / 'train' / 'ore' / 'reference-segmenter' / 'quality'
+        record_path = self._write_generated_records(records_path, [
             {
                 'document_id': f'truncated{index}', 'written': True,
                 'jats': {'status': 'ok', 'reference_count': 45},

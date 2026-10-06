@@ -99,10 +99,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=str,
         required=False,
         help=(
-            'File pattern of the quality.jsonl written at generation, e.g.'
-            ' "<data>/train/*/reference-segmenter/quality.jsonl". Its counts are joined'
-            ' with the entity count only this step can take. Without it the entity count'
-            ' is still recorded, with nothing to compare it against.'
+            'File pattern of the per-document records written at generation, e.g.'
+            ' "<data>/train/*/reference-segmenter/quality/*.quality.json". Their counts'
+            ' are joined with the entity count only this step can take. Without it the'
+            ' entity count is still recorded, with nothing to compare it against.'
         )
     )
     parser.add_argument(

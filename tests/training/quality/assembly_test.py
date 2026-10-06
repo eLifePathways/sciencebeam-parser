@@ -41,29 +41,54 @@ def _generated(
 class TestGetCorpusNameForRecordFilePath:
     def test_should_take_the_directory_above_the_model(self):
         assert get_corpus_name_for_record_file_path(
-            '/data/train/ore/reference-segmenter/quality.jsonl'
+            '/data/train/ore/reference-segmenter/quality'
+            '/document1.reference-segmenter.quality.json'
         ) == 'ore'
 
     def test_should_be_none_without_a_directory_to_read(self):
-        assert get_corpus_name_for_record_file_path('quality.jsonl') is None
+        assert get_corpus_name_for_record_file_path('document1.quality.json') is None
 
 
 class TestReadGeneratedDocumentRecords:
-    def test_should_read_the_rows_and_the_corpus_they_came_from(self, tmp_path: Path):
-        record_file_path = tmp_path / 'train' / 'ore' / REFERENCE_SEGMENTER / 'quality.jsonl'
-        record_file_path.parent.mkdir(parents=True)
-        record_file_path.write_text('\n'.join([
-            json.dumps({'document_id': 'document1', 'entity_element_count': 12}),
-            json.dumps({'document_id': 'document2', 'entity_element_count': 34}),
-        ]) + '\n', encoding='utf-8')
-        record_by_document_id = read_generated_document_records(str(record_file_path))
+    def test_should_read_the_records_and_the_corpus_they_came_from(
+        self, tmp_path: Path
+    ):
+        records_path = tmp_path / 'train' / 'ore' / REFERENCE_SEGMENTER / 'quality'
+        records_path.mkdir(parents=True)
+        for document_id, entity_element_count in [('document1', 12), ('document2', 34)]:
+            (
+                records_path / f'{document_id}.{REFERENCE_SEGMENTER}.quality.json'
+            ).write_text(json.dumps({
+                'document_id': document_id,
+                'entity_element_count': entity_element_count,
+            }), encoding='utf-8')
+        record_by_document_id = read_generated_document_records(
+            str(records_path / '*.quality.json')
+        )
         assert set(record_by_document_id) == {'document1', 'document2'}
         assert record_by_document_id['document1'].corpus == 'ore'
         assert record_by_document_id['document2'].entity_element_count == 34
 
+    def test_should_read_the_records_of_every_corpus_a_pattern_matches(
+        self, tmp_path: Path
+    ):
+        for corpus, document_id in [('ore', 'document1'), ('scielo', 'document2')]:
+            records_path = tmp_path / 'train' / corpus / REFERENCE_SEGMENTER / 'quality'
+            records_path.mkdir(parents=True)
+            (
+                records_path / f'{document_id}.{REFERENCE_SEGMENTER}.quality.json'
+            ).write_text(
+                json.dumps({'document_id': document_id}), encoding='utf-8'
+            )
+        record_by_document_id = read_generated_document_records(
+            str(tmp_path / 'train' / '*' / REFERENCE_SEGMENTER / 'quality' / '*.json')
+        )
+        assert record_by_document_id['document1'].corpus == 'ore'
+        assert record_by_document_id['document2'].corpus == 'scielo'
+
     def test_should_fail_when_no_record_matches(self, tmp_path: Path):
         with pytest.raises(RuntimeError):
-            read_generated_document_records(str(tmp_path / 'not-there' / '*.jsonl'))
+            read_generated_document_records(str(tmp_path / 'not-there' / '*.json'))
 
 
 class TestAssembledDocumentRecord:
