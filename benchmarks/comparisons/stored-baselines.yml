@@ -10,6 +10,7 @@ variants:
   - {label: grobid 0.9.0 (default), tool: grobid, version: 0.9.0-crf, profile: default}
   - {label: grobid 0.9.1 (default), tool: grobid, version: 0.9.1-crf, profile: default}
   - {label: agentic rl-v5full-s20, tool: jats-agentic-annotation, version: qwen3.5-9b-rl-v5full-s20, profile: default}
+  - {label: parser main (wapiti sp+ore), tool: sciencebeam-parser, version: main, profile: wapiti_scielo_preprints_ore}
   - {label: parser main (grobid_crf), tool: sciencebeam-parser, version: main, profile: grobid_crf}
 
 rows:

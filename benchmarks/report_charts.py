@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from benchmarks.report_grid import ChartConfig, GridRow, Selection, SelectionError
 
 # Validated as a set for adjacent marks in both colour-vision and normal-vision terms;
 # the order is the safety mechanism rather than a preference, so slots are taken in turn
@@ -203,3 +205,97 @@ def chart_markdown(
         src = base_url.rstrip("/") + "/" + name if base_url else f"{rel_dir}/{name}"
         lines += [f"![{spec.alt_text}]({src})", ""]
     return lines
+
+
+@dataclass(frozen=True)
+class ChartOutput:
+    """Where a chart's image is written, and what the report should link it as."""
+    out_dir: Optional[Path] = None
+    rel_dir: str = "charts"
+    prefix: str = ""
+    base_url: str = ""
+
+
+def _declared_charts(
+    selection: Selection, overall_rows: Sequence[GridRow]
+) -> List[ChartConfig]:
+    """What to draw: each chart a comparison file named, plus every row of a field asked
+    for by name alone, which is what `--chart` means."""
+    declared = list(selection.chart_configs)
+    for field in selection.charts:
+        for row in overall_rows:
+            if row.field != field:
+                continue
+            if selection.chart_methods is not None and row.method not in selection.chart_methods:
+                continue
+            declared.append(ChartConfig(field=field, method=row.method, scope=row.scope))
+    return declared
+
+
+def _chart_spec(
+    chart: ChartConfig,
+    labels: Sequence[str],
+    corpus_grids: Dict[str, List[GridRow]],
+    overall_rows: Sequence[GridRow],
+    common: Sequence[str],
+) -> Optional[ChartSpec]:
+    """The per-corpus tables' own cells, so a chart cannot state anything its corpus
+    section does not. A row a corpus has no cells for contributes nothing rather than a
+    zero."""
+    corpora = [
+        corpus for corpus in common
+        if chart.corpora is None or corpus in chart.corpora
+    ]
+    key = (chart.field, chart.method, chart.scope)
+    overall = next(
+        (row for row in overall_rows if (row.field, row.method, row.scope) == key), None
+    )
+    if overall is None or not corpora:
+        return None
+    per_corpus = [
+        next(
+            (
+                found for found in corpus_grids.get(corpus, [])
+                if (found.field, found.method, found.scope) == key
+            ),
+            None,
+        )
+        for corpus in corpora
+    ]
+    return ChartSpec(
+        field=chart.field, method=chart.method, scope=chart.scope,
+        n_docs=overall.n_docs, corpora=tuple(corpora), series=tuple(labels),
+        values=tuple(
+            tuple(found.values[index] if found else None for found in per_corpus)
+            for index in range(len(labels))
+        ),
+        title_override=chart.title,
+    )
+
+
+def chart_specs(
+    selection: Selection,
+    labels: Sequence[str],
+    corpus_grids: Dict[str, List[GridRow]],
+    overall_rows: Sequence[GridRow],
+    common: Sequence[str],
+) -> List[ChartSpec]:
+    declared = _declared_charts(selection, overall_rows)
+    missing = [
+        f"{chart.field} ({chart.method}, {chart.scope})"
+        for chart in declared
+        if not any(
+            (row.field, row.method, row.scope) == (chart.field, chart.method, chart.scope)
+            for row in overall_rows
+        )
+    ]
+    if missing:
+        raise SelectionError(
+            "Nothing to chart for " + "; ".join(missing)
+            + ". A chart draws a row the tables show."
+        )
+    specs = [
+        _chart_spec(chart, labels, corpus_grids, overall_rows, common)
+        for chart in declared
+    ]
+    return [spec for spec in specs if spec is not None]
