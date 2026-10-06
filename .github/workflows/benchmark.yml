@@ -24,8 +24,15 @@ on:
   pull_request:
     types: [labeled, synchronize]
 
+# The profile, because two profiles write different paths in the predictions
+# store and so can run at once; not the mode or the corpus set, because those
+# share a path with every other run of the same profile and a concurrent push
+# to one path cannot be rebased. `inputs.profile` is empty for a push, for a PR
+# and for a dispatch left at its default, so the default below is repeated here
+# to keep those in one group with a dispatch that names it -- it must stay in
+# step with `Resolve benchmark profile`.
 concurrency:
-  group: benchmark-${{ github.ref }}
+  group: benchmark-${{ github.ref }}-${{ inputs.profile || 'grobid_crf' }}
   cancel-in-progress: true
 
 jobs:
