@@ -97,16 +97,23 @@ class ModelQualityRecord:
     `entity_element_count` is None for a model whose labels mark regions rather
     than repeated entities; `written` is False when the generator produced no
     entities and so wrote no file.
+
+    `labelled_content_hash` is what a review pins a verdict to, and is present
+    for a model that writes a span record, which is the same set of models whose
+    data can be read on the page in the first place.
     """
     model_name: str
     written: bool
     entity_element_count: Optional[int] = None
     label_counts: Optional[Dict[str, Dict[str, int]]] = None
+    labelled_content_hash: Optional[str] = None
 
     def to_json_dict(self) -> Dict[str, Any]:
         json_dict: Dict[str, Any] = {'written': self.written}
         if self.entity_element_count is not None:
             json_dict['entity_element_count'] = self.entity_element_count
+        if self.labelled_content_hash is not None:
+            json_dict['labelled_content_hash'] = self.labelled_content_hash
         if self.label_counts:
             json_dict['label_counts'] = self.label_counts
         return json_dict

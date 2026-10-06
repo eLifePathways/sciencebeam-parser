@@ -95,6 +95,22 @@ class TestDocumentQualityRecord:
         assert json_dict['written'] is True
         assert 'entity_element_count' not in json_dict
 
+    def test_should_carry_the_pin_a_review_judges_against(self):
+        json_dict = _record_for_models(
+            ModelQualityRecord(
+                model_name='segmentation',
+                written=True,
+                labelled_content_hash='sha256:abc'
+            )
+        ).to_json_dict_by_model(['segmentation'])['segmentation']
+        assert json_dict['labelled_content_hash'] == 'sha256:abc'
+
+    def test_should_omit_the_pin_for_a_model_that_writes_no_span_record(self):
+        json_dict = _record_for_models(
+            ModelQualityRecord(model_name=REFERENCE_SEGMENTER, written=True)
+        ).to_json_dict_by_model([REFERENCE_SEGMENTER])[REFERENCE_SEGMENTER]
+        assert 'labelled_content_hash' not in json_dict
+
     def test_should_record_a_jats_that_could_not_be_parsed_without_counts(self):
         json_dict = DocumentQualityRecord(
             document_id=DOCUMENT_ID_1,

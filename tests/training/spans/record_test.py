@@ -30,6 +30,7 @@ from sciencebeam_parser.training.spans.record import (
     LabelledSpan,
     check_spans_against_tei,
     format_spans_record,
+    get_labelled_content_hash,
     get_model_labels,
     iter_labelled_spans,
     iter_tei_line_texts
@@ -272,6 +273,83 @@ class TestGetModelLabels:
             HEADER_ELEMENT_PATH_BY_LABEL, HEADER_ROOT_ELEMENT_PATH
         )
         assert labels.index('<title>') < labels.index('<author>')
+
+
+class TestGetLabelledContentHash:
+    def _get_span(
+        self,
+        line_index: int = 0,
+        label: str = '<title>',
+        text: str = 'Title',
+        coordinates: Optional[LayoutPageCoordinates] = None
+    ) -> LabelledSpan:
+        return LabelledSpan(
+            line_index=line_index, label=label, text=text, coordinates=coordinates
+        )
+
+    def test_should_name_the_version_and_the_algorithm_it_used(self):
+        assert get_labelled_content_hash([self._get_span()]).startswith('v1:sha256:')
+
+    def test_should_stay_at_the_value_a_corpus_has_already_committed(self):
+        """A corpus commits these, so changing how one is taken invalidates them all."""
+        assert get_labelled_content_hash([
+            LabelledSpan(line_index=0, label='<title>', text='A title', coordinates=None),
+            LabelledSpan(line_index=1, label='<author>', text='\nJo Bloggs', coordinates=None)
+        ]) == (
+            'v1:sha256:'
+            'b6208f0c3b9b25f77e2da405101a7e5aeacc8ac5f365ee38a604b6345f73f354'
+        )
+
+    def test_should_not_change_where_a_span_only_moved_on_the_page(self):
+        assert get_labelled_content_hash([
+            self._get_span(coordinates=LayoutPageCoordinates(
+                x=10, y=20, width=30, height=10, page_number=1
+            ))
+        ]) == get_labelled_content_hash([
+            self._get_span(coordinates=LayoutPageCoordinates(
+                x=99, y=88, width=30, height=10, page_number=2
+            ))
+        ])
+
+    def test_should_change_where_a_span_was_relabelled(self):
+        assert get_labelled_content_hash([
+            self._get_span(label='<title>')
+        ]) != get_labelled_content_hash([
+            self._get_span(label='<author>')
+        ])
+
+    def test_should_change_where_the_text_a_label_covers_changed(self):
+        assert get_labelled_content_hash([
+            self._get_span(text='Title')
+        ]) != get_labelled_content_hash([
+            self._get_span(text='Titel')
+        ])
+
+    def test_should_change_where_a_line_break_moved(self):
+        assert get_labelled_content_hash([
+            self._get_span(line_index=0, text='Poul'),
+            self._get_span(line_index=0, text=' Holm')
+        ]) != get_labelled_content_hash([
+            self._get_span(line_index=0, text='Poul'),
+            self._get_span(line_index=1, text=' Holm')
+        ])
+
+    def test_should_change_where_a_label_boundary_moved_inside_a_line(self):
+        assert get_labelled_content_hash([
+            self._get_span(label='<author>', text='Poul Holm 1')
+        ]) != get_labelled_content_hash([
+            self._get_span(label='<author>', text='Poul Holm'),
+            self._get_span(label='<affiliation>', text=' 1')
+        ])
+
+    def test_should_change_where_one_element_became_two_under_the_same_label(self):
+        """A span ends where its element does, and two siblings train differently."""
+        assert get_labelled_content_hash([
+            self._get_span(label='<affiliation>', text='A B')
+        ]) != get_labelled_content_hash([
+            self._get_span(label='<affiliation>', text='A'),
+            self._get_span(label='<affiliation>', text=' B')
+        ])
 
 
 class TestFormatSpansRecord:

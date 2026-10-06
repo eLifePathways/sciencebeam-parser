@@ -84,6 +84,7 @@ from sciencebeam_parser.utils.xml_writer import TracedItem
 from sciencebeam_parser.training.spans.record import (
     check_spans_against_tei,
     format_spans_record,
+    get_labelled_content_hash,
     get_model_labels,
     iter_labelled_spans,
     iter_tei_line_texts
@@ -569,6 +570,7 @@ class AbstractModelTrainingDataGenerator(ABC):
                 ),
             )
         trace: Sequence[TracedItem] = []
+        labelled_content_hash: Optional[str] = None
         if spans_file_path:
             assert isinstance(tei_training_data_generator, AbstractTeiTrainingDataGenerator)
             training_tei_root, trace = (
@@ -618,6 +620,7 @@ class AbstractModelTrainingDataGenerator(ABC):
                     root_training_xml_element_path=root_element_path
                 ))
             )
+            labelled_content_hash = get_labelled_content_hash(spans)
             LOGGER.info('writing span record to: %r', spans_file_path)
             write_text(
                 spans_file_path,
@@ -637,6 +640,7 @@ class AbstractModelTrainingDataGenerator(ABC):
             label_counts=self.get_quality_label_counts(
                 model_data_list_list, document_context
             ),
+            labelled_content_hash=labelled_content_hash,
         )
 
 
