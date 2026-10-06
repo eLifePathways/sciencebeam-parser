@@ -766,21 +766,23 @@ class TestDifferentlyScoredNote:
 
 
 def _cost(
-    n_processed: Optional[int] = 60,
+    n_predicted: Optional[int] = 60,
+    n_attempted: Optional[int] = None,
     elapsed_s: Optional[float] = 600.0,
     n_runs: int = 1,
     concurrency: Optional[list] = None,
     cpu_seconds: Optional[float] = 1800.0,
-    cpu_n_processed: Optional[int] = None,
+    cpu_n_predicted: Optional[int] = None,
     machines: Optional[list] = None,
     median: int = 2400,
     p90: int = 9100,
 ) -> dict:
     cost: dict = {"latency_ms": {"n": 60, "median": median, "p90": p90}}
-    if n_processed is not None:
+    if n_predicted is not None:
         cost.update({
             "n_runs": n_runs,
-            "n_processed": n_processed,
+            "n_predicted": n_predicted,
+            "n_attempted": n_predicted if n_attempted is None else n_attempted,
             "elapsed_s": elapsed_s,
             "concurrency": [4] if concurrency is None else concurrency,
             "machines": (
@@ -790,8 +792,8 @@ def _cost(
         })
     if cpu_seconds is not None:
         cost["cpu_seconds"] = cpu_seconds
-        cost["cpu_n_processed"] = (
-            n_processed if cpu_n_processed is None else cpu_n_processed
+        cost["cpu_n_predicted"] = (
+            n_predicted if cpu_n_predicted is None else cpu_n_predicted
         )
     return cost
 
@@ -828,14 +830,18 @@ class TestComputeCostSection:
         assert "AMD EPYC 7763, 4 cores" in report
 
     def test_should_state_how_many_runs_produced_the_predictions(self):
-        report = self._report(("SB", _cost(n_runs=3, n_processed=60, elapsed_s=600.0)))
+        report = self._report(("SB", _cost(n_runs=3, n_predicted=60, elapsed_s=600.0)))
         assert "60 docs in 10m00s over 3 runs at concurrency 4" in report
 
     def test_should_report_cpu_over_the_part_of_the_set_that_was_measured(self):
         report = self._report(
-            ("SB", _cost(n_processed=60, cpu_seconds=900.0, cpu_n_processed=30))
+            ("SB", _cost(n_predicted=60, cpu_seconds=900.0, cpu_n_predicted=30))
         )
         assert "30.0 CPU-seconds per document over the 30 of 60 measured" in report
+
+    def test_should_report_what_was_attempted_where_some_failed(self):
+        report = self._report(("SB", _cost(n_predicted=50, n_attempted=60)))
+        assert "50 docs in 10m00s (60 attempted) at concurrency 4 — 300 docs/hour" in report
 
     def test_should_omit_cpu_where_no_run_measured_it(self):
         report = self._report(("SB", _cost(cpu_seconds=None)))

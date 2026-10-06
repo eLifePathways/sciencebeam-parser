@@ -451,19 +451,19 @@ class TestRunScoreLlmUsage:
             },
             {
                 "type": "run", "started_at": "2026-10-05T10:00:00.1+00:00",
-                "concurrency": 4, "n_processed": 40, "elapsed_s": 400.0,
+                "concurrency": 4, "n_processed": 40, "n_predicted": 40, "elapsed_s": 400.0,
                 "machine": {"cpu_model": "AMD EPYC 7763", "cpu_count": 4,
                             "cpu_seconds": 1200.0},
             },
             {
                 "type": "run", "started_at": "2026-10-06T10:00:00.1+00:00",
-                "concurrency": 4, "n_processed": 20, "elapsed_s": 200.0,
+                "concurrency": 4, "n_processed": 20, "n_predicted": 20, "elapsed_s": 200.0,
                 "machine": {"cpu_model": "AMD EPYC 7763", "cpu_count": 4,
                             "cpu_seconds": 600.0},
             },
         ])
         assert summary["cost"]["n_runs"] == 2
-        assert summary["cost"]["n_processed"] == 60
+        assert summary["cost"]["n_predicted"] == 60
         assert summary["cost"]["cpu_seconds"] == 1800.0
 
     def test_should_leave_the_summary_unchanged_without_a_prediction(self, tmp_path: Path):

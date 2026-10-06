@@ -278,6 +278,7 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
     resolved_concurrency = _resolve_concurrency(concurrency)
     passes = max(1, retry_passes)
     n_processed = 0
+    n_predicted = 0
 
     # A later pass asks again for what is still missing, which is a different
     # question from the engine's own retries: those spend their backoff inside one
@@ -303,6 +304,7 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
             )
         )
         n_processed += pass_ok + pass_err
+        n_predicted += pass_ok
 
     n_ok, n_err, n_recovered = _summarise_manifest(run_dir, records)
     elapsed_s = round(time.monotonic() - t_start, 1)
@@ -316,6 +318,7 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
             run_started_at=run_started_at,
             concurrency=resolved_concurrency,
             n_processed=n_processed,
+            n_predicted=n_predicted,
             elapsed_s=elapsed_s,
             machine=machine,
         ))
@@ -350,6 +353,7 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
         # run inherits documents an earlier invocation paid for, and a throughput
         # computed from it would be a fiction.
         "n_processed": n_processed,
+        "n_predicted": n_predicted,
         "elapsed_s": elapsed_s,
         # The whole machine over the run window, the benchmark client included, and
         # without a CPU figure at all where the parser ran on another host.

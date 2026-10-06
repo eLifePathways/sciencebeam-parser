@@ -136,6 +136,7 @@ def _run_entry(
     started_at: str = INVOCATION,
     concurrency: int = 4,
     n_processed: int = 10,
+    n_predicted: Optional[int] = None,
     elapsed_s: float = 100.0,
     cpu_seconds: Optional[float] = 300.0,
     cpu_model: Optional[str] = "AMD EPYC 7763",
@@ -147,6 +148,7 @@ def _run_entry(
         machine["cpu_seconds"] = cpu_seconds
     return run_manifest_entry(
         run_started_at=started_at, concurrency=concurrency, n_processed=n_processed,
+        n_predicted=n_processed if n_predicted is None else n_predicted,
         elapsed_s=elapsed_s, machine=machine,
     )
 
@@ -180,10 +182,10 @@ class TestAggregateCost:
                        elapsed_s=50.0, cpu_seconds=150.0),
         ])
         assert cost["n_runs"] == 2
-        assert cost["n_processed"] == 15
+        assert cost["n_predicted"] == 15
         assert cost["elapsed_s"] == 150.0
         assert cost["cpu_seconds"] == 450.0
-        assert cost["cpu_n_processed"] == 15
+        assert cost["cpu_n_predicted"] == 15
 
     def test_should_report_latency_over_every_document_whichever_run_made_it(self):
         cost = self._cost([
@@ -199,14 +201,14 @@ class TestAggregateCost:
             _run_entry(started_at="2026-10-06T10:00:00+00:00", n_processed=5,
                        cpu_seconds=None),
         ])
-        assert cost["n_processed"] == 15
+        assert cost["n_predicted"] == 15
         assert cost["cpu_seconds"] == 300.0
-        assert cost["cpu_n_processed"] == 10
+        assert cost["cpu_n_predicted"] == 10
 
     def test_should_omit_cpu_where_no_run_measured_it(self):
         cost = self._cost([_run_entry(cpu_seconds=None)])
         assert "cpu_seconds" not in cost
-        assert cost["n_processed"] == 10
+        assert cost["n_predicted"] == 10
 
     def test_should_collect_the_machines_and_concurrencies_it_was_measured_at(self):
         cost = self._cost([
@@ -219,3 +221,18 @@ class TestAggregateCost:
             {"cpu_model": "AMD EPYC 7763", "cpu_count": 4},
             {"cpu_model": "Intel Xeon Platinum 8370C", "cpu_count": 4},
         ]
+
+    def test_should_ignore_a_run_that_produced_nothing(self):
+        cost = self._cost([
+            _entry(record_id="doc1", elapsed_ms=100),
+            # Reached no parser: sixty documents failed in a tenth of a second.
+            _run_entry(n_processed=60, n_predicted=0, elapsed_s=0.1, cpu_seconds=0.4),
+        ])
+        assert "n_predicted" not in cost
+        assert "cpu_seconds" not in cost
+        assert cost["latency_ms"]["n"] == 1
+
+    def test_should_state_what_a_partly_failed_run_attempted(self):
+        cost = self._cost([_run_entry(n_processed=60, n_predicted=50, elapsed_s=600.0)])
+        assert cost["n_predicted"] == 50
+        assert cost["n_attempted"] == 60

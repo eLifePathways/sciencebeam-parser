@@ -123,10 +123,11 @@ def _percentile_ms(sorted_values: List[int], fraction: float) -> int:
 RUN_ENTRY_TYPE = "run"
 
 
-def run_manifest_entry(
+def run_manifest_entry(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     run_started_at: str,
     concurrency: int,
     n_processed: int,
+    n_predicted: int,
     elapsed_s: float,
     machine: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -144,6 +145,10 @@ def run_manifest_entry(
         "started_at": run_started_at,
         "concurrency": concurrency,
         "n_processed": n_processed,
+        # What it has to show for them. A run that reached no parser at all failed
+        # sixty documents in a tenth of a second, and a rate over what it attempted
+        # would report that as the fastest run ever measured.
+        "n_predicted": n_predicted,
         "elapsed_s": elapsed_s,
         "machine": machine,
     }
@@ -212,28 +217,38 @@ def aggregate_cost(
     """
     runs = [entry for entry in manifest_entries if entry.get("type") == RUN_ENTRY_TYPE]
     latency = aggregate_latency_ms(manifest_entries, corpora)
-    if not runs and not latency:
+    # A run states what it has to show for its wall clock, and one with nothing to
+    # show is left out of the rates rather than dividing by what it attempted.
+    contributing = [run for run in runs if run.get("n_predicted")]
+    if not contributing and not latency:
         return None
 
     cost: Dict[str, Any] = {}
     if latency:
         cost["latency_ms"] = latency
-    if not runs:
+    if not contributing:
         return cost
 
-    measured = [run for run in runs if (run.get("machine") or {}).get("cpu_seconds")]
+    measured = [
+        run for run in contributing if (run.get("machine") or {}).get("cpu_seconds")
+    ]
     cost.update({
-        "n_runs": len(runs),
-        "n_processed": sum(run.get("n_processed") or 0 for run in runs),
-        "elapsed_s": round(sum(run.get("elapsed_s") or 0.0 for run in runs), 1),
-        "concurrency": _distinct([run.get("concurrency") for run in runs]),
+        "n_runs": len(contributing),
+        "n_predicted": sum(run["n_predicted"] for run in contributing),
+        "n_attempted": sum(
+            run.get("n_processed") or run["n_predicted"] for run in contributing
+        ),
+        "elapsed_s": round(sum(run.get("elapsed_s") or 0.0 for run in contributing), 1),
+        "concurrency": _distinct([run.get("concurrency") for run in contributing]),
         # Kept paired, since a core count belongs to the machine beside it and a
         # set measured on two of them has no single one to report.
-        "machines": _distinct_machines([run.get("machine") or {} for run in runs]),
+        "machines": _distinct_machines([
+            run.get("machine") or {} for run in contributing
+        ]),
     })
     if measured:
         cost["cpu_seconds"] = round(
             sum(run["machine"]["cpu_seconds"] for run in measured), 1
         )
-        cost["cpu_n_processed"] = sum(run.get("n_processed") or 0 for run in measured)
+        cost["cpu_n_predicted"] = sum(run["n_predicted"] for run in measured)
     return cost

@@ -240,24 +240,28 @@ def _fmt_ms(value: int) -> str:
 
 
 def _throughput_bullet(cost: dict) -> List[str]:
-    """Documents an hour, over every invocation that generated any of them.
+    """Predictions an hour, over every run that produced any of them.
 
-    A set assembled over several invocations states what all of them took
-    together; one assembled entirely from the predictions store states nothing,
-    having generated nothing.
+    Over what the runs produced rather than what they attempted, so that a run
+    which reached no parser and failed everything in a tenth of a second does not
+    report the fastest throughput in the file. Where the two differ, both are
+    stated: the wall clock covers the failures as well.
     """
-    n_processed = cost.get("n_processed")
+    n_predicted = cost.get("n_predicted")
     elapsed_s = cost.get("elapsed_s")
-    if not n_processed or not elapsed_s:
+    if not n_predicted or not elapsed_s:
         return []
-    bullet = f"{n_processed:,} docs in {format_duration(elapsed_s)}"
+    bullet = f"{n_predicted:,} docs in {format_duration(elapsed_s)}"
+    n_attempted = cost.get("n_attempted") or n_predicted
+    if n_attempted > n_predicted:
+        bullet += f" ({n_attempted:,} attempted)"
     n_runs = cost.get("n_runs") or 1
     if n_runs > 1:
         bullet += f" over {n_runs} runs"
     concurrency = cost.get("concurrency") or []
     if concurrency:
         bullet += " at concurrency " + "/".join(str(value) for value in concurrency)
-    return [f"{bullet} — {n_processed / elapsed_s * 3600:,.0f} docs/hour"]
+    return [f"{bullet} — {n_predicted / elapsed_s * 3600:,.0f} docs/hour"]
 
 
 def _latency_bullet(cost: dict) -> List[str]:
@@ -279,16 +283,16 @@ def _machine_label(machine: dict) -> str:
 
 def _cpu_bullets(cost: dict) -> List[str]:
     cpu_seconds = cost.get("cpu_seconds")
-    cpu_n_processed = cost.get("cpu_n_processed") or 0
-    n_processed = cost.get("n_processed") or 0
+    cpu_n_predicted = cost.get("cpu_n_predicted") or 0
+    n_predicted = cost.get("n_predicted") or 0
     machines = cost.get("machines") or []
     bullets = []
-    if cpu_seconds and cpu_n_processed:
-        bullet = f"{cpu_seconds / cpu_n_processed:.1f} CPU-seconds per document"
+    if cpu_seconds and cpu_n_predicted:
+        bullet = f"{cpu_seconds / cpu_n_predicted:.1f} CPU-seconds per document"
         # Only part of a set is measured where another part was generated against a
         # parser on another host, and a rate over all of it would understate it.
-        if cpu_n_processed < n_processed:
-            bullet += f" over the {cpu_n_processed:,} of {n_processed:,} measured"
+        if cpu_n_predicted < n_predicted:
+            bullet += f" over the {cpu_n_predicted:,} of {n_predicted:,} measured"
         elif cost.get("elapsed_s") and len(machines) == 1:
             # How much of one machine the run kept busy. Nothing to say of a set
             # measured on two, where the figure would average different machines.

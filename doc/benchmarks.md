@@ -91,7 +91,13 @@ Three numbers, beside the scores, for the variants that record them:
   at. `--concurrency 0` resolves to the core count of the machine running the
   client, so the resolved value is recorded with the number.
 - **CPU-seconds per document** — the machine's busy time while generating
-  them, divided by the documents processed, retries included.
+  them, divided by the documents produced.
+
+Both rates are over what a run produced rather than what it attempted, and
+where the two differ the attempts are stated beside them: the wall clock covers
+the failures too. A run that produced nothing — one that reached no parser, say,
+and failed every document in a tenth of a second — states no rate at all rather
+than the fastest ever recorded.
 
 The CPU figure is the whole machine (`/proc/stat`), not the parser alone: the
 work is spread across a persistent wapiti process, in-process torch threads and
