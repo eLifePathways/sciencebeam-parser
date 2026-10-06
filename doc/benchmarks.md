@@ -237,6 +237,10 @@ and are read from the store like any baseline that does not generate:
 gh workflow run "Generate LLM predictions" --ref main
 ```
 
+Or from GitHub: **Actions** → **Generate LLM predictions** → **Run workflow**,
+on `main`. Leave the checkpoint blank to use the `eval.yml` version; `mode` and
+`split` pick the sample.
+
 The checkpoint defaults to the `version:` `eval.yml` gives the tool, so
 generation stores under the version the benchmark reads. What the store already
 has is fetched rather than regenerated.
