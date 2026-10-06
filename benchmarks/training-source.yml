@@ -38,3 +38,21 @@ sampling:
 
 seeds:
   sample: 42
+
+# What each corpus and model is meant to be generated at.  A mode names a
+# `sampling` entry; `none` says no data is wanted, and a model left out says the
+# same thing less deliberately.  This is what `dev-regenerate-training-data`
+# reads, and what the state of the corpus is compared against.
+generate:
+  ore:
+    segmentation: smoke
+    header: smoke
+    reference-segmenter: medium
+    citation: medium
+    affiliation-address: none
+  scielo_preprints-jats:
+    segmentation: smoke
+    header: smoke
+    reference-segmenter: medium
+    citation: medium
+    affiliation-address: none

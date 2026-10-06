@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pyarrow as pa
@@ -79,3 +80,49 @@ class TestFetchTrainingSource:
         for record in records:
             assert Path(record["pdf_path"]).read_bytes().startswith(b"%PDF-")
             assert Path(record["xml_path"]).read_text(encoding="utf-8").startswith("<article")
+
+
+class TestSourceManifest:
+    def test_writes_a_manifest_naming_the_mode_and_selection(self, repo: Path):
+        out = repo / "out"
+        fetch_training_source(_BASE_CONFIG, "smoke", "train", out)
+
+        manifest = json.loads(
+            (out / "train" / "ore" / "source.json").read_text(encoding="utf-8")
+        )
+        assert manifest["corpus"] == "ore"
+        assert manifest["split"] == "train"
+        assert manifest["mode"] == "smoke"
+        assert manifest["seed"] == 42
+        assert manifest["requested_document_count"] == 2
+        assert len(manifest["selected_document_ids"]) == 2
+        assert manifest["dataset"]["repo_id"] == "org/repo"
+        assert manifest["dataset"]["revision"] == "main"
+
+    def test_names_the_documents_the_mode_selected_rather_than_the_directory(
+        self, repo: Path
+    ):
+        """A fetch only ever adds, so a smaller mode leaves the larger one's files.
+
+        The manifest has to describe the selection, or `medium` holding 66
+        documents reads as what `medium` asked for.
+        """
+        out = repo / "out"
+        fetch_training_source(_BASE_CONFIG, "full", "train", out)
+        fetch_training_source(_BASE_CONFIG, "smoke", "train", out)
+
+        manifest = json.loads(
+            (out / "train" / "ore" / "source.json").read_text(encoding="utf-8")
+        )
+        assert manifest["mode"] == "smoke"
+        assert len(manifest["selected_document_ids"]) == 2
+        assert len(list((out / "train" / "ore").glob("*.pdf"))) == 5
+
+    def test_omits_a_commit_when_there_is_no_revision_to_resolve(self, repo: Path):
+        out = repo / "out"
+        fetch_training_source(_BASE_CONFIG, "smoke", "train", out)
+
+        manifest = json.loads(
+            (out / "train" / "ore" / "source.json").read_text(encoding="utf-8")
+        )
+        assert "commit" not in manifest["dataset"]

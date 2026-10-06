@@ -3,17 +3,50 @@
 Reads cc_by_corpora from training-source.yml and calls generate_data once per
 corpus, writing output to <output-path>/<split>/<corpus>/.  Any extra arguments
 after -- are forwarded verbatim to generate_data.
+
+The models are named here rather than forwarded blindly, because each one gets a
+record of what its data was generated from, and that record cannot be written for
+a model list this does not know.
 """
 import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Optional, Sequence
 
 import yaml
 
-from sciencebeam_parser.training.cli.generate_data import main as generate_data_main
+from sciencebeam_parser.training.cli.generate_data import (
+    get_enabled_model_names,
+    main as generate_data_main,
+)
+
+from benchmarks.training_records import read_source_manifest
 
 LOGGER = logging.getLogger(__name__)
+
+
+def write_pair_records(
+    corpus_source: Path,
+    corpus_output: Path,
+    model_names: Optional[Sequence[str]],
+) -> None:
+    """Carry what the fetch resolved into a record beside each model's data.
+
+    Without a manifest there is nothing to carry: the source tree was assembled
+    by hand, and a record claiming a mode it cannot know would be worse than none.
+    """
+    manifest = read_source_manifest(corpus_source)
+    if manifest is None:
+        LOGGER.warning(
+            "No source manifest in %s, so no mode is recorded for what it generated."
+            " Fetch writes one; a hand-assembled source tree has none.",
+            corpus_source,
+        )
+        return
+    for model_name in model_names or get_enabled_model_names(None):
+        file_path = manifest.to_pair_record(model_name).write(corpus_output / model_name)
+        LOGGER.info("Wrote pair record: %s", file_path)
 
 
 def main(argv=None):
@@ -44,6 +77,16 @@ def main(argv=None):
         default="train",
         help="Dataset split subdirectory (default: train)",
     )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        help="Models to generate for (default: every model generate_data produces)",
+    )
+    parser.add_argument(
+        "--corpus",
+        nargs="+",
+        help="Generate only these corpora (default: every corpus in cc_by_corpora)",
+    )
     args, extra_argv = parser.parse_known_args(argv)
 
     logging.basicConfig(
@@ -56,6 +99,13 @@ def main(argv=None):
     if not corpora:
         LOGGER.warning("No cc_by_corpora defined in %s; nothing to generate.", args.config)
         sys.exit(0)
+
+    if args.corpus:
+        unknown = sorted(set(args.corpus) - set(corpora))
+        if unknown:
+            LOGGER.error("Corpora %s are not in cc_by_corpora", unknown)
+            sys.exit(1)
+        corpora = [corpus for corpus in corpora if corpus in set(args.corpus)]
 
     errors = []
     for corpus in corpora:
@@ -74,6 +124,7 @@ def main(argv=None):
             "--source-xml-path", str(corpus_source / "*.jats.xml"),
             "--output-path", str(corpus_output),
             "--use-directory-structure",
+            *(["--models", *args.models] if args.models else []),
             *extra_argv,
         ]
         try:
@@ -81,6 +132,8 @@ def main(argv=None):
         except Exception:  # pylint: disable=broad-except
             LOGGER.exception("Failed to generate training data for corpus %r", corpus)
             errors.append(corpus)
+            continue
+        write_pair_records(corpus_source, corpus_output, args.models)
 
     if errors:
         LOGGER.error("Generation failed for corpora: %s", ", ".join(errors))

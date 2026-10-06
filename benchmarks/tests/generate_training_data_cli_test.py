@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
@@ -198,3 +199,148 @@ class TestGenerateTrainingDataCli:
 
         assert call_count == 2
         assert exc_info.value.code == 1
+
+
+def _write_manifest(corpus_dir: Path, mode: str = "medium") -> None:
+    (corpus_dir / "source.json").write_text(
+        json.dumps({
+            "corpus": "ore",
+            "split": "train",
+            "mode": mode,
+            "seed": 42,
+            "dataset": {
+                "repo_id": "org/repo",
+                "revision": "main",
+                "commit": "abc123",
+                "location": "ore/train.parquet",
+            },
+            "requested_document_count": 50,
+            "selected_document_ids": ["a", "b"],
+        }),
+        encoding="utf-8",
+    )
+
+
+class TestPairRecord:
+    def test_writes_a_record_per_named_model(self, tmp_path: Path):
+        config = _write_config(tmp_path, ["ore"])
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _write_manifest(_make_corpus_dir(source, "train", "ore"))
+
+        with patch("benchmarks.generate_training_data_cli.generate_data_main"):
+            main([
+                "--config", str(config),
+                "--source-data", str(source),
+                "--output-path", str(output),
+                "--models", "segmentation", "header",
+            ])
+
+        pair_dir = output / "train" / "ore"
+        assert sorted(p.name for p in pair_dir.iterdir()) == ["header", "segmentation"]
+        record = json.loads(
+            (pair_dir / "segmentation" / "provenance.json").read_text(encoding="utf-8")
+        )
+        assert record["mode"] == "medium"
+        assert record["model"] == "segmentation"
+        assert record["corpus"] == "ore"
+        assert record["seed"] == 42
+        assert record["dataset"]["commit"] == "abc123"
+
+    def test_forwards_the_named_models_to_generate_data(self, tmp_path: Path):
+        config = _write_config(tmp_path, ["ore"])
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _write_manifest(_make_corpus_dir(source, "train", "ore"))
+
+        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
+            main([
+                "--config", str(config),
+                "--source-data", str(source),
+                "--output-path", str(output),
+                "--models", "segmentation",
+            ])
+
+        argv = mock_gen.call_args.args[0]
+        assert argv[argv.index("--models") + 1] == "segmentation"
+
+    def test_writes_no_record_without_a_manifest(self, tmp_path: Path):
+        config = _write_config(tmp_path, ["ore"])
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _make_corpus_dir(source, "train", "ore")
+
+        with patch("benchmarks.generate_training_data_cli.generate_data_main"):
+            main([
+                "--config", str(config),
+                "--source-data", str(source),
+                "--output-path", str(output),
+                "--models", "segmentation",
+            ])
+
+        assert not (output / "train" / "ore" / "segmentation").exists()
+
+    def test_writes_no_record_for_a_corpus_that_failed(self, tmp_path: Path):
+        config = _write_config(tmp_path, ["ore"])
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _write_manifest(_make_corpus_dir(source, "train", "ore"))
+
+        with patch(
+            "benchmarks.generate_training_data_cli.generate_data_main",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(SystemExit):
+                main([
+                    "--config", str(config),
+                    "--source-data", str(source),
+                    "--output-path", str(output),
+                    "--models", "segmentation",
+                ])
+
+        assert not (output / "train" / "ore" / "segmentation").exists()
+
+
+class TestCorpusNarrowing:
+    def test_generates_only_the_named_corpus(self, tmp_path: Path):
+        config = _write_config(tmp_path, ["ore", "scielo"])
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _make_corpus_dir(source, "train", "ore")
+        _make_corpus_dir(source, "train", "scielo")
+
+        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
+            main([
+                "--config", str(config),
+                "--source-data", str(source),
+                "--output-path", str(output),
+                "--corpus", "scielo",
+            ])
+
+        assert mock_gen.call_count == 1
+        argv = mock_gen.call_args.args[0]
+        assert "scielo" in argv[argv.index("--output-path") + 1]
+
+    def test_rejects_a_corpus_outside_the_allow_list(self, tmp_path: Path):
+        config = _write_config(tmp_path, ["ore"])
+        source = tmp_path / "source"
+        output = tmp_path / "output"
+        output.mkdir()
+        _make_corpus_dir(source, "train", "ore")
+
+        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
+            with pytest.raises(SystemExit) as exc_info:
+                main([
+                    "--config", str(config),
+                    "--source-data", str(source),
+                    "--output-path", str(output),
+                    "--corpus", "plos",
+                ])
+
+        assert exc_info.value.code == 1
+        mock_gen.assert_not_called()

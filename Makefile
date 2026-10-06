@@ -91,7 +91,10 @@ DELFT_TRAINING_DATA_MODEL ?= segmentation
 #   make dev-generate-training-data TRAINING_DATA_OUTPUT=/path/to/output-repo
 SOURCE_TRAINING_CONFIG ?= benchmarks/training-source.yml
 SOURCE_TRAINING_MODE ?= smoke
-SOURCE_TRAINING_DATA ?= data/source-training-data/$(SOURCE_TRAINING_MODE)
+# One source tree per mode, since a corpus may want two of them: its references at
+# medium and its segmentation at smoke are two fetches and two generation runs.
+SOURCE_TRAINING_ROOT ?= data/source-training-data
+SOURCE_TRAINING_DATA ?= $(SOURCE_TRAINING_ROOT)/$(SOURCE_TRAINING_MODE)
 SOURCE_TRAINING_SPLIT ?= train
 
 SHOW_FIELD ?=
@@ -344,6 +347,36 @@ dev-generate-training-data:
 		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
 		--models $(TRAINING_DATA_MODELS) \
 		--debug \
+		$(ARGS)
+
+
+## Rebuild every corpus and model the config declares, at the mode it declares.
+## Usage: make dev-regenerate-training-data [ARGS="--corpus ore --model segmentation"]
+dev-regenerate-training-data:
+	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
+		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
+		echo "       Clone the output repo and symlink it to data/generated-training-data,"; \
+		echo "       or pass TRAINING_DATA_OUTPUT=/path/to/repo on the command line."; \
+		exit 1; }
+	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
+	$(PYTHON) -m benchmarks.regenerate_training_data_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--source-root $(SOURCE_TRAINING_ROOT) \
+		--output-path $(TRAINING_DATA_OUTPUT) \
+		--split $(SOURCE_TRAINING_SPLIT) \
+		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
+		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
+		--debug \
+		$(ARGS)
+
+
+## List what the generated corpus holds against what the config declares.
+## Usage: make dev-training-data-state [ARGS=--check]
+dev-training-data-state:
+	$(PYTHON) -m benchmarks.training_data_state_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--training-data $(TRAINING_DATA_OUTPUT) \
+		--split $(SOURCE_TRAINING_SPLIT) \
 		$(ARGS)
 
 

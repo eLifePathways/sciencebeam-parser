@@ -25,6 +25,7 @@ from benchmarks.corpus_source import (
     resolve_source,
 )
 from benchmarks.sampling import positional_ids, stratified_ids
+from benchmarks.training_records import SourceManifest
 
 LOGGER = logging.getLogger(__name__)
 
@@ -204,13 +205,14 @@ def _record(corpus: str, record_id: str, paths: Mapping[str, Path]) -> Dict[str,
     }
 
 
-def _fetch(
+def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     cfg: Mapping[str, Any],
     mode: str,
     split: str,
     data_dir: Path,
     with_pdf: bool,
     include: Optional[Iterable[str]] = None,
+    write_manifest: bool = False,
 ) -> List[Dict[str, str]]:
     """Materialise gold XML, and PDFs when asked, for each corpus of one split.
 
@@ -238,8 +240,10 @@ def _fetch(
                 raw_n=sample_sizes[source.corpus],
                 seed=seed,
                 mode=mode,
+                split=split,
                 corpus_dir=data_dir / split / source.corpus,
                 with_pdf=with_pdf,
+                write_manifest=write_manifest,
             )
         )
     return records
@@ -253,6 +257,8 @@ def _fetch_corpus(  # pylint: disable=too-many-arguments,too-many-positional-arg
     mode: str,
     corpus_dir: Path,
     with_pdf: bool,
+    split: str = "train",
+    write_manifest: bool = False,
 ) -> List[Dict[str, str]]:
     LOGGER.info(
         "Fetching corpus %r from %s (mode=%s, n=%s)",
@@ -264,6 +270,10 @@ def _fetch_corpus(  # pylint: disable=too-many-arguments,too-many-positional-arg
     picked, by_stratum = _select_ids(reader, source, raw_n, seed)
     corpus_dir.mkdir(parents=True, exist_ok=True)
     records = _materialise(reader, source, picked, by_stratum, corpus_dir, with_pdf)
+    if write_manifest:
+        _write_source_manifest(
+            reader, source, mode, split, seed, raw_n, picked, corpus_dir
+        )
     LOGGER.info(
         "Corpus %r: %d record(s) available in %s",
         source.corpus,
@@ -271,6 +281,39 @@ def _fetch_corpus(  # pylint: disable=too-many-arguments,too-many-positional-arg
         corpus_dir,
     )
     return records
+
+
+def _write_source_manifest(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    reader: RepoReader,
+    source: CorpusSource,
+    mode: str,
+    split: str,
+    seed: int,
+    raw_n: Optional[int],
+    picked: Sequence[str],
+    corpus_dir: Path,
+) -> None:
+    """Leave what this fetch resolved beside the documents it wrote.
+
+    The directory accumulates: it is never pruned, and a mode asking for fewer
+    documents than are already there leaves the extra ones in place. Naming the
+    selection is what keeps "which documents is this mode" answerable from the
+    tree rather than inferred from its size.
+    """
+    manifest = SourceManifest(
+        corpus=source.corpus,
+        split=split,
+        mode=mode,
+        seed=seed,
+        repo_id=source.repo_id,
+        revision=source.revision,
+        location=source.path or str(source.file),
+        commit=reader.resolve_commit(source),
+        requested_document_count=raw_n,
+        selected_document_ids=[_record_id_of(raw_id) for raw_id in picked],
+    )
+    file_path = manifest.write(corpus_dir)
+    LOGGER.info("Wrote source manifest: %s", file_path)
 
 
 def fetch_data(
@@ -302,8 +345,12 @@ def fetch_gold(
     return _fetch(cfg, mode, split, data_dir, with_pdf=False, include=include)
 
 
-def fetch_training_source(
-    cfg: Dict[str, Any], mode: str, split: str, data_dir: Path
+def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    cfg: Dict[str, Any],
+    mode: str,
+    split: str,
+    data_dir: Path,
+    include: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, str]]:
     """Fetch PDF + JATS XML for CC-BY corpora only.
 
@@ -311,9 +358,9 @@ def fetch_training_source(
     permitted.  Corpora absent from that list are silently skipped so that
     the allow-list can be extended without changing call sites.
 
-    Takes no include list: a corpus outside `cc_by_corpora` is not opt-in here, it
-    is refused, because this path generates training data that is published
-    elsewhere.
+    `include` narrows the fetch to corpora that are already allowed; it cannot
+    widen it. A corpus outside `cc_by_corpora` is not opt-in here, it is refused,
+    because this path generates training data that is published elsewhere.
     """
     allowed: Set[str] = set(cfg.get("cc_by_corpora", []))
     filtered_sampling = {
@@ -322,7 +369,17 @@ def fetch_training_source(
     }
     filtered_cfg = {**cfg, "sampling": filtered_sampling}
     in_split = allowed.intersection(cfg["dataset"]["splits"].get(split, {}))
-    return fetch_data(filtered_cfg, mode, split, data_dir, include=in_split)
+    if include is not None:
+        in_split = in_split.intersection(include)
+    return _fetch(
+        filtered_cfg,
+        mode,
+        split,
+        data_dir,
+        with_pdf=True,
+        include=in_split,
+        write_manifest=True,
+    )
 
 
 def get_corpus_variants(
