@@ -155,8 +155,12 @@ class TestStashAndRestore:
         (pair / "corpus" / "tei" / "made.segmentation.tei.xml").write_text(
             "<new/>", encoding="utf-8"
         )
+        (pair / "quality").mkdir(parents=True, exist_ok=True)
+        (pair / "quality" / "made.segmentation.quality.json").write_text(
+            '{"status": "ok"}', encoding="utf-8"
+        )
 
-        restored = restore_unproduced_documents(pair, stash, ["made", "failed"])
+        restored = restore_unproduced_documents(pair, stash, ["made", "failed"], "segmentation")
 
         assert restored == ["failed"]
         assert (pair / "corpus" / "tei" / "failed.segmentation.tei.xml").is_file()
@@ -172,8 +176,12 @@ class TestStashAndRestore:
         (pair / "corpus" / "tei" / "kept.segmentation.tei.xml").write_text(
             "<new/>", encoding="utf-8"
         )
+        (pair / "quality").mkdir(parents=True, exist_ok=True)
+        (pair / "quality" / "kept.segmentation.quality.json").write_text(
+            '{"status": "ok"}', encoding="utf-8"
+        )
 
-        restored = restore_unproduced_documents(pair, stash, ["kept"])
+        restored = restore_unproduced_documents(pair, stash, ["kept"], "segmentation")
 
         assert not restored
         assert not (pair / "corpus" / "tei" / "dropped.segmentation.tei.xml").exists()
@@ -185,7 +193,7 @@ class TestStashAndRestore:
         stash = stash_pair(pair)
         (pair / "corpus" / "tei").mkdir(parents=True)
 
-        restored = restore_unproduced_documents(pair, stash, ["2-114_v1"])
+        restored = restore_unproduced_documents(pair, stash, ["2-114_v1"], "segmentation")
 
         assert restored == ["2-114_v1"]
         assert not (pair / "corpus" / "tei" / "2-114_v10.segmentation.tei.xml").exists()
@@ -201,7 +209,7 @@ class TestStashAndRestore:
 
     def test_a_pair_that_does_not_exist_yet_stashes_nothing(self, tmp_path: Path):
         assert stash_pair(tmp_path / "never-generated") is None
-        assert not restore_unproduced_documents(tmp_path, None, ["a"])
+        assert not restore_unproduced_documents(tmp_path, None, ["a"], "segmentation")
 
 
 class TestRegenerate:
@@ -391,3 +399,62 @@ class TestMissingSource:
         assert exc_info.value.code == 1
         assert (existing / "kept.tei.xml").is_file()
         mock_generate.assert_not_called()
+
+
+class TestRestoringAfterAPartialWrite:
+    def _pair(self, tmp_path: Path) -> Path:
+        pair = tmp_path / "segmentation"
+        (pair / "corpus" / "tei").mkdir(parents=True)
+        (pair / "quality").mkdir(parents=True)
+        (pair / "corpus" / "tei" / "a.segmentation.tei.xml").write_text(
+            "<good/>", encoding="utf-8"
+        )
+        (pair / "quality" / "a.segmentation.quality.json").write_text(
+            '{"status": "ok", "written": true}', encoding="utf-8"
+        )
+        return pair
+
+    def _record(self, pair: Path, status: str) -> None:
+        (pair / "quality").mkdir(parents=True, exist_ok=True)
+        (pair / "quality" / "a.segmentation.quality.json").write_text(
+            '{"status": "%s"}' % status, encoding="utf-8"
+        )
+
+    def test_a_timeout_that_left_half_a_document_is_still_put_back(
+        self, tmp_path: Path
+    ):
+        """The timeout kills the worker mid-run, so output can already be on disk.
+
+        Half a document beside a record saying it timed out is worse than the one
+        that was there before, so the record decides rather than the files.
+        """
+        pair = self._pair(tmp_path)
+        stash = stash_pair(pair)
+        (pair / "corpus" / "tei").mkdir(parents=True)
+        (pair / "corpus" / "tei" / "a.segmentation.tei.xml").write_text(
+            "<partial/>", encoding="utf-8"
+        )
+        self._record(pair, "timeout")
+
+        assert restore_unproduced_documents(pair, stash, ["a"], "segmentation") == ["a"]
+        assert (pair / "corpus" / "tei" / "a.segmentation.tei.xml").read_text(
+            encoding="utf-8"
+        ) == "<good/>"
+        assert '"status": "ok"' in (
+            pair / "quality" / "a.segmentation.quality.json"
+        ).read_text(encoding="utf-8")
+
+    def test_a_document_read_fine_and_producing_nothing_is_left_alone(
+        self, tmp_path: Path
+    ):
+        """`ok` with nothing written is a result, not a failure.
+
+        Putting the old data back would make the corpus disagree with the run that
+        read the document.
+        """
+        pair = self._pair(tmp_path)
+        stash = stash_pair(pair)
+        self._record(pair, "ok")
+
+        assert not restore_unproduced_documents(pair, stash, ["a"], "segmentation")
+        assert not (pair / "corpus" / "tei" / "a.segmentation.tei.xml").exists()

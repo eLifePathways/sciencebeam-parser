@@ -12,6 +12,7 @@ each model within it.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 import sys
@@ -21,7 +22,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import yaml
 
 from sciencebeam_parser.training.cli.generate_data import get_enabled_model_names
-from sciencebeam_parser.training.quality.record import QUALITY_RECORD_DIRECTORY_NAME
+from sciencebeam_parser.training.quality.record import (
+    QUALITY_RECORD_DIRECTORY_NAME,
+    DocumentStatus,
+    get_quality_record_filename,
+)
 
 from benchmarks.fetch import fetch_training_source
 from benchmarks.generate_training_data_from_tree_cli import main as generate_from_tree_main
@@ -111,20 +116,40 @@ def _document_files(root: Path, document_id: str) -> List[Path]:
     ]
 
 
-def restore_unproduced_documents(
-    pair_dir: Path, stash: Optional[Path], document_ids: Sequence[str]
-) -> List[str]:
-    """Put back every document the rebuild was asked for and did not produce.
+def _document_status(pair_dir: Path, document_id: str, model: str) -> Optional[str]:
+    """What this run recorded for the document, or None if it recorded nothing."""
+    record_path = (
+        pair_dir
+        / QUALITY_RECORD_DIRECTORY_NAME
+        / get_quality_record_filename(document_id, model)
+    )
+    if not record_path.is_file():
+        return None
+    try:
+        return json.loads(record_path.read_text(encoding="utf-8")).get("status")
+    except ValueError:
+        return None
 
-    A document outside the mode's selection is not offered here, so lowering a
-    declaration still drops what it no longer names. What comes back is only what
-    was asked for and could not be made again.
+
+def restore_unproduced_documents(
+    pair_dir: Path, stash: Optional[Path], document_ids: Sequence[str], model: str
+) -> List[str]:
+    """Put back every document the rebuild was asked for and did not process.
+
+    The record decides, not whether files appeared: a document killed by the
+    timeout can leave part of its output behind, and half a document beside a
+    record saying it timed out is worse than the one that was there before.
+
+    `status: ok` with nothing written is left alone -- the run read the document
+    and it legitimately produced nothing, which is a result rather than a failure.
+    A document outside the mode's selection is never offered here, so lowering a
+    declaration still drops what it stops naming.
     """
     if stash is None or not stash.is_dir():
         return []
     restored = []
     for document_id in document_ids:
-        if _document_files(pair_dir / "corpus", document_id):
+        if _document_status(pair_dir, document_id, model) == DocumentStatus.OK:
             continue
         files = _document_files(stash, document_id)
         if not files:
@@ -190,8 +215,17 @@ def _generate_group(  # pylint: disable=too-many-arguments,too-many-positional-a
         "--models", *models,
         *extra_argv,
     ])
-    for pair_dir, stash in zip(pair_dirs, stashes):
-        restored = restore_unproduced_documents(pair_dir, stash, asked_for)
+    _restore_and_discard(models, pair_dirs, stashes, asked_for)
+
+
+def _restore_and_discard(
+    models: Sequence[str],
+    pair_dirs: Sequence[Path],
+    stashes: Sequence[Optional[Path]],
+    asked_for: Sequence[str],
+) -> None:
+    for model, pair_dir, stash in zip(models, pair_dirs, stashes):
+        restored = restore_unproduced_documents(pair_dir, stash, asked_for, model)
         if restored:
             LOGGER.warning(
                 "%s: kept %d document(s) this run did not produce: %s",
