@@ -321,7 +321,7 @@ dev-benchmark-with-baselines:
 		$(ARGS)
 
 
-## Fetch one mode's source documents. dev-regenerate-training-data does this for
+## Fetch one mode's source documents. dev-generate-training-data does this for
 ## every mode the config declares, so this is for working on a single tree.
 dev-fetch-training-source:
 	$(PYTHON) -m benchmarks.fetch_training_source_cli \
@@ -334,15 +334,15 @@ dev-fetch-training-source:
 ## Generate from the one source tree at SOURCE_TRAINING_MODE, for the models the
 ## config declares. It neither fetches nor clears, and it takes no notice of which
 ## mode each model is declared at -- it generates from the tree it is given.
-## Use dev-regenerate-training-data unless that is what you want.
-dev-generate-training-data:
+## Use dev-generate-training-data unless that is what you want.
+dev-generate-training-data-from-tree:
 	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
 		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
 		echo "       Clone the output repo and symlink it to data/generated-training-data,"; \
 		echo "       or pass TRAINING_DATA_OUTPUT=/path/to/repo on the command line."; \
 		exit 1; }
 	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
-	$(PYTHON) -m benchmarks.generate_training_data_cli \
+	$(PYTHON) -m benchmarks.generate_training_data_from_tree_cli \
 		--config $(SOURCE_TRAINING_CONFIG) \
 		--source-data $(SOURCE_TRAINING_DATA) \
 		--output-path $(TRAINING_DATA_OUTPUT) \
@@ -353,18 +353,18 @@ dev-generate-training-data:
 		$(ARGS)
 
 
-## The declared rebuild, and the one to reach for: fetches each mode the config
-## declares and rebuilds each declared pair at it, clearing the pair first so that
-## a lowered mode takes effect.
-## Usage: make dev-regenerate-training-data [ARGS="--corpus ore --model segmentation"]
-dev-regenerate-training-data:
+## Build the corpus the config declares: fetches each mode it names and generates
+## each declared pair at it, clearing the pair first so that a lowered mode takes
+## effect. This is the one to reach for.
+## Usage: make dev-generate-training-data [ARGS="--corpus ore --model segmentation"]
+dev-generate-training-data:
 	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
 		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
 		echo "       Clone the output repo and symlink it to data/generated-training-data,"; \
 		echo "       or pass TRAINING_DATA_OUTPUT=/path/to/repo on the command line."; \
 		exit 1; }
 	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
-	$(PYTHON) -m benchmarks.regenerate_training_data_cli \
+	$(PYTHON) -m benchmarks.generate_training_data_cli \
 		--config $(SOURCE_TRAINING_CONFIG) \
 		--source-root $(SOURCE_TRAINING_ROOT) \
 		--output-path $(TRAINING_DATA_OUTPUT) \

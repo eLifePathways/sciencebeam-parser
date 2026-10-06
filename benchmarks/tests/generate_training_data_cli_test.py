@@ -1,420 +1,320 @@
 from __future__ import annotations
 
-import json
 import textwrap
 from pathlib import Path
+from typing import List, Tuple
 from unittest.mock import patch
 
 import pytest
 
-from benchmarks.generate_training_data_cli import main
+from benchmarks.generate_training_data_cli import clear_pair, main, select_pairs
+from benchmarks.training_intent import PairIntent
 
+CONFIG = """\
+dataset:
+  repo_id: org/repo
+  revision: main
+  splits:
+    train:
+      ore:
+        file: ore/train.parquet
+        id_column: id
+      scielo:
+        file: scielo/train.parquet
+        id_column: id
 
-def _write_config(path: Path, corpora: list) -> Path:
-    config_file = path / "training-source.yml"
-    config_file.write_text(
-        textwrap.dedent(f"""\
-            cc_by_corpora: {corpora!r}
-        """),
-        encoding="utf-8",
-    )
-    return config_file
+cc_by_corpora:
+  - ore
+  - scielo
 
+sampling:
+  smoke:
+    ore: 10
+    scielo: 10
+  medium:
+    ore: 50
+    scielo: 50
 
-def _make_corpus_dir(source_root: Path, split: str, corpus: str) -> Path:
-    d = source_root / split / corpus
-    d.mkdir(parents=True)
-    return d
+seeds:
+  sample: 42
 
-
-class TestGenerateTrainingDataCli:
-    def test_calls_generate_data_once_per_corpus(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore", "scielo"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-        _make_corpus_dir(source, "train", "scielo")
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-            ])
-
-        assert mock_gen.call_count == 2
-        called_corpora = [c.args[0][c.args[0].index("--output-path") + 1]
-                          for c in mock_gen.call_args_list]
-        assert any("ore" in p for p in called_corpora)
-        assert any("scielo" in p for p in called_corpora)
-
-    def test_source_and_output_paths_contain_split_and_corpus(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-                "--split", "train",
-            ])
-
-        argv = mock_gen.call_args.args[0]
-        source_path = argv[argv.index("--source-path") + 1]
-        xml_path = argv[argv.index("--source-xml-path") + 1]
-        out_path = argv[argv.index("--output-path") + 1]
-
-        assert source_path == str(source / "train" / "ore" / "*.pdf")
-        assert xml_path == str(source / "train" / "ore" / "*.jats.xml")
-        assert out_path == str(output / "train" / "ore")
-
-    def test_use_directory_structure_always_forwarded(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-            ])
-
-        argv = mock_gen.call_args.args[0]
-        assert "--use-directory-structure" in argv
-
-    def test_extra_args_forwarded_to_generate_data(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-                "--num-workers", "4",
-                "--document-timeout", "60",
-                "--debug",
-            ])
-
-        argv = mock_gen.call_args.args[0]
-        assert "--num-workers" in argv
-        assert "4" in argv
-        assert "--document-timeout" in argv
-        assert "60" in argv
-        assert "--debug" in argv
-
-    def test_skips_corpus_with_missing_source_directory(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore", "missing"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-        # "missing" corpus directory is intentionally not created
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-            ])
-
-        assert mock_gen.call_count == 1
-        argv = mock_gen.call_args.args[0]
-        assert "ore" in argv[argv.index("--output-path") + 1]
-
-    def test_empty_cc_by_corpora_exits_cleanly(self, tmp_path: Path):
-        config = _write_config(tmp_path, [])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            with pytest.raises(SystemExit) as exc_info:
-                main([
-                    "--config", str(config),
-                    "--source-data", str(source),
-                    "--output-path", str(output),
-                ])
-
-        assert exc_info.value.code == 0
-        mock_gen.assert_not_called()
-
-    def test_corpus_failure_causes_exit_1(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-
-        with patch(
-            "benchmarks.generate_training_data_cli.generate_data_main",
-            side_effect=RuntimeError("boom"),
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                main([
-                    "--config", str(config),
-                    "--source-data", str(source),
-                    "--output-path", str(output),
-                ])
-
-        assert exc_info.value.code == 1
-
-    def test_second_corpus_still_runs_after_first_fails(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore", "scielo"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-        _make_corpus_dir(source, "train", "scielo")
-
-        call_count = 0
-
-        def _side_effect(argv):
-            nonlocal call_count
-            call_count += 1
-            if "ore" in argv[argv.index("--output-path") + 1]:
-                raise RuntimeError("ore failed")
-
-        with patch(
-            "benchmarks.generate_training_data_cli.generate_data_main",
-            side_effect=_side_effect,
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                main([
-                    "--config", str(config),
-                    "--source-data", str(source),
-                    "--output-path", str(output),
-                ])
-
-        assert call_count == 2
-        assert exc_info.value.code == 1
-
-
-def _write_manifest(corpus_dir: Path, mode: str = "medium") -> None:
-    (corpus_dir / "source.json").write_text(
-        json.dumps({
-            "corpus": "ore",
-            "split": "train",
-            "mode": mode,
-            "seed": 42,
-            "dataset": {
-                "repo_id": "org/repo",
-                "revision": "main",
-                "commit": "abc123",
-                "location": "ore/train.parquet",
-            },
-            "requested_document_count": 50,
-            "selected_document_ids": ["a", "b"],
-        }),
-        encoding="utf-8",
-    )
-
-
-class TestPairRecord:
-    def test_writes_a_record_per_named_model(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _write_manifest(_make_corpus_dir(source, "train", "ore"))
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main"):
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-                "--models", "segmentation", "header",
-            ])
-
-        pair_dir = output / "train" / "ore"
-        assert sorted(p.name for p in pair_dir.iterdir()) == ["header", "segmentation"]
-        record = json.loads(
-            (pair_dir / "segmentation" / "provenance.json").read_text(encoding="utf-8")
-        )
-        assert record["mode"] == "medium"
-        assert record["model"] == "segmentation"
-        assert record["corpus"] == "ore"
-        assert record["seed"] == 42
-        assert record["dataset"]["commit"] == "abc123"
-
-    def test_forwards_the_named_models_to_generate_data(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _write_manifest(_make_corpus_dir(source, "train", "ore"))
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-                "--models", "segmentation",
-            ])
-
-        argv = mock_gen.call_args.args[0]
-        assert argv[argv.index("--models") + 1] == "segmentation"
-
-    def test_writes_no_record_without_a_manifest(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main"):
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-                "--models", "segmentation",
-            ])
-
-        assert not (output / "train" / "ore" / "segmentation").exists()
-
-    def test_writes_no_record_for_a_corpus_that_failed(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _write_manifest(_make_corpus_dir(source, "train", "ore"))
-
-        with patch(
-            "benchmarks.generate_training_data_cli.generate_data_main",
-            side_effect=RuntimeError("boom"),
-        ):
-            with pytest.raises(SystemExit):
-                main([
-                    "--config", str(config),
-                    "--source-data", str(source),
-                    "--output-path", str(output),
-                    "--models", "segmentation",
-                ])
-
-        assert not (output / "train" / "ore" / "segmentation").exists()
-
-
-class TestCorpusNarrowing:
-    def test_generates_only_the_named_corpus(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore", "scielo"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-        _make_corpus_dir(source, "train", "scielo")
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(config),
-                "--source-data", str(source),
-                "--output-path", str(output),
-                "--corpus", "scielo",
-            ])
-
-        assert mock_gen.call_count == 1
-        argv = mock_gen.call_args.args[0]
-        assert "scielo" in argv[argv.index("--output-path") + 1]
-
-    def test_rejects_a_corpus_outside_the_allow_list(self, tmp_path: Path):
-        config = _write_config(tmp_path, ["ore"])
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _make_corpus_dir(source, "train", "ore")
-
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            with pytest.raises(SystemExit) as exc_info:
-                main([
-                    "--config", str(config),
-                    "--source-data", str(source),
-                    "--output-path", str(output),
-                    "--corpus", "plos",
-                ])
-
-        assert exc_info.value.code == 1
-        mock_gen.assert_not_called()
-
-
-DECLARING_CONFIG = """\
-cc_by_corpora: ['ore', 'scielo']
 generate:
   ore:
     segmentation: smoke
+    header: smoke
     citation: medium
     affiliation-address: none
+  scielo:
+    segmentation: smoke
 """
 
 
-class TestDefaultModels:
-    def _config(self, path: Path) -> Path:
-        config_file = path / "training-source.yml"
-        config_file.write_text(DECLARING_CONFIG, encoding="utf-8")
-        return config_file
+@pytest.fixture(name="config_file")
+def _config_file(tmp_path: Path) -> Path:
+    config_file = tmp_path / "training-source.yml"
+    config_file.write_text(textwrap.dedent(CONFIG), encoding="utf-8")
+    return config_file
 
-    def test_generates_what_the_config_declares_when_no_models_are_named(
-        self, tmp_path: Path
+
+def _make_source_trees(tmp_path: Path) -> None:
+    """What a fetch would have left on disk for the declared pairs."""
+    for mode, corpora in [("smoke", ["ore", "scielo"]), ("medium", ["ore"])]:
+        for corpus in corpora:
+            (tmp_path / "source" / mode / "train" / corpus).mkdir(parents=True)
+
+
+def _run(config_file: Path, tmp_path: Path, *extra: str):
+    _make_source_trees(tmp_path)
+    with patch(
+        "benchmarks.generate_training_data_cli.fetch_training_source"
+    ) as mock_fetch, patch(
+        "benchmarks.generate_training_data_cli.generate_from_tree_main"
+    ) as mock_generate:
+        main([
+            "--config", str(config_file),
+            "--source-root", str(tmp_path / "source"),
+            "--output-path", str(tmp_path / "out"),
+            *extra,
+        ])
+    return mock_fetch, mock_generate
+
+
+class TestSelectPairs:
+    PAIRS = [
+        PairIntent("ore", "segmentation", "smoke"),
+        PairIntent("ore", "citation", "medium"),
+        PairIntent("scielo", "segmentation", "smoke"),
+    ]
+
+    def test_covers_everything_when_nothing_is_named(self):
+        assert select_pairs(self.PAIRS, None, None) == self.PAIRS
+
+    def test_narrows_to_a_corpus(self):
+        assert select_pairs(self.PAIRS, ["scielo"], None) == [self.PAIRS[2]]
+
+    def test_narrows_to_a_model(self):
+        assert [pair.corpus for pair in select_pairs(self.PAIRS, None, ["segmentation"])] == [
+            "ore",
+            "scielo",
+        ]
+
+    def test_narrows_by_both(self):
+        assert select_pairs(self.PAIRS, ["ore"], ["citation"]) == [self.PAIRS[1]]
+
+
+class TestClearPair:
+    def test_removes_what_generation_wrote(self, tmp_path: Path):
+        pair = tmp_path / "segmentation"
+        (pair / "corpus" / "tei").mkdir(parents=True)
+        (pair / "corpus" / "tei" / "a.tei.xml").write_text("<x/>", encoding="utf-8")
+        (pair / "quality").mkdir()
+        (pair / "quality" / "a.segmentation.quality.json").write_text("{}", encoding="utf-8")
+        (pair / "provenance.json").write_text("{}\n", encoding="utf-8")
+
+        clear_pair(pair)
+
+        assert not (pair / "corpus").exists()
+        assert not (pair / "quality").exists()
+        assert not (pair / "provenance.json").exists()
+
+    def test_leaves_what_a_person_wrote(self, tmp_path: Path):
+        pair = tmp_path / "segmentation"
+        (pair / "verdicts").mkdir(parents=True)
+        (pair / "verdicts" / "a.json").write_text("{}", encoding="utf-8")
+        (pair / "corpus").mkdir()
+
+        clear_pair(pair)
+
+        assert (pair / "verdicts" / "a.json").is_file()
+
+    def test_is_quiet_about_a_pair_that_does_not_exist_yet(self, tmp_path: Path):
+        clear_pair(tmp_path / "never-generated")
+
+
+class TestRegenerate:
+    def test_fetches_each_declared_mode_for_the_corpora_that_want_it(
+        self, config_file: Path, tmp_path: Path
     ):
-        """Without this, the only default left is every model generate_data has.
+        mock_fetch, _ = _run(config_file, tmp_path)
 
-        A corpus that declares three models would get figure, fulltext, table and
-        the name models too -- data nothing asked for, in a repo that is reviewed
-        by reading its diffs.
+        by_mode = {
+            call.args[1]: (call.args[3], call.kwargs["include"])
+            for call in mock_fetch.call_args_list
+        }
+        assert set(by_mode) == {"smoke", "medium"}
+        assert by_mode["smoke"][1] == ["ore", "scielo"]
+        assert by_mode["medium"][1] == ["ore"]
+        assert by_mode["smoke"][0] == tmp_path / "source" / "smoke"
+
+    def test_generates_one_run_per_corpus_and_mode(
+        self, config_file: Path, tmp_path: Path
+    ):
+        _, mock_generate = _run(config_file, tmp_path)
+
+        runs = []
+        for call in mock_generate.call_args_list:
+            argv = call.args[0]
+            models = argv[argv.index("--models") + 1:]
+            runs.append((argv[argv.index("--source-data") + 1], tuple(models)))
+        assert sorted(runs) == sorted([
+            (str(tmp_path / "source" / "smoke"), ("segmentation", "header")),
+            (str(tmp_path / "source" / "medium"), ("citation",)),
+            (str(tmp_path / "source" / "smoke"), ("segmentation",)),
+        ])
+
+    def test_never_generates_a_model_declared_none(
+        self, config_file: Path, tmp_path: Path
+    ):
+        _, mock_generate = _run(config_file, tmp_path)
+
+        every_argv = [arg for call in mock_generate.call_args_list for arg in call.args[0]]
+        assert "affiliation-address" not in every_argv
+
+    def test_clears_a_declared_pair_before_generating_it(
+        self, config_file: Path, tmp_path: Path
+    ):
+        stale = tmp_path / "out" / "train" / "ore" / "citation" / "corpus"
+        stale.mkdir(parents=True)
+        (stale / "old.tei.xml").write_text("<x/>", encoding="utf-8")
+
+        _run(config_file, tmp_path)
+
+        assert not stale.exists()
+
+    def test_leaves_an_undeclared_pair_alone(self, config_file: Path, tmp_path: Path):
+        undeclared = tmp_path / "out" / "train" / "ore" / "affiliation-address" / "corpus"
+        undeclared.mkdir(parents=True)
+        (undeclared / "kept.tei.xml").write_text("<x/>", encoding="utf-8")
+
+        _run(config_file, tmp_path)
+
+        assert (undeclared / "kept.tei.xml").is_file()
+
+    def test_narrowing_fetches_and_generates_only_what_was_named(
+        self, config_file: Path, tmp_path: Path
+    ):
+        mock_fetch, mock_generate = _run(
+            config_file, tmp_path, "--corpus", "ore", "--model", "citation"
+        )
+
+        assert [call.args[1] for call in mock_fetch.call_args_list] == ["medium"]
+        assert mock_generate.call_count == 1
+
+    def test_skip_fetch_generates_from_what_is_on_disk(
+        self, config_file: Path, tmp_path: Path
+    ):
+        mock_fetch, mock_generate = _run(config_file, tmp_path, "--skip-fetch")
+
+        mock_fetch.assert_not_called()
+        assert mock_generate.call_count == 3
+
+    def test_forwards_extra_arguments_to_generation(
+        self, config_file: Path, tmp_path: Path
+    ):
+        _, mock_generate = _run(config_file, tmp_path, "--num-workers", "4")
+
+        argv = mock_generate.call_args_list[0].args[0]
+        assert argv[argv.index("--num-workers") + 1] == "4"
+
+    def test_refuses_a_mode_the_config_does_not_define(
+        self, config_file: Path, tmp_path: Path
+    ):
+        config_file.write_text(
+            config_file.read_text(encoding="utf-8").replace(
+                "segmentation: smoke", "segmentation: enormous", 1
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(Exception, match="`sampling` does not"):
+            _run(config_file, tmp_path)
+
+    def test_refuses_a_model_generation_does_not_produce(
+        self, config_file: Path, tmp_path: Path
+    ):
+        config_file.write_text(
+            config_file.read_text(encoding="utf-8").replace(
+                "segmentation: smoke", "segmentaion: smoke", 1
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(Exception, match="generation does not"):
+            _run(config_file, tmp_path)
+
+    def test_a_failed_group_exits_non_zero_and_the_rest_still_run(
+        self, config_file: Path, tmp_path: Path
+    ):
+        _make_source_trees(tmp_path)
+
+        def _side_effect(argv):
+            if "citation" in argv:
+                raise RuntimeError("boom")
+
+        with patch("benchmarks.generate_training_data_cli.fetch_training_source"), patch(
+            "benchmarks.generate_training_data_cli.generate_from_tree_main",
+            side_effect=_side_effect,
+        ) as mock_generate:
+            with pytest.raises(SystemExit) as exc_info:
+                main([
+                    "--config", str(config_file),
+                    "--source-root", str(tmp_path / "source"),
+                    "--output-path", str(tmp_path / "out"),
+                ])
+
+        assert exc_info.value.code == 1
+        assert mock_generate.call_count == 3
+
+
+class TestOneCorpusPerRun:
+    def test_each_run_names_the_corpus_it_is_for(self, config_file: Path, tmp_path: Path):
+        """Generation iterates every allowed corpus in the source tree it is given.
+
+        Both corpora are fetched into the smoke tree, so a run that did not name
+        its corpus would generate each pair twice -- the second time over a pair
+        the rebuild had already cleared and filled.
         """
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _write_manifest(_make_corpus_dir(source, "train", "ore"))
+        _, mock_generate = _run(config_file, tmp_path)
 
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(self._config(tmp_path)),
-                "--source-data", str(source),
-                "--output-path", str(output),
-            ])
+        pairs: List[Tuple[str, str]] = []
+        for call in mock_generate.call_args_list:
+            argv = call.args[0]
+            assert argv.count("--corpus") == 1
+            corpus = argv[argv.index("--corpus") + 1]
+            models = argv[argv.index("--models") + 1:]
+            pairs.extend((corpus, model) for model in models)
 
-        argv = mock_gen.call_args.args[0]
-        assert argv[argv.index("--models") + 1:] == ["segmentation", "citation"]
+        assert len(pairs) == len(set(pairs))
+        assert sorted(pairs) == [
+            ("ore", "citation"),
+            ("ore", "header"),
+            ("ore", "segmentation"),
+            ("scielo", "segmentation"),
+        ]
 
-    def test_named_models_still_win(self, tmp_path: Path):
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _write_manifest(_make_corpus_dir(source, "train", "ore"))
 
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(self._config(tmp_path)),
-                "--source-data", str(source),
-                "--output-path", str(output),
-                "--models", "header",
-            ])
+class TestMissingSource:
+    def test_does_not_clear_a_pair_it_cannot_rebuild(
+        self, config_file: Path, tmp_path: Path
+    ):
+        """Clearing comes first, so a missing source must stop before it.
 
-        argv = mock_gen.call_args.args[0]
-        assert argv[argv.index("--models") + 1:] == ["header"]
+        Otherwise a rebuild against a source tree that was never fetched empties
+        every declared pair and generates nothing into them.
+        """
+        existing = tmp_path / "out" / "train" / "ore" / "citation" / "corpus"
+        existing.mkdir(parents=True)
+        (existing / "kept.tei.xml").write_text("<x/>", encoding="utf-8")
 
-    def test_a_corpus_declaring_nothing_falls_back_to_every_model(self, tmp_path: Path):
-        source = tmp_path / "source"
-        output = tmp_path / "output"
-        output.mkdir()
-        _write_manifest(_make_corpus_dir(source, "train", "scielo"))
+        with patch(
+            "benchmarks.generate_training_data_cli.generate_from_tree_main"
+        ) as mock_generate:
+            with pytest.raises(SystemExit) as exc_info:
+                main([
+                    "--config", str(config_file),
+                    "--source-root", str(tmp_path / "never-fetched"),
+                    "--output-path", str(tmp_path / "out"),
+                    "--skip-fetch",
+                ])
 
-        with patch("benchmarks.generate_training_data_cli.generate_data_main") as mock_gen:
-            main([
-                "--config", str(self._config(tmp_path)),
-                "--source-data", str(source),
-                "--output-path", str(output),
-                "--corpus", "scielo",
-            ])
-
-        assert "--models" not in mock_gen.call_args.args[0]
+        assert exc_info.value.code == 1
+        assert (existing / "kept.tei.xml").is_file()
+        mock_generate.assert_not_called()
