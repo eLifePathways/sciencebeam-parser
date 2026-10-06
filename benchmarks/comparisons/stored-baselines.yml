@@ -6,12 +6,15 @@
 # `label` is optional: left out, a column is named for its tool, version and profile,
 # which is what tells two profiles of one version apart. Set it where that runs long --
 # it is the column heading and the chart's legend entry, so it wants to stay short.
+# `default` says nothing where a tool has only one profile, so GROBID is named for the
+# engine its version already states.
 variants:
-  - {label: grobid 0.9.0 (default), tool: grobid, version: 0.9.0-crf, profile: default}
-  - {label: grobid 0.9.1 (default), tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: grobid 0.9.1-crf, tool: grobid, version: 0.9.1-crf, profile: default}
   - {label: agentic rl-v5full-s20, tool: jats-agentic-annotation, version: qwen3.5-9b-rl-v5full-s20, profile: default}
-  - {label: parser main (wapiti sp+ore), tool: sciencebeam-parser, version: main, profile: wapiti_scielo_preprints_ore}
-  - {label: parser main (grobid_crf), tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {label: parser wapiti (sp+ore), tool: sciencebeam-parser, version: main, profile: wapiti_scielo_preprints_ore}
+  - {label: parser delft (sp+ore), tool: sciencebeam-parser, version: main, profile: delft_scielo_preprints_ore}
+  - {label: parser llm_references, tool: sciencebeam-parser, version: main, profile: llm_references}
+  - {label: parser grobid_crf, tool: sciencebeam-parser, version: main, profile: grobid_crf}
 
 rows:
   - {field: title, method: levenshtein, type: string}

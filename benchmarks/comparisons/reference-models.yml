@@ -4,7 +4,7 @@
 # `label` is optional: left out, a column is named for its tool, version and profile.
 # It is the column heading and the chart's legend entry, so keep it short.
 variants:
-  - {label: grobid 0.9.1 (default), tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: grobid 0.9.1 (crf), tool: grobid, version: 0.9.1-crf, profile: default}
   - {label: parser main (grobid_crf), tool: sciencebeam-parser, version: main, profile: grobid_crf}
   - {current: true}
 
