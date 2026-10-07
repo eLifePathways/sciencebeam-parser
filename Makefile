@@ -77,9 +77,6 @@ TRAINING_DATA_NUM_WORKERS ?= 1
 # Per-document timeout in seconds; 0 disables. Skips outlier PDFs (e.g. 73-page, 38 MB)
 # that cause the JATS aligner to run for many minutes.
 TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
-# Models to generate training data for (space-separated). Override to add more.
-TRAINING_DATA_MODELS ?= segmentation header affiliation-address reference-segmenter citation
-
 # Where dev-generate-delft-training-data writes, and which model it converts.
 # It converts one model at a time, because the delft CLI takes one model's paths.
 DELFT_TRAINING_DATA_OUTPUT ?= $(TRAINING_DATA_OUTPUT)/delft
@@ -89,9 +86,13 @@ DELFT_TRAINING_DATA_MODEL ?= segmentation
 # TRAINING_DATA_OUTPUT must point to a checkout of the output repo; create a
 # symlink at data/generated-training-data or override the variable directly:
 #   make dev-generate-training-data TRAINING_DATA_OUTPUT=/path/to/output-repo
-SOURCE_TRAINING_CONFIG ?= benchmarks/training-source.yml
+# The config lives in the generated data repo, beside the corpus it describes.
+SOURCE_TRAINING_CONFIG ?= $(TRAINING_DATA_OUTPUT)/training-source.yml
 SOURCE_TRAINING_MODE ?= smoke
-SOURCE_TRAINING_DATA ?= data/source-training-data/$(SOURCE_TRAINING_MODE)
+# One source tree per mode, since a corpus may want two of them: its references at
+# medium and its segmentation at smoke are two fetches and two generation runs.
+SOURCE_TRAINING_ROOT ?= data/source-training-data
+SOURCE_TRAINING_DATA ?= $(SOURCE_TRAINING_ROOT)/$(SOURCE_TRAINING_MODE)
 SOURCE_TRAINING_SPLIT ?= train
 
 SHOW_FIELD ?=
@@ -320,6 +321,8 @@ dev-benchmark-with-baselines:
 		$(ARGS)
 
 
+## Fetch one mode's source documents. dev-generate-training-data does this for
+## every mode the config declares, so this is for working on a single tree.
 dev-fetch-training-source:
 	$(PYTHON) -m benchmarks.fetch_training_source_cli \
 		--config $(SOURCE_TRAINING_CONFIG) \
@@ -328,6 +331,32 @@ dev-fetch-training-source:
 		--output-path $(SOURCE_TRAINING_DATA)
 
 
+## Generate from the one source tree at SOURCE_TRAINING_MODE, for the models the
+## config declares. It neither fetches nor clears, and it takes no notice of which
+## mode each model is declared at -- it generates from the tree it is given.
+## Use dev-generate-training-data unless that is what you want.
+dev-generate-training-data-from-tree:
+	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
+		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
+		echo "       Clone the output repo and symlink it to data/generated-training-data,"; \
+		echo "       or pass TRAINING_DATA_OUTPUT=/path/to/repo on the command line."; \
+		exit 1; }
+	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
+	$(PYTHON) -m benchmarks.generate_training_data_from_tree_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--source-data $(SOURCE_TRAINING_DATA) \
+		--output-path $(TRAINING_DATA_OUTPUT) \
+		--split $(SOURCE_TRAINING_SPLIT) \
+		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
+		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
+		--debug \
+		$(ARGS)
+
+
+## Build the corpus the config declares: fetches each mode it names and generates
+## each declared pair at it, clearing the pair first so that a lowered mode takes
+## effect. This is the one to reach for.
+## Usage: make dev-generate-training-data [ARGS="--corpus ore --model segmentation"]
 dev-generate-training-data:
 	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
 		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
@@ -337,13 +366,22 @@ dev-generate-training-data:
 	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
 	$(PYTHON) -m benchmarks.generate_training_data_cli \
 		--config $(SOURCE_TRAINING_CONFIG) \
-		--source-data $(SOURCE_TRAINING_DATA) \
+		--source-root $(SOURCE_TRAINING_ROOT) \
 		--output-path $(TRAINING_DATA_OUTPUT) \
 		--split $(SOURCE_TRAINING_SPLIT) \
 		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
 		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
-		--models $(TRAINING_DATA_MODELS) \
 		--debug \
+		$(ARGS)
+
+
+## List what the generated corpus holds against what the config declares.
+## Usage: make dev-training-data-state [ARGS=--check]
+dev-training-data-state:
+	$(PYTHON) -m benchmarks.training_data_state_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--training-data $(TRAINING_DATA_OUTPUT) \
+		--split $(SOURCE_TRAINING_SPLIT) \
 		$(ARGS)
 
 
