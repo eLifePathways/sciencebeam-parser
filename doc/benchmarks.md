@@ -80,6 +80,48 @@ with no prediction — and calls out a comparison whose columns cover different
 documents, since a delta across unequal sets reflects which documents each
 column covered as well as how it performed.
 
+## Compute cost
+
+Three numbers, beside the scores, for the variants that record them:
+
+- **latency** — what one document waited, as a median and a p90 over the
+  documents that got a prediction. A request that timed out took the client
+  timeout rather than that long to answer, so it is left out.
+- **throughput** — documents an hour, at the concurrency they were generated
+  at. `--concurrency 0` resolves to the core count of the machine running the
+  client, so the resolved value is recorded with the number.
+- **CPU-seconds per document** — the machine's busy time while generating
+  them, divided by the documents produced.
+
+Both rates are over what a run produced rather than what it attempted, and
+where the two differ the attempts are stated beside them: the wall clock covers
+the failures too. A run that produced nothing — one that reached no parser, say,
+and failed every document in a tenth of a second — states no rate at all rather
+than the fastest ever recorded.
+
+The CPU figure is the whole machine (`/proc/stat`), not the parser alone: the
+work is spread across a persistent wapiti process, in-process torch threads and
+subprocesses, and no measure taken inside the parser sees all of it. So it
+includes the benchmark client, and anything else the host was doing, and it is
+recorded only where the parser ran on the same machine — a run against a remote
+`--parser-url` records none. Where only part of a set was measured that way, the
+rate is stated over the part that was.
+
+All three cover every run that generated any of the predictions, not only the
+run that scored them. A run fetches what the predictions store has and asks the
+parser only for what is missing, so a set is usually assembled over several
+invocations, and may be assembled on several machines. Each invocation appends
+its own record to `manifest.jsonl` — what it processed, how long it took, at
+what concurrency, on what machine — beside the documents it produced, and each
+document entry is stamped with the invocation that wrote it. The store carries
+the manifest, so those records arrive with the predictions. Every other reader
+of the manifest selects on `status` or on a document's keys, so a line with
+neither is ignored by all of them.
+
+The report names what the set was measured on, and warns when the runs behind
+one column, or the columns being compared, differ in hardware or concurrency,
+since a timing delta is then partly a property of the measurement.
+
 ## Where the gold does not record a field
 
 Whether a publisher records an acknowledgement or marks its body sections is a
@@ -120,6 +162,7 @@ that, and both are scored:
 | `abstract_anywhere` | the article's own abstract, always one value | any abstract it carries |
 | `abstract_any_language` | every language the document carries it in, the article's own first | any abstract it carries |
 | `abstract_all_languages` | the same | every abstract it carries, paired with the gold |
+| `abstract_language` | the language each abstract is declared to be in | the language it declared for the abstract that matches |
 
 `abstract` is the headline and is literal: the article's own abstract on both
 sides. `abstract_anywhere` credits a tool that finds the article's own abstract
@@ -146,6 +189,21 @@ comparable with the rows above it. Below each corpus table, and in the
 comparison report, a block counts how often the credited one was a translation,
 per corpus: a run that reads the translation of every multilingual paper scores
 like one that reads the article's own, and that block is where it shows.
+
+`abstract_language` scores the declaration rather than the text, and is empty
+unless the run's profile sets `abstracts_mode` to `variants` or
+`merged_by_language`: the shipped default declares no language. The
+`grobid_crf_abstract_variants` and `grobid_crf_abstract_merged_by_language`
+profiles are the default with that one setting changed, so a run against either
+and a run against the default differ in nothing else. The two sides are paired
+by the abstract's text, since neither the order nor the count can be relied on,
+and a gold abstract declaring no language is left out of the
+comparison rather than counted as a miss: `biorxiv`, `ore` and `pkp` declare
+none at all, and `scielo_br` and `scielo_preprints-jats` declare one on
+`<trans-abstract>` and not on the `<abstract>` beside it. Its denominator is
+pairs rather than documents, so a document carrying three declared languages
+weighs three times one carrying a single one, and the figure is not comparable
+with the rows above.
 
 `abstract_legacy` is the measure these replaced: every `<abstract>` element
 joined into one string, with `<trans-abstract>` unread. It is scored so that a
@@ -194,6 +252,10 @@ and are read from the store like any baseline that does not generate:
 ```sh
 gh workflow run "Generate LLM predictions" --ref main
 ```
+
+Or from GitHub: **Actions** → **Generate LLM predictions** → **Run workflow**,
+on `main`. Leave the checkpoint blank to use the `eval.yml` version; `mode` and
+`split` pick the sample.
 
 The checkpoint defaults to the `version:` `eval.yml` gives the tool, so
 generation stores under the version the benchmark reads. What the store already

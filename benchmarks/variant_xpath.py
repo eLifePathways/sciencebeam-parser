@@ -11,6 +11,8 @@ from lxml import etree as ET
 
 from sciencebeam_judge.utils.xml import get_text_content
 
+from benchmarks.matched_property_scoring import PROPERTY_SEPARATOR
+
 XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
 
 ABSTRACT = "abstract"
@@ -80,8 +82,26 @@ def fn_jats_abstract_variants(_, nodes):
     ]
 
 
+def _language_pair(node: ET.ElementBase) -> str:
+    """A value's language and the text that identifies it, for `matched_property`."""
+    return (node.get(XML_LANG) or "") + PROPERTY_SEPARATOR + get_text_content(node)
+
+
+def fn_jats_abstract_language_pairs(_, nodes):
+    return [
+        _language_pair(variant)
+        for node in nodes for variant in abstract_variants(node)
+    ]
+
+
+def fn_tei_abstract_language_pairs(_, nodes):
+    return [_language_pair(node) for node in nodes]
+
+
 def register_variant_functions(ns: Optional[ET.FunctionNamespace] = None) -> None:
     if ns is None:
         ns = ET.FunctionNamespace(None)
     ns["jats-main-abstract"] = fn_jats_main_abstract
     ns["jats-abstract-variants"] = fn_jats_abstract_variants
+    ns["jats-abstract-language-pairs"] = fn_jats_abstract_language_pairs
+    ns["tei-abstract-language-pairs"] = fn_tei_abstract_language_pairs

@@ -66,7 +66,15 @@ from sciencebeam_parser.training.cli.generate_data import (
     get_generation_config,
     main,
 )
-from sciencebeam_parser.training.quality.record import DocumentStatus, JatsStatus
+from sciencebeam_parser.training.quality.record import (
+    DocumentStatus,
+    JatsStatus,
+    get_quality_record_filename
+)
+from sciencebeam_parser.training.spans.record import (
+    LabelledSpan,
+    get_labelled_content_hash
+)
 
 from tests.processors.fulltext.model_mocks import MockFullTextModels
 from tests.test_utils import log_on_exception
@@ -465,6 +473,72 @@ class TestGenerateTrainingDataForLayoutDocument:
         assert reference_segmenter_json_dict['entity_element_count'] == 1
         assert json_dict_by_model['citation']['entity_element_count'] == 1
         assert 'entity_element_count' not in json_dict_by_model['segmentation']
+
+    def test_should_pin_a_model_with_a_span_record_to_what_that_record_says(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        """The pin has to be recoverable from the corpus, or it cannot be backfilled."""
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'segmentation' / 'corpus' / 'spans',
+            MINIMAL_EXAMPLE_PDF,
+            SegmentationModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        quality_path = (
+            output_path / 'segmentation' / 'quality'
+            / get_quality_record_filename(Path(MINIMAL_EXAMPLE_PDF).stem, 'segmentation')
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        recomputed = get_labelled_content_hash([
+            LabelledSpan(
+                line_index=json_dict['line'] - 1,
+                label=json_dict['label'],
+                text=json_dict['text'],
+                coordinates=None
+            )
+            for json_dict in json_dicts[1:]
+        ])
+        recorded = json.loads(quality_path.read_text(encoding='utf-8'))
+        assert recorded['labelled_content_hash'] == recomputed
+
+    def test_should_not_pin_a_model_that_writes_no_span_record(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        quality_path = (
+            output_path / 'citation' / 'quality'
+            / get_quality_record_filename(Path(MINIMAL_EXAMPLE_PDF).stem, 'citation')
+        )
+        assert 'labelled_content_hash' not in json.loads(
+            quality_path.read_text(encoding='utf-8')
+        )
 
     def test_should_report_a_missing_jats_without_a_reference_count(
         self,

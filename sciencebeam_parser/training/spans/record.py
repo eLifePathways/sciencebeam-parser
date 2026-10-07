@@ -17,6 +17,7 @@ the field names and the model's labels travel with the data.  A span the layout
 could not place keeps its place in the file, with its label and text and no
 coordinates.
 """
+import hashlib
 import json
 from typing import (
     Any, Dict, Iterable, Iterator, List, Mapping, NamedTuple, Optional, Sequence, Tuple
@@ -288,6 +289,36 @@ def check_spans_against_tei(
                 f'{document_id}: line {1 + line_index} is {span_text!r} in the spans'
                 f' and {tei_line_text!r} in the training tei'
             )
+
+
+LABELLED_CONTENT_HASH_PREFIX = 'v1:sha256:'
+
+
+def get_labelled_content_hash(spans: Sequence[LabelledSpan]) -> str:
+    """What a review judged, as a value a verdict can be pinned to.
+
+    The labels and the text they cover, and not the file holding them: a record
+    written in another format still says the same thing about the same document,
+    and a verdict should survive that.  Coordinates are left out for the same
+    reason -- where a line sits on the page is not what was judged.  The line a
+    span belongs to is in, because a line break moving changes what trains, and
+    so is each span boundary: a span ends where its element does, so two spans
+    under one label are two sibling elements and train differently from one.
+
+    The digest is over, per span and in order, the JSON array of its zero-based
+    line index, its label and its text, encoded as UTF-8 with non-ASCII left as
+    it is and Python's default separators, each followed by a newline.  The
+    version leads the value because a corpus commits these: changing how the
+    digest is taken has to read as a different pin rather than as data nobody
+    recognises any more.
+    """
+    digest = hashlib.sha256()
+    for span in spans:
+        digest.update(json.dumps(
+            [span.line_index, span.label, span.text], ensure_ascii=False
+        ).encode('utf-8'))
+        digest.update(b'\n')
+    return LABELLED_CONTENT_HASH_PREFIX + digest.hexdigest()
 
 
 def iter_page_json_dicts(

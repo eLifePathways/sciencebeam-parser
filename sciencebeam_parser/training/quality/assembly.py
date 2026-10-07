@@ -51,8 +51,13 @@ class GeneratedDocumentRecord:
 
 
 def get_corpus_name_for_record_file_path(record_file_path: str) -> Optional[str]:
-    """The corpus a record belongs to, which is the directory above its model's."""
-    model_directory = os.path.dirname(record_file_path)
+    """The corpus a record belongs to, which is the directory above its model's.
+
+    A record sits in its model's `quality` directory, so the corpus is three
+    levels up rather than two.
+    """
+    records_directory = os.path.dirname(record_file_path)
+    model_directory = os.path.dirname(records_directory)
     corpus_directory = os.path.dirname(model_directory)
     return os.path.basename(corpus_directory) or None
 
@@ -60,25 +65,24 @@ def get_corpus_name_for_record_file_path(record_file_path: str) -> Optional[str]
 def read_generated_document_records(
     record_path_pattern: str
 ) -> Dict[str, GeneratedDocumentRecord]:
+    """Read the records a pattern matches, one JSON object per file."""
     record_file_list = glob(record_path_pattern)
     if not record_file_list:
         raise RuntimeError(
             'no quality record found for file pattern %r' % record_path_pattern
         )
-    LOGGER.info('reading quality records from: %r', record_file_list)
+    LOGGER.info('reading %d quality records', len(record_file_list))
+    LOGGER.debug('quality record files: %r', record_file_list)
     record_by_document_id: Dict[str, GeneratedDocumentRecord] = {}
     for record_file_path in record_file_list:
         corpus = get_corpus_name_for_record_file_path(record_file_path)
         with open(record_file_path, 'r', encoding='utf-8') as record_file:
-            for line in record_file:
-                if not line.strip():
-                    continue
-                json_dict = json.loads(line)
-                record_by_document_id[json_dict['document_id']] = GeneratedDocumentRecord(
-                    document_id=json_dict['document_id'],
-                    corpus=corpus,
-                    json_dict=json_dict,
-                )
+            json_dict = json.load(record_file)
+        record_by_document_id[json_dict['document_id']] = GeneratedDocumentRecord(
+            document_id=json_dict['document_id'],
+            corpus=corpus,
+            json_dict=json_dict,
+        )
     return record_by_document_id
 
 

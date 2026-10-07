@@ -68,21 +68,25 @@ Additionally the `--gzip` argument can be passed in, resulting in gzip (`.gz`) c
 
 #### The quality record
 
-Every run writes a `quality.jsonl` per model it generated for, one JSON line per
-source document, whether the document succeeded or not. It holds the count at each
-stage where the cardinality of the labels can change, so that a corpus can be
-compared against the JATS it was aligned from without counting labels in the
-generated data afterwards.
+Every run writes one record per source document and model it generated for,
+whether the document succeeded or not. It holds the count at each stage where the
+cardinality of the labels can change, so that a corpus can be compared against the
+JATS it was aligned from without counting labels in the generated data afterwards.
 
 The record is per model because generation is run per model: a corpus commonly
 holds one model's data at one document set and another model's at a different one,
 and a record covering the whole corpus would describe the last run rather than the
-data beside it. With `--use-directory-structure` each file sits beside that model's
-`corpus` directory, otherwise it is `<model>.quality.jsonl` in the output path:
+data beside it. It is per document because a run is routinely narrowed to one
+document or one model, and a record covering only what the run touched would drop
+the documents it exists for.
+
+With `--use-directory-structure` the records sit in a `quality` directory beside
+that model's `corpus`, otherwise they are flat in the output path under the same
+filenames:
 
 ```text
-reference-segmenter/quality.jsonl
-citation/quality.jsonl
+reference-segmenter/quality/PPR459453.reference-segmenter.quality.json
+citation/quality/PPR459453.citation.quality.json
 ```
 
 ```json
@@ -107,6 +111,14 @@ citation/quality.jsonl
   `reference-segmenter` and `citation`, and absent for a model whose labels mark
   regions rather than repeated entities. `written: false` is a model that found no
   entities and so wrote no file at all.
+- `labelled_content_hash` is over the labels the document carries and the text
+  each one covers, and is present for a model that writes a span record. It
+  changes when a label, the text under it, a line break or an element boundary
+  moves, and not when the same content is written to a different file format or
+  lands elsewhere on the page. It can be recomputed from the span record beside
+  it; `get_labelled_content_hash` states the recipe. The leading `v1` is the
+  recipe's version, so a corpus pinned under an older one reads as pinned
+  differently rather than as unrecognisable.
 - `label_counts` is per citation label, over references rather than occurrences:
   `jats` counts references whose JATS carries a sub-field for that label, `marked`
   counts references the training data marks it in. The two differ legitimately —
@@ -115,8 +127,13 @@ citation/quality.jsonl
 
 The record is written by the parent process as each document finishes, so a run
 that is interrupted keeps the records it had, and a document that timed out or
-failed is present with a `status` of `timeout` or `error` in every model's file
-rather than missing.
+failed gets a record with a `status` of `timeout` or `error` for every model
+rather than none at all.
+
+Regenerating part of a corpus rewrites the records of the documents it covered and
+leaves the rest standing, so what a regeneration changed is a list of files in the
+diff. Nothing here removes a record: a record with no generated data beside it is
+the case the record exists for.
 
 #### The span record
 
@@ -204,14 +221,18 @@ what the training data ends up with is the entities those elements parse back to
 It writes `<delft-output-path>.quality.jsonl` (or `--quality-output-path`), one row
 per document, and logs a summary per corpus.
 
+It is one file per assembly run rather than per document, because it describes the
+corpus a run assembled rather than data committed beside it.
+
 Pass `--quality-record-path` to join what generation recorded, so that a loss can be
-attributed to a stage rather than only observed:
+attributed to a stage rather than only observed. It is a pattern over the
+per-document records:
 
 ```bash
 python -m sciencebeam_parser.training.cli.generate_delft_data \
     --model-name="reference_segmenter" \
     --tei-source-path="data/generated-training-data/train/*/reference-segmenter/corpus/tei/*.tei.xml" \
-    --quality-record-path="data/generated-training-data/train/*/reference-segmenter/quality.jsonl" \
+    --quality-record-path="data/generated-training-data/train/*/reference-segmenter/quality/*.quality.json" \
     --delft-output-path="./data/generated-training-data/delft/reference-segmenter/corpus/reference-segmenter.data"
 ```
 
