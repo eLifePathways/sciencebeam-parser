@@ -22,7 +22,7 @@ variants:
   - {label: ScienceBeam refs retrained (non-DL), tool: sciencebeam-parser, version: main,
      profile: wapiti_references_scielo_preprints_ore}
   - {label: ScienceBeam refs retrained (DL), tool: sciencebeam-parser, version: main,
-     profile: delft_scielo_preprints_ore}
+     profile: delft_references_scielo_preprints_ore}
   - {label: ScienceBeam all retrained (DL), tool: sciencebeam-parser, version: main,
      profile: delft_all_scielo_preprints_ore}
   - {label: ScienceBeam + LLM references, tool: sciencebeam-parser, version: main, profile: llm_references}

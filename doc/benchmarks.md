@@ -217,21 +217,15 @@ variant produced a value the gold has none of. `type` is **asserted, not selecte
 summary gives a field exactly one scoring type, so naming it catches a run that re-typed
 the field instead of comparing across the change.
 
-A **chart** is either a score row or a compute figure. `compute:` takes
-`cpu_seconds_per_doc`, `latency_median`, `latency_p90`, `docs_per_hour` or
-`estimated_cost_per_1k`, and draws one bar per variant. The `latency_` metrics are named for the record they read; what they
-measure is a whole document being converted, so the charts call it time per document — the same numbers the Compute cost section states as text. Each variant
-keeps the colour it has as a series in the score charts, so the two read as one set, and
-nothing is drawn until two variants recorded the figure: one bar is a number with a
-rectangle around it, and runs that predate the measurement record none.
+Charts are drawn in the order the file declares them, whatever their kind, and written to `charts/` beside the report.
 
-A score **chart** names one row and draws it as a grouped bar chart, variants as series and
-corpora along the axis. Charts are drawn in the order the file declares
-them, whatever their kind. `rows:` instead of `row:` draws several rows side by side with
-the fields along the axis, which says which fields a difference reaches rather than where it
-lives; it needs two rows or more, and has no corpus axis to need two corpora. It reads the same cells the table does, and a variant that
-scored nothing for a corpus leaves a gap there rather than a bar at zero. Charts are
-written to `charts/` beside the report.
+A **score chart** names one row with `row:` and draws it as a grouped bar chart, the variants as series and the corpora along the axis. It reads the same cells the table does, so a variant that scored nothing for a corpus leaves a gap there rather than a bar at zero, and nothing is drawn below two corpora. `rows:` instead of `row:` draws several rows side by side with the fields along the axis, which says which fields a difference reaches rather than where it lives; it needs two rows or more, and having no corpus axis it needs no two corpora either.
+
+A **compute chart** says what a run spent rather than what it scored. `compute:` takes `cpu_seconds_per_doc`, `latency_median`, `latency_p90`, `docs_per_hour` or `estimated_cost_per_1k`, reading the same record the Compute cost section states as text, and draws one bar per variant. Nothing is drawn until two variants recorded the figure — one bar is a number with a rectangle around it, and a run that predates the measurement records none — and the axis says how many did where some did not.
+
+The `latency_` metrics are named for the record they read. What they measure is a whole document being converted, so the charts call it time per document and name the unit as wall-clock seconds.
+
+`estimated_cost_per_1k` prices the CPU at `cpu_usd_per_hour` and adds what an LLM provider charged, each over the documents it was measured over, and stacks the two so the bar says which part it is. Colour there says which part rather than which variant, since that is what the segments differ by; every other chart keeps a variant's colour the same throughout. The default rate is roughly what a small general-purpose instance costs on demand per vCPU-hour — an AWS `t4g`/`c7g` or a GCP `e2`, excluding free tiers and anything with a usage limit. It is a sense of scale rather than a quote: rates move, differ by region and fall with commitment, so check current pricing before quoting any of it, and nothing here is billed at any rate anyway, since CI's CPU costs us nothing. The axis says which rate it used.
 
 Anything named that no summary can answer for — a field, method, corpus, scope, variant
 or asserted type — is an error that says so, rather than an empty column.
