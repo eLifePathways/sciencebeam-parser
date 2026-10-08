@@ -231,7 +231,6 @@ sequence_model_profiles:
       - wapiti_refseg_scielo_preprints_ore
       - wapiti_citation_scielo_preprints_ore
   # The same training documents as the wapiti pair above, on the delft engine.
-  # Interim: a bucket path is benchmarked from a pull request and never merges.
   delft_refseg_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     reference_segmenter:
@@ -248,16 +247,15 @@ sequence_model_profiles:
       - delft_citation_scielo_preprints_ore
   # Segmentation, trained on the same documents. Both engines, so the pair can be
   # compared against each other as well as against the shipped wapiti model.
-  # Interim: a bucket path is benchmarked from a pull request and never merges.
   wapiti_seg_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     segmentation:
-      path: 'gs://sciencebeam-v2-models/wapiti/segmentation/models/2026-10-06_wapiti_grobid_090_scielo_preprints_ore/segmentation/'
+      path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/08e5e4a5e6080e6e1874ef6ab4dc8cca7ceac181/segmentation/wapiti/2026-10-06_wapiti_grobid_090_scielo_preprints_ore'
       engine: 'wapiti'
   delft_seg_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     segmentation:
-      path: 'gs://sciencebeam-v2-models/delft/segmentation/models/2026-10-06_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore_b50_flex_t4/segmentation'
+      path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/08e5e4a5e6080e6e1874ef6ab4dc8cca7ceac181/segmentation/delft/2026-10-06_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore_b50_flex_t4'
       engine: 'delft'
   # Every retrained model of an engine at once. The pair above it --
   # wapiti_references_scielo_preprints_ore and delft_references_scielo_preprints_ore -- stays the
