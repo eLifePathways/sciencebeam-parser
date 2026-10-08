@@ -187,6 +187,12 @@ jobs:
           path: charts
         continue-on-error: true
 
+      - name: Say when there was nothing to publish
+        if: steps.download.outcome != 'success'
+        run: |
+          echo "::notice::No charts artifact for this run. Either no comparison was" \
+            "named, or the one named drew no charts - this job has nothing to do and" \
+            "says so rather than passing silently."
       - name: Publish charts to the release
         if: steps.download.outcome == 'success'
         env:
