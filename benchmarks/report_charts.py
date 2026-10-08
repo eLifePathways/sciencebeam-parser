@@ -399,12 +399,27 @@ class ComputeChartSpec:
         return COMPUTE_METRICS[self.metric][1]
 
     @property
+    def caption(self) -> str:
+        """Which variants are on the chart, so a column missing from it is visible.
+
+        A variant records this only if the run that made its predictions measured it,
+        and nothing about the chart otherwise says that the others were left out rather
+        than being zero.
+        """
+        recorded = sum(value is not None for value in self.values)
+        if recorded == len(self.values):
+            return self.axis_label
+        return (
+            f"{self.axis_label} — {recorded} of {len(self.values)} variants recorded it"
+        )
+
+    @property
     def title(self) -> str:
         return self.title_override or COMPUTE_METRICS[self.metric][0]
 
     @property
     def alt_text(self) -> str:
-        return f"{self.title}, {self.axis_label}, one bar per variant"
+        return f"{self.title}, {self.caption}, one bar per variant"
 
 
 def _compute_value_format(largest: float) -> str:
@@ -472,7 +487,7 @@ def render_compute_chart(
 def _style_compute_axes(axes, spec, positions, labels, largest: float) -> None:
     axes.set_yticks(positions)
     axes.set_yticklabels(labels, fontsize=8, color=TEXT_SECONDARY)
-    axes.set_xlabel(spec.axis_label, fontsize=8.5, color=TEXT_SECONDARY)
+    axes.set_xlabel(spec.caption, fontsize=8.5, color=TEXT_SECONDARY)
     axes.set_xlim(0, largest * 1.16)
     axes.tick_params(axis="both", length=0, colors=TEXT_SECONDARY, labelsize=8)
     axes.set_axisbelow(True)

@@ -210,3 +210,25 @@ class TestLegendLayout:
 
     def test_should_not_widen_beyond_what_was_asked(self):
         assert _legend_layout(8, 4)[0] == 4
+
+
+class TestComputeChartCoverage:
+    """A variant records this only if the run that made its predictions measured it."""
+
+    def _spec(self, values):
+        return ComputeChartSpec(
+            metric="cpu_seconds_per_doc",
+            series=tuple(f"run {index}" for index in range(len(values))),
+            values=tuple(values),
+        )
+
+    def test_should_say_nothing_extra_where_every_variant_recorded_it(self):
+        assert self._spec([1.0, 2.0]).caption == "CPU-seconds per document"
+
+    def test_should_say_how_many_recorded_it_where_some_did_not(self):
+        assert self._spec([1.0, 2.0, None]).caption == (
+            "CPU-seconds per document — 2 of 3 variants recorded it"
+        )
+
+    def test_should_carry_that_into_the_alt_text(self):
+        assert "2 of 3 variants recorded it" in self._spec([1.0, 2.0, None]).alt_text
