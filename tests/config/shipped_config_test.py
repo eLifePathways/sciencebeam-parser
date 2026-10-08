@@ -22,11 +22,11 @@ SHARED_BASE_PROFILE = 'grobid_crf_0_9_0'
 
 # Profiles combining single-model profiles, and the profile each model comes from.
 COMBINED_PROFILES: Dict[str, Dict[str, str]] = {
-    'wapiti_scielo_preprints_ore': {
+    'wapiti_references_scielo_preprints_ore': {
         'reference_segmenter': 'wapiti_refseg_scielo_preprints_ore',
         'citation': 'wapiti_citation_scielo_preprints_ore',
     },
-    'delft_scielo_preprints_ore': {
+    'delft_references_scielo_preprints_ore': {
         'reference_segmenter': 'delft_refseg_scielo_preprints_ore',
         'citation': 'delft_citation_scielo_preprints_ore',
     },

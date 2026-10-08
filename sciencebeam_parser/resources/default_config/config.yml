@@ -226,7 +226,7 @@ sequence_model_profiles:
     citation:
       path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/e266cc546e035e0d41734b9403b9cb496b6895a1/citation/wapiti/2026-09-08_wapiti_grobid_090_scielo_preprints_ore'
       engine: 'wapiti'
-  wapiti_scielo_preprints_ore:
+  wapiti_references_scielo_preprints_ore:
     extends:
       - wapiti_refseg_scielo_preprints_ore
       - wapiti_citation_scielo_preprints_ore
@@ -242,7 +242,7 @@ sequence_model_profiles:
     citation:
       path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/dd39a9d6246b94a4e5861cf548921a7a3f1ba0ca/citation/delft/2026-09-18_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore'
       engine: 'delft'
-  delft_scielo_preprints_ore:
+  delft_references_scielo_preprints_ore:
     extends:
       - delft_refseg_scielo_preprints_ore
       - delft_citation_scielo_preprints_ore
@@ -260,7 +260,7 @@ sequence_model_profiles:
       path: 'gs://sciencebeam-v2-models/delft/segmentation/models/2026-10-06_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore_b50_flex_t4/segmentation'
       engine: 'delft'
   # Every retrained model of an engine at once. The pair above it --
-  # wapiti_scielo_preprints_ore and delft_scielo_preprints_ore -- stays the
+  # wapiti_references_scielo_preprints_ore and delft_references_scielo_preprints_ore -- stays the
   # reference models alone, so a change in the references can still be read
   # without segmentation moving underneath it.
   wapiti_all_scielo_preprints_ore:
@@ -394,8 +394,8 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-  wapiti_scielo_preprints_ore:
-    sequence_models: wapiti_scielo_preprints_ore
+  wapiti_references_scielo_preprints_ore:
+    sequence_models: wapiti_references_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
@@ -412,8 +412,8 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-  delft_scielo_preprints_ore:
-    sequence_models: delft_scielo_preprints_ore
+  delft_references_scielo_preprints_ore:
+    sequence_models: delft_references_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
