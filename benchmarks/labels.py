@@ -51,15 +51,18 @@ def field_label(field: str) -> str:
     return FIELD_LABELS.get(field, field)
 
 
-# What each scoring method does, rather than what the library calls it. `levenshtein` and
-# `edit_sim` run the same normalised edit distance; `edit_sim` strips punctuation and
-# whitespace from both sides first.
+# What each scoring method does, rather than what the library calls it. The difference
+# that matters between `levenshtein` and `edit_sim` is not the measure -- both run the
+# same normalised edit distance -- but what is done with it: `levenshtein` counts a value
+# as matched or not at a threshold of 0.8, while `edit_sim` scores the similarity itself,
+# so a near miss earns partial credit under one and nothing under the other. `edit_sim`
+# additionally strips punctuation and whitespace from both sides first.
 METHOD_LABELS: Dict[str, str] = {
     "exact": "exact match",
-    "levenshtein": "edit similarity",
-    "edit_sim": "edit similarity, ignoring punctuation",
-    "ratcliff_obershelp": "Ratcliff-Obershelp similarity",
-    "soft": "soft match",
+    "soft": "exact match, punctuation ignored",
+    "levenshtein": "matched at 80% edit similarity",
+    "ratcliff_obershelp": "matched at 95% Ratcliff-Obershelp similarity",
+    "edit_sim": "edit similarity scored in full, punctuation ignored",
 }
 
 

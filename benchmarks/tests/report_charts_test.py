@@ -41,7 +41,8 @@ class TestChartSpec:
 
     def test_should_say_which_scope_it_covers(self):
         assert _spec(scope="gold", n_docs=12).caption == (
-            "edit similarity, over the 12 documents whose gold records it"
+            "matched at 80% edit similarity,"
+            " over the 12 documents whose gold records it"
         )
 
     def test_should_say_how_the_field_was_scored(self):
@@ -57,7 +58,8 @@ class TestChartSpec:
 
     def test_should_describe_itself_for_a_reader_who_cannot_see_it(self):
         assert _spec().alt_text == (
-            "Abstract — f1 by corpus, edit similarity, over all 40 documents"
+            "Abstract — f1 by corpus, matched at 80% edit similarity,"
+            " over all 40 documents"
         )
 
     def test_should_name_the_field_the_way_a_reader_would(self):
@@ -82,7 +84,7 @@ class TestChartMarkdown:
 
     def test_should_carry_the_alt_text(self):
         lines = chart_markdown([_spec()], "charts")
-        assert lines[2].startswith("![Abstract — f1 by corpus, edit similarity, over all 40")
+        assert lines[2].startswith("![Abstract — f1 by corpus, matched at 80% edit similarity")
 
 
 class TestRenderChart:

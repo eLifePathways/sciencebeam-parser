@@ -329,7 +329,7 @@ class TestFieldsChart:
 
     def test_links_it_from_the_report(self, tmp_path):
         report = self._charted(tmp_path, self._ROWS, title="Key fields")
-        assert "![Key fields, edit similarity, over all" in report
+        assert "![Key fields, matched at 80% edit similarity, over all" in report
 
     def test_fails_naming_a_row_the_tables_do_not_show(self, tmp_path):
         with pytest.raises(SelectionError, match="keywords"):

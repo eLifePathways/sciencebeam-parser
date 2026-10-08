@@ -25,7 +25,10 @@ variants:
      profile: delft_references_scielo_preprints_ore}
   - {label: ScienceBeam all retrained (DL), tool: sciencebeam-parser, version: main,
      profile: delft_all_scielo_preprints_ore}
-  - {label: ScienceBeam + LLM references, tool: sciencebeam-parser, version: main, profile: llm_references}
+  - {label: ScienceBeam + LLM references, tool: sciencebeam-parser, version: main,
+     profile: llm_references}
+  - {label: ScienceBeam + LLM throughout, tool: sciencebeam-parser, version: main,
+     profile: llm_all}
   - {label: Agentic LLM (v5full-s20), tool: jats-agentic-annotation, version: qwen3.5-9b-rl-v5full-s20, profile: default}
 
 rows:

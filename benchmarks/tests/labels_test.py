@@ -56,11 +56,13 @@ class TestMethodLabel:
     def test_should_say_what_the_method_does(self):
         assert method_label("exact") == "exact match"
 
-    def test_should_tell_the_two_edit_distances_apart(self):
-        # Both run the same normalised edit distance; `edit_sim` strips punctuation and
-        # whitespace from both sides first.
-        assert method_label("levenshtein") == "edit similarity"
-        assert method_label("edit_sim") == "edit similarity, ignoring punctuation"
+    def test_should_say_where_a_method_counts_a_match_rather_than_scoring_it(self):
+        # Both run the same edit distance; `levenshtein` counts a value as matched or
+        # not at 0.8, while `edit_sim` scores the similarity itself.
+        assert method_label("levenshtein") == "matched at 80% edit similarity"
+        assert method_label("edit_sim") == (
+            "edit similarity scored in full, punctuation ignored"
+        )
 
     def test_should_fall_back_to_the_identifier(self):
         assert method_label("something_new") == "something_new"
