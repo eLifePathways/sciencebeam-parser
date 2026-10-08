@@ -33,7 +33,7 @@ variants:
 
 rows:
   - {field: title, method: levenshtein, type: string}
-  - {field: abstract, method: levenshtein, type: string}
+  - {field: abstract_anywhere, method: levenshtein, type: best_match}
   - {field: author_full_names, method: levenshtein, type: partial_ulist}
   - {field: reference_title, method: levenshtein, type: partial_list}
   - {field: first_reference_text, method: levenshtein, type: string}
