@@ -22,7 +22,7 @@ from benchmarks.comparison_config import (
     store_variants,
     to_selection,
 )
-from benchmarks.report_grid import Selection, SelectionError
+from benchmarks.report_grid import SelectionError
 from benchmarks.score import run_score
 
 LOGGER = logging.getLogger(__name__)
@@ -299,8 +299,6 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     include: Optional[Iterable[str]] = None,
     retry_passes: int = DEFAULT_RETRY_PASSES,
     comparison: Optional[str] = None,
-    chart_fields: Optional[Iterable[str]] = None,
-    chart_methods: Optional[Iterable[str]] = None,
     chart_prefix: str = "",
     chart_base_url: str = "",
 ) -> None:
@@ -367,14 +365,9 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     labeled_paths.append((current_label, primary_run_dir / "summary.json"))
 
     if len(labeled_paths) >= 2:
-        run_compare(
-            labeled_paths, primary_run_dir / "comparison.md",
-            Selection(
-                charts=tuple(chart_fields or ()),
-                chart_methods=tuple(chart_methods) if chart_methods else None,
-            ),
-            chart_prefix, chart_base_url,
-        )
+        # No charts: this is the report CI has always posted, and a comparison file is
+        # how a run asks for one of its own.
+        run_compare(labeled_paths, primary_run_dir / "comparison.md")
     else:
         LOGGER.info("Only one summary available; skipping comparison report")
 
@@ -461,18 +454,6 @@ def main(argv=None) -> None:
         ),
     )
     parser.add_argument(
-        "--chart", action="append", default=None, dest="chart_fields", metavar="FIELD",
-        help=(
-            "Also chart this field in the comparison, repeatable. Off by default, so a"
-            " run that does not ask produces the report it produces today"
-        ),
-    )
-    parser.add_argument(
-        "--chart-method", action="append", default=None, dest="chart_methods",
-        metavar="METHOD",
-        help="Chart only this method, repeatable. Leaves the tables as they are",
-    )
-    parser.add_argument(
         "--chart-prefix", default="",
         help="Prefix for chart filenames, so runs published together stay apart",
     )
@@ -557,8 +538,6 @@ def main(argv=None) -> None:
         include=args.include_corpus,
         retry_passes=args.retry_passes,
         comparison=args.comparison,
-        chart_fields=args.chart_fields,
-        chart_methods=args.chart_methods,
         chart_prefix=args.chart_prefix,
         chart_base_url=args.chart_base_url,
     )

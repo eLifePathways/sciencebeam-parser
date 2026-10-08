@@ -24,16 +24,6 @@ on:
         required: false
         default: ''
         type: string
-      chart_fields:
-        description: 'Fields to chart, space separated (empty = no charts, which is the default report)'
-        required: false
-        default: ''
-        type: string
-      chart_methods:
-        description: 'Scoring methods to chart, space separated (empty = every method the field carries)'
-        required: false
-        default: ''
-        type: string
   push:
     branches: [main]
   pull_request:
@@ -97,16 +87,12 @@ jobs:
            contains(github.event.pull_request.labels.*.name, 'benchmark:plos') ||
            inputs.include_plos) && '--include-corpus plos-manuscripts' || ''
         }}
-      # Charts are opt-in: without a `charts:<field>` label or a dispatch input this
-      # is empty, no images are drawn, and the report is the one CI has always posted.
+      # A comparison file to render beside the report, by name. Empty renders only the
+      # report CI has always posted, which is every run that does not ask.
       BENCHMARK_COMPARISON: >-
         ${{ inputs.comparison || '' }}
-      BENCHMARK_CHART_FIELDS: >-
-        ${{ inputs.chart_fields || '' }}
-      BENCHMARK_CHART_METHODS: >-
-        ${{ inputs.chart_methods || '' }}
-      # The release the publish job uploads to. The URL is knowable before the upload
-      # happens, so the report can link it while it is still being rendered.
+      # The release the publish job uploads a comparison's charts to. The URL is knowable
+      # before the upload happens, so the report can link it while it is being rendered.
       BENCHMARK_CHART_RELEASE: benchmark-charts
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/validation
 
@@ -164,7 +150,7 @@ jobs:
           echo "::notice::Benchmark profile: $PROFILE (from $PROFILE_SOURCE)"
           echo "BENCHMARK_PROFILE=$PROFILE" >> "$GITHUB_ENV"
 
-      - name: Resolve charted fields
+      - name: Resolve the comparison
         env:
           PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: |
@@ -179,30 +165,6 @@ jobs:
           echo "BENCHMARK_COMPARISON=${COMPARISON}" >> "$GITHUB_ENV"
           if [ -n "$COMPARISON" ]; then
             echo "::notice::Comparison: $COMPARISON"
-          fi
-          LABEL_FIELDS=$(echo "$PR_LABELS_JSON" \
-            | jq -r '.[]? | select(startswith("charts:")) | sub("^charts:"; "")' | tr '\n' ' ')
-          FIELDS="${LABEL_FIELDS:-${BENCHMARK_CHART_FIELDS}}"
-          for field in $FIELDS; do
-            if ! [[ "$field" =~ ^[A-Za-z0-9_]+$ ]]; then
-              echo "::error::Invalid chart field '$field' - only letters, digits and underscores"
-              exit 1
-            fi
-          done
-          LABEL_METHODS=$(echo "$PR_LABELS_JSON" \
-            | jq -r '.[]? | select(startswith("chart-method:")) | sub("^chart-method:"; "")' \
-            | tr '\n' ' ')
-          METHODS="${LABEL_METHODS:-${BENCHMARK_CHART_METHODS}}"
-          for method in $METHODS; do
-            if ! [[ "$method" =~ ^[A-Za-z0-9_]+$ ]]; then
-              echo "::error::Invalid chart method '$method' - only letters, digits and underscores"
-              exit 1
-            fi
-          done
-          echo "BENCHMARK_CHART_FIELDS=${FIELDS}" >> "$GITHUB_ENV"
-          echo "BENCHMARK_CHART_METHODS=${METHODS}" >> "$GITHUB_ENV"
-          if [ -n "$FIELDS" ]; then
-            echo "::notice::Charting: $FIELDS ${METHODS:+(methods: $METHODS)}"
           fi
 
       - name: Set image tag
@@ -320,18 +282,12 @@ jobs:
           # A PR comment cannot render a local file, so the images are linked at the
           # release the publish job uploads them to. That job runs after this one, so
           # the links are briefly 404 and then resolve.
-          CHART_ARGS=()
+          COMPARISON_ARGS=()
           if [ -n "${BENCHMARK_COMPARISON}" ]; then
-            CHART_ARGS+=(--comparison "${BENCHMARK_COMPARISON}")
+            COMPARISON_ARGS+=(--comparison "${BENCHMARK_COMPARISON}")
           fi
-          for field in ${BENCHMARK_CHART_FIELDS}; do
-            CHART_ARGS+=(--chart "$field")
-          done
-          if [ ${#CHART_ARGS[@]} -gt 0 ]; then
-            for method in ${BENCHMARK_CHART_METHODS}; do
-              CHART_ARGS+=(--chart-method "$method")
-            done
-            CHART_ARGS+=(
+          if [ ${#COMPARISON_ARGS[@]} -gt 0 ]; then
+            COMPARISON_ARGS+=(
               --chart-prefix "${GITHUB_SHA}-"
               --chart-base-url \
                 "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.BENCHMARK_CHART_RELEASE }}"
@@ -349,7 +305,7 @@ jobs:
             --profile "${{ env.BENCHMARK_PROFILE }}" \
             --retry-passes ${{ env.BENCHMARK_RETRY_PASSES }} \
             ${{ env.BENCHMARK_CORPORA }} \
-            "${CHART_ARGS[@]}" \
+            "${COMPARISON_ARGS[@]}" \
             "${PUSH_CURRENT_ARG[@]}"
 
       # The client only sees {"detail":"Internal Server Error"}, so without this a
