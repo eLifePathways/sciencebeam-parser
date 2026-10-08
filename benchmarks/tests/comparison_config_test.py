@@ -10,6 +10,7 @@ from benchmarks.comparison_config import (
     primary_index,
     resolve_variants,
     to_selection,
+    variant_descriptions,
 )
 from benchmarks.report_grid import (
     ChartConfig,
@@ -412,3 +413,26 @@ class TestCostChartRate:
                 TWO_VARIANTS
                 + "charts:\n  - {compute: estimated_cost_per_1k, cpu_usd_per_hour: 0}\n"
             )
+
+
+class TestVariantDescriptions:
+    def test_should_name_the_store_coordinates(self):
+        config = _parse(TWO_VARIANTS)
+        assert variant_descriptions(config)[0][1] == (
+            "`grobid` `0.9.1-crf`, profile `default`"
+        )
+
+    def test_should_say_which_is_the_run_under_test(self):
+        config = _parse(TWO_VARIANTS)
+        assert "the run under test" in variant_descriptions(config)[1][1]
+
+    def test_should_fall_back_to_the_path_it_was_given(self):
+        config = _parse(
+            "variants:\n  - {label: a, summary: some/summary.json}\n"
+            "  - {label: b, current: true}\n"
+        )
+        assert variant_descriptions(config)[0][1] == "`some/summary.json`"
+
+    def test_should_keep_the_declared_order(self):
+        config = _parse(TWO_VARIANTS)
+        assert [label for label, _ in variant_descriptions(config)] == ["grobid", "head"]

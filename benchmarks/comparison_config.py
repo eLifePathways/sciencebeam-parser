@@ -243,6 +243,24 @@ def load_comparison(name_or_path: str, base_dir: Path = COMPARISON_DIR) -> Compa
     return parse_comparison(yaml.safe_load(path.read_text(encoding="utf-8")), name=path.stem)
 
 
+def variant_descriptions(config: ComparisonConfig) -> List[Tuple[str, str]]:
+    """Each column's label and what it actually is.
+
+    A label says what distinguishes a column, which is not the same as saying which
+    profile produced it -- and the comparison file that knows is somewhere else.
+    """
+    described = []
+    for variant in config.variants:
+        if variant.current:
+            what = f"the run under test, profile `{variant.profile}`"
+        elif variant.summary:
+            what = f"`{variant.summary}`"
+        else:
+            what = f"`{variant.tool}` `{variant.version}`, profile `{variant.profile}`"
+        described.append((variant.label, what))
+    return described
+
+
 def primary_index(config: ComparisonConfig) -> int:
     """Which column the deltas measure against. The last unless one says otherwise, so
     reordering for the sake of reading does not move the reference with it."""

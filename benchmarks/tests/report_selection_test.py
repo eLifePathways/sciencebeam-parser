@@ -350,3 +350,41 @@ class TestFieldsChart:
             charts=ChartOutput(out_dir=tmp_path),
         )
         assert list(tmp_path.iterdir())
+
+
+class TestVariantsSection:
+    _DESCRIBED = [
+        ("GROBID", "`grobid` `0.9.1-crf`, profile `default`"),
+        ("ScienceBeam", "`sciencebeam-parser` `main`, profile `grobid_crf`"),
+    ]
+
+    def _report(self, **kwargs):
+        return _render_comparison_report(
+            [("GROBID", _two_field_summary()), ("ScienceBeam", _two_field_summary(0.05))],
+            **kwargs,
+        )
+
+    def test_says_nothing_where_no_variant_was_described(self):
+        assert "What each column is" not in self._report()
+
+    def test_names_the_profile_behind_each_column(self):
+        report = self._report(variants=self._DESCRIBED)
+        assert "profile `grobid_crf`" in report
+
+    def test_collapses_it(self):
+        report = self._report(variants=self._DESCRIBED)
+        assert "<summary>What each column is (2 variants)</summary>" in report
+
+    def test_marks_the_column_the_deltas_measure_against(self):
+        report = self._report(variants=self._DESCRIBED, primary=0)
+        line = next(
+            line for line in report.splitlines() if line.startswith("| GROBID |")
+        )
+        assert "deltas are measured against this" in line
+
+    def test_leaves_the_others_unmarked(self):
+        report = self._report(variants=self._DESCRIBED, primary=0)
+        line = next(
+            line for line in report.splitlines() if line.startswith("| ScienceBeam |")
+        )
+        assert "deltas are measured against" not in line

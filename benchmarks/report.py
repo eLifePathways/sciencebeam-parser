@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from benchmarks.comparison_config import (
     load_comparison,
     primary_index,
+    variant_descriptions,
     resolve_variants,
     to_selection,
 )
@@ -681,12 +682,42 @@ def _differently_scored_note(
     ]
 
 
+def _render_variants_section(
+    described: Sequence[Tuple[str, str]], primary: int
+) -> List[str]:
+    """What each column is, collapsed: needed to read the report, not while reading it.
+
+    A label says what distinguishes a column, which is not the same as saying which
+    profile produced it, and the file that knows is somewhere the reader is not.
+    """
+    if not described:
+        return []
+    reference = primary % len(described)
+    rows = [
+        f"| {label} | {what} |"
+        f" {'deltas are measured against this' if index == reference else ''} |"
+        for index, (label, what) in enumerate(described)
+    ]
+    return [
+        "<details>",
+        f"<summary>What each column is ({len(described)} variants)</summary>",
+        "",
+        "| Column | Variant | |",
+        "|---|---|---|",
+        *rows,
+        "",
+        "</details>",
+        "",
+    ]
+
+
 def _render_comparison_report(  # pylint: disable=too-many-locals
     labeled_summaries: List[Tuple[str, dict]],
     labeled_run_records: Optional[List[Tuple[str, Optional[dict]]]] = None,
     selection: Selection = Selection(),
     charts: ChartOutput = ChartOutput(),
     primary: int = -1,
+    variants: Sequence[Tuple[str, str]] = (),
 ) -> str:
     if not labeled_summaries:
         return ""
@@ -715,6 +746,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     }
 
     lines = ["## ScienceBeam Parser Evaluation", ""]
+    lines += _render_variants_section(variants, primary)
     lines += _coverage_lines(labeled_run_records or [])
     lines += _differently_scored_note(labeled_summaries, field_names)
 
@@ -805,6 +837,7 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
     chart_prefix: str = "",
     chart_base_url: str = "",
     primary: int = -1,
+    variants: Sequence[Tuple[str, str]] = (),
 ) -> None:
     labeled_summaries = [
         (label, json.loads(path.read_text()))
@@ -827,7 +860,7 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         base_url=chart_base_url,
     )
     report = _render_comparison_report(
-        labeled_summaries, labeled_run_records, selection, charts, primary
+        labeled_summaries, labeled_run_records, selection, charts, primary, variants
     )
     if out_path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -936,9 +969,12 @@ def main(argv: Optional[List[str]] = None) -> None:
             )
             selection = to_selection(config)
             primary = primary_index(config)
+            variants = variant_descriptions(config)
         else:
             labeled_paths = [_parse_labeled_summary(s) for s in args.summaries]
             primary = -1
+            # A `--summary` pair has no coordinates, so the path is what names it.
+            variants = [(label, f"`{path}`") for label, path in labeled_paths]
             selection = Selection(
                 fields=tuple(args.fields) if args.fields else None,
                 methods=tuple(args.methods) if args.methods else None,
@@ -948,7 +984,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             )
         run_compare(
             labeled_paths, Path(args.out) if args.out else None,
-            selection, args.chart_prefix, args.chart_base_url, primary,
+            selection, args.chart_prefix, args.chart_base_url, primary, variants,
         )
     except SelectionError as error:
         parser.error(str(error))

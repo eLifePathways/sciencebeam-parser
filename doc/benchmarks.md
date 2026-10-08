@@ -228,6 +228,11 @@ The `latency_` metrics are named for the record they read. What they measure is 
 
 `estimated_cost_per_1k` prices the CPU at `cpu_usd_per_hour` and adds what an LLM provider charged, each over the documents it was measured over, and stacks the two so the bar says which part it is. Colour there says which part rather than which variant, since that is what the segments differ by; every other chart keeps a variant's colour the same throughout. The default rate is roughly what a small general-purpose instance costs on demand per vCPU-hour — an AWS `t4g`/`c7g` or a GCP `e2`, excluding free tiers and anything with a usage limit. It is a sense of scale rather than a quote: rates move, differ by region and fall with commitment, so check current pricing before quoting any of it, and nothing here is billed at any rate anyway, since CI's CPU costs us nothing. The axis says which rate it used.
 
+The report opens with a collapsed block naming what each column is — the tool, version
+and profile behind the label, and which column the deltas measure against — because a
+label says what distinguishes a column rather than what produced it, and the comparison
+file that knows is somewhere the reader is not.
+
 Anything named that no summary can answer for — a field, method, corpus, scope, variant
 or asserted type — is an error that says so, rather than an empty column.
 

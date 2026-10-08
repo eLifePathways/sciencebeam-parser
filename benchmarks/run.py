@@ -18,6 +18,7 @@ from benchmarks.report import run_compare
 from benchmarks.comparison_config import (
     load_comparison,
     primary_index,
+    variant_descriptions,
     resolve_variants,
     store_variants,
     to_selection,
@@ -279,7 +280,7 @@ def run_stored_comparison(  # pylint: disable=too-many-arguments,too-many-positi
         resolve_variants(comparison_config, runs_dir, split, current_run),
         out_dir / f"comparison-{comparison_config.name}.md",
         to_selection(comparison_config), chart_prefix, chart_base_url,
-        primary_index(comparison_config),
+        primary_index(comparison_config), variant_descriptions(comparison_config),
     )
 
 
@@ -378,7 +379,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
             resolve_variants(comparison_config, runs_dir, split, primary_run_dir),
             primary_run_dir / f"comparison-{comparison_config.name}.md",
             to_selection(comparison_config), chart_prefix, chart_base_url,
-            primary_index(comparison_config),
+            primary_index(comparison_config), variant_descriptions(comparison_config),
         )
 
 
