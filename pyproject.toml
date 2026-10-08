@@ -37,6 +37,7 @@ telemetry = [
 
 [dependency-groups]
 benchmark = [
+    "font-source-sans-pro>=0.0.1",
     "httpx>=0.28",
     "huggingface-hub>=0.30",
     "matplotlib>=3.9",

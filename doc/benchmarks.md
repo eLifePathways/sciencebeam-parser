@@ -217,7 +217,7 @@ variant produced a value the gold has none of. `type` is **asserted, not selecte
 summary gives a field exactly one scoring type, so naming it catches a run that re-typed
 the field instead of comparing across the change.
 
-Charts are drawn in the order the file declares them, whatever their kind, and written to `charts/` beside the report.
+Charts are drawn in the order the file declares them, whatever their kind, and written to `charts/` beside the report. They are drawn in Source Sans Pro, which ships as a dependency rather than being looked for on the machine, so a chart drawn in CI matches one drawn on a laptop; without the package they fall back to matplotlib's own font.
 
 A **score chart** names one row with `row:` and draws it as a grouped bar chart, the variants as series and the corpora along the axis. It reads the same cells the table does, so a variant that scored nothing for a corpus leaves a gap there rather than a bar at zero, and nothing is drawn below two corpora. `rows:` instead of `row:` draws several rows side by side with the fields along the axis, which says which fields a difference reaches rather than where it lives; it needs two rows or more, and having no corpus axis it needs no two corpora either.
 

@@ -9,6 +9,7 @@ from benchmarks.report_charts import (
     _draw_bars,
     ComputeChartSpec,
     _drop_colliding_labels,
+    _figure_width,
     _legend_layout,
     chart_markdown,
     render_compute_chart,
@@ -258,3 +259,20 @@ class TestStackedCostChart:
     def test_should_leave_the_parts_to_the_legend(self):
         spec = self._spec(("rented CPU",), ((0.02, 0.03),), (0.02, 0.03))
         assert "LLM provider" not in spec.caption
+
+
+class TestFigureWidth:
+    """A legend wider than the axes makes the saved image wider than the plot."""
+
+    def test_should_follow_the_groups_where_the_legend_is_narrow(self):
+        assert _figure_width(("a", "b"), 5) == pytest.approx(7.1)
+
+    def test_should_widen_for_a_legend_the_plot_cannot_hold(self):
+        wide = ("ScienceBeam refs retrained (non-DL)",) * 7
+        assert _figure_width(wide, 5) > 10
+
+    def test_should_not_widen_for_a_single_series(self):
+        assert _figure_width(("only one",), 5) == pytest.approx(7.1)
+
+    def test_should_keep_the_plot_floor_for_few_groups(self):
+        assert _figure_width(("a", "b"), 1) == pytest.approx(7.0)

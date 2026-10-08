@@ -40,6 +40,12 @@ GRID = "#dedcd6"
 # Enough to stay sharp pasted into a presentation, without making the PR comment slow.
 DPI = 200
 
+# Matplotlib's own DejaVu is what it falls back to, and it has no medium weight, so the
+# titles came out at regular and warned about it. Source Sans Pro ships as a dependency
+# rather than being looked for on the machine, so a chart drawn in CI matches one drawn
+# on a laptop.
+FONT_FAMILY = "Source Sans Pro"
+
 SCOPE_CAPTIONS = {
     "all": "over all {n} documents",
     "gold": "over the {n} documents whose gold records it",
@@ -118,25 +124,28 @@ def render_chart(spec: ChartSpec, out_dir: Path, prefix: str = "") -> Path:
     import matplotlib  # pylint: disable=import-outside-toplevel
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
+    _register_font(matplotlib)
 
     n_groups = len(spec.corpora)
     n_series = len(spec.series)
-    figure, axes = plt.subplots(figsize=(max(7.0, 1.1 * n_groups + 1.6), 4.0), dpi=DPI)
+    figure, axes = plt.subplots(
+        figsize=(_figure_width(spec.series, n_groups), 4.0), dpi=DPI,
+    )
     figure.patch.set_facecolor(SURFACE)
     axes.set_facecolor(SURFACE)
 
     labels = _draw_bars(axes, spec)
     rotated = _style_axes(axes, spec, n_groups)
-    _place_legend(axes, columns=min(n_series, 4), below=0.26 if rotated else 0.16)
-    figure.suptitle(spec.title, x=0.012, y=0.98, ha="left", fontsize=11,
-                    color=TEXT_PRIMARY, fontweight="medium")
-    axes.set_title(spec.caption, loc="left", fontsize=8.5, color=TEXT_SECONDARY, pad=10)
+    _place_legend(axes, columns=min(n_series, 4), below=0.2 if rotated else 0.12)
+    figure.suptitle(spec.title, x=0.012, y=1.0, ha="left", fontsize=12.5,
+                    color=TEXT_PRIMARY, fontweight="semibold")
+    axes.set_title(spec.caption, loc="left", fontsize=9, color=TEXT_SECONDARY, pad=14)
     _drop_colliding_labels(figure, labels)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{prefix}{spec.filename}"
     figure.savefig(
-        path, dpi=DPI, facecolor=SURFACE, bbox_inches="tight", pad_inches=0.22,
+        path, dpi=DPI, facecolor=SURFACE, bbox_inches="tight", pad_inches=0.3,
         # Without this the PNG carries the time it was drawn, so two identical runs
         # produce different bytes.
         metadata={"Software": None, "Creation Time": None},
@@ -199,6 +208,47 @@ def _drop_colliding_labels(figure, labels: List) -> int:
     for label in labels:
         label.remove()
     return 0
+
+
+# Rough width of a character of the legend's 8pt text, in inches. Enough to size a figure
+# with; the exact extent is not known until the thing has been drawn.
+LEGEND_CHAR_INCHES = 0.062
+
+
+def _register_font(matplotlib) -> None:
+    """Point matplotlib at the font this ships, once per process.
+
+    Left alone where the package is absent, so a chart still draws -- in matplotlib's own
+    font, which is what it did before.
+    """
+    if matplotlib.rcParams["font.family"] == [FONT_FAMILY]:
+        return
+    try:
+        from font_source_sans_pro import (  # pylint: disable=import-outside-toplevel
+            SourceSansPro,
+            SourceSansProSemibold,
+        )
+    except ImportError:
+        return
+    from matplotlib import font_manager  # pylint: disable=import-outside-toplevel
+    for path in (SourceSansPro, SourceSansProSemibold):
+        font_manager.fontManager.addfont(path)
+    matplotlib.rcParams["font.family"] = [FONT_FAMILY]
+
+
+def _figure_width(series: Sequence[str], n_groups: int) -> float:
+    """Wide enough for the plot and for the legend under it.
+
+    The legend is laid out in the axes' own coordinates, so a legend wider than the axes
+    makes the saved image wider than the axes rather than the other way around -- which
+    reads as a chart that stopped short of its own picture.
+    """
+    plot = max(7.0, 1.1 * n_groups + 1.6)
+    if len(series) < 2:
+        return plot
+    columns = _legend_layout(len(series), min(len(series), 4))[0]
+    widest = max(len(name) for name in series)
+    return max(plot, columns * (widest * LEGEND_CHAR_INCHES + 0.5) + 0.5)
 
 
 def _legend_layout(count: int, columns: int) -> Tuple[int, List[int]]:
@@ -456,6 +506,7 @@ def render_compute_chart(
     import matplotlib  # pylint: disable=import-outside-toplevel
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
+    _register_font(matplotlib)
 
     figure, axes = plt.subplots(
         figsize=(8.0, max(2.2, 0.52 * len(drawn) + 1.4)), dpi=DPI,
@@ -489,13 +540,13 @@ def render_compute_chart(
         _place_legend(
             axes, columns=len(spec.components), below=0.0, above_plot=True,
         )
-    figure.suptitle(spec.title, x=0.012, y=0.985, ha="left", fontsize=11,
-                    color=TEXT_PRIMARY, fontweight="medium")
+    figure.suptitle(spec.title, x=0.012, y=1.0, ha="left", fontsize=12.5,
+                    color=TEXT_PRIMARY, fontweight="semibold")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{prefix}{spec.filename}"
     figure.savefig(
-        path, dpi=DPI, facecolor=SURFACE, bbox_inches="tight", pad_inches=0.22,
+        path, dpi=DPI, facecolor=SURFACE, bbox_inches="tight", pad_inches=0.3,
         metadata={"Software": None, "Creation Time": None},
     )
     plt.close(figure)

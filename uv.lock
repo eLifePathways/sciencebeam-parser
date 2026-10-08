@@ -978,6 +978,15 @@ wheels = [
 ]
 
 [[package]]
+name = "font-source-sans-pro"
+version = "0.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/62/db/6be92aed80a2a328d3632c59aeb0986f82403096ea1a3896468bfcbc2987/font-source-sans-pro-0.0.1.tar.gz", hash = "sha256:3f81d8e52b0d7e930e2c867c0d3ee549312d03f97b71b664a8361006311f72e5", size = 2159156, upload-time = "2018-10-26T16:10:15.908Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4c/95/3d29d2f821bd368f74ab5fe5e7d5bf0a55a0a26d3202a56526f475e51c1b/font_source_sans_pro-0.0.1-py3-none-any.whl", hash = "sha256:2250396f565a0fea35726e56059216d1d5d75071d64d075ebdfec183b4b85765", size = 2169233, upload-time = "2018-10-26T16:10:12.053Z" },
+]
+
+[[package]]
 name = "fonttools"
 version = "4.65.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4165,6 +4174,7 @@ telemetry = [
 
 [package.dev-dependencies]
 benchmark = [
+    { name = "font-source-sans-pro" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -4207,6 +4217,7 @@ provides-extras = ["cpu", "delft", "cv", "telemetry"]
 
 [package.metadata.requires-dev]
 benchmark = [
+    { name = "font-source-sans-pro", specifier = ">=0.0.1" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "huggingface-hub", specifier = ">=0.30" },
     { name = "matplotlib", specifier = ">=3.9" },
