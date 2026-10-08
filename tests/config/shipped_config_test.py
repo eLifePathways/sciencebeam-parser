@@ -30,6 +30,16 @@ COMBINED_PROFILES: Dict[str, Dict[str, str]] = {
         'reference_segmenter': 'delft_refseg_scielo_preprints_ore',
         'citation': 'delft_citation_scielo_preprints_ore',
     },
+    'wapiti_all_scielo_preprints_ore': {
+        'segmentation': 'wapiti_seg_scielo_preprints_ore',
+        'reference_segmenter': 'wapiti_refseg_scielo_preprints_ore',
+        'citation': 'wapiti_citation_scielo_preprints_ore',
+    },
+    'delft_all_scielo_preprints_ore': {
+        'segmentation': 'delft_seg_scielo_preprints_ore',
+        'reference_segmenter': 'delft_refseg_scielo_preprints_ore',
+        'citation': 'delft_citation_scielo_preprints_ore',
+    },
     'llm_references': {
         'reference_segmenter': 'llm_reference_segmenter',
         'citation': 'llm_citation',
