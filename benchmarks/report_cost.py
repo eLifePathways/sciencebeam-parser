@@ -157,10 +157,15 @@ def render_cost_section(
 
 # What a compute chart can draw, and what its axis says. Each reads the same record the
 # bullets above are written from, so a chart cannot state a figure the text does not.
+# `latency` is what the stored record calls it and what a service usually means by the
+# time between a request and its response. What this measures is a whole document being
+# converted, which takes seconds to minutes, so the charts say so instead.
 COMPUTE_METRICS: Dict[str, Tuple[str, str]] = {
     "cpu_seconds_per_doc": ("Compute per document", "CPU-seconds per document"),
-    "latency_median": ("Median latency", "seconds per document"),
-    "latency_p90": ("p90 latency", "seconds per document"),
+    "latency_median": (
+        "Median time per document", "wall-clock seconds per document",
+    ),
+    "latency_p90": ("p90 time per document", "wall-clock seconds per document"),
     "docs_per_hour": ("Throughput", "documents per hour"),
 }
 

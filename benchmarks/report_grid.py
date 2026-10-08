@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 SCOPE_ALL = "all"
 SCOPE_GOLD = "gold"
@@ -94,6 +94,9 @@ class ComputeChartConfig:
     title: Optional[str] = None
 
 
+DeclaredChart = Union[ChartConfig, FieldsChartConfig, ComputeChartConfig]
+
+
 @dataclass(frozen=True)
 class Selection:
     """What the reader asked to see, as opposed to what was scored."""
@@ -108,17 +111,15 @@ class Selection:
     row_filter: Optional[Dict[str, Tuple[Tuple[str, str], ...]]] = None
     # Per field, the scoring type the comparison says it should have been measured with.
     expected_types: Optional[Dict[str, str]] = None
-    # Charts named one at a time, as a comparison file declares them.
-    chart_configs: Tuple[ChartConfig, ...] = ()
-    compute_charts: Tuple[ComputeChartConfig, ...] = ()
-    fields_charts: Tuple[FieldsChartConfig, ...] = ()
+    # Charts named one at a time, in the order a comparison file declares them: a
+    # reader scrolls past them in that order, so it is the order they are drawn in.
+    declared_charts: Tuple[DeclaredChart, ...] = ()
 
     @property
     def is_empty(self) -> bool:
         return not (
             self.fields or self.methods or self.corpora or self.charts
-            or self.chart_methods or self.row_filter or self.chart_configs
-            or self.compute_charts or self.fields_charts
+            or self.chart_methods or self.row_filter or self.declared_charts
         )
 
 

@@ -11,7 +11,12 @@ from benchmarks.comparison_config import (
     resolve_variants,
     to_selection,
 )
-from benchmarks.report_grid import SelectionError
+from benchmarks.report_grid import (
+    ChartConfig,
+    ComputeChartConfig,
+    FieldsChartConfig,
+    SelectionError,
+)
 
 TWO_VARIANTS = """
 variants:
@@ -22,6 +27,16 @@ variants:
 
 def _parse(text: str):
     return parse_comparison(yaml.safe_load(text))
+
+
+def _first(config, kind):
+    """The first declared chart of a kind, for a test that is about that kind."""
+    return next(chart for chart in config.charts if isinstance(chart, kind))
+
+
+def _kinds(config) -> list:
+    """The declared charts' kinds, in the order the file declares them."""
+    return [type(chart) for chart in config.charts]
 
 
 class TestVariants:
@@ -152,15 +167,16 @@ class TestToSelection:
             TWO_VARIANTS
             + "charts:\n  - {row: {field: title, method: exact}, title: Titles}\n"
         ))
-        assert (selection.chart_configs[0].field, selection.chart_configs[0].title) == (
-            "title", "Titles",
-        )
+        chart = selection.declared_charts[0]
+        assert isinstance(chart, ChartConfig)
+        assert (chart.field, chart.title) == ("title", "Titles")
 
     def test_should_default_a_chart_to_the_all_documents_row(self):
         selection = to_selection(_parse(
             TWO_VARIANTS + "charts:\n  - {row: {field: title, method: exact}}\n"
         ))
-        assert selection.chart_configs[0].scope == "all"
+        chart = selection.declared_charts[0]
+        assert isinstance(chart, ChartConfig) and chart.scope == "all"
 
     def test_should_reject_a_chart_without_a_method(self):
         with pytest.raises(SelectionError, match="field and a method"):
@@ -262,7 +278,8 @@ class TestAvailableBaselines:
 class TestComputeCharts:
     def test_should_parse_a_compute_chart(self):
         config = _parse(TWO_VARIANTS + "charts:\n  - {compute: cpu_seconds_per_doc}\n")
-        assert [c.metric for c in config.compute_charts] == ["cpu_seconds_per_doc"]
+        metrics = [c.metric for c in config.charts if isinstance(c, ComputeChartConfig)]
+        assert metrics == ["cpu_seconds_per_doc"]
 
     def test_should_keep_score_and_compute_charts_apart(self):
         config = _parse(
@@ -270,13 +287,13 @@ class TestComputeCharts:
             + "charts:\n  - {row: {field: title, method: exact}}\n"
             + "  - {compute: latency_median}\n"
         )
-        assert (len(config.charts), len(config.compute_charts)) == (1, 1)
+        assert _kinds(config) == [ChartConfig, ComputeChartConfig]
 
     def test_should_carry_a_title(self):
         config = _parse(
             TWO_VARIANTS + "charts:\n  - {compute: docs_per_hour, title: How fast}\n"
         )
-        assert config.compute_charts[0].title == "How fast"
+        assert _first(config, ComputeChartConfig).title == "How fast"
 
     def test_should_reject_an_unknown_metric(self):
         with pytest.raises(SelectionError, match="cpu_secs"):
@@ -297,7 +314,10 @@ class TestComputeCharts:
         selection = to_selection(
             _parse(TWO_VARIANTS + "charts:\n  - {compute: latency_p90}\n")
         )
-        assert [c.metric for c in selection.compute_charts] == ["latency_p90"]
+        assert [
+            c.metric for c in selection.declared_charts
+            if isinstance(c, ComputeChartConfig)
+        ] == ["latency_p90"]
 
 
 class TestPrimaryVariant:
@@ -342,18 +362,19 @@ class TestFieldsChartConfig:
 
     def test_should_parse_a_rows_chart(self):
         config = _parse(TWO_VARIANTS + self._ROWS)
-        assert config.fields_charts[0].rows == (
+        assert _first(config, FieldsChartConfig).rows == (
             ("title", "levenshtein", "all"), ("abstract", "levenshtein", "all"),
         )
 
     def test_should_carry_the_title(self):
-        assert _parse(TWO_VARIANTS + self._ROWS).fields_charts[0].title == "Key fields"
+        config = _parse(TWO_VARIANTS + self._ROWS)
+        assert _first(config, FieldsChartConfig).title == "Key fields"
 
     def test_should_keep_it_apart_from_a_single_row_chart(self):
         config = _parse(
             TWO_VARIANTS + self._ROWS + "  - {row: {field: title, method: exact}}\n"
         )
-        assert (len(config.charts), len(config.fields_charts)) == (1, 1)
+        assert _kinds(config) == [FieldsChartConfig, ChartConfig]
 
     def test_should_need_more_than_one_row(self):
         with pytest.raises(SelectionError, match="at least two rows"):
@@ -370,4 +391,4 @@ class TestFieldsChartConfig:
             )
 
     def test_should_reach_the_selection(self):
-        assert len(to_selection(_parse(TWO_VARIANTS + self._ROWS)).fields_charts) == 1
+        assert len(to_selection(_parse(TWO_VARIANTS + self._ROWS)).declared_charts) == 1

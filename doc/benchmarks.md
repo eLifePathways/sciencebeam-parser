@@ -218,14 +218,16 @@ the field instead of comparing across the change.
 
 A **chart** is either a score row or a compute figure. `compute:` takes
 `cpu_seconds_per_doc`, `latency_median`, `latency_p90` or `docs_per_hour`, and draws one
-bar per variant — the same numbers the Compute cost section states as text. Each variant
+bar per variant. The `latency_` metrics are named for the record they read; what they
+measure is a whole document being converted, so the charts call it time per document — the same numbers the Compute cost section states as text. Each variant
 keeps the colour it has as a series in the score charts, so the two read as one set, and
 nothing is drawn until two variants recorded the figure: one bar is a number with a
 rectangle around it, and runs that predate the measurement record none.
 
 A score **chart** names one row and draws it as a grouped bar chart, variants as series and
-corpora along the axis. `rows:` instead of `row:` draws several rows side by side with the
-fields along the axis, which says which fields a difference reaches rather than where it
+corpora along the axis. Charts are drawn in the order the file declares
+them, whatever their kind. `rows:` instead of `row:` draws several rows side by side with
+the fields along the axis, which says which fields a difference reaches rather than where it
 lives; it needs two rows or more, and has no corpus axis to need two corpora. It reads the same cells the table does, and a variant that
 scored nothing for a corpus leaves a gap there rather than a bar at zero. Charts are
 written to `charts/` beside the report.

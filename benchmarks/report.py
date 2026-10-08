@@ -16,12 +16,15 @@ from benchmarks.report_charts import (
     ChartOutput,
     chart_markdown,
     chart_specs,
+    chart_spec,
     compute_chart_specs,
     fields_chart_specs,
     render_charts,
     render_compute_charts,
 )
 from benchmarks.report_grid import (
+    ComputeChartConfig,
+    FieldsChartConfig,
     GridRow,
     Selection,
     SelectionError,
@@ -683,6 +686,41 @@ def _differently_scored_note(
     ]
 
 
+def _render_declared_chart(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    declared,
+    labels: Sequence[str],
+    labeled_summaries: List[Tuple[str, dict]],
+    corpus_grids: Dict[str, List[GridRow]],
+    overall_rows: Sequence[GridRow],
+    common: Sequence[str],
+    charts: ChartOutput,
+) -> List[str]:
+    """One declared chart, drawn and linked, or nothing where it has too little to say."""
+    if isinstance(declared, ComputeChartConfig):
+        specs: Sequence = compute_chart_specs(declared, [
+            (label, summary.get("cost") or {}) for label, summary in labeled_summaries
+        ])
+        if charts.out_dir is not None:
+            specs = render_compute_charts(specs, charts.out_dir, charts.prefix)
+    elif isinstance(declared, FieldsChartConfig):
+        # No corpus axis, so no two-corpus floor: the question is which fields a
+        # difference reaches rather than where it lives.
+        specs = fields_chart_specs(declared, labels, overall_rows)
+        if charts.out_dir is not None:
+            render_charts(specs, charts.out_dir, charts.prefix)
+    else:
+        if len(common) < 2:
+            return []
+        specs = [
+            spec for spec in [
+                chart_spec(declared, labels, corpus_grids, overall_rows, common)
+            ] if spec is not None
+        ]
+        if charts.out_dir is not None:
+            render_charts(specs, charts.out_dir, charts.prefix)
+    return chart_markdown(specs, charts.rel_dir, charts.prefix, charts.base_url)[2:]
+
+
 def _render_comparison_report(  # pylint: disable=too-many-locals
     labeled_summaries: List[Tuple[str, dict]],
     labeled_run_records: Optional[List[Tuple[str, Optional[dict]]]] = None,
@@ -730,38 +768,22 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     # A single corpus puts one group of bars on the axis, which says nothing the table
     # does not.
     chart_lines: List[str] = []
-    if (selection.charts or selection.chart_configs) and len(common) > 1:
+    labels = [label for label, _ in labeled_summaries]
+    for declared in selection.declared_charts:
+        chart_lines += _render_declared_chart(
+            declared, labels, labeled_summaries, corpus_grids, overall_rows,
+            common, charts,
+        )
+    # `--chart` names fields rather than charts, so it cannot interleave with the file's
+    # order and is drawn after whatever that declared.
+    if selection.charts and len(common) > 1:
         specs = chart_specs(
-            selection, [label for label, _ in labeled_summaries],
-            corpus_grids, overall_rows, common,
+            selection, labels, corpus_grids, overall_rows, common,
         )
         if charts.out_dir is not None:
             render_charts(specs, charts.out_dir, charts.prefix)
         chart_lines += chart_markdown(
             specs, charts.rel_dir, charts.prefix, charts.base_url
-        )[2:]
-    if selection.fields_charts:
-        # No corpus axis, so no two-corpus floor: the question is which fields a
-        # difference reaches rather than where it lives.
-        field_specs = fields_chart_specs(
-            selection, [label for label, _ in labeled_summaries], overall_rows,
-        )
-        if charts.out_dir is not None:
-            render_charts(field_specs, charts.out_dir, charts.prefix)
-        chart_lines += chart_markdown(
-            field_specs, charts.rel_dir, charts.prefix, charts.base_url
-        )[2:]
-    if selection.compute_charts:
-        # What a run spent, which has no corpus axis and so no two-corpus floor.
-        compute_specs = compute_chart_specs(selection, [
-            (label, summary.get("cost") or {}) for label, summary in labeled_summaries
-        ])
-        if charts.out_dir is not None:
-            compute_specs = render_compute_charts(
-                compute_specs, charts.out_dir, charts.prefix
-            )
-        chart_lines += chart_markdown(
-            compute_specs, charts.rel_dir, charts.prefix, charts.base_url
         )[2:]
     if chart_lines:
         lines += ["### Charts", "", *chart_lines]
@@ -838,7 +860,7 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         )
         for label, path in labeled_summary_paths
     ]
-    wants_charts = bool(selection.charts or selection.chart_configs)
+    wants_charts = bool(selection.charts or selection.declared_charts)
     charts = ChartOutput(
         out_dir=out_path.parent / "charts" if out_path and wants_charts else None,
         prefix=chart_prefix,

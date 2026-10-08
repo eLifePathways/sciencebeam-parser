@@ -18,6 +18,7 @@ from benchmarks.report_grid import (
     SCOPE_GOLD,
     ChartConfig,
     ComputeChartConfig,
+    DeclaredChart,
     FieldsChartConfig,
     Selection,
     SelectionError,
@@ -53,11 +54,7 @@ class ComparisonConfig:
     variants: Tuple[VariantSpec, ...]
     rows: Tuple[RowSpec, ...] = ()
     corpora: Optional[Tuple[str, ...]] = None
-    charts: Tuple[ChartConfig, ...] = dataclass_field(default_factory=tuple)
-    compute_charts: Tuple[ComputeChartConfig, ...] = dataclass_field(
-        default_factory=tuple)
-    fields_charts: Tuple[FieldsChartConfig, ...] = dataclass_field(
-        default_factory=tuple)
+    charts: Tuple[DeclaredChart, ...] = dataclass_field(default_factory=tuple)
     name: str = "comparison"
 
 
@@ -221,15 +218,7 @@ def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:
             _parse_row(entry, index) for index, entry in enumerate(data.get("rows") or [])
         ),
         corpora=tuple(corpora) if corpora else None,
-        charts=tuple(
-            chart for chart in parsed if isinstance(chart, ChartConfig)
-        ),
-        compute_charts=tuple(
-            chart for chart in parsed if isinstance(chart, ComputeChartConfig)
-        ),
-        fields_charts=tuple(
-            chart for chart in parsed if isinstance(chart, FieldsChartConfig)
-        ),
+        charts=tuple(parsed),
     )
 
 
@@ -400,7 +389,5 @@ def to_selection(config: ComparisonConfig) -> Selection:
         corpora=config.corpora,
         row_filter=row_filter(config),
         expected_types=expected_types(config) or None,
-        chart_configs=config.charts,
-        compute_charts=config.compute_charts,
-        fields_charts=config.fields_charts,
+        declared_charts=config.charts,
     )

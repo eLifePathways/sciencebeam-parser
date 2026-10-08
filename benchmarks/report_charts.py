@@ -15,6 +15,7 @@ from benchmarks.labels import corpus_label, field_label
 from benchmarks.report_cost import COMPUTE_METRICS
 from benchmarks.report_grid import (
     ChartConfig,
+    ComputeChartConfig,
     FieldsChartConfig,
     GridRow,
     Selection,
@@ -295,9 +296,8 @@ class ChartOutput:
 def _declared_charts(
     selection: Selection, overall_rows: Sequence[GridRow]
 ) -> List[ChartConfig]:
-    """What to draw: each chart a comparison file named, plus every row of a field asked
-    for by name alone, which is what `--chart` means."""
-    declared = list(selection.chart_configs)
+    """Every row of a field asked for by name alone, which is what `--chart` means."""
+    declared: List[ChartConfig] = []
     for field in selection.charts:
         for row in overall_rows:
             if row.field != field:
@@ -308,7 +308,7 @@ def _declared_charts(
     return declared
 
 
-def _chart_spec(
+def chart_spec(
     chart: ChartConfig,
     labels: Sequence[str],
     corpus_grids: Dict[str, List[GridRow]],
@@ -326,7 +326,14 @@ def _chart_spec(
     overall = next(
         (row for row in overall_rows if (row.field, row.method, row.scope) == key), None
     )
-    if overall is None or not corpora:
+    if overall is None:
+        raise SelectionError(
+            f"Nothing to chart for {chart.field} ({chart.method}, {chart.scope})."
+            " A chart draws a row the tables show."
+        )
+    # A corpus subset that overlaps nothing is a chart with no bars rather than a
+    # question that cannot be asked.
+    if not corpora:
         return None
     per_corpus = [
         next(
@@ -357,21 +364,8 @@ def chart_specs(
     common: Sequence[str],
 ) -> List[ChartSpec]:
     declared = _declared_charts(selection, overall_rows)
-    missing = [
-        f"{chart.field} ({chart.method}, {chart.scope})"
-        for chart in declared
-        if not any(
-            (row.field, row.method, row.scope) == (chart.field, chart.method, chart.scope)
-            for row in overall_rows
-        )
-    ]
-    if missing:
-        raise SelectionError(
-            "Nothing to chart for " + "; ".join(missing)
-            + ". A chart draws a row the tables show."
-        )
     specs = [
-        _chart_spec(chart, labels, corpus_grids, overall_rows, common)
+        chart_spec(chart, labels, corpus_grids, overall_rows, common)
         for chart in declared
     ]
     return [spec for spec in specs if spec is not None]
@@ -499,50 +493,47 @@ def _style_compute_axes(axes, spec, positions, labels, largest: float) -> None:
 
 
 def fields_chart_specs(
-    selection: Selection,
+    chart: FieldsChartConfig,
     labels: Sequence[str],
     overall_rows: Sequence[GridRow],
 ) -> List[ChartSpec]:
-    """One chart per declared set of rows, drawn across the fields rather than corpora.
+    """The declared rows side by side, drawn across the fields rather than corpora.
 
     The values are the overall table's own cells, so this says which fields a difference
     reaches while the per-corpus charts say where it lives.
     """
-    specs = []
-    for position, chart in enumerate(selection.fields_charts):
-        found = [_overall_row(overall_rows, key) for key in chart.rows]
-        missing = [
-            f"{field} ({method}, {scope})"
-            for (field, method, scope), row in zip(chart.rows, found) if row is None
-        ]
-        if missing:
-            raise SelectionError(
-                "Nothing to chart for " + "; ".join(missing)
-                + ". A chart draws a row the tables show."
-            )
-        rows = [row for row in found if row is not None]
-        specs.append(ChartSpec(
-            field=rows[0].field, method=rows[0].method, scope=rows[0].scope,
-            n_docs=max(row.n_docs for row in rows),
-            corpora=tuple(row.field for row in rows),
-            group_labels=tuple(_fields_chart_group(chart, row) for row in rows),
-            series=tuple(labels),
-            values=tuple(
-                tuple(row.values[index] for row in rows) for index in range(len(labels))
-            ),
-            title_override=chart.title,
-            name=_chart_name(chart, position),
-        ))
-    return specs
+    found = [_overall_row(overall_rows, key) for key in chart.rows]
+    missing = [
+        f"{field} ({method}, {scope})"
+        for (field, method, scope), row in zip(chart.rows, found) if row is None
+    ]
+    if missing:
+        raise SelectionError(
+            "Nothing to chart for " + "; ".join(missing)
+            + ". A chart draws a row the tables show."
+        )
+    rows = [row for row in found if row is not None]
+    return [ChartSpec(
+        field=rows[0].field, method=rows[0].method, scope=rows[0].scope,
+        n_docs=max(row.n_docs for row in rows),
+        corpora=tuple(row.field for row in rows),
+        group_labels=tuple(_fields_chart_group(chart, row) for row in rows),
+        series=tuple(labels),
+        values=tuple(
+            tuple(row.values[index] for row in rows) for index in range(len(labels))
+        ),
+        title_override=chart.title,
+        name=_chart_name(chart),
+    )]
 
 
-def _chart_name(chart: FieldsChartConfig, position: int) -> str:
+def _chart_name(chart: FieldsChartConfig) -> str:
     """A filename that says what the chart is, so a published asset is identifiable."""
     if chart.title:
         slug = re.sub(r"[^a-z0-9]+", "-", chart.title.lower()).strip("-")
         if slug:
             return slug[:60]
-    return "-".join(field for field, _, _ in chart.rows)[:60] or str(position)
+    return "-".join(field for field, _, _ in chart.rows)[:60]
 
 
 def _overall_row(rows: Sequence[GridRow], key) -> Optional[GridRow]:
@@ -562,15 +553,12 @@ def _fields_chart_group(chart: FieldsChartConfig, row: GridRow) -> str:
 
 
 def compute_chart_specs(
-    selection: Selection, labeled_costs: Sequence[Tuple[str, dict]]
+    chart: ComputeChartConfig, labeled_costs: Sequence[Tuple[str, dict]]
 ) -> List[ComputeChartSpec]:
     from benchmarks.report_cost import compute_metric  # pylint: disable=import-outside-toplevel
-    return [
-        ComputeChartSpec(
-            metric=chart.metric,
-            series=tuple(label for label, _ in labeled_costs),
-            values=tuple(compute_metric(cost, chart.metric) for _, cost in labeled_costs),
-            title_override=chart.title,
-        )
-        for chart in selection.compute_charts
-    ]
+    return [ComputeChartSpec(
+        metric=chart.metric,
+        series=tuple(label for label, _ in labeled_costs),
+        values=tuple(compute_metric(cost, chart.metric) for _, cost in labeled_costs),
+        title_override=chart.title,
+    )]

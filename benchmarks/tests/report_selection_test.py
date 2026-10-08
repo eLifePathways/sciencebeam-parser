@@ -183,7 +183,7 @@ class TestDeclaredCharts:
     def _charted(self, tmp_path, **chart):
         return _render_comparison_report(
             [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
-            selection=Selection(chart_configs=(ChartConfig(**chart),)),
+            selection=Selection(declared_charts=(ChartConfig(**chart),)),
             charts=ChartOutput(out_dir=tmp_path),
         )
 
@@ -309,7 +309,7 @@ class TestFieldsChart:
     def _charted(self, tmp_path, rows, **kwargs):
         return _render_comparison_report(
             [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
-            selection=Selection(fields_charts=(FieldsChartConfig(rows=rows, **kwargs),)),
+            selection=Selection(declared_charts=(FieldsChartConfig(rows=rows, **kwargs),)),
             charts=ChartOutput(out_dir=tmp_path),
         )
 
@@ -346,7 +346,7 @@ class TestFieldsChart:
                 ("base", _two_field_summary(corpora=("ore",))),
                 ("head", _two_field_summary(0.05, corpora=("ore",))),
             ],
-            selection=Selection(fields_charts=(FieldsChartConfig(rows=self._ROWS),)),
+            selection=Selection(declared_charts=(FieldsChartConfig(rows=self._ROWS),)),
             charts=ChartOutput(out_dir=tmp_path),
         )
         assert list(tmp_path.iterdir())
