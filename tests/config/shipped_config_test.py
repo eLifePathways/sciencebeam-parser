@@ -22,11 +22,21 @@ SHARED_BASE_PROFILE = 'grobid_crf_0_9_0'
 
 # Profiles combining single-model profiles, and the profile each model comes from.
 COMBINED_PROFILES: Dict[str, Dict[str, str]] = {
-    'wapiti_scielo_preprints_ore': {
+    'wapiti_references_scielo_preprints_ore': {
         'reference_segmenter': 'wapiti_refseg_scielo_preprints_ore',
         'citation': 'wapiti_citation_scielo_preprints_ore',
     },
-    'delft_scielo_preprints_ore': {
+    'delft_references_scielo_preprints_ore': {
+        'reference_segmenter': 'delft_refseg_scielo_preprints_ore',
+        'citation': 'delft_citation_scielo_preprints_ore',
+    },
+    'wapiti_all_scielo_preprints_ore': {
+        'segmentation': 'wapiti_seg_scielo_preprints_ore',
+        'reference_segmenter': 'wapiti_refseg_scielo_preprints_ore',
+        'citation': 'wapiti_citation_scielo_preprints_ore',
+    },
+    'delft_all_scielo_preprints_ore': {
+        'segmentation': 'delft_seg_scielo_preprints_ore',
         'reference_segmenter': 'delft_refseg_scielo_preprints_ore',
         'citation': 'delft_citation_scielo_preprints_ore',
     },
@@ -181,14 +191,14 @@ class TestShippedProfilesShareTheirModels:
             is not citation.fulltext_models.reference_segmenter_model
         )
 
-    def test_should_hold_every_shipped_profile_for_less_than_three_unshared_ones(
+    def test_should_hold_every_shipped_profile_for_a_quarter_of_what_unshared_would_cost(
         self, registry: ProfileRegistry
     ):
-        for profile_name in AppConfig(get_shipped_config()).get_profile_names():
+        profile_names = AppConfig(get_shipped_config()).get_profile_names()
+        for profile_name in profile_names:
             registry.get_bundle(profile_name)
-        assert registry.model_cache.get_loaded_model_count() < 3 * len(
-            SEQUENCE_MODEL_CLASS_BY_NAME
-        )
+        unshared_count = len(profile_names) * len(SEQUENCE_MODEL_CLASS_BY_NAME)
+        assert registry.model_cache.get_loaded_model_count() < unshared_count / 4
 
     def test_should_attribute_two_profiles_to_different_digests(
         self, registry: ProfileRegistry

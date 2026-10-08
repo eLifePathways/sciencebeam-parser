@@ -40,14 +40,14 @@ otherwise:
 
 ```yaml
 selectable_profiles:
-  - wapiti_scielo_preprints_ore
+  - wapiti_references_scielo_preprints_ore
   - llm_references
 ```
 
 or by environment, which takes a YAML list:
 
 ```bash
-export SCIENCEBEAM_PARSER__SELECTABLE_PROFILES='[wapiti_scielo_preprints_ore, llm_references]'
+export SCIENCEBEAM_PARSER__SELECTABLE_PROFILES='[wapiti_references_scielo_preprints_ore, llm_references]'
 ```
 
 `all` means every profile the config declares, which is the convenient setting
