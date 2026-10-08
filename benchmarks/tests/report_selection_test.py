@@ -195,7 +195,7 @@ class TestDeclaredCharts:
         report = self._charted(
             tmp_path, field="title", method="exact", title="How titles fare"
         )
-        assert "![How titles fare, over all" in report
+        assert "![How titles fare, exact match, over all" in report
 
     def test_narrows_to_the_corpora_it_names(self, tmp_path):
         self._charted(tmp_path, field="title", method="exact", corpora=("ore",))
@@ -329,7 +329,7 @@ class TestFieldsChart:
 
     def test_links_it_from_the_report(self, tmp_path):
         report = self._charted(tmp_path, self._ROWS, title="Key fields")
-        assert "![Key fields, over all" in report
+        assert "![Key fields, edit similarity, over all" in report
 
     def test_fails_naming_a_row_the_tables_do_not_show(self, tmp_path):
         with pytest.raises(SelectionError, match="keywords"):

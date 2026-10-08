@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 
-from benchmarks.labels import corpus_label, field_label
+from benchmarks.labels import corpus_label, field_label, method_label
 from benchmarks.report_cost import COMPUTE_METRICS
 from benchmarks.report_grid import (
     ChartConfig,
@@ -78,6 +78,8 @@ class ChartSpec:
     # Groups are corpora unless the chart draws several rows, when they are fields.
     group_labels: Optional[Tuple[str, ...]] = None
     name: Optional[str] = None
+    # Whether the groups span more than one scoring method, which they then name.
+    mixed_methods: bool = False
 
     @property
     def filename(self) -> str:
@@ -96,12 +98,16 @@ class ChartSpec:
         if self.title_override:
             return self.title_override
         if self.name:
-            return f"f1 by field ({self.method})"
-        return f"{field_label(self.field)} ({self.method}) — f1 by corpus"
+            return "f1 by field"
+        return f"{field_label(self.field)} — f1 by corpus"
 
     @property
     def caption(self) -> str:
-        return SCOPE_CAPTIONS[self.scope].format(n=self.n_docs)
+        scope = SCOPE_CAPTIONS[self.scope].format(n=self.n_docs)
+        # Where a chart mixes methods its groups already name them one by one.
+        if self.mixed_methods:
+            return scope
+        return f"{method_label(self.method)}, {scope}"
 
     @property
     def alt_text(self) -> str:
@@ -137,7 +143,14 @@ def render_chart(spec: ChartSpec, out_dir: Path, prefix: str = "") -> Path:
     labels = _draw_bars(axes, spec)
     rotated = _style_axes(axes, spec, n_groups)
     _place_legend(axes, columns=min(n_series, 4), below=0.2 if rotated else 0.12)
-    figure.suptitle(spec.title, x=0.012, y=1.0, ha="left", fontsize=12.5,
+    # Margins in inches rather than as a fraction: the figure is sized for the legend, so
+    # a fraction would widen the gutters with it and leave the bars adrift in the middle.
+    width = figure.get_size_inches()[0]
+    left = AXIS_LABEL_INCHES / width
+    figure.subplots_adjust(left=left, right=1 - 0.1 / width)
+    # Both lines start where the bars do, so the title, the caption and the plot share
+    # one edge.
+    figure.suptitle(spec.title, x=left, y=1.0, ha="left", fontsize=12.5,
                     color=TEXT_PRIMARY, fontweight="semibold")
     axes.set_title(spec.caption, loc="left", fontsize=9, color=TEXT_SECONDARY, pad=14)
     _drop_colliding_labels(figure, labels)
@@ -213,6 +226,9 @@ def _drop_colliding_labels(figure, labels: List) -> int:
 # Rough width of a character of the legend's 8pt text, in inches. Enough to size a figure
 # with; the exact extent is not known until the thing has been drawn.
 LEGEND_CHAR_INCHES = 0.062
+
+# Room for the y-axis label and its tick numbers, left of where the bars start.
+AXIS_LABEL_INCHES = 0.62
 
 
 def _register_font(matplotlib) -> None:

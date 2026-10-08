@@ -49,3 +49,20 @@ FIELD_LABELS: Dict[str, str] = {
 def field_label(field: str) -> str:
     """As for a corpus: the identifier where nothing friendlier is known."""
     return FIELD_LABELS.get(field, field)
+
+
+# What each scoring method does, rather than what the library calls it. `levenshtein` and
+# `edit_sim` run the same normalised edit distance; `edit_sim` strips punctuation and
+# whitespace from both sides first.
+METHOD_LABELS: Dict[str, str] = {
+    "exact": "exact match",
+    "levenshtein": "edit similarity",
+    "edit_sim": "edit similarity, ignoring punctuation",
+    "ratcliff_obershelp": "Ratcliff-Obershelp similarity",
+    "soft": "soft match",
+}
+
+
+def method_label(method: str) -> str:
+    """As for a corpus or a field: the identifier where nothing friendlier is known."""
+    return METHOD_LABELS.get(method, method)

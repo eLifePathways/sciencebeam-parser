@@ -191,8 +191,9 @@ comparison's variants against `benchmarks/runs` for `BENCHMARK_SPLIT`, writes
 underlying command is `python -m benchmarks.report --comparison <name>`, which takes
 `--runs`, `--split` and `--current-run` directly.
 
-Charts name a corpus and a field the way a reader would — `SciELO Preprints` rather than
-`scielo_preprints-jats`, `Authors` rather than `author_full_names`. The identifiers stay as they are in the tables and everywhere a
+Charts name a corpus, a field and a scoring method the way a reader would — `SciELO
+Preprints` rather than `scielo_preprints-jats`, `Authors` rather than
+`author_full_names`, `edit similarity` rather than `levenshtein`. The identifiers stay as they are in the tables and everywhere a
 name has to match `eval.yml` or the predictions store; a corpus with no friendlier name
 charts under its own.
 
@@ -219,7 +220,7 @@ the field instead of comparing across the change.
 
 Charts are drawn in the order the file declares them, whatever their kind, and written to `charts/` beside the report. They are drawn in Source Sans Pro, which ships as a dependency rather than being looked for on the machine, so a chart drawn in CI matches one drawn on a laptop; without the package they fall back to matplotlib's own font.
 
-A **score chart** names one row with `row:` and draws it as a grouped bar chart, the variants as series and the corpora along the axis. It reads the same cells the table does, so a variant that scored nothing for a corpus leaves a gap there rather than a bar at zero, and nothing is drawn below two corpora. `rows:` instead of `row:` draws several rows side by side with the fields along the axis, which says which fields a difference reaches rather than where it lives; it needs two rows or more, and having no corpus axis it needs no two corpora either.
+A **score chart** names one row with `row:` and draws it as a grouped bar chart, the variants as series and the corpora along the axis. Its caption says how the field was scored — `exact match`, `edit similarity`, or `edit similarity, ignoring punctuation` for `edit_sim`, which strips punctuation and whitespace from both sides before measuring — so a `title:` of your own cannot hide it. It reads the same cells the table does, so a variant that scored nothing for a corpus leaves a gap there rather than a bar at zero, and nothing is drawn below two corpora. `rows:` instead of `row:` draws several rows side by side with the fields along the axis, which says which fields a difference reaches rather than where it lives; it needs two rows or more, and having no corpus axis it needs no two corpora either.
 
 A **compute chart** says what a run spent rather than what it scored. `compute:` takes `cpu_seconds_per_doc`, `latency_median`, `latency_p90`, `docs_per_hour` or `estimated_cost_per_1k`, reading the same record the Compute cost section states as text, and draws one bar per variant. Nothing is drawn until two variants recorded the figure — one bar is a number with a rectangle around it, and a run that predates the measurement records none — and the axis says how many did where some did not.
 
