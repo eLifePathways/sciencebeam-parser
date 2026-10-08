@@ -61,7 +61,6 @@ jobs:
       # more stored predictions than the others score more documents than them, which is
       # not a comparison.
       BENCHMARK_MODE: ${{ inputs.mode || 'medium' }}
-      BENCHMARK_CHART_RELEASE: benchmark-charts
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/comparison
 
     steps:
@@ -118,34 +117,26 @@ jobs:
             --predictions-repo sciencebeam-eval-predictions \
             --comparison "${BENCHMARK_COMPARISON}" \
             --comparison-only \
-            --comparison-out "${BENCHMARK_RUN}" \
-            --chart-prefix "${GITHUB_SHA}-" \
-            --chart-base-url \
-              "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.BENCHMARK_CHART_RELEASE }}"
+            --comparison-out "${BENCHMARK_RUN}"
 
       - name: Write job summary
         run: cat "${BENCHMARK_RUN}/comparison-${BENCHMARK_COMPARISON}.md" >> $GITHUB_STEP_SUMMARY
 
+      # CML uploads the images a report refers to and rewrites the links, which is how a
+      # chart reaches a comment: GitHub serves `img` over http(s) only, and the web UI's
+      # own attachment upload has no API a workflow can use.
+      - name: Install CML
+        run: npm install -g @dvcorg/cml
+
       - name: Post PR comment
         if: github.event_name == 'pull_request'
         env:
-          GH_TOKEN: ${{ github.token }}
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          REPORT="${BENCHMARK_RUN}/comparison-${BENCHMARK_COMPARISON}.md"
-          PR=${{ github.event.pull_request.number }}
-          MARKER="<!-- benchmark-comparison: ${BENCHMARK_COMPARISON} -->"
-
-          # One comment per comparison, edited in place: unlike the benchmark report
-          # these are cheap to re-run, so a PR would otherwise collect one per push.
-          ID=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --paginate \
-            --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -n1)
-          { echo "${MARKER}"; cat "${REPORT}"; } > comparison-comment.md
-          if [ -n "$ID" ]; then
-            gh api "repos/${{ github.repository }}/issues/comments/${ID}" \
-              -X PATCH -f body="$(cat comparison-comment.md)"
-          else
-            gh pr comment "${PR}" --body-file comparison-comment.md
-          fi
+          # From the run directory, so the report's own `charts/x.png` resolves whether
+          # CML reads them relative to the file or to where it was invoked.
+          cd "${BENCHMARK_RUN}"
+          cml comment create "comparison-${BENCHMARK_COMPARISON}.md"
 
       - name: Upload the comparison
         if: always()
@@ -157,58 +148,3 @@ jobs:
             ${{ env.BENCHMARK_RUN }}/charts/*.png
           if-no-files-found: ignore
           retention-days: 30
-
-      - name: Upload charts for publishing
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: benchmark-comparison-charts-${{ github.sha }}
-          path: ${{ env.BENCHMARK_RUN }}/charts/*.png
-          if-no-files-found: ignore
-          retention-days: 1
-
-  # Separate because this is the only thing here that needs `contents: write`, and the
-  # job above runs the branch's own code. The report links these images before they
-  # exist, at a URL fixed by the release name and the run's sha, so they resolve once
-  # this finishes rather than needing to be written back.
-  publish-charts:
-    needs: comparison
-    if: always() && needs.comparison.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download charts
-        id: download
-        uses: actions/download-artifact@v6
-        with:
-          name: benchmark-comparison-charts-${{ github.sha }}
-          path: charts
-        continue-on-error: true
-
-      - name: Say when there was nothing to publish
-        if: steps.download.outcome != 'success'
-        run: |
-          echo "::notice::No charts artifact for this run. Either no comparison was" \
-            "named, or the one named drew no charts - this job has nothing to do and" \
-            "says so rather than passing silently."
-      - name: Publish charts to the release
-        if: steps.download.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE: benchmark-charts
-        run: |
-          shopt -s nullglob
-          files=(charts/*.png)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No charts to publish"
-            exit 0
-          fi
-          if ! gh release view "$RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            gh release create "$RELEASE" --repo "${{ github.repository }}" \
-              --prerelease --title "Benchmark charts" \
-              --notes "Images linked from benchmark comparisons. Written by the benchmark workflows."
-          fi
-          gh release upload "$RELEASE" --repo "${{ github.repository }}" --clobber "${files[@]}"
-          echo "Published ${#files[@]} charts to $RELEASE"

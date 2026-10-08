@@ -257,11 +257,11 @@ narrows which images without touching the tables.
 
 ### Where the images are linked from
 
-The report links charts by relative path, which renders in an editor preview and in the
-repository's own view of the file. `--chart-base-url` links them somewhere public
-instead, for a surface that cannot render a local file — the files still have to be
-published there — and `--chart-prefix` keeps runs published together from overwriting
-each other.
+The report links charts by relative path, which renders in an editor preview, in the
+repository's own view of the file, and for whatever posts the comment. `--chart-base-url`
+rewrites them to an absolute URL for a surface that needs one — the files still have to be
+published there — and `--chart-prefix` keeps runs published together from overwriting each
+other.
 
 ### In CI
 
@@ -276,8 +276,10 @@ the others would otherwise be scored over more of them. Alongside a `benchmark:`
 runs instead as part of `benchmark.yml`, which posts it as its own comment beside the
 report that always posts; that is
 also the only route for a comparison naming `current: true`, since only that run produces
-the column. Either way the images are uploaded to the `benchmark-charts` pre-release and
-linked from the comment.
+the column. Either way the comment is posted with `cml comment create`, which uploads the images the
+report refers to and rewrites the links — GitHub serves `img` over http(s) only, and the
+web UI's own attachment upload has no API a workflow can call. The images are hosted by
+CML rather than by GitHub.
 
 The report CI always posts is unchanged and never carries charts. A chart cannot be asked
 for by flag in CI — a comparison file is how a run asks for one, and `--chart` on
