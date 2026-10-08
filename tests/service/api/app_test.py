@@ -19,7 +19,8 @@ from sciencebeam_parser.app.parser import (
 from sciencebeam_parser.app.profiles import (
     PROFILE_DIGEST_HEADER_NAME,
     PROFILE_HEADER_NAME,
-    ProfileBundle
+    ProfileBundle,
+    ProfileDescription
 )
 from sciencebeam_parser.app.profiles import (
     ProfileNotSelectableError,
@@ -61,6 +62,24 @@ def _request_temp_path(tmp_path: Path) -> Path:
 
 
 PROFILE_NAME_1 = 'profile1'
+PROFILE_NAME_2 = 'profile2'
+
+PROFILE_DESCRIPTIONS = [
+    ProfileDescription(
+        name=PROFILE_NAME_1,
+        label='Profile 1',
+        description='What profile 1 serves.',
+        alias_names=['profile_one'],
+        is_default=True
+    ),
+    ProfileDescription(
+        name=PROFILE_NAME_2,
+        label=None,
+        description=None,
+        alias_names=[],
+        is_default=False
+    ),
+]
 
 
 def get_profile_bundle_mock(name: Optional[str] = PROFILE_NAME_1) -> ProfileBundle:
@@ -79,8 +98,9 @@ def _sciencebeam_parser_mock() -> MagicMock:
     )
     mock.profile_registry.get_bundle.return_value = get_profile_bundle_mock()
     mock.profile_registry.get_available_profile_names.return_value = [
-        PROFILE_NAME_1, 'profile2'
+        PROFILE_NAME_1, PROFILE_NAME_2
     ]
+    mock.profile_registry.get_profile_descriptions.return_value = PROFILE_DESCRIPTIONS
     return mock
 
 
@@ -644,8 +664,6 @@ DOCUMENT_ROUTE_PATHS = [
     '/processFulltextAssetDocument',
 ]
 
-PROFILE_NAME_2 = 'profile2'
-
 
 @pytest.fixture(name='ok_response_mock')
 def _ok_response_mock(
@@ -862,6 +880,54 @@ class TestProfileAttributionHeader:
         assert sorted(reported) == [PROFILE_NAME_1, PROFILE_NAME_2]
 
 
+def _without_none_values(value):
+    """What the schema document keeps of a response: FastAPI encodes it without nulls."""
+    if isinstance(value, dict):
+        return {
+            key: _without_none_values(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_without_none_values(item) for item in value]
+    return value
+
+
+class TestProfileList:
+    def test_should_say_what_every_selectable_profile_is_for(
+        self, test_client: TestClient
+    ):
+        assert _get_ok_json(test_client.get('/profiles')) == {
+            'profiles': [
+                {
+                    'name': PROFILE_NAME_1,
+                    'label': 'Profile 1',
+                    'description': 'What profile 1 serves.',
+                    'alias_names': ['profile_one'],
+                    'is_default': True
+                },
+                {
+                    'name': PROFILE_NAME_2,
+                    'label': None,
+                    'description': None,
+                    'alias_names': [],
+                    'is_default': False
+                },
+            ]
+        }
+
+    def test_should_document_what_this_deployment_serves_as_the_response_example(
+        self, sciencebeam_parser_mock: MagicMock, test_client: TestClient
+    ):
+        """What a reader of the generated docs sees without executing anything."""
+        schema = create_api_app(sciencebeam_parser=sciencebeam_parser_mock).openapi()
+        example = (
+            schema['paths']['/profiles']['get']
+            ['responses']['200']['content']['application/json']['example']
+        )
+        assert example == _without_none_values(_get_ok_json(test_client.get('/profiles')))
+
+
 class TestSelectableProfilesInTheSchema:
     def test_should_name_every_selectable_profile_on_every_route(
         self, sciencebeam_parser_mock: MagicMock
@@ -881,6 +947,26 @@ class TestSelectableProfilesInTheSchema:
         ]
         assert enums
         assert all(enum == [PROFILE_NAME_1, PROFILE_NAME_2] for enum in enums)
+
+    def test_should_keep_the_named_branch_first(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        """What makes the docs render a list rather than a free text box.
+
+        Swagger UI merges only the first branch of an `anyOf` into the parameter
+        schema, and the `enum` it renders is whatever that branch carries -- so
+        the string branch leading is the dropdown, not a detail of the document.
+        """
+        schema = create_api_app(sciencebeam_parser=sciencebeam_parser_mock).openapi()
+        first_branches = [
+            parameter['schema']['anyOf'][0]
+            for operations in schema['paths'].values()
+            for operation in operations.values()
+            for parameter in operation.get('parameters', [])
+            if parameter['name'] == 'profile'
+        ]
+        assert first_branches
+        assert all(branch.get('type') == 'string' for branch in first_branches)
 
     def test_should_still_serve_the_documentation(
         self, test_client: TestClient
