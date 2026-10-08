@@ -349,8 +349,12 @@ sequence_model_profiles:
 
 profiles:
   biorxiv_elife:
+    label: 'bioRxiv / eLife (DeLFT)'
+    description: 'DeLFT models trained on bioRxiv and eLife articles, with wapiti name models from GROBID.'
     sequence_models: biorxiv_elife
   grobid_crf_0_9_0:
+    label: 'GROBID CRF 0.9.0'
+    description: 'Wapiti CRF models for every region, as shipped with GROBID 0.9.0.'
     sequence_models: grobid_crf_0_9_0
     processors:
       fulltext:
@@ -361,6 +365,8 @@ profiles:
   # restated rather than inherited: a profile overlays the base config, not another
   # profile.
   grobid_crf_abstract_variants:
+    label: 'GROBID CRF 0.9.0, abstracts as variants'
+    description: 'The default models, emitting each abstract the header model labels as a variant of its own.'
     sequence_models: grobid_crf_0_9_0
     processors:
       fulltext:
@@ -368,6 +374,8 @@ profiles:
           enabled: false
         abstracts_mode: 'variants'
   grobid_crf_abstract_merged_by_language:
+    label: 'GROBID CRF 0.9.0, abstracts merged by language'
+    description: 'The default models, merging the abstracts the header model labels into one per language.'
     sequence_models: grobid_crf_0_9_0
     processors:
       fulltext:
@@ -375,84 +383,112 @@ profiles:
           enabled: false
         abstracts_mode: 'merged_by_language'
   wapiti_grobid_only:
+    label: 'Wapiti reference models, GROBID data only'
+    description: 'GROBID 0.9.0 with both reference models retrained as wapiti CRFs on GROBID training data alone.'
     sequence_models: wapiti_grobid_only
     processors:
       fulltext:
         noise_filter:
           enabled: false
   wapiti_refseg_scielo_preprints_ore:
+    label: 'Wapiti reference segmenter, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with the reference-segmenter retrained as a wapiti CRF on SciELO preprints and ORE.'
     sequence_models: wapiti_refseg_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   wapiti_citation_scielo_preprints_ore:
+    label: 'Wapiti citation, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with the citation model retrained as a wapiti CRF on SciELO preprints and ORE.'
     sequence_models: wapiti_citation_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   wapiti_references_scielo_preprints_ore:
+    label: 'Wapiti reference models, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with both reference models retrained as wapiti CRFs on SciELO preprints and ORE.'
     sequence_models: wapiti_references_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   delft_refseg_scielo_preprints_ore:
+    label: 'DeLFT reference segmenter, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with the reference-segmenter retrained as a DeLFT model on SciELO preprints and ORE.'
     sequence_models: delft_refseg_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   delft_citation_scielo_preprints_ore:
+    label: 'DeLFT citation, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with the citation model retrained as a DeLFT model on SciELO preprints and ORE.'
     sequence_models: delft_citation_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   delft_references_scielo_preprints_ore:
+    label: 'DeLFT reference models, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with both reference models retrained as DeLFT models on SciELO preprints and ORE.'
     sequence_models: delft_references_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   wapiti_seg_scielo_preprints_ore:
+    label: 'Wapiti segmentation, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with the segmentation model retrained as a wapiti CRF on SciELO preprints and ORE.'
     sequence_models: wapiti_seg_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   delft_seg_scielo_preprints_ore:
+    label: 'DeLFT segmentation, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with the segmentation model retrained as a DeLFT model on SciELO preprints and ORE.'
     sequence_models: delft_seg_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   wapiti_all_scielo_preprints_ore:
+    label: 'Wapiti retrained models, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with segmentation and both reference models retrained as wapiti CRFs on SciELO preprints and ORE.'
     sequence_models: wapiti_all_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   delft_all_scielo_preprints_ore:
+    label: 'DeLFT retrained models, SciELO preprints and ORE'
+    description: 'GROBID 0.9.0 with segmentation and both reference models retrained as DeLFT models on SciELO preprints and ORE.'
     sequence_models: delft_all_scielo_preprints_ore
     processors:
       fulltext:
         noise_filter:
           enabled: false
   llm_reference_segmenter:
+    label: 'LLM reference segmenter'
+    description: 'GROBID 0.9.0 with the references split apart by an LLM rather than a CRF. Needs an API key.'
     sequence_models: llm_reference_segmenter
     processors:
       fulltext:
         noise_filter:
           enabled: false
   llm_citation:
+    label: 'LLM citation'
+    description: 'GROBID 0.9.0 with each reference parsed into fields by an LLM rather than a CRF. Needs an API key.'
     sequence_models: llm_citation
     processors:
       fulltext:
         noise_filter:
           enabled: false
   llm_segmentation:
+    label: 'LLM segmentation'
+    description: 'GROBID 0.9.0 with the regions of the document named by an LLM reading its text. Needs an API key.'
     sequence_models: llm_segmentation
     processors:
       fulltext:
@@ -465,6 +501,8 @@ profiles:
           # they get is worth +0.010, and `reference_title` 0.532 to 0.573.
           action: 'relabel'
   llm_all:
+    label: 'LLM segmentation and references'
+    description: 'GROBID 0.9.0 with segmentation and both reference models served by an LLM. Needs an API key.'
     sequence_models: llm_all
     processors:
       fulltext:
@@ -473,6 +511,8 @@ profiles:
           outside_main_area: true
           action: 'relabel'
   llm_references:
+    label: 'LLM references'
+    description: 'GROBID 0.9.0 with both reference models served by an LLM. Needs an API key.'
     sequence_models: llm_references
     processors:
       fulltext:

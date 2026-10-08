@@ -141,6 +141,15 @@ class TestShippedProfilesOnlyChangeWhatIsPerRequest:
     def test_should_only_set_keys_a_profile_may_set(self):
         AppConfig(get_shipped_config()).validate_profiles()
 
+    def test_should_say_what_every_profile_is_for(self):
+        """A caller choosing between them is not reading this file."""
+        config = AppConfig(get_shipped_config())
+        unlabelled = [
+            name for name in config.get_profile_names()
+            if not config.get_profile_label(name) or not config.get_profile_description(name)
+        ]
+        assert not unlabelled
+
     def test_should_declare_no_extra_selectable_profiles(self):
         """What production serves is unchanged by adding a per-request parameter."""
         assert get_shipped_config()['selectable_profiles'] == []

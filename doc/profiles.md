@@ -78,13 +78,61 @@ The first request for a profile pays for loading its models, which for a delft
 profile includes downloading and converting the artefacts. `preload_on_startup`
 warms the deployment's own profile only.
 
+## What each profile is for
+
+`GET /api/profiles` says what a caller is choosing between:
+
+```bash
+curl --fail --show-error 'http://localhost:8080/api/profiles'
+```
+
+```json
+{
+  "profiles": [
+    {
+      "name": "grobid_crf_0_9_0",
+      "label": "GROBID CRF 0.9.0",
+      "description": "Wapiti CRF models for every region, as shipped with GROBID 0.9.0.",
+      "alias_names": ["grobid_crf"],
+      "is_default": true
+    }
+  ]
+}
+```
+
+It lists what this deployment declares selectable, so a deployment that narrows
+`selectable_profiles` advertises only what it serves. An alias is reported as
+`alias_names` of the profile it resolves to rather than as a choice of its own:
+`grobid_crf` and `grobid_crf_0_9_0` are one profile under two names.
+
+The text comes from the profile itself:
+
+```yaml
+profiles:
+  llm_references:
+    label: 'LLM references'
+    description: 'GROBID 0.9.0 with both reference models served by an LLM. Needs an API key.'
+    sequence_models: llm_references
+```
+
+Both keys are optional — a profile without them is still selectable and still
+listed, reporting `null` for each — and neither reaches the configuration that
+serves a document, so adding or editing one leaves the profile digest where it
+is.
+
+`/api/docs` documents the list as the response example for that route, built
+from the registry when the app starts. That is where a reader of the generated
+documentation sees it: the `profile` parameter's schema names the profiles it
+accepts, but the documentation renderer has no surface for a word about each
+value, so the prose arrives as a response rather than in the parameter.
+
 ## What a profile may set
 
-A profile may set `sequence_models`, `models` and `processors`. Everything else
-in the config — the download directory, the lookups, the wapiti binary, the LLM
-response cache — is built once and shared by every profile in the process, so a
-profile setting one of those keys is a startup error naming the profile and the
-key.
+A profile may set `sequence_models`, `models` and `processors`, and may describe
+itself with `label` and `description`. Everything else in the config — the
+download directory, the lookups, the wapiti binary, the LLM response cache — is
+built once and shared by every profile in the process, so a profile setting one
+of those keys is a startup error naming the profile and the key.
 
 ## Which profile served a response
 

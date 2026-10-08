@@ -28,6 +28,7 @@ from sciencebeam_parser.service.api.routers.convert import create_convert_router
 from sciencebeam_parser.service.api.routers.grobid import create_grobid_router
 from sciencebeam_parser.service.api.routers.low_level import create_low_level_router
 from sciencebeam_parser.service.api.routers.models import create_models_router
+from sciencebeam_parser.service.api.routers.profiles import create_profiles_router
 from sciencebeam_parser.service.api.routers.status import create_status_router
 
 
@@ -41,6 +42,9 @@ def create_api_app(
     app.state.sciencebeam_parser = sciencebeam_parser
 
     app.include_router(create_status_router())
+    app.include_router(create_profiles_router(
+        profile_registry=sciencebeam_parser.profile_registry
+    ))
     app.include_router(create_convert_router())
     app.include_router(create_grobid_router())
     app.include_router(create_low_level_router())
