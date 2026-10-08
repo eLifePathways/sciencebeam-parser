@@ -196,6 +196,10 @@ charts under its own.
 apart. Set it where that runs long, since it is the column heading and the chart's legend
 entry; keep the profile in it.
 
+The order of `variants:` is the order the columns and bars appear in. `primary: true`
+says which column the deltas measure against — without it the last one, as `--summary`
+has always worked — so moving a variant for the sake of reading moves nothing else.
+
 A variant is **named rather than pointed at** — by `tool`, `version` and `profile`,
 the way the predictions store holds it — so a checked-in file carries no run id and
 resolves against whichever run is at hand. `current: true` is the run under test, and

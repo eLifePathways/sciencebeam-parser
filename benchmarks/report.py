@@ -6,7 +6,12 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from benchmarks.comparison_config import load_comparison, resolve_variants, to_selection
+from benchmarks.comparison_config import (
+    load_comparison,
+    primary_index,
+    resolve_variants,
+    to_selection,
+)
 from benchmarks.report_charts import (
     ChartOutput,
     chart_markdown,
@@ -256,20 +261,26 @@ def _render_usage_section(
     ]
 
 
-def _score_cells(values: Sequence[Optional[float]]) -> List[str]:
-    primary_f1 = values[-1]
-    other_f1s = list(values[:-1])
+def _score_cells(values: Sequence[Optional[float]], primary: int = -1) -> List[str]:
+    """Every column in the order it is declared, then a delta per other column.
+
+    Which column the deltas measure against is stated rather than taken from the order,
+    so that moving a variant for the sake of reading moves nothing else.
+    """
+    primary_f1 = values[primary]
+    others = [value for index, value in enumerate(values) if index != primary % len(values)]
     deltas = [
         _fmt_delta(primary_f1 - f1 if primary_f1 is not None and f1 is not None else None)
-        for f1 in other_f1s
+        for f1 in others
     ]
-    return [_fmt_f1(f1) for f1 in other_f1s] + [_fmt_f1(primary_f1)] + deltas
+    return [_fmt_f1(f1) for f1 in values] + deltas
 
 
 def _render_field_table(
     labeled_summaries: List[Tuple[str, dict]],
     rows: Sequence[GridRow],
     field_scoring_types: dict,
+    primary: int = -1,
 ) -> List[str]:
     """Render the comparison table from cells that were already computed.
 
@@ -277,10 +288,13 @@ def _render_field_table(
     that can answer the extraction question. `Docs` says which documents each row covers,
     so neither is read as the other.
     """
-    primary_label, _ = labeled_summaries[-1]
-    other_labels = [label for label, _ in labeled_summaries[:-1]]
+    labels = [label for label, _ in labeled_summaries]
+    other_labels = [
+        label for index, label in enumerate(labels)
+        if index != primary % len(labels)
+    ]
 
-    col_labels = other_labels + [primary_label] + [f"Δ {lbl}" for lbl in other_labels]
+    col_labels = labels + [f"Δ {label}" for label in other_labels]
     n_cols = 2 * len(other_labels) + 4
     lines = [
         "| Field (method) | Type | Docs | " + " | ".join(col_labels) + " |",
@@ -289,7 +303,7 @@ def _render_field_table(
 
     for row in rows:
         field_type = field_scoring_types.get(row.field, "string")
-        cells = _score_cells(row.values)
+        cells = _score_cells(row.values, primary)
         lines.append(
             f"| {row.field} ({row.method}) | {field_type} | {row.docs_label} | "
             + " | ".join(cells) + " |"
@@ -535,12 +549,14 @@ def _corpus_grid(
     )
 
 
-def _render_corpus_section(
+def _render_corpus_section(  # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-positional-arguments
     corpus: str,
     labeled_summaries: List[Tuple[str, dict]],
     field_names: List[str],
     rows: Sequence[GridRow],
     field_scoring_types: dict,
+    primary: int = -1,
 ) -> List[str]:
     counts_by_label = [
         (label, s.get("corpora", {}).get(corpus, {}).get("n", 0))
@@ -549,7 +565,9 @@ def _render_corpus_section(
     counts = " | ".join(f"**{label}**: {n} docs" for label, n in counts_by_label)
     lines = [counts, ""] + _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, [corpus], field_names)
-    lines.extend(_render_field_table(labeled_summaries, rows, field_scoring_types))
+    lines.extend(_render_field_table(
+        labeled_summaries, rows, field_scoring_types, primary
+    ))
     produced = _render_produced_section(labeled_summaries, field_names, [corpus])
     if produced:
         lines += ["", *produced[:-1]]
@@ -579,13 +597,15 @@ def _overall_grid(
     )
 
 
-def _render_overall_section(  # pylint: disable=too-many-locals
+def _render_overall_section(  # pylint: disable=too-many-locals,too-many-arguments
+    # pylint: disable=too-many-positional-arguments
     labeled_summaries: List[Tuple[str, dict]],
     field_names: List[str],
     rows: Sequence[GridRow],
     field_scoring_types: dict,
     corpora: List[str],
     common: List[str],
+    primary: int = -1,
 ) -> List[str]:
     _, primary_summary = labeled_summaries[-1]
     omitted = [corpus for corpus in corpora if corpus not in common]
@@ -611,7 +631,9 @@ def _render_overall_section(  # pylint: disable=too-many-locals
         ]
     lines += _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, common, field_names)
-    lines.extend(_render_field_table(labeled_summaries, rows, field_scoring_types))
+    lines.extend(_render_field_table(
+        labeled_summaries, rows, field_scoring_types, primary
+    ))
     produced = _render_produced_section(labeled_summaries, field_names, common)
     if produced:
         lines += ["", *produced[:-1]]
@@ -665,6 +687,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     labeled_run_records: Optional[List[Tuple[str, Optional[dict]]]] = None,
     selection: Selection = Selection(),
     charts: ChartOutput = ChartOutput(),
+    primary: int = -1,
 ) -> str:
     if not labeled_summaries:
         return ""
@@ -699,7 +722,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     if len(corpora) > 1:
         lines.extend(_render_overall_section(
             labeled_summaries, field_names, overall_rows, field_scoring_types,
-            corpora, common,
+            corpora, common, primary,
         ))
         lines.append("")
 
@@ -759,7 +782,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
         n_primary = primary_summary.get("corpora", {}).get(corpus, {}).get("n", 0)
         corpus_lines = _render_corpus_section(
             corpus, labeled_summaries, field_names, corpus_grids[corpus],
-            field_scoring_types,
+            field_scoring_types, primary,
         )
         lines += [
             "<details>",
@@ -781,12 +804,13 @@ def _parse_labeled_summary(spec: str) -> Tuple[str, Path]:
     return label, Path(path_str)
 
 
-def run_compare(
+def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     labeled_summary_paths: List[Tuple[str, Path]],
     out_path: Optional[Path],
     selection: Selection = Selection(),
     chart_prefix: str = "",
     chart_base_url: str = "",
+    primary: int = -1,
 ) -> None:
     labeled_summaries = [
         (label, json.loads(path.read_text()))
@@ -809,7 +833,7 @@ def run_compare(
         base_url=chart_base_url,
     )
     report = _render_comparison_report(
-        labeled_summaries, labeled_run_records, selection, charts
+        labeled_summaries, labeled_run_records, selection, charts, primary
     )
     if out_path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -917,8 +941,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                 Path(args.current_run) if args.current_run else None,
             )
             selection = to_selection(config)
+            primary = primary_index(config)
         else:
             labeled_paths = [_parse_labeled_summary(s) for s in args.summaries]
+            primary = -1
             selection = Selection(
                 fields=tuple(args.fields) if args.fields else None,
                 methods=tuple(args.methods) if args.methods else None,
@@ -928,7 +954,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             )
         run_compare(
             labeled_paths, Path(args.out) if args.out else None,
-            selection, args.chart_prefix, args.chart_base_url,
+            selection, args.chart_prefix, args.chart_base_url, primary,
         )
     except SelectionError as error:
         parser.error(str(error))

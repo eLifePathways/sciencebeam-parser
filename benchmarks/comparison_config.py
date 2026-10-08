@@ -35,6 +35,7 @@ class VariantSpec:
     profile: str = "default"
     current: bool = False
     summary: Optional[str] = None
+    primary: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,8 @@ def _unknown_keys(entry: dict, allowed: Sequence[str], what: str) -> None:
 def _parse_variant(entry: Any, index: int) -> VariantSpec:
     entry = _require_mapping(entry, f"variants[{index}]")
     _unknown_keys(
-        entry, ("label", "tool", "version", "profile", "current", "summary"),
+        entry,
+        ("label", "tool", "version", "profile", "current", "summary", "primary"),
         f"variants[{index}]",
     )
     current = bool(entry.get("current"))
@@ -91,7 +93,7 @@ def _parse_variant(entry: Any, index: int) -> VariantSpec:
     label = entry.get("label") or _default_label(tool, version, profile, current, summary)
     return VariantSpec(
         label=label, tool=tool, version=version, profile=profile,
-        current=current, summary=summary,
+        current=current, summary=summary, primary=bool(entry.get("primary")),
     )
 
 
@@ -173,6 +175,8 @@ def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:
     variants = data.get("variants") or []
     if len(variants) < 2:
         raise SelectionError("a comparison needs at least two variants")
+    if sum(bool(_require_mapping(v, "variant").get("primary")) for v in variants) > 1:
+        raise SelectionError("only one variant can be the primary")
     corpora = data.get("corpora")
     parsed = [
         _parse_chart(entry, index)
@@ -207,6 +211,15 @@ def load_comparison(name_or_path: str, base_dir: Path = COMPARISON_DIR) -> Compa
     if not path.exists():
         raise SelectionError(f"No comparison file at {path}")
     return parse_comparison(yaml.safe_load(path.read_text(encoding="utf-8")), name=path.stem)
+
+
+def primary_index(config: ComparisonConfig) -> int:
+    """Which column the deltas measure against. The last unless one says otherwise, so
+    reordering for the sake of reading does not move the reference with it."""
+    for index, variant in enumerate(config.variants):
+        if variant.primary:
+            return index
+    return len(config.variants) - 1
 
 
 def store_variants(config: ComparisonConfig) -> List[VariantSpec]:

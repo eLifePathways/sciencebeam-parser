@@ -7,6 +7,7 @@ from benchmarks.comparison_config import (
     available_baselines,
     load_comparison,
     parse_comparison,
+    primary_index,
     resolve_variants,
     to_selection,
 )
@@ -297,3 +298,35 @@ class TestComputeCharts:
             _parse(TWO_VARIANTS + "charts:\n  - {compute: latency_p90}\n")
         )
         assert [c.metric for c in selection.compute_charts] == ["latency_p90"]
+
+
+class TestPrimaryVariant:
+    def test_should_default_to_the_last(self):
+        config = _parse(TWO_VARIANTS)
+        assert primary_index(config) == len(config.variants) - 1
+
+    def test_should_take_the_one_that_says_so(self):
+        config = _parse("""
+variants:
+  - {tool: grobid, version: 1, primary: true}
+  - {tool: grobid, version: 2}
+  - {current: true}
+""")
+        assert primary_index(config) == 0
+
+    def test_should_reject_two_primaries(self):
+        with pytest.raises(SelectionError, match="only one variant"):
+            _parse("""
+variants:
+  - {tool: grobid, version: 1, primary: true}
+  - {tool: grobid, version: 2, primary: true}
+""")
+
+    def test_should_survive_reordering_the_others(self):
+        config = _parse("""
+variants:
+  - {tool: grobid, version: "1"}
+  - {tool: grobid, version: "2", primary: true}
+  - {current: true}
+""")
+        assert config.variants[primary_index(config)].version == "2"
