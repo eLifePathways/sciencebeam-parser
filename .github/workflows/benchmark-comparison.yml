@@ -1,0 +1,199 @@
+name: Benchmark comparison
+
+# Renders a named comparison from predictions the store already holds: fetch the gold,
+# score what is stored, compare. No parser, no container and nothing generated, so this
+# takes minutes where a benchmark takes hours -- which is the point, since a comparison
+# is a question asked of runs that already happened and is worth re-asking freely.
+#
+# A comparison naming `current: true` wants the run under test, which only `benchmark.yml`
+# produces; labelled here on its own it fails saying which variant it could not resolve.
+
+on:
+  workflow_dispatch:
+    inputs:
+      comparison:
+        description: 'Named comparison from benchmarks/comparisons/'
+        required: true
+        type: string
+      split:
+        description: 'Split the stored predictions were produced against'
+        required: false
+        default: 'validation'
+        type: string
+  pull_request:
+    types: [labeled, synchronize]
+
+# One comparison at a time per branch; a later label supersedes an earlier one.
+concurrency:
+  group: benchmark-comparison-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  comparison:
+    # `contains` over the labels needs the name in full, and the name is the comparison's,
+    # so the list is matched as text instead. A `benchmark:` label means `benchmark.yml`
+    # is already running and renders the comparison beside its own report, so this stands
+    # down rather than posting a second one -- and that is the route a comparison naming
+    # `current: true` has to take, since only that run produces it.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(toJson(github.event.pull_request.labels.*.name), 'comparison:') &&
+       !contains(toJson(github.event.pull_request.labels.*.name), 'benchmark:'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: benchmark
+    permissions:
+      contents: read
+      pull-requests: write
+
+    env:
+      BENCHMARK_SPLIT: ${{ inputs.split || 'validation' }}
+      # Every document of the split, because a comparison scores what the store holds
+      # rather than a sample of it: scoring skips a prediction whose gold was not
+      # fetched, so a smaller mode would quietly compare fewer documents than it says.
+      BENCHMARK_MODE: full
+      BENCHMARK_CHART_RELEASE: benchmark-charts
+      BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/comparison
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: uv sync --frozen --group benchmark
+
+      - name: Resolve the comparison
+        env:
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          DISPATCH_COMPARISON: ${{ inputs.comparison }}
+        run: |
+          LABEL_COMPARISON=$(echo "$PR_LABELS_JSON" \
+            | jq -r '.[]? | select(startswith("comparison:")) | sub("^comparison:"; "")' \
+            | head -n1)
+          COMPARISON="${LABEL_COMPARISON:-${DISPATCH_COMPARISON}}"
+          if ! [[ "$COMPARISON" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::Invalid comparison '$COMPARISON' - only letters, digits, dashes and underscores"
+            exit 1
+          fi
+          if [ ! -f "benchmarks/comparisons/${COMPARISON}.yml" ]; then
+            echo "::error::No benchmarks/comparisons/${COMPARISON}.yml on this branch"
+            exit 1
+          fi
+          echo "::notice::Comparison: $COMPARISON"
+          echo "BENCHMARK_COMPARISON=${COMPARISON}" >> "$GITHUB_ENV"
+
+      - name: Checkout predictions repo
+        uses: actions/checkout@v5
+        with:
+          repository: elifepathways/sciencebeam-eval-predictions
+          path: sciencebeam-eval-predictions
+          token: ${{ secrets.PREDICTIONS_REPO_PAT }}
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: .gitignore
+          sparse-checkout-cone-mode: false
+
+      - name: Render the comparison
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run python -m benchmarks.run \
+            --config benchmarks/eval.yml \
+            --mode ${{ env.BENCHMARK_MODE }} \
+            --split ${{ env.BENCHMARK_SPLIT }} \
+            --data benchmarks/data \
+            --runs benchmarks/runs \
+            --predictions-repo sciencebeam-eval-predictions \
+            --comparison "${BENCHMARK_COMPARISON}" \
+            --comparison-only \
+            --comparison-out "${BENCHMARK_RUN}" \
+            --chart-prefix "${GITHUB_SHA}-" \
+            --chart-base-url \
+              "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.BENCHMARK_CHART_RELEASE }}"
+
+      - name: Write job summary
+        run: cat "${BENCHMARK_RUN}/comparison-${BENCHMARK_COMPARISON}.md" >> $GITHUB_STEP_SUMMARY
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPORT="${BENCHMARK_RUN}/comparison-${BENCHMARK_COMPARISON}.md"
+          PR=${{ github.event.pull_request.number }}
+          MARKER="<!-- benchmark-comparison: ${BENCHMARK_COMPARISON} -->"
+
+          # One comment per comparison, edited in place: unlike the benchmark report
+          # these are cheap to re-run, so a PR would otherwise collect one per push.
+          ID=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -n1)
+          { echo "${MARKER}"; cat "${REPORT}"; } > comparison-comment.md
+          if [ -n "$ID" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${ID}" \
+              -X PATCH -f body="$(cat comparison-comment.md)"
+          else
+            gh pr comment "${PR}" --body-file comparison-comment.md
+          fi
+
+      - name: Upload the comparison
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-comparison-${{ github.sha }}
+          path: |
+            ${{ env.BENCHMARK_RUN }}/*.md
+            ${{ env.BENCHMARK_RUN }}/charts/*.png
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload charts for publishing
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-comparison-charts-${{ github.sha }}
+          path: ${{ env.BENCHMARK_RUN }}/charts/*.png
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # Separate because this is the only thing here that needs `contents: write`, and the
+  # job above runs the branch's own code. The report links these images before they
+  # exist, at a URL fixed by the release name and the run's sha, so they resolve once
+  # this finishes rather than needing to be written back.
+  publish-charts:
+    needs: comparison
+    if: always() && needs.comparison.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download charts
+        id: download
+        uses: actions/download-artifact@v6
+        with:
+          name: benchmark-comparison-charts-${{ github.sha }}
+          path: charts
+        continue-on-error: true
+
+      - name: Publish charts to the release
+        if: steps.download.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: benchmark-charts
+        run: |
+          shopt -s nullglob
+          files=(charts/*.png)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No charts to publish"
+            exit 0
+          fi
+          if ! gh release view "$RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$RELEASE" --repo "${{ github.repository }}" \
+              --prerelease --title "Benchmark charts" \
+              --notes "Images linked from benchmark comparisons. Written by the benchmark workflows."
+          fi
+          gh release upload "$RELEASE" --repo "${{ github.repository }}" --clobber "${files[@]}"
+          echo "Published ${#files[@]} charts to $RELEASE"

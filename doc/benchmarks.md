@@ -260,12 +260,18 @@ each other.
 
 ### In CI
 
-The workflow renders no comparison unless asked, and the report it always posts is
-unchanged and never carries charts. A `comparison:<name>` label on the PR, or the
-`comparison` input on a manual run, renders that comparison **beside** the usual report;
-its images are uploaded to the `benchmark-charts` pre-release and linked from the comment.
-A chart cannot be asked for by flag in CI — a comparison file is how a run asks for one,
-and `--chart` on `benchmarks.report` covers the ad-hoc case locally.
+A `comparison:<name>` label on a PR renders that comparison in CI. On its own it runs
+`benchmark-comparison.yml`, which fetches the gold, scores what the predictions store
+holds and posts the result — minutes, with no parser and nothing generated, so it is
+cheap to re-run whenever the comparison file changes. Alongside a `benchmark:` label it
+runs instead as part of `benchmark.yml`, beside the report that always posts; that is
+also the only route for a comparison naming `current: true`, since only that run produces
+the column. Either way the images are uploaded to the `benchmark-charts` pre-release and
+linked from the comment.
+
+The report CI always posts is unchanged and never carries charts. A chart cannot be asked
+for by flag in CI — a comparison file is how a run asks for one, and `--chart` on
+`benchmarks.report` covers the ad-hoc case locally.
 
 A comparison names variants of its own, which is most of why it exists — they do not
 have to be among `eval.yml`'s `baselines:`. Any it names that `eval.yml` does not already
