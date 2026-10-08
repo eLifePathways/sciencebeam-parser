@@ -273,7 +273,8 @@ the comparison is over and should match the mode the stored predictions were pro
 the sample is seeded and nested, so a mode is a defined set of documents rather than
 whatever each variant happens to hold, and a variant with more stored predictions than
 the others would otherwise be scored over more of them. Alongside a `benchmark:` label it
-runs instead as part of `benchmark.yml`, beside the report that always posts; that is
+runs instead as part of `benchmark.yml`, which posts it as its own comment beside the
+report that always posts; that is
 also the only route for a comparison naming `current: true`, since only that run produces
 the column. Either way the images are uploaded to the `benchmark-charts` pre-release and
 linked from the comment.

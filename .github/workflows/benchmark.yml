@@ -385,6 +385,31 @@ jobs:
           } > benchmark-comment.md
           gh pr comment "${PR}" --body-file benchmark-comment.md
 
+      - name: Post the comparison
+        if: github.event_name == 'pull_request' && env.BENCHMARK_COMPARISON != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPORT="${BENCHMARK_RUN}/comparison-${BENCHMARK_COMPARISON}.md"
+          if [ ! -f "$REPORT" ]; then
+            echo "::warning::No ${REPORT} to post"
+            exit 0
+          fi
+          PR=${{ github.event.pull_request.number }}
+          MARKER="<!-- benchmark-comparison: ${BENCHMARK_COMPARISON} -->"
+
+          # The comment `benchmark-comparison.yml` edits, so a PR carries one per
+          # comparison however it was rendered, rather than one per workflow.
+          ID=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -n1)
+          { echo "${MARKER}"; cat "${REPORT}"; } > comparison-comment.md
+          if [ -n "$ID" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${ID}" \
+              -X PATCH -f body="$(cat comparison-comment.md)"
+          else
+            gh pr comment "${PR}" --body-file comparison-comment.md
+          fi
+
       - name: Upload run artifacts
         if: always()
         uses: actions/upload-artifact@v5
