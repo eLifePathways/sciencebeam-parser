@@ -29,6 +29,9 @@ SERIES_COLOURS = (
     "#2a78d6", "#eb6834", "#1baf7a", "#eda100",
     "#e87ba4", "#008300", "#4a3aa7", "#e34948",
 )
+# A stacked bar's segments differ by what they are, not by which variant they belong to,
+# so they take their own two slots rather than the variants'.
+COST_COMPONENT_COLOURS = ("#2a78d6", "#eb6834")
 SURFACE = "#fcfcfb"
 TEXT_PRIMARY = "#0b0b0b"
 TEXT_SECONDARY = "#52514e"
@@ -215,12 +218,15 @@ def _legend_layout(count: int, columns: int) -> Tuple[int, List[int]]:
     ]
 
 
-def _place_legend(axes, columns: int, below: float) -> None:
+def _place_legend(
+    axes, columns: int, below: float, above_plot: bool = False
+) -> None:
     handles, names = axes.get_legend_handles_labels()
     width, order = _legend_layout(len(names), columns)
     axes.legend(
         [handles[index] for index in order], [names[index] for index in order],
-        loc="upper left", bbox_to_anchor=(0, -below), ncol=width,
+        loc="lower left" if above_plot else "upper left",
+        bbox_to_anchor=(0, 1.02) if above_plot else (0, -below), ncol=width,
         frameon=False, fontsize=8, labelcolor=TEXT_SECONDARY,
     )
 
@@ -385,6 +391,10 @@ class ComputeChartSpec:
     title_override: Optional[str] = None
     # What the CPU was priced at, where the figure is a price.
     rate: Optional[float] = None
+    # Named parts the bars stack, where the figure is made of more than one thing.
+    components: Tuple[str, ...] = ()
+    # Per component, per variant; parallel to `components` and `series`.
+    component_values: Tuple[Tuple[Optional[float], ...], ...] = ()
 
     @property
     def filename(self) -> str:
@@ -404,7 +414,7 @@ class ComputeChartSpec:
         """
         parts = [self.axis_label]
         if self.rate is not None:
-            parts.append(f"CPU at ${self.rate:g}/vCPU-hour, plus what the provider charged")
+            parts.append(f"CPU at ${self.rate:g}/vCPU-hour")
         recorded = sum(value is not None for value in self.values)
         if recorded != len(self.values):
             parts.append(f"{recorded} of {len(self.values)} variants recorded it")
@@ -456,14 +466,14 @@ def render_compute_chart(
     # Top to bottom in the order the comparison declares its variants, and each keeps
     # the colour it carries as a series in the score charts.
     positions = list(range(len(drawn)))[::-1]
-    colours = [
-        SERIES_COLOURS[index % len(SERIES_COLOURS)]
-        for index, value in enumerate(spec.values) if value is not None
-    ]
-    axes.barh(
-        positions, [value for _, value in drawn],
-        height=0.58, color=colours, linewidth=0,
-    )
+    kept = [index for index, value in enumerate(spec.values) if value is not None]
+    if spec.components:
+        _draw_cost_stack(axes, spec, positions, kept)
+    else:
+        axes.barh(
+            positions, [value for _, value in drawn], height=0.58, linewidth=0,
+            color=[SERIES_COLOURS[index % len(SERIES_COLOURS)] for index in kept],
+        )
     largest = max(value for _, value in drawn)
     template = _compute_value_format(largest)
     for position, (_, value) in zip(positions, drawn):
@@ -473,6 +483,12 @@ def render_compute_chart(
         )
 
     _style_compute_axes(axes, spec, positions, [label for label, _ in drawn], largest)
+    if spec.components:
+        # Above the plot rather than below it: a horizontal chart's own labels and axis
+        # title already occupy everything under the bars.
+        _place_legend(
+            axes, columns=len(spec.components), below=0.0, above_plot=True,
+        )
     figure.suptitle(spec.title, x=0.012, y=0.985, ha="left", fontsize=11,
                     color=TEXT_PRIMARY, fontweight="medium")
 
@@ -484,6 +500,25 @@ def render_compute_chart(
     )
     plt.close(figure)
     return path
+
+
+def _draw_cost_stack(axes, spec: "ComputeChartSpec", positions, kept) -> None:
+    """One bar per variant, segmented by what the cost is made of.
+
+    Here the colour says which part rather than which variant, because that is what the
+    segments differ by; the variant is the axis label beside them. A 2px gap keeps two
+    segments from reading as one block.
+    """
+    left = [0.0] * len(kept)
+    for component, values in zip(spec.components, spec.component_values):
+        widths = [values[index] or 0.0 for index in kept]
+        axes.barh(
+            positions, widths, left=left, height=0.58, linewidth=0,
+            label=component, color=COST_COMPONENT_COLOURS[
+                spec.components.index(component) % len(COST_COMPONENT_COLOURS)
+            ],
+        )
+        left = [start + width for start, width in zip(left, widths)]
 
 
 def _style_compute_axes(axes, spec, positions, labels, largest: float) -> None:
@@ -571,6 +606,26 @@ def compute_chart_specs(
     )
     usage_by_label = dict(labeled_usage or [])
     rate = chart.cpu_usd_per_hour or DEFAULT_CPU_USD_PER_HOUR
+    priced = chart.metric == "estimated_cost_per_1k"
+    components: Tuple[str, ...] = ()
+    component_values: Tuple[Tuple[Optional[float], ...], ...] = ()
+    if priced:
+        from benchmarks.report_cost import (  # pylint: disable=import-outside-toplevel
+            COST_COMPONENTS,
+            estimated_cost_components,
+        )
+        parts = [
+            estimated_cost_components(cost, usage_by_label.get(label) or {}, rate)
+            for label, cost in labeled_costs
+        ]
+        # Only the parts something actually spent, so a comparison with no LLM in it
+        # does not carry a legend entry for one.
+        components = tuple(
+            name for name in COST_COMPONENTS if any(name in part for part in parts)
+        )
+        component_values = tuple(
+            tuple(part.get(name) for part in parts) for name in components
+        )
     return [ComputeChartSpec(
         metric=chart.metric,
         series=tuple(label for label, _ in labeled_costs),
@@ -579,5 +634,7 @@ def compute_chart_specs(
             for label, cost in labeled_costs
         ),
         title_override=chart.title,
-        rate=rate if chart.metric == "estimated_cost_per_1k" else None,
+        rate=rate if priced else None,
+        components=components if len(components) > 1 else (),
+        component_values=component_values if len(components) > 1 else (),
     )]

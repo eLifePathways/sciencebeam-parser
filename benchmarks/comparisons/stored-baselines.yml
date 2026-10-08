@@ -8,8 +8,9 @@
 # it is the column heading and the chart's legend entry, so it wants to stay short.
 # The labels say what distinguishes a column rather than what the profile is called:
 # wapiti and delft are the same training documents on a CRF and a deep-learning engine,
-# which `non-DL` and `DL` say to someone who does not know either name. The profile
-# beside each label is what actually selects it.
+# which `non-DL` and `DL` say to someone who does not know either name. `refs` retrains
+# the reference-segmenter and citation models; `all` adds segmentation. The profile beside
+# each label is what actually selects it.
 #
 # The order is the order columns and bars appear in. `primary: true` says which
 # column the deltas measure against, so reordering for the sake of reading moves
@@ -18,8 +19,12 @@ variants:
   - {label: GROBID 0.9.1 (non-DL), tool: grobid, version: 0.9.1-crf, profile: default}
   - {label: ScienceBeam (non-DL), tool: sciencebeam-parser, version: main, profile: grobid_crf,
      primary: true}
-  - {label: ScienceBeam retrained (non-DL), tool: sciencebeam-parser, version: main, profile: wapiti_scielo_preprints_ore}
-  - {label: ScienceBeam retrained (DL), tool: sciencebeam-parser, version: main, profile: delft_scielo_preprints_ore}
+  - {label: ScienceBeam refs retrained (non-DL), tool: sciencebeam-parser, version: main,
+     profile: wapiti_references_scielo_preprints_ore}
+  - {label: ScienceBeam refs retrained (DL), tool: sciencebeam-parser, version: main,
+     profile: delft_scielo_preprints_ore}
+  - {label: ScienceBeam all retrained (DL), tool: sciencebeam-parser, version: main,
+     profile: delft_all_scielo_preprints_ore}
   - {label: ScienceBeam + LLM references, tool: sciencebeam-parser, version: main, profile: llm_references}
   - {label: Agentic LLM (v5full-s20), tool: jats-agentic-annotation, version: qwen3.5-9b-rl-v5full-s20, profile: default}
 

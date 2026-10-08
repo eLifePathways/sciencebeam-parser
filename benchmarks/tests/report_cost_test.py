@@ -5,7 +5,11 @@ from typing import Optional
 import pytest
 
 from benchmarks.report import _render_comparison_report
-from benchmarks.report_cost import COMPUTE_METRICS, compute_metric
+from benchmarks.report_cost import (
+    COMPUTE_METRICS,
+    compute_metric,
+    estimated_cost_components,
+)
 
 
 def _title_summary(f1: float, method: str = "levenshtein") -> dict:
@@ -220,3 +224,29 @@ class TestEstimatedCost:
 
     def test_should_give_nothing_where_neither_part_is_known(self):
         assert compute_metric({}, "estimated_cost_per_1k") is None
+
+
+class TestCostComponents:
+    def test_should_name_each_part_it_priced(self):
+        parts = estimated_cost_components(
+            {"cpu_seconds": 720.0, "cpu_n_predicted": 100},
+            {"cost_credits": 0.5, "n_with_usage": 100},
+        )
+        assert sorted(parts) == ["LLM provider", "rented CPU"]
+
+    def test_should_leave_out_a_part_nothing_was_spent_on(self):
+        parts = estimated_cost_components(
+            {"cpu_seconds": 720.0, "cpu_n_predicted": 100}, {}
+        )
+        assert list(parts) == ["rented CPU"]
+
+    def test_should_sum_to_the_total(self):
+        cost = {"cpu_seconds": 720.0, "cpu_n_predicted": 100}
+        usage = {"cost_credits": 0.5, "n_with_usage": 100}
+        parts = estimated_cost_components(cost, usage)
+        assert sum(parts.values()) == pytest.approx(
+            compute_metric(cost, "estimated_cost_per_1k", usage)
+        )
+
+    def test_should_be_empty_where_nothing_was_recorded(self):
+        assert not estimated_cost_components({}, {})

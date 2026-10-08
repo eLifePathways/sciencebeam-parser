@@ -175,11 +175,12 @@ COMPUTE_METRICS: Dict[str, Tuple[str, str]] = {
     ),
 }
 
-# A cheap general-purpose on-demand vCPU, of the kind AWS or GCP rent by the hour,
-# excluding free tiers and anything with a usage limit. It is a round number rather than
-# a quote: rates move, differ by region and fall with commitment, and nothing here is
-# billed at any of them -- CI's CPU costs us nothing. Set `cpu_usd_per_hour` on the chart
-# to price it at whatever is actually being considered.
+# Roughly what a small general-purpose instance costs on demand per vCPU-hour -- an AWS
+# `t4g`/`c7g` or a GCP `e2`, excluding free tiers and anything with a usage limit. A round
+# number rather than a quote: rates move, differ by region and fall with commitment, so
+# check it against current pricing before quoting any of this. Nothing here is billed at
+# any rate either way, since CI's CPU costs us nothing. Set `cpu_usd_per_hour` on the
+# chart to price it at whatever is actually being considered.
 DEFAULT_CPU_USD_PER_HOUR = 0.03
 
 
@@ -209,6 +210,32 @@ def compute_metric(
         predicted, elapsed = cost.get("n_predicted"), cost.get("elapsed_s")
         return predicted / elapsed * 3600 if predicted and elapsed else None
     raise ValueError(f"Unknown compute metric {metric!r}")
+
+
+COST_COMPONENTS = ("rented CPU", "LLM provider")
+
+
+def estimated_cost_components(
+    cost: dict, usage: dict, cpu_usd_per_hour: float = DEFAULT_CPU_USD_PER_HOUR
+) -> Dict[str, float]:
+    """The parts the estimate is made of, per thousand documents.
+
+    Charted apart because they behave differently: rented CPU is cents a thousand and
+    barely moves between tools, while an LLM provider's charge is the whole figure where
+    there is one. A total alone says which is dearer and not why.
+    """
+    parts: Dict[str, float] = {}
+    cpu_seconds, cpu_documents = cost.get("cpu_seconds"), cost.get("cpu_n_predicted")
+    if cpu_seconds and cpu_documents:
+        parts[COST_COMPONENTS[0]] = (
+            cpu_seconds / cpu_documents * cpu_usd_per_hour / 3600 * 1000
+        )
+    spent, charged_documents = usage.get("cost_credits"), usage.get("n_with_usage")
+    if spent is not None and charged_documents:
+        # OpenRouter credits are dollars; `doc/llm_engine.md` says the number is the
+        # provider's own, so whatever it discounted is already in it.
+        parts[COST_COMPONENTS[1]] = spent / charged_documents * 1000
+    return parts
 
 
 def _estimated_cost_per_doc(

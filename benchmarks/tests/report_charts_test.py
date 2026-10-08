@@ -232,3 +232,29 @@ class TestComputeChartCoverage:
 
     def test_should_carry_that_into_the_alt_text(self):
         assert "2 of 3 variants recorded it" in self._spec([1.0, 2.0, None]).alt_text
+
+
+class TestStackedCostChart:
+    def _spec(self, components, component_values, values):
+        return ComputeChartSpec(
+            metric="estimated_cost_per_1k",
+            series=tuple(f"run {index}" for index in range(len(values))),
+            values=tuple(values), rate=0.03,
+            components=components, component_values=component_values,
+        )
+
+    def test_should_draw_a_bar_made_of_its_parts(self, tmp_path):
+        spec = self._spec(
+            ("rented CPU", "LLM provider"),
+            ((0.02, 0.03), (None, 2.04)),
+            (0.02, 2.07),
+        )
+        assert render_compute_chart(spec, tmp_path) is not None
+
+    def test_should_say_the_rate_it_priced_the_cpu_at(self):
+        spec = self._spec(("rented CPU",), ((0.02, 0.03),), (0.02, 0.03))
+        assert "CPU at $0.03/vCPU-hour" in spec.caption
+
+    def test_should_leave_the_parts_to_the_legend(self):
+        spec = self._spec(("rented CPU",), ((0.02, 0.03),), (0.02, 0.03))
+        assert "LLM provider" not in spec.caption
