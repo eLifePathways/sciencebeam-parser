@@ -20,6 +20,12 @@ on:
         required: false
         default: 'validation'
         type: string
+      mode:
+        description: 'Document sample to compare over; match the mode the predictions were produced at'
+        required: false
+        default: 'medium'
+        type: choice
+        options: [smoke, small, medium, large, full]
   pull_request:
     types: [labeled, synchronize]
 
@@ -48,10 +54,13 @@ jobs:
 
     env:
       BENCHMARK_SPLIT: ${{ inputs.split || 'validation' }}
-      # Every document of the split, because a comparison scores what the store holds
-      # rather than a sample of it: scoring skips a prediction whose gold was not
-      # fetched, so a smaller mode would quietly compare fewer documents than it says.
-      BENCHMARK_MODE: full
+      # The mode names which documents the comparison is over, and the sample is seeded
+      # and nested -- a smaller mode is a subset of a larger one -- so it is a defined
+      # denominator rather than whatever each variant happens to hold. It wants to match
+      # the mode the stored predictions were produced at: `full` would let a variant with
+      # more stored predictions than the others score more documents than them, which is
+      # not a comparison.
+      BENCHMARK_MODE: ${{ inputs.mode || 'medium' }}
       BENCHMARK_CHART_RELEASE: benchmark-charts
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/comparison
 

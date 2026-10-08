@@ -268,7 +268,11 @@ each other.
 A `comparison:<name>` label on a PR renders that comparison in CI. On its own it runs
 `benchmark-comparison.yml`, which fetches the gold, scores what the predictions store
 holds and posts the result — minutes, with no parser and nothing generated, so it is
-cheap to re-run whenever the comparison file changes. Alongside a `benchmark:` label it
+cheap to re-run whenever the comparison file changes. Its `mode` names which documents
+the comparison is over and should match the mode the stored predictions were produced at:
+the sample is seeded and nested, so a mode is a defined set of documents rather than
+whatever each variant happens to hold, and a variant with more stored predictions than
+the others would otherwise be scored over more of them. Alongside a `benchmark:` label it
 runs instead as part of `benchmark.yml`, beside the report that always posts; that is
 also the only route for a comparison naming `current: true`, since only that run produces
 the column. Either way the images are uploaded to the `benchmark-charts` pre-release and
