@@ -186,6 +186,11 @@ comparison's variants against `benchmarks/runs` for `BENCHMARK_SPLIT`, writes
 underlying command is `python -m benchmarks.report --comparison <name>`, which takes
 `--runs`, `--split` and `--current-run` directly.
 
+Charts name a corpus the way a reader would — `SciELO Preprints` rather than
+`scielo_preprints-jats`. The identifiers stay as they are in the tables and everywhere a
+name has to match `eval.yml` or the predictions store; a corpus with no friendlier name
+charts under its own.
+
 `label` is optional. Left out, a column is named for its tool, version and profile —
 `sciencebeam-parser main (llm_all)` — which is what tells two profiles of one version
 apart. Set it where that runs long, since it is the column heading and the chart's legend

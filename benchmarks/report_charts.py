@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 
+from benchmarks.corpus_labels import corpus_label
 from benchmarks.report_cost import COMPUTE_METRICS
 from benchmarks.report_grid import ChartConfig, GridRow, Selection, SelectionError
 
@@ -178,9 +179,10 @@ def _style_axes(axes, spec: ChartSpec, n_groups: int) -> None:
     axes.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
     axes.set_ylabel("f1", fontsize=8.5, color=TEXT_SECONDARY)
     axes.set_xticks(range(n_groups))
-    longest = max((len(corpus) for corpus in spec.corpora), default=0)
+    names = [corpus_label(corpus) for corpus in spec.corpora]
+    longest = max((len(name) for name in names), default=0)
     axes.set_xticklabels(
-        spec.corpora, fontsize=8, color=TEXT_SECONDARY,
+        names, fontsize=8, color=TEXT_SECONDARY,
         rotation=20 if longest > 10 else 0,
         ha="right" if longest > 10 else "center",
     )
