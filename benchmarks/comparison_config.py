@@ -18,6 +18,7 @@ from benchmarks.report_grid import (
     SCOPE_GOLD,
     ChartConfig,
     ComputeChartConfig,
+    FieldsChartConfig,
     Selection,
     SelectionError,
 )
@@ -54,6 +55,8 @@ class ComparisonConfig:
     corpora: Optional[Tuple[str, ...]] = None
     charts: Tuple[ChartConfig, ...] = dataclass_field(default_factory=tuple)
     compute_charts: Tuple[ComputeChartConfig, ...] = dataclass_field(
+        default_factory=tuple)
+    fields_charts: Tuple[FieldsChartConfig, ...] = dataclass_field(
         default_factory=tuple)
     name: str = "comparison"
 
@@ -139,6 +142,8 @@ def _parse_chart(entry: Any, index: int):
     entry = _require_mapping(entry, f"charts[{index}]")
     if "compute" in entry:
         return _parse_compute_chart(entry, index)
+    if "rows" in entry:
+        return _parse_fields_chart(entry, index)
     _unknown_keys(entry, ("row", "title", "corpora"), f"charts[{index}]")
     row = _require_mapping(entry.get("row", {}), f"charts[{index}].row")
     _unknown_keys(row, ("field", "method", "scope"), f"charts[{index}].row")
@@ -156,6 +161,31 @@ def _parse_chart(entry: Any, index: int):
         title=entry.get("title"),
         corpora=tuple(corpora) if corpora else None,
     )
+
+
+def _parse_fields_chart(entry: dict, index: int) -> FieldsChartConfig:
+    _unknown_keys(entry, ("rows", "title"), f"charts[{index}]")
+    rows = entry["rows"]
+    if not isinstance(rows, list) or len(rows) < 2:
+        raise SelectionError(
+            f"charts[{index}] needs at least two rows; one is the per-corpus chart"
+        )
+    parsed = []
+    for position, row in enumerate(rows):
+        row = _require_mapping(row, f"charts[{index}].rows[{position}]")
+        _unknown_keys(row, ("field", "method", "scope"), f"charts[{index}].rows[{position}]")
+        if not row.get("field") or not row.get("method"):
+            raise SelectionError(
+                f"charts[{index}].rows[{position}] needs a field and a method"
+            )
+        scope = row.get("scope", SCOPE_ALL)
+        if scope not in (SCOPE_ALL, SCOPE_GOLD):
+            raise SelectionError(
+                f"charts[{index}].rows[{position}] has scope {scope!r};"
+                f" a chart draws one of {SCOPE_ALL} or {SCOPE_GOLD}"
+            )
+        parsed.append((row["field"], row["method"], scope))
+    return FieldsChartConfig(rows=tuple(parsed), title=entry.get("title"))
 
 
 def _parse_compute_chart(entry: dict, index: int) -> ComputeChartConfig:
@@ -196,6 +226,9 @@ def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:
         ),
         compute_charts=tuple(
             chart for chart in parsed if isinstance(chart, ComputeChartConfig)
+        ),
+        fields_charts=tuple(
+            chart for chart in parsed if isinstance(chart, FieldsChartConfig)
         ),
     )
 
@@ -369,4 +402,5 @@ def to_selection(config: ComparisonConfig) -> Selection:
         expected_types=expected_types(config) or None,
         chart_configs=config.charts,
         compute_charts=config.compute_charts,
+        fields_charts=config.fields_charts,
     )

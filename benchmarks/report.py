@@ -17,6 +17,7 @@ from benchmarks.report_charts import (
     chart_markdown,
     chart_specs,
     compute_chart_specs,
+    fields_chart_specs,
     render_charts,
     render_compute_charts,
 )
@@ -738,6 +739,17 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
             render_charts(specs, charts.out_dir, charts.prefix)
         chart_lines += chart_markdown(
             specs, charts.rel_dir, charts.prefix, charts.base_url
+        )[2:]
+    if selection.fields_charts:
+        # No corpus axis, so no two-corpus floor: the question is which fields a
+        # difference reaches rather than where it lives.
+        field_specs = fields_chart_specs(
+            selection, [label for label, _ in labeled_summaries], overall_rows,
+        )
+        if charts.out_dir is not None:
+            render_charts(field_specs, charts.out_dir, charts.prefix)
+        chart_lines += chart_markdown(
+            field_specs, charts.rel_dir, charts.prefix, charts.base_url
         )[2:]
     if selection.compute_charts:
         # What a run spent, which has no corpus axis and so no two-corpus floor.

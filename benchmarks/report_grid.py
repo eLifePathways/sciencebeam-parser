@@ -77,6 +77,17 @@ class ChartConfig:
 
 
 @dataclass(frozen=True)
+class FieldsChartConfig:
+    """Several rows side by side, over the documents the comparison covers.
+
+    The per-corpus chart answers where a difference lives; this one answers which fields
+    it reaches, which is the other half and wants no corpus axis.
+    """
+    rows: Tuple[Tuple[str, str, str], ...]
+    title: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class ComputeChartConfig:
     """A declared chart of what a run spent rather than what it scored."""
     metric: str
@@ -100,13 +111,14 @@ class Selection:
     # Charts named one at a time, as a comparison file declares them.
     chart_configs: Tuple[ChartConfig, ...] = ()
     compute_charts: Tuple[ComputeChartConfig, ...] = ()
+    fields_charts: Tuple[FieldsChartConfig, ...] = ()
 
     @property
     def is_empty(self) -> bool:
         return not (
             self.fields or self.methods or self.corpora or self.charts
             or self.chart_methods or self.row_filter or self.chart_configs
-            or self.compute_charts
+            or self.compute_charts or self.fields_charts
         )
 
 

@@ -31,6 +31,13 @@ rows:
   - {field: first_reference_text, method: levenshtein, type: string}
 
 charts:
+  - rows:
+      - {field: title, method: levenshtein}
+      - {field: abstract, method: levenshtein}
+      - {field: author_full_names, method: levenshtein}
+      - {field: reference_title, method: levenshtein}
+      - {field: first_reference_text, method: levenshtein}
+    title: Key fields, over every scored document
   - row: {field: reference_title, method: levenshtein}
     title: Reference titles by corpus
   - row: {field: title, method: levenshtein}

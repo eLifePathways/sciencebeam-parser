@@ -6,13 +6,20 @@ publishing the files somewhere a PR comment can reach is the caller's business.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 
-from benchmarks.corpus_labels import corpus_label
+from benchmarks.labels import corpus_label, field_label
 from benchmarks.report_cost import COMPUTE_METRICS
-from benchmarks.report_grid import ChartConfig, GridRow, Selection, SelectionError
+from benchmarks.report_grid import (
+    ChartConfig,
+    FieldsChartConfig,
+    GridRow,
+    Selection,
+    SelectionError,
+)
 
 # Validated as a set for adjacent marks in both colour-vision and normal-vision terms;
 # the order is the safety mechanism rather than a preference, so slots are taken in turn
@@ -54,18 +61,33 @@ class ChartSpec:
     n_docs: int
     corpora: Tuple[str, ...]
     series: Tuple[str, ...]
-    # Per series, per corpus. None where that variant scored nothing there.
+    # Per series, per group. None where that variant scored nothing there.
     values: Tuple[Tuple[Optional[float], ...], ...]
     # What the comparison called it, where it said.
     title_override: Optional[str] = None
+    # Groups are corpora unless the chart draws several rows, when they are fields.
+    group_labels: Optional[Tuple[str, ...]] = None
+    name: Optional[str] = None
 
     @property
     def filename(self) -> str:
+        if self.name:
+            return f"fields-{self.name}.png"
         return f"{self.field}-{self.method}-{self.scope}.png"
 
     @property
+    def axis_names(self) -> Tuple[str, ...]:
+        return self.group_labels or tuple(
+            corpus_label(corpus) for corpus in self.corpora
+        )
+
+    @property
     def title(self) -> str:
-        return self.title_override or f"{self.field} ({self.method}) — f1 by corpus"
+        if self.title_override:
+            return self.title_override
+        if self.name:
+            return f"f1 by field ({self.method})"
+        return f"{field_label(self.field)} ({self.method}) — f1 by corpus"
 
     @property
     def caption(self) -> str:
@@ -74,6 +96,10 @@ class ChartSpec:
     @property
     def alt_text(self) -> str:
         return f"{self.title}, {self.caption}"
+
+    @property
+    def group_axis(self) -> str:
+        return "field" if self.name else "corpus"
 
 
 def render_chart(spec: ChartSpec, out_dir: Path, prefix: str = "") -> Path:
@@ -96,11 +122,8 @@ def render_chart(spec: ChartSpec, out_dir: Path, prefix: str = "") -> Path:
     axes.set_facecolor(SURFACE)
 
     labels = _draw_bars(axes, spec)
-    _style_axes(axes, spec, n_groups)
-    axes.legend(
-        loc="upper left", bbox_to_anchor=(0, -0.14), ncol=min(n_series, 4),
-        frameon=False, fontsize=8, labelcolor=TEXT_SECONDARY,
-    )
+    rotated = _style_axes(axes, spec, n_groups)
+    _place_legend(axes, columns=min(n_series, 4), below=0.26 if rotated else 0.16)
     figure.suptitle(spec.title, x=0.012, y=0.98, ha="left", fontsize=11,
                     color=TEXT_PRIMARY, fontweight="medium")
     axes.set_title(spec.caption, loc="left", fontsize=8.5, color=TEXT_SECONDARY, pad=10)
@@ -174,12 +197,41 @@ def _drop_colliding_labels(figure, labels: List) -> int:
     return 0
 
 
-def _style_axes(axes, spec: ChartSpec, n_groups: int) -> None:
+def _legend_layout(count: int, columns: int) -> Tuple[int, List[int]]:
+    """How wide the legend really is, and the order that makes it read left to right.
+
+    Matplotlib fills a legend column by column, so the reordering has to be built from
+    the grid it will actually draw: six entries asked to fill four columns become three
+    columns of two, and telling it four would undo the reordering.
+    """
+    rows = -(-count // columns)
+    width = -(-count // rows)
+    return width, [
+        row * width + column
+        for column in range(width)
+        for row in range(rows)
+        if row * width + column < count
+    ]
+
+
+def _place_legend(axes, columns: int, below: float) -> None:
+    handles, names = axes.get_legend_handles_labels()
+    width, order = _legend_layout(len(names), columns)
+    axes.legend(
+        [handles[index] for index in order], [names[index] for index in order],
+        loc="upper left", bbox_to_anchor=(0, -below), ncol=width,
+        frameon=False, fontsize=8, labelcolor=TEXT_SECONDARY,
+    )
+
+
+def _style_axes(axes, spec: ChartSpec, n_groups: int) -> bool:
+    """Returns whether the corpus names had to be angled, which decides how much room
+    the legend needs under them."""
     axes.set_ylim(0, 1.06)
     axes.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
     axes.set_ylabel("f1", fontsize=8.5, color=TEXT_SECONDARY)
     axes.set_xticks(range(n_groups))
-    names = [corpus_label(corpus) for corpus in spec.corpora]
+    names = list(spec.axis_names)
     longest = max((len(name) for name in names), default=0)
     axes.set_xticklabels(
         names, fontsize=8, color=TEXT_SECONDARY,
@@ -193,6 +245,7 @@ def _style_axes(axes, spec: ChartSpec, n_groups: int) -> None:
     for side in ("top", "right", "left"):
         axes.spines[side].set_visible(False)
     axes.spines["bottom"].set_color(GRID)
+    return longest > 10
 
 
 def render_charts(
@@ -428,6 +481,69 @@ def _style_compute_axes(axes, spec, positions, labels, largest: float) -> None:
     for side in ("top", "right", "left"):
         axes.spines[side].set_visible(False)
     axes.spines["bottom"].set_color(GRID)
+
+
+def fields_chart_specs(
+    selection: Selection,
+    labels: Sequence[str],
+    overall_rows: Sequence[GridRow],
+) -> List[ChartSpec]:
+    """One chart per declared set of rows, drawn across the fields rather than corpora.
+
+    The values are the overall table's own cells, so this says which fields a difference
+    reaches while the per-corpus charts say where it lives.
+    """
+    specs = []
+    for position, chart in enumerate(selection.fields_charts):
+        found = [_overall_row(overall_rows, key) for key in chart.rows]
+        missing = [
+            f"{field} ({method}, {scope})"
+            for (field, method, scope), row in zip(chart.rows, found) if row is None
+        ]
+        if missing:
+            raise SelectionError(
+                "Nothing to chart for " + "; ".join(missing)
+                + ". A chart draws a row the tables show."
+            )
+        rows = [row for row in found if row is not None]
+        specs.append(ChartSpec(
+            field=rows[0].field, method=rows[0].method, scope=rows[0].scope,
+            n_docs=max(row.n_docs for row in rows),
+            corpora=tuple(row.field for row in rows),
+            group_labels=tuple(_fields_chart_group(chart, row) for row in rows),
+            series=tuple(labels),
+            values=tuple(
+                tuple(row.values[index] for row in rows) for index in range(len(labels))
+            ),
+            title_override=chart.title,
+            name=_chart_name(chart, position),
+        ))
+    return specs
+
+
+def _chart_name(chart: FieldsChartConfig, position: int) -> str:
+    """A filename that says what the chart is, so a published asset is identifiable."""
+    if chart.title:
+        slug = re.sub(r"[^a-z0-9]+", "-", chart.title.lower()).strip("-")
+        if slug:
+            return slug[:60]
+    return "-".join(field for field, _, _ in chart.rows)[:60] or str(position)
+
+
+def _overall_row(rows: Sequence[GridRow], key) -> Optional[GridRow]:
+    return next(
+        (row for row in rows if (row.field, row.method, row.scope) == key), None
+    )
+
+
+def _fields_chart_group(chart: FieldsChartConfig, row: GridRow) -> str:
+    """The field, plus the method or scope only where the chart mixes them."""
+    name = field_label(row.field)
+    if len({method for _, method, _ in chart.rows}) > 1:
+        name += f" ({row.method})"
+    if len({scope for _, _, scope in chart.rows}) > 1:
+        name += f" [{row.scope}]"
+    return name
 
 
 def compute_chart_specs(

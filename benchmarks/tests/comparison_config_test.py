@@ -330,3 +330,44 @@ variants:
   - {current: true}
 """)
         assert config.variants[primary_index(config)].version == "2"
+
+
+class TestFieldsChartConfig:
+    _ROWS = """charts:
+  - rows:
+      - {field: title, method: levenshtein}
+      - {field: abstract, method: levenshtein}
+    title: Key fields
+"""
+
+    def test_should_parse_a_rows_chart(self):
+        config = _parse(TWO_VARIANTS + self._ROWS)
+        assert config.fields_charts[0].rows == (
+            ("title", "levenshtein", "all"), ("abstract", "levenshtein", "all"),
+        )
+
+    def test_should_carry_the_title(self):
+        assert _parse(TWO_VARIANTS + self._ROWS).fields_charts[0].title == "Key fields"
+
+    def test_should_keep_it_apart_from_a_single_row_chart(self):
+        config = _parse(
+            TWO_VARIANTS + self._ROWS + "  - {row: {field: title, method: exact}}\n"
+        )
+        assert (len(config.charts), len(config.fields_charts)) == (1, 1)
+
+    def test_should_need_more_than_one_row(self):
+        with pytest.raises(SelectionError, match="at least two rows"):
+            _parse(
+                TWO_VARIANTS
+                + "charts:\n  - rows:\n      - {field: title, method: exact}\n"
+            )
+
+    def test_should_need_a_method_on_every_row(self):
+        with pytest.raises(SelectionError, match="rows\\[1\\]"):
+            _parse(
+                TWO_VARIANTS + "charts:\n  - rows:\n"
+                "      - {field: title, method: exact}\n      - {field: abstract}\n"
+            )
+
+    def test_should_reach_the_selection(self):
+        assert len(to_selection(_parse(TWO_VARIANTS + self._ROWS)).fields_charts) == 1

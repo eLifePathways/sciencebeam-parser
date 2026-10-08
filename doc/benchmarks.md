@@ -144,6 +144,10 @@ charts:
   - row: {field: reference_title, method: levenshtein}
     title: Reference titles by corpus
     corpora: [biorxiv, pkp]               # optional; the table's corpora otherwise
+  - rows:                                 # several rows, fields along the axis
+      - {field: title, method: levenshtein}
+      - {field: reference_title, method: levenshtein}
+    title: Key fields
   - {compute: cpu_seconds_per_doc}        # what it spent, rather than what it scored
 ```
 
@@ -186,8 +190,8 @@ comparison's variants against `benchmarks/runs` for `BENCHMARK_SPLIT`, writes
 underlying command is `python -m benchmarks.report --comparison <name>`, which takes
 `--runs`, `--split` and `--current-run` directly.
 
-Charts name a corpus the way a reader would — `SciELO Preprints` rather than
-`scielo_preprints-jats`. The identifiers stay as they are in the tables and everywhere a
+Charts name a corpus and a field the way a reader would — `SciELO Preprints` rather than
+`scielo_preprints-jats`, `Authors` rather than `author_full_names`. The identifiers stay as they are in the tables and everywhere a
 name has to match `eval.yml` or the predictions store; a corpus with no friendlier name
 charts under its own.
 
@@ -220,7 +224,9 @@ nothing is drawn until two variants recorded the figure: one bar is a number wit
 rectangle around it, and runs that predate the measurement record none.
 
 A score **chart** names one row and draws it as a grouped bar chart, variants as series and
-corpora along the axis. It reads the same cells the table does, and a variant that
+corpora along the axis. `rows:` instead of `row:` draws several rows side by side with the
+fields along the axis, which says which fields a difference reaches rather than where it
+lives; it needs two rows or more, and has no corpus axis to need two corpora. It reads the same cells the table does, and a variant that
 scored nothing for a corpus leaves a gap there rather than a bar at zero. Charts are
 written to `charts/` beside the report.
 

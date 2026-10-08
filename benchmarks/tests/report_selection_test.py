@@ -6,7 +6,12 @@ from typing import List
 import pytest
 
 from benchmarks.report import ChartOutput, _render_comparison_report, run_compare
-from benchmarks.report_grid import ChartConfig, Selection, SelectionError
+from benchmarks.report_grid import (
+    ChartConfig,
+    FieldsChartConfig,
+    Selection,
+    SelectionError,
+)
 
 
 def _agg(scoring_type: str, method: str, by_field: dict) -> dict:
@@ -298,3 +303,50 @@ class TestPrimaryColumn:
         second = _rows(_render_comparison_report(moved, primary=0))[1]
         # Same reference, so the same deltas -- in the order the columns now sit.
         assert sorted(first.split("|")[-3:]) == sorted(second.split("|")[-3:])
+
+
+class TestFieldsChart:
+    def _charted(self, tmp_path, rows, **kwargs):
+        return _render_comparison_report(
+            [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
+            selection=Selection(fields_charts=(FieldsChartConfig(rows=rows, **kwargs),)),
+            charts=ChartOutput(out_dir=tmp_path),
+        )
+
+    _ROWS = (("title", "levenshtein", "all"), ("abstract", "levenshtein", "all"))
+
+    def test_draws_one_chart_for_the_whole_set(self, tmp_path):
+        self._charted(tmp_path, self._ROWS)
+        assert len(list(tmp_path.iterdir())) == 1
+
+    def test_names_the_file_after_its_title(self, tmp_path):
+        self._charted(tmp_path, self._ROWS, title="Key fields")
+        assert (tmp_path / "fields-key-fields.png").exists()
+
+    def test_names_the_file_after_its_fields_without_a_title(self, tmp_path):
+        self._charted(tmp_path, self._ROWS)
+        assert (tmp_path / "fields-title-abstract.png").exists()
+
+    def test_links_it_from_the_report(self, tmp_path):
+        report = self._charted(tmp_path, self._ROWS, title="Key fields")
+        assert "![Key fields, over all" in report
+
+    def test_fails_naming_a_row_the_tables_do_not_show(self, tmp_path):
+        with pytest.raises(SelectionError, match="keywords"):
+            self._charted(
+                tmp_path,
+                (("keywords", "levenshtein", "all"), ("title", "levenshtein", "all")),
+            )
+
+    def test_draws_for_a_single_corpus(self, tmp_path):
+        # No corpus axis, so the two-corpus floor the per-corpus charts have
+        # does not apply.
+        _render_comparison_report(
+            [
+                ("base", _two_field_summary(corpora=("ore",))),
+                ("head", _two_field_summary(0.05, corpora=("ore",))),
+            ],
+            selection=Selection(fields_charts=(FieldsChartConfig(rows=self._ROWS),)),
+            charts=ChartOutput(out_dir=tmp_path),
+        )
+        assert list(tmp_path.iterdir())

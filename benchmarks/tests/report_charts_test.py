@@ -9,6 +9,7 @@ from benchmarks.report_charts import (
     _draw_bars,
     ComputeChartSpec,
     _drop_colliding_labels,
+    _legend_layout,
     chart_markdown,
     render_compute_chart,
     render_chart,
@@ -44,8 +45,11 @@ class TestChartSpec:
 
     def test_should_describe_itself_for_a_reader_who_cannot_see_it(self):
         assert _spec().alt_text == (
-            "abstract (levenshtein) — f1 by corpus, over all 40 documents"
+            "Abstract (levenshtein) — f1 by corpus, over all 40 documents"
         )
+
+    def test_should_name_the_field_the_way_a_reader_would(self):
+        assert _spec(field="author_full_names").title.startswith("Authors (")
 
 
 class TestChartMarkdown:
@@ -66,7 +70,7 @@ class TestChartMarkdown:
 
     def test_should_carry_the_alt_text(self):
         lines = chart_markdown([_spec()], "charts")
-        assert lines[2].startswith("![abstract (levenshtein) — f1 by corpus, over all 40")
+        assert lines[2].startswith("![Abstract (levenshtein) — f1 by corpus, over all 40")
 
 
 class TestRenderChart:
@@ -177,3 +181,32 @@ class TestComputeChart:
     def test_should_apply_the_prefix(self, tmp_path):
         path = render_compute_chart(self._spec([1.0, 2.0]), tmp_path, prefix="sha-")
         assert path is not None and path.name.startswith("sha-")
+
+
+class TestLegendLayout:
+    """Matplotlib fills a legend column by column; people read it row by row."""
+
+    def _rows(self, count: int, columns: int = 4):
+        width, order = _legend_layout(count, columns)
+        n_rows = -(-count // width)
+        rows: list = [[] for _ in range(n_rows)]
+        for slot, item in enumerate(order):
+            rows[slot % n_rows].append(item)
+        return rows
+
+    def test_should_read_left_to_right_on_one_row(self):
+        assert self._rows(4) == [[0, 1, 2, 3]]
+
+    def test_should_read_left_to_right_across_two_rows(self):
+        assert self._rows(6) == [[0, 1, 2], [3, 4, 5]]
+
+    def test_should_handle_a_row_that_does_not_fill(self):
+        assert self._rows(5) == [[0, 1, 2], [3, 4]]
+
+    def test_should_narrow_to_the_grid_it_will_draw(self):
+        # Six entries asked to fill four columns become three columns of two; telling
+        # matplotlib four would undo the reordering.
+        assert _legend_layout(6, 4)[0] == 3
+
+    def test_should_not_widen_beyond_what_was_asked(self):
+        assert _legend_layout(8, 4)[0] == 4
