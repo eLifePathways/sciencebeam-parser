@@ -260,6 +260,19 @@ class TestShippedComparisons:
         for path in paths:
             assert load_comparison(str(path)).variants
 
+    def test_should_ship_one_comparison_for_each_ci_route(self):
+        from pathlib import Path  # pylint: disable=import-outside-toplevel
+        configs = [
+            load_comparison(str(path))
+            for path in sorted(Path("benchmarks/comparisons").glob("*.yml"))
+        ]
+        has_current = [
+            config.name for config in configs
+            if any(variant.current for variant in config.variants)
+        ]
+        assert has_current, "expected an example the benchmark renders"
+        assert len(has_current) < len(configs), "expected a store-only example"
+
 
 class TestAvailableBaselines:
     def test_should_be_empty_without_a_baselines_directory(self, tmp_path):

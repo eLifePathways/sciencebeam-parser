@@ -128,7 +128,7 @@ put side by side, the rows to keep and what each chart shows. It is a view over
 summaries that already exist, so adding one costs no run and moves no figure.
 
 ```yaml
-# benchmarks/comparisons/reference-models.yml
+# benchmarks/comparisons/this-run.yml
 variants:
   - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
   - {label: main, tool: sciencebeam-parser, version: main, profile: grobid_crf}
@@ -154,10 +154,10 @@ charts:
 
 ```sh
 # Fetch each named variant's predictions from the store, score them, and render:
-make dev-comparison-with-baselines COMPARISON=reference-models
+make dev-comparison-with-baselines COMPARISON=this-run
 
 # Or, where every variant has already been scored, just render:
-make dev-comparison COMPARISON=reference-models
+make dev-comparison COMPARISON=this-run
 ```
 
 The first is the one to reach for. Predictions are the expensive part of a benchmark
@@ -174,7 +174,7 @@ default — the point of leaving `validation` alone is what makes its numbers wo
 
 `stored-baselines` is the one that needs nothing of its own: it names only variants the
 store holds, so it compares what CI compares without a parser or a benchmark run.
-`reference-models` adds the run under test, so it needs one — `COMPARISON_CURRENT_RUN`
+`this-run` adds the run under test, so it needs one — `COMPARISON_CURRENT_RUN`
 says where its summary is. `make dev-comparisons-list` names them. `BENCHMARK_DATA` and
 `BENCHMARK_RUNS` say where the gold and the runs are, which a git worktree needs since
 neither is in one: both are gitignored and stay in the checkout that produced them. The
@@ -274,9 +274,10 @@ the sample is seeded and nested, so a mode is a defined set of documents rather 
 whatever each variant happens to hold, and a variant with more stored predictions than
 the others would otherwise be scored over more of them. Alongside a `benchmark:` label it
 runs instead as part of `benchmark.yml`, which posts it as its own comment beside the
-report that always posts; that is
-also the only route for a comparison naming `current: true`, since only that run produces
-the column. Either way the comment is posted with `cml comment create`, which uploads the images the
+report that always posts. That is the route a comparison naming `current: true` has to
+take, since only that run produces the column, and it is the only reason to pair the two
+labels: a comparison without one reads the store alone, so the benchmark adds no column
+to it and CI says so rather than letting the run go unremarked. Either way the comment is posted with `cml comment create`, which uploads the images the
 report refers to and rewrites the links — GitHub serves `img` over http(s) only, and the
 web UI's own attachment upload has no API a workflow can call. The images are hosted by
 CML rather than by GitHub.

@@ -1,0 +1,37 @@
+# This PR's own run against what ships and the best stored alternative.
+#
+# `current: true` is the whole point of it, and the only reason to spend a benchmark on a
+# comparison: a PR's predictions are never pushed to the store, so nothing but the run
+# that produced them can put them in a column. Label a PR `benchmark:<mode>` alongside
+# `comparison:this-run`; a comparison of stored predictions alone wants
+# `benchmark-comparison.yml` instead, which needs no benchmark at all.
+#
+# `this run` is the primary, so each delta reads as how much better it is than that
+# column rather than the other way round.
+variants:
+  - {label: GROBID 0.9.1 (non-DL), tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: ScienceBeam (non-DL), tool: sciencebeam-parser, version: main,
+     profile: grobid_crf}
+  - {label: ScienceBeam all retrained (DL), tool: sciencebeam-parser, version: main,
+     profile: delft_all_scielo_preprints_ore}
+  - {label: this run, current: true, primary: true}
+
+rows:
+  - {field: title, method: levenshtein, type: string}
+  - {field: abstract_anywhere, method: levenshtein, type: best_match}
+  - {field: author_full_names, method: levenshtein, type: partial_ulist}
+  - {field: reference_title, method: levenshtein, type: partial_list}
+  - {field: first_reference_text, method: levenshtein, type: string}
+
+charts:
+  - rows:
+      - {field: title, method: levenshtein}
+      - {field: abstract_anywhere, method: levenshtein}
+      - {field: author_full_names, method: levenshtein}
+      - {field: reference_title, method: levenshtein}
+      - {field: first_reference_text, method: levenshtein}
+    title: Key fields, this run against the baselines
+  - row: {field: reference_title, method: levenshtein}
+    title: Reference titles by corpus
+  - {compute: latency_median}
+  - {compute: estimated_cost_per_1k}

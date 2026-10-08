@@ -161,7 +161,23 @@ jobs:
           fi
           echo "BENCHMARK_COMPARISON=${COMPARISON}" >> "$GITHUB_ENV"
           if [ -n "$COMPARISON" ]; then
+            # Checked before the benchmark rather than after it: a name that resolves to
+            # nothing would otherwise surface hours later, with the run already spent.
+            if [ ! -f "benchmarks/comparisons/${COMPARISON}.yml" ]; then
+              echo "::error::No benchmarks/comparisons/${COMPARISON}.yml on this branch"
+              exit 1
+            fi
             echo "::notice::Comparison: $COMPARISON"
+            # Only a `current: true` variant puts this run in a column, and a PR's
+            # predictions never reach the store, so without one the comparison says
+            # exactly what it would have said on `main` -- and the `Benchmark comparison`
+            # workflow would have said it in minutes.
+            if ! grep -qE '^\s*-?\s*\{?\s*.*current:\s*true' \
+                "benchmarks/comparisons/${COMPARISON}.yml"; then
+              echo "::warning::Comparison '$COMPARISON' names no 'current: true' variant,"\
+                "so this benchmark adds no column to it - label 'comparison:$COMPARISON'"\
+                "on its own to render it from the predictions store in minutes"
+            fi
           fi
 
       - name: Set image tag

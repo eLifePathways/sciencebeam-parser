@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -409,6 +410,77 @@ class TestRunBenchmark:
         # The first run_compare call is the report CI always posts.
         default_labels = [label for label, _ in mock_compare.call_args_list[0][0][0]]
         assert not any("grobid_crf" in label for label in default_labels), default_labels
+
+    @patch("benchmarks.run._docker_stop")
+    @patch("benchmarks.run._docker_start")
+    @patch("benchmarks.run._wait_healthy")
+    @patch("benchmarks.run.run_compare")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_warns_when_a_comparison_does_not_name_the_run_under_test(
+        self, mock_gold, _mock_predict, mock_score, _mock_compare,
+        _mock_wait, _mock_start, _mock_stop, tmp_path: Path, caplog,
+    ):
+        mock_gold.return_value = self.gold_records()
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        self.seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+        comparison = tmp_path / "stored.yml"
+        comparison.write_text(
+            "variants:\n"
+            "  - {label: crf, tool: sciencebeam-parser, version: main,"
+            " profile: grobid_crf}\n"
+            "  - {label: grobid, tool: grobid, version: 0.9.0-crf, profile: default}\n"
+        )
+
+        def fake_score(_cfg, run_dir, *_a, **_kw):
+            self.make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        with caplog.at_level(logging.WARNING, logger="benchmarks.run"):
+            run_benchmark(
+                _CONFIG, "smoke", "train", tmp_path / "data", runs_dir, store,
+                parser_url="http://parser", comparison=str(comparison),
+            )
+
+        assert any("no `current: true` variant" in r.message for r in caplog.records), (
+            [r.message for r in caplog.records]
+        )
+
+    @patch("benchmarks.run._docker_stop")
+    @patch("benchmarks.run._docker_start")
+    @patch("benchmarks.run._wait_healthy")
+    @patch("benchmarks.run.run_compare")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_stays_quiet_when_the_comparison_names_the_run_under_test(
+        self, mock_gold, _mock_predict, mock_score, _mock_compare,
+        _mock_wait, _mock_start, _mock_stop, tmp_path: Path, caplog,
+    ):
+        mock_gold.return_value = self.gold_records()
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        self.seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+        comparison = tmp_path / "extra.yml"
+        comparison.write_text(_COMPARISON_YAML)
+
+        def fake_score(_cfg, run_dir, *_a, **_kw):
+            self.make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        with caplog.at_level(logging.WARNING, logger="benchmarks.run"):
+            run_benchmark(
+                _CONFIG, "smoke", "train", tmp_path / "data", runs_dir, store,
+                parser_url="http://parser", comparison=str(comparison),
+            )
+
+        assert not any("`current: true`" in r.message for r in caplog.records), (
+            [r.message for r in caplog.records]
+        )
 
 
 class TestCoverage:
