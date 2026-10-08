@@ -41,7 +41,7 @@ rows:
 charts:
   - rows:
       - {field: title, method: levenshtein}
-      - {field: abstract, method: levenshtein}
+      - {field: abstract_anywhere, method: levenshtein}
       - {field: author_full_names, method: levenshtein}
       - {field: reference_title, method: levenshtein}
       - {field: first_reference_text, method: levenshtein}
