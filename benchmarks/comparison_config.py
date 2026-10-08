@@ -186,14 +186,22 @@ def _parse_fields_chart(entry: dict, index: int) -> FieldsChartConfig:
 
 
 def _parse_compute_chart(entry: dict, index: int) -> ComputeChartConfig:
-    _unknown_keys(entry, ("compute", "title"), f"charts[{index}]")
+    _unknown_keys(entry, ("compute", "title", "cpu_usd_per_hour"), f"charts[{index}]")
     metric = entry["compute"]
     if metric not in COMPUTE_METRICS:
         raise SelectionError(
             f"charts[{index}] asks for compute {metric!r};"
             + " known: " + ", ".join(repr(name) for name in sorted(COMPUTE_METRICS))
         )
-    return ComputeChartConfig(metric=metric, title=entry.get("title"))
+    rate = entry.get("cpu_usd_per_hour")
+    if rate is not None and not (isinstance(rate, (int, float)) and rate > 0):
+        raise SelectionError(
+            f"charts[{index}] has cpu_usd_per_hour {rate!r}; expected a positive number"
+        )
+    return ComputeChartConfig(
+        metric=metric, title=entry.get("title"),
+        cpu_usd_per_hour=float(rate) if rate is not None else None,
+    )
 
 
 def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:

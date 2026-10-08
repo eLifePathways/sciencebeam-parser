@@ -392,3 +392,23 @@ class TestFieldsChartConfig:
 
     def test_should_reach_the_selection(self):
         assert len(to_selection(_parse(TWO_VARIANTS + self._ROWS)).declared_charts) == 1
+
+
+class TestCostChartRate:
+    def test_should_default_to_no_rate_of_its_own(self):
+        config = _parse(TWO_VARIANTS + "charts:\n  - {compute: estimated_cost_per_1k}\n")
+        assert _first(config, ComputeChartConfig).cpu_usd_per_hour is None
+
+    def test_should_take_a_rate(self):
+        config = _parse(
+            TWO_VARIANTS
+            + "charts:\n  - {compute: estimated_cost_per_1k, cpu_usd_per_hour: 0.05}\n"
+        )
+        assert _first(config, ComputeChartConfig).cpu_usd_per_hour == 0.05
+
+    def test_should_reject_a_rate_that_is_not_a_positive_number(self):
+        with pytest.raises(SelectionError, match="positive number"):
+            _parse(
+                TWO_VARIANTS
+                + "charts:\n  - {compute: estimated_cost_per_1k, cpu_usd_per_hour: 0}\n"
+            )

@@ -184,3 +184,39 @@ class TestComputeMetric:
     def test_should_reject_a_metric_it_does_not_know(self):
         with pytest.raises(ValueError, match="nope"):
             compute_metric(self._COST, "nope")
+
+
+class TestEstimatedCost:
+    _CPU = {"cpu_seconds": 720.0, "cpu_n_predicted": 100}
+
+    def test_should_price_the_cpu_at_the_rate_given(self):
+        # 7.2 CPU-seconds a document at $0.03 an hour is $0.00006, or $0.06 a thousand.
+        assert compute_metric(
+            self._CPU, "estimated_cost_per_1k", cpu_usd_per_hour=0.03
+        ) == pytest.approx(0.06)
+
+    def test_should_scale_with_the_rate(self):
+        cheap = compute_metric(self._CPU, "estimated_cost_per_1k", cpu_usd_per_hour=0.03)
+        dear = compute_metric(self._CPU, "estimated_cost_per_1k", cpu_usd_per_hour=0.06)
+        assert cheap is not None and dear == pytest.approx(cheap * 2)
+
+    def test_should_add_what_the_provider_charged(self):
+        usage = {"cost_credits": 0.5, "n_with_usage": 100}
+        with_llm = compute_metric(
+            self._CPU, "estimated_cost_per_1k", usage, cpu_usd_per_hour=0.03
+        )
+        assert with_llm == pytest.approx(0.06 + 5.0)
+
+    def test_should_price_a_provider_charge_without_any_cpu(self):
+        usage = {"cost_credits": 0.5, "n_with_usage": 100}
+        assert compute_metric({}, "estimated_cost_per_1k", usage) == pytest.approx(5.0)
+
+    def test_should_divide_each_part_by_what_it_measured(self):
+        # The provider charged over 50 documents, not the 100 the CPU covered.
+        usage = {"cost_credits": 0.5, "n_with_usage": 50}
+        assert compute_metric(
+            self._CPU, "estimated_cost_per_1k", usage, cpu_usd_per_hour=0.03
+        ) == pytest.approx(0.06 + 10.0)
+
+    def test_should_give_nothing_where_neither_part_is_known(self):
+        assert compute_metric({}, "estimated_cost_per_1k") is None

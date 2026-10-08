@@ -12,19 +12,14 @@ from benchmarks.comparison_config import (
     resolve_variants,
     to_selection,
 )
+from benchmarks.report_chart_section import render_declared_chart
 from benchmarks.report_charts import (
     ChartOutput,
     chart_markdown,
     chart_specs,
-    chart_spec,
-    compute_chart_specs,
-    fields_chart_specs,
     render_charts,
-    render_compute_charts,
 )
 from benchmarks.report_grid import (
-    ComputeChartConfig,
-    FieldsChartConfig,
     GridRow,
     Selection,
     SelectionError,
@@ -686,41 +681,6 @@ def _differently_scored_note(
     ]
 
 
-def _render_declared_chart(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    declared,
-    labels: Sequence[str],
-    labeled_summaries: List[Tuple[str, dict]],
-    corpus_grids: Dict[str, List[GridRow]],
-    overall_rows: Sequence[GridRow],
-    common: Sequence[str],
-    charts: ChartOutput,
-) -> List[str]:
-    """One declared chart, drawn and linked, or nothing where it has too little to say."""
-    if isinstance(declared, ComputeChartConfig):
-        specs: Sequence = compute_chart_specs(declared, [
-            (label, summary.get("cost") or {}) for label, summary in labeled_summaries
-        ])
-        if charts.out_dir is not None:
-            specs = render_compute_charts(specs, charts.out_dir, charts.prefix)
-    elif isinstance(declared, FieldsChartConfig):
-        # No corpus axis, so no two-corpus floor: the question is which fields a
-        # difference reaches rather than where it lives.
-        specs = fields_chart_specs(declared, labels, overall_rows)
-        if charts.out_dir is not None:
-            render_charts(specs, charts.out_dir, charts.prefix)
-    else:
-        if len(common) < 2:
-            return []
-        specs = [
-            spec for spec in [
-                chart_spec(declared, labels, corpus_grids, overall_rows, common)
-            ] if spec is not None
-        ]
-        if charts.out_dir is not None:
-            render_charts(specs, charts.out_dir, charts.prefix)
-    return chart_markdown(specs, charts.rel_dir, charts.prefix, charts.base_url)[2:]
-
-
 def _render_comparison_report(  # pylint: disable=too-many-locals
     labeled_summaries: List[Tuple[str, dict]],
     labeled_run_records: Optional[List[Tuple[str, Optional[dict]]]] = None,
@@ -770,7 +730,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     chart_lines: List[str] = []
     labels = [label for label, _ in labeled_summaries]
     for declared in selection.declared_charts:
-        chart_lines += _render_declared_chart(
+        chart_lines += render_declared_chart(
             declared, labels, labeled_summaries, corpus_grids, overall_rows,
             common, charts,
         )

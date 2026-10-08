@@ -92,6 +92,8 @@ class ComputeChartConfig:
     """A declared chart of what a run spent rather than what it scored."""
     metric: str
     title: Optional[str] = None
+    # Only read by the estimated-cost metric; nothing here is billed at any rate.
+    cpu_usd_per_hour: Optional[float] = None
 
 
 DeclaredChart = Union[ChartConfig, FieldsChartConfig, ComputeChartConfig]

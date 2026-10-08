@@ -149,6 +149,7 @@ charts:
       - {field: reference_title, method: levenshtein}
     title: Key fields
   - {compute: cpu_seconds_per_doc}        # what it spent, rather than what it scored
+  - {compute: estimated_cost_per_1k, cpu_usd_per_hour: 0.03}
 ```
 
 ```sh
@@ -217,8 +218,8 @@ summary gives a field exactly one scoring type, so naming it catches a run that 
 the field instead of comparing across the change.
 
 A **chart** is either a score row or a compute figure. `compute:` takes
-`cpu_seconds_per_doc`, `latency_median`, `latency_p90` or `docs_per_hour`, and draws one
-bar per variant. The `latency_` metrics are named for the record they read; what they
+`cpu_seconds_per_doc`, `latency_median`, `latency_p90`, `docs_per_hour` or
+`estimated_cost_per_1k`, and draws one bar per variant. The `latency_` metrics are named for the record they read; what they
 measure is a whole document being converted, so the charts call it time per document — the same numbers the Compute cost section states as text. Each variant
 keeps the colour it has as a series in the score charts, so the two read as one set, and
 nothing is drawn until two variants recorded the figure: one bar is a number with a

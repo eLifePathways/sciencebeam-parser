@@ -44,3 +44,4 @@ charts:
     title: Reference titles by corpus
   - {compute: latency_median}
   - {compute: cpu_seconds_per_doc}
+  - {compute: estimated_cost_per_1k}

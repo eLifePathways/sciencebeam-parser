@@ -383,6 +383,8 @@ class ComputeChartSpec:
     series: Tuple[str, ...]
     values: Tuple[Optional[float], ...]
     title_override: Optional[str] = None
+    # What the CPU was priced at, where the figure is a price.
+    rate: Optional[float] = None
 
     @property
     def filename(self) -> str:
@@ -400,12 +402,13 @@ class ComputeChartSpec:
         and nothing about the chart otherwise says that the others were left out rather
         than being zero.
         """
+        parts = [self.axis_label]
+        if self.rate is not None:
+            parts.append(f"CPU at ${self.rate:g}/vCPU-hour, plus what the provider charged")
         recorded = sum(value is not None for value in self.values)
-        if recorded == len(self.values):
-            return self.axis_label
-        return (
-            f"{self.axis_label} — {recorded} of {len(self.values)} variants recorded it"
-        )
+        if recorded != len(self.values):
+            parts.append(f"{recorded} of {len(self.values)} variants recorded it")
+        return " — ".join(parts)
 
     @property
     def title(self) -> str:
@@ -417,7 +420,12 @@ class ComputeChartSpec:
 
 
 def _compute_value_format(largest: float) -> str:
-    return "{:,.0f}" if largest >= 100 else "{:,.1f}"
+    """Enough decimals to tell the bars apart, without a column of trailing zeros."""
+    if largest >= 100:
+        return "{:,.0f}"
+    if largest >= 1:
+        return "{:,.2f}"
+    return "{:,.3f}"
 
 
 def render_compute_chart(
@@ -553,12 +561,23 @@ def _fields_chart_group(chart: FieldsChartConfig, row: GridRow) -> str:
 
 
 def compute_chart_specs(
-    chart: ComputeChartConfig, labeled_costs: Sequence[Tuple[str, dict]]
+    chart: ComputeChartConfig,
+    labeled_costs: Sequence[Tuple[str, dict]],
+    labeled_usage: Optional[Sequence[Tuple[str, dict]]] = None,
 ) -> List[ComputeChartSpec]:
-    from benchmarks.report_cost import compute_metric  # pylint: disable=import-outside-toplevel
+    from benchmarks.report_cost import (  # pylint: disable=import-outside-toplevel
+        DEFAULT_CPU_USD_PER_HOUR,
+        compute_metric,
+    )
+    usage_by_label = dict(labeled_usage or [])
+    rate = chart.cpu_usd_per_hour or DEFAULT_CPU_USD_PER_HOUR
     return [ComputeChartSpec(
         metric=chart.metric,
         series=tuple(label for label, _ in labeled_costs),
-        values=tuple(compute_metric(cost, chart.metric) for _, cost in labeled_costs),
+        values=tuple(
+            compute_metric(cost, chart.metric, usage_by_label.get(label), rate)
+            for label, cost in labeled_costs
+        ),
         title_override=chart.title,
+        rate=rate if chart.metric == "estimated_cost_per_1k" else None,
     )]
