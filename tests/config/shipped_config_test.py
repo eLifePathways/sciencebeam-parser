@@ -191,14 +191,14 @@ class TestShippedProfilesShareTheirModels:
             is not citation.fulltext_models.reference_segmenter_model
         )
 
-    def test_should_hold_every_shipped_profile_for_less_than_three_unshared_ones(
+    def test_should_hold_every_shipped_profile_for_a_quarter_of_what_unshared_would_cost(
         self, registry: ProfileRegistry
     ):
-        for profile_name in AppConfig(get_shipped_config()).get_profile_names():
+        profile_names = AppConfig(get_shipped_config()).get_profile_names()
+        for profile_name in profile_names:
             registry.get_bundle(profile_name)
-        assert registry.model_cache.get_loaded_model_count() < 3 * len(
-            SEQUENCE_MODEL_CLASS_BY_NAME
-        )
+        unshared_count = len(profile_names) * len(SEQUENCE_MODEL_CLASS_BY_NAME)
+        assert registry.model_cache.get_loaded_model_count() < unshared_count / 4
 
     def test_should_attribute_two_profiles_to_different_digests(
         self, registry: ProfileRegistry
