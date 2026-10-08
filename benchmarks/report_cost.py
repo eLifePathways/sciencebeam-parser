@@ -175,13 +175,14 @@ COMPUTE_METRICS: Dict[str, Tuple[str, str]] = {
     ),
 }
 
-# Roughly what a small general-purpose instance costs on demand per vCPU-hour -- an AWS
-# `t4g`/`c7g` or a GCP `e2`, excluding free tiers and anything with a usage limit. A round
+# A sustained general-purpose on-demand vCPU-hour, checked October 2026 against AWS
+# `c7g.medium` at $0.036 for its one vCPU and GCP `e2-standard-4` at $0.134 for four.
+# Burstable families are cheaper per vCPU -- `t4g.medium` is about $0.017 -- but they are
+# credit-limited, which is not what a converter running flat out would get. A round
 # number rather than a quote: rates move, differ by region and fall with commitment, so
-# check it against current pricing before quoting any of this. Nothing here is billed at
-# any rate either way, since CI's CPU costs us nothing. Set `cpu_usd_per_hour` on the
-# chart to price it at whatever is actually being considered.
-DEFAULT_CPU_USD_PER_HOUR = 0.03
+# check before quoting any of it, and nothing here is billed at any rate anyway since
+# CI's CPU costs us nothing. `cpu_usd_per_hour` on the chart prices it otherwise.
+DEFAULT_CPU_USD_PER_HOUR = 0.035
 
 
 def compute_metric(
