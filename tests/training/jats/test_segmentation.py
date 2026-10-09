@@ -155,6 +155,24 @@ class TestCoordinateBasedDetection:
         labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
         assert [labels[id(line)] for line in numbers] == [SEG_PAGE, SEG_PAGE]
 
+    def test_a_page_number_the_jats_vote_claimed_still_becomes_page(self):
+        # PPR458837 prints its number in the same corner of all 23 pages; the
+        # aligner matched 7 of them into the article's text, which is where the
+        # number stopped being furniture.
+        numbers = [
+            _make_line(str(page_number), y=20.0, page_number=page_number)
+            for page_number in (1, 2, 3)
+        ]
+        doc = self._two_pages(*numbers)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        annotated.set_token_label(
+            numbers[1].tokens[0], JatsFieldNames.BODY_SECTION_PARAGRAPH
+        )
+        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        assert [labels[id(line)] for line in numbers] == [
+            SEG_PAGE, SEG_PAGE, SEG_PAGE
+        ]
+
     def test_line_in_middle_of_page_is_not_headnote(self):
         line = _make_line('Normal', 'content', y=500.0)  # 50% of page
         doc = _make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)

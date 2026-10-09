@@ -257,6 +257,11 @@ def _tag_page_numbers_by_position(
     repeats is where it is set: the same spot, page after page, in a line of its
     own that reads as a number.  Two pages at least, since one page cannot show
     a position repeating, and a number in the middle of a table is not one.
+
+    The spot carries over a region the JATS vote has already named: a number the
+    page prints in its own corner is furniture wherever the article's text
+    happens to have matched it.  A cover page is left alone, which keeps a whole
+    page to one label.
     """
     by_spot: Dict[Tuple[float, float], List[_SegLine]] = {}
     page_numbers: Set[int] = set()
@@ -279,7 +284,7 @@ def _tag_page_numbers_by_position(
         if len({_get_page_number(sl) for sl in spot_lines}) <= threshold:
             continue
         for seg_line in spot_lines:
-            if seg_line.seg_label is None:
+            if seg_line.seg_label is None or seg_line.seg_label in _ARTICLE_CONTENT_LABELS:
                 seg_line.seg_label = SEG_PAGE
 
 
