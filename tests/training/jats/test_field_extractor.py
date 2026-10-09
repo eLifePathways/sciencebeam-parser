@@ -461,6 +461,65 @@ class TestAvailability:
         assert back == ['Ethics', 'Approved by the review board.']
 
 
+def _back_matter_values(xml: str):
+    return [
+        v.text for v in _field_values_for(xml)
+        if v.field_name in (
+            JatsFieldNames.BACK_SECTION_TITLE,
+            JatsFieldNames.BACK_SECTION_PARAGRAPH,
+        )
+    ]
+
+
+class TestEthicsSection:
+    def test_an_ethics_section_among_the_declarations_is_back_matter(self):
+        back = _back_matter_values(
+            '<article><body>'
+            '<sec sec-type="methods"><title>Methods</title><p>We measured it.</p></sec>'
+            '<sec><title>Ethical considerations</title><p>The board approved it.</p></sec>'
+            '<sec sec-type="data-availability"><title>Data availability</title>'
+            '<p>In the archive.</p></sec>'
+            '</body></article>'
+        )
+        assert back == ['Ethical considerations', 'The board approved it.']
+
+    def test_an_ethics_section_the_results_follow_stays_in_the_body(self):
+        # PPR458963 and PPR459581 both print "Aspectos éticos" between their
+        # methods and their results, which is the article arguing rather than
+        # declaring.
+        back = _back_matter_values(
+            '<article><body>'
+            '<sec sec-type="methods"><title>Methods</title><p>We measured it.</p></sec>'
+            '<sec><title>Ethical considerations</title><p>The board approved it.</p></sec>'
+            '<sec sec-type="results"><title>Results</title><p>It went up.</p></sec>'
+            '</body></article>'
+        )
+        assert back == []
+
+
+class TestNoticeSection:
+    def test_a_legal_notice_at_the_end_is_back_matter(self):
+        # PPR459239 prints "Aviso legal" after its conclusions, and 5-271_v1
+        # prints "Patents" there; GROBID files a publisher's note under annex.
+        back = _back_matter_values(
+            '<article><body>'
+            '<sec><title>Considerac oes Finais</title><p>We conclude it.</p></sec>'
+            '<sec><title>Aviso legal</title><p>The views are the authors.</p></sec>'
+            '</body></article>'
+        )
+        assert back == ['Aviso legal', 'The views are the authors.']
+
+    def test_a_disclaimer_the_article_follows_stays_in_the_body(self):
+        # 6-35_v1 opens with "Disclaimer" before its introduction.
+        back = _back_matter_values(
+            '<article><body>'
+            '<sec><title>Disclaimer</title><p>Not an official position.</p></sec>'
+            '<sec sec-type="intro"><title>Introduction</title><p>We begin.</p></sec>'
+            '</body></article>'
+        )
+        assert back == []
+
+
 class TestSubArticle:
     def test_extracts_sub_article_paragraphs(self):
         fvs = _field_values_for(

@@ -76,9 +76,10 @@ _CONFLICT_TITLES = frozenset({
 
 _ETHICS_SEC = '@sec-type="ethics"' + " or @sec-type='ethics-statement'"
 
-# GROBID has no label of its own for these; its corpus files an ethics or
-# approval statement under `<div type="annex">` 60 times against 3 as body, and
-# an article prints one beside its availability statement, not in its argument.
+# GROBID has no label of its own for these.  Its corpus files one of the
+# headings below under `<div type="annex">` 61 times and as `<body>` 39, so the
+# heading alone does not decide: what separates them is where the section sits.
+# `_get_back_matter_ethics_sections` is what applies that.
 _ETHICS_TITLES = frozenset({
     'ethics',
     'ethics and consent',
@@ -240,6 +241,59 @@ def _get_ethics_sections(root: etree._Element) -> Set[etree._Element]:
     return _get_sections(root, _ETHICS_SEC, _ETHICS_TITLES, 'ethics')
 
 
+# A named declaration GROBID files under `<div type="annex">`.
+_NOTICE_TITLES = frozenset({
+    'disclaimer',
+    'aviso legal',
+    'nota legal',
+    "publisher's note",
+    'publishers note',
+    'patents',
+    'patentes',
+    'abbreviations',
+    'abreviaturas',
+    'abreviacoes',
+    'declarations',
+    'declaraciones',
+    'declaracoes',
+})
+
+
+def _get_notice_sections(root: etree._Element) -> Set[etree._Element]:
+    return {
+        el for el in root.xpath('(body|back)/sec[not(@sec-type)]')
+        if _normalised_section_title(el) in _NOTICE_TITLES
+    }
+
+
+def _get_back_matter_ethics_sections(
+    root: etree._Element,
+    already_placed: Set[etree._Element],
+) -> Set[etree._Element]:
+    """Ethics and notice sections that sit in the back matter, not the argument.
+
+    An article states its ethics either way: as a section of its methods, with
+    results still to come, or among the declarations at the end.  The heading
+    reads the same in both, so what follows the section decides.  One under
+    `back` is already past the argument; one under `body` counts only where
+    nothing but other back-matter sections follows it.
+
+    `already_placed` is what the clearer kinds have taken, which is why they are
+    matched first: they are how this one recognises the run it is in.
+    """
+    sections = _get_ethics_sections(root) | _get_notice_sections(root)
+    back_matter = already_placed | sections
+    return {
+        el for el in sections
+        if el.getparent() is None
+        or el.getparent().tag != 'body'
+        or all(
+            following in back_matter
+            for following in el.itersiblings('sec')
+        )
+    }
+
+
 def _is_bold_heading(el: etree._Element) -> bool:
     """Whether a paragraph is nothing but a bold heading.
 
@@ -261,6 +315,7 @@ def _is_within(el: etree._Element, elements: Set[etree._Element]) -> bool:
 
 class _LabelledSections(NamedTuple):
     """The sections of the body or back matter the model has its own label for."""
+    supplementary: Set[etree._Element]
     availability: Set[etree._Element]
     contribution: Set[etree._Element]
     conflict: Set[etree._Element]
@@ -271,23 +326,37 @@ class _LabelledSections(NamedTuple):
 
     @staticmethod
     def of(root: etree._Element) -> '_LabelledSections':
+        availability = _get_availability_sections(root)
+        contribution = _get_contribution_sections(root)
+        conflict = _get_conflict_sections(root)
+        funding = _get_funding_sections(root)
+        acknowledgement = {
+            el for el in root.xpath('back//fn')
+            if _get_fn_kind(el) == 'acknowledgement'
+        }
         return _LabelledSections(
-            availability=_get_availability_sections(root),
-            contribution=_get_contribution_sections(root),
-            conflict=_get_conflict_sections(root),
-            funding=_get_funding_sections(root),
-            acknowledgement={
-                el for el in root.xpath('back//fn')
-                if _get_fn_kind(el) == 'acknowledgement'
-            },
-            ethics=_get_ethics_sections(root),
+            supplementary=set(
+                root.xpath('//sec[@sec-type="supplementary-material"]')
+            ),
+            availability=availability,
+            contribution=contribution,
+            conflict=conflict,
+            funding=funding,
+            acknowledgement=acknowledgement,
+            ethics=_get_back_matter_ethics_sections(
+                root,
+                already_placed=(
+                    availability | contribution | conflict | funding
+                    | acknowledgement
+                ),
+            ),
             footnote=set(root.xpath('back//fn')),
         )
 
     def _kind(self, el: etree._Element) -> Optional[str]:
         for kind in (
-            'availability', 'contribution', 'conflict', 'funding',
-            'acknowledgement', 'ethics', 'footnote',
+            'supplementary', 'availability', 'contribution', 'conflict',
+            'funding', 'acknowledgement', 'ethics', 'footnote',
         ):
             if _is_within(el, getattr(self, kind)):
                 return kind
@@ -306,6 +375,8 @@ class _LabelledSections(NamedTuple):
 
 
 _TITLE_FIELD_BY_KIND = {
+    # An appendix the JATS files under `body` rather than under `app`.
+    'supplementary': JatsFieldNames.APPENDIX_GROUP_TITLE,
     'availability': JatsFieldNames.AVAILABILITY_SECTION_TITLE,
     'contribution': JatsFieldNames.CONTRIBUTION_SECTION_TITLE,
     'conflict': JatsFieldNames.CONFLICT_SECTION_TITLE,
@@ -318,6 +389,7 @@ _TITLE_FIELD_BY_KIND = {
 }
 
 _PARAGRAPH_FIELD_BY_KIND = {
+    'supplementary': JatsFieldNames.APPENDIX,
     'availability': JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
     'contribution': JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
     'conflict': JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
