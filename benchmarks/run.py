@@ -312,15 +312,16 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
     comparison_config = load_comparison(comparison) if comparison else None
     # A comparison with no `current: true` variant reads the predictions store alone, and
-    # the store is already there -- so this run told it nothing. Said once here rather
-    # than left to be noticed in a report whose columns all predate the branch.
+    # the store is already there -- so this run told it nothing, and scoring it alone
+    # would have taken minutes. Said once here rather than left to be noticed in a report
+    # whose columns all predate the run.
     if comparison_config is not None and not any(
         variant.current for variant in comparison_config.variants
     ):
         LOGGER.warning(
             "Comparison %r names no `current: true` variant, so it compares stored"
-            " predictions only and this run adds no column to it. The"
-            " `Benchmark comparison` workflow renders it in minutes without one.",
+            " predictions only and this run adds no column to it. --comparison-only"
+            " renders it without a run.",
             comparison_config.name,
         )
 

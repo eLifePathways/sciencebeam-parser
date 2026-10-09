@@ -19,11 +19,6 @@ on:
         required: false
         default: false
         type: boolean
-      comparison:
-        description: 'Named comparison from benchmarks/comparisons/ to render as well (empty = none)'
-        required: false
-        default: ''
-        type: string
   push:
     branches: [main]
   pull_request:
@@ -87,10 +82,6 @@ jobs:
            contains(github.event.pull_request.labels.*.name, 'benchmark:plos') ||
            inputs.include_plos) && '--include-corpus plos-manuscripts' || ''
         }}
-      # A comparison file to render beside the report, by name. Empty renders only the
-      # report CI has always posted, which is every run that does not ask.
-      BENCHMARK_COMPARISON: >-
-        ${{ inputs.comparison || '' }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/validation
 
     steps:
@@ -146,39 +137,6 @@ jobs:
           fi
           echo "::notice::Benchmark profile: $PROFILE (from $PROFILE_SOURCE)"
           echo "BENCHMARK_PROFILE=$PROFILE" >> "$GITHUB_ENV"
-
-      - name: Resolve the comparison
-        env:
-          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
-        run: |
-          LABEL_COMPARISON=$(echo "$PR_LABELS_JSON" \
-            | jq -r '.[]? | select(startswith("comparison:")) | sub("^comparison:"; "")' \
-            | head -n1)
-          COMPARISON="${LABEL_COMPARISON:-${BENCHMARK_COMPARISON}}"
-          if [ -n "$COMPARISON" ] && ! [[ "$COMPARISON" =~ ^[A-Za-z0-9_-]+$ ]]; then
-            echo "::error::Invalid comparison '$COMPARISON' - only letters, digits, dashes and underscores"
-            exit 1
-          fi
-          echo "BENCHMARK_COMPARISON=${COMPARISON}" >> "$GITHUB_ENV"
-          if [ -n "$COMPARISON" ]; then
-            # Checked before the benchmark rather than after it: a name that resolves to
-            # nothing would otherwise surface hours later, with the run already spent.
-            if [ ! -f "benchmarks/comparisons/${COMPARISON}.yml" ]; then
-              echo "::error::No benchmarks/comparisons/${COMPARISON}.yml on this branch"
-              exit 1
-            fi
-            echo "::notice::Comparison: $COMPARISON"
-            # Only a `current: true` variant puts this run in a column, and a PR's
-            # predictions never reach the store, so without one the comparison says
-            # exactly what it would have said on `main` -- and the `Benchmark comparison`
-            # workflow would have said it in minutes.
-            if ! grep -qE '^\s*-?\s*\{?\s*.*current:\s*true' \
-                "benchmarks/comparisons/${COMPARISON}.yml"; then
-              echo "::warning::Comparison '$COMPARISON' names no 'current: true' variant,"\
-                "so this benchmark adds no column to it - label 'comparison:$COMPARISON'"\
-                "on its own to render it from the predictions store in minutes"
-            fi
-          fi
 
       - name: Set image tag
         id: image_tag
@@ -292,10 +250,6 @@ jobs:
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             PUSH_CURRENT_ARG=(--push-current)
           fi
-          COMPARISON_ARGS=()
-          if [ -n "${BENCHMARK_COMPARISON}" ]; then
-            COMPARISON_ARGS+=(--comparison "${BENCHMARK_COMPARISON}")
-          fi
           uv run python -m benchmarks.run \
             --config benchmarks/eval.yml \
             --mode ${{ env.BENCHMARK_MODE }} \
@@ -308,7 +262,6 @@ jobs:
             --profile "${{ env.BENCHMARK_PROFILE }}" \
             --retry-passes ${{ env.BENCHMARK_RETRY_PASSES }} \
             ${{ env.BENCHMARK_CORPORA }} \
-            "${COMPARISON_ARGS[@]}" \
             "${PUSH_CURRENT_ARG[@]}"
 
       # The client only sees {"detail":"Internal Server Error"}, so without this a
@@ -388,28 +341,6 @@ jobs:
           } > benchmark-comment.md
           gh pr comment "${PR}" --body-file benchmark-comment.md
 
-      # CML uploads the images a report refers to and rewrites the links, which is how a
-      # chart reaches a comment: GitHub serves `img` over http(s) only, and the web UI's
-      # own attachment upload has no API a workflow can use.
-      - name: Install CML
-        if: env.BENCHMARK_COMPARISON != ''
-        run: npm install -g @dvcorg/cml
-
-      - name: Post the comparison
-        if: github.event_name == 'pull_request' && env.BENCHMARK_COMPARISON != ''
-        env:
-          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          REPORT="comparison-${BENCHMARK_COMPARISON}.md"
-          if [ ! -f "${BENCHMARK_RUN}/${REPORT}" ]; then
-            echo "::warning::No ${REPORT} to post"
-            exit 0
-          fi
-          # From the run directory, so the report's own `charts/x.png` resolves whether
-          # CML reads them relative to the file or to where it was invoked.
-          cd "${BENCHMARK_RUN}"
-          cml comment create "${REPORT}"
-
       - name: Upload run artifacts
         if: always()
         uses: actions/upload-artifact@v5
@@ -419,5 +350,4 @@ jobs:
             ${{ env.BENCHMARK_RUN }}/*.md
             ${{ env.BENCHMARK_RUN }}/*.json
             ${{ env.BENCHMARK_RUN }}/*.jsonl
-            ${{ env.BENCHMARK_RUN }}/charts/*.png
           retention-days: 30

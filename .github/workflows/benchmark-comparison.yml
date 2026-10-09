@@ -5,8 +5,11 @@ name: Benchmark comparison
 # takes minutes where a benchmark takes hours -- which is the point, since a comparison
 # is a question asked of runs that already happened and is worth re-asking freely.
 #
-# A comparison naming `current: true` wants the run under test, which only `benchmark.yml`
-# produces; labelled here on its own it fails saying which variant it could not resolve.
+# Every variant is named the way the predictions store files it -- tool, version, profile
+# -- so a comparison is a question about runs that already happened, and is independent of
+# the branch it is labelled on. A `current: true` variant names a run directory instead,
+# which is a local arrangement: labelled here it fails saying which variant it could not
+# resolve.
 
 on:
   workflow_dispatch:
@@ -37,14 +40,10 @@ concurrency:
 jobs:
   comparison:
     # `contains` over the labels needs the name in full, and the name is the comparison's,
-    # so the list is matched as text instead. A `benchmark:` label means `benchmark.yml`
-    # is already running and renders the comparison beside its own report, so this stands
-    # down rather than posting a second one -- and that is the route a comparison naming
-    # `current: true` has to take, since only that run produces it.
+    # so the list is matched as text instead.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (contains(toJson(github.event.pull_request.labels.*.name), 'comparison:') &&
-       !contains(toJson(github.event.pull_request.labels.*.name), 'benchmark:'))
+      contains(toJson(github.event.pull_request.labels.*.name), 'comparison:')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: benchmark

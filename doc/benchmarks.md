@@ -128,11 +128,13 @@ put side by side, the rows to keep and what each chart shows. It is a view over
 summaries that already exist, so adding one costs no run and moves no figure.
 
 ```yaml
-# benchmarks/comparisons/this-run.yml
+# benchmarks/comparisons/models.yml
 variants:
   - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
-  - {label: main, tool: sciencebeam-parser, version: main, profile: grobid_crf}
-  - {label: this run, current: true}      # the last is the primary; deltas are to it
+  - {label: crf, tool: sciencebeam-parser, version: main, profile: grobid_crf,
+     primary: true}                       # the deltas are to this one
+  - {label: retrained, tool: sciencebeam-parser, version: main,
+     profile: delft_all_scielo_preprints_ore}
 
 corpora: [biorxiv, pkp, scielo_br]        # optional; every corpus otherwise
 
@@ -154,10 +156,10 @@ charts:
 
 ```sh
 # Fetch each named variant's predictions from the store, score them, and render:
-make dev-comparison-with-baselines COMPARISON=this-run
+make dev-comparison-with-baselines COMPARISON=stored-baselines
 
 # Or, where every variant has already been scored, just render:
-make dev-comparison COMPARISON=this-run
+make dev-comparison COMPARISON=stored-baselines
 ```
 
 The first is the one to reach for. Predictions are the expensive part of a benchmark
@@ -172,10 +174,9 @@ the split CI runs; `train` is there only where a run pushed it. Comparing what C
 therefore means `BENCHMARK_SPLIT=validation`, which is a deliberate choice rather than a
 default — the point of leaving `validation` alone is what makes its numbers worth quoting.
 
-`stored-baselines` is the one that needs nothing of its own: it names only variants the
-store holds, so it compares what CI compares without a parser or a benchmark run.
-`this-run` adds the run under test, so it needs one — `COMPARISON_CURRENT_RUN`
-says where its summary is. `make dev-comparisons-list` names them. `BENCHMARK_DATA` and
+`stored-baselines` is the one checked in: it names only variants the store holds, so it
+compares what CI compares without a parser or a benchmark run. `make dev-comparisons-list`
+names what is there. `BENCHMARK_DATA` and
 `BENCHMARK_RUNS` say where the gold and the runs are, which a git worktree needs since
 neither is in one: both are gitignored and stay in the checkout that produced them. The
 comparison itself is written to `COMPARISON_OUT_DIR`, which stays in the tree being worked
@@ -272,18 +273,19 @@ cheap to re-run whenever the comparison file changes. Its `mode` names which doc
 the comparison is over and should match the mode the stored predictions were produced at:
 the sample is seeded and nested, so a mode is a defined set of documents rather than
 whatever each variant happens to hold, and a variant with more stored predictions than
-the others would otherwise be scored over more of them. Alongside a `benchmark:` label it
-runs instead as part of `benchmark.yml`, which posts it as its own comment beside the
-report that always posts. That is the route a comparison naming `current: true` has to
-take, since only that run produces the column, and it is the only reason to pair the two
-labels: a comparison without one reads the store alone, so the benchmark adds no column
-to it and CI says so rather than letting the run go unremarked. Either way the comment is posted with `cml comment create`, which uploads the images the
-report refers to and rewrites the links — GitHub serves `img` over http(s) only, and the
-web UI's own attachment upload has no API a workflow can call. The images are hosted by
-CML rather than by GitHub.
+the others would otherwise be scored over more of them. The comment is posted with
+`cml comment create`, which uploads the images the report refers to and rewrites the
+links — GitHub serves `img` over http(s) only, and the web UI's own attachment upload has
+no API a workflow can call. The images are hosted by CML rather than by GitHub.
 
-The report CI always posts is unchanged and never carries charts. A chart cannot be asked
-for by flag in CI — a comparison file is how a run asks for one, and `--chart` on
+A comparison names every variant the way the predictions store files it, so what it
+compares does not depend on the branch it is labelled on, and it runs whether or not a
+`benchmark:` label is there too. `current: true` is the exception and is a local
+arrangement: it points at a run directory rather than at the store, so CI cannot resolve
+it and the checked-in comparisons do not use it.
+
+The report CI always posts is unchanged and never carries charts, and a benchmark run
+renders no comparison. A chart cannot be asked for by flag in CI — a comparison file is how a run asks for one, and `--chart` on
 `benchmarks.report` covers the ad-hoc case locally.
 
 A comparison names variants of its own, which is most of why it exists — they do not
