@@ -15,6 +15,15 @@ from benchmarks.predict import DEFAULT_RETRY_PASSES, run_predict
 from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
+from benchmarks.comparison_config import (
+    load_comparison,
+    primary_index,
+    variant_descriptions,
+    resolve_variants,
+    store_variants,
+    to_selection,
+)
+from benchmarks.report_grid import SelectionError
 from benchmarks.score import run_score
 
 LOGGER = logging.getLogger(__name__)
@@ -215,6 +224,66 @@ def _run_baseline(  # pylint: disable=too-many-locals
     return (label, summary_path) if summary_path.exists() else None
 
 
+def _comparison_only_variants(config: dict, comparison_config) -> list:
+    """A comparison's named variants that `eval.yml` does not already run."""
+    if comparison_config is None:
+        return []
+    declared = {
+        (baseline["tool"], baseline["version"], baseline.get("profile", "default"))
+        for baseline in config.get("baselines", [])
+    }
+    return [
+        variant for variant in store_variants(comparison_config)
+        if (variant.tool, variant.version, variant.profile) not in declared
+    ]
+
+
+def run_stored_comparison(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # pylint: disable=too-many-locals
+    config: dict,
+    mode: str,
+    split: str,
+    data_dir: Path,
+    runs_dir: Path,
+    store: PredictionsStore,
+    comparison: str,
+    out_dir: Optional[Path] = None,
+    current_run: Optional[Path] = None,
+    concurrency: int = 0,
+    include: Optional[Iterable[str]] = None,
+    chart_prefix: str = "",
+    chart_base_url: str = "",
+) -> None:
+    """Render a comparison from predictions the store already holds.
+
+    Fetches each named variant's predictions, scores them and compares -- no parser, no
+    docker and nothing generated. This is the whole run for a question asked after the
+    fact, which is most of them: predictions are the expensive part and they are kept.
+    """
+    comparison_config = load_comparison(comparison)
+    corpus_variants = get_corpus_variants(config, split, include)
+    expected_ids = {
+        (record["corpus"], record["record_id"])
+        for record in fetch_gold(config, mode, split, data_dir, include=include)
+    }
+
+    for variant in store_variants(comparison_config):
+        _run_baseline(
+            config, mode, split, data_dir, runs_dir,
+            str(variant.tool), str(variant.version), variant.profile,
+            False,
+            expected_ids, corpus_variants, store, concurrency, include, None,
+        )
+
+    out_dir = out_dir or runs_dir / split
+    run_compare(
+        resolve_variants(comparison_config, runs_dir, split, current_run),
+        out_dir / f"comparison-{comparison_config.name}.md",
+        to_selection(comparison_config), chart_prefix, chart_base_url,
+        primary_index(comparison_config), variant_descriptions(comparison_config),
+    )
+
+
 def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     config: dict,
     mode: str,
@@ -230,6 +299,9 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     concurrency: int = 0,
     include: Optional[Iterable[str]] = None,
     retry_passes: int = DEFAULT_RETRY_PASSES,
+    comparison: Optional[str] = None,
+    chart_prefix: str = "",
+    chart_base_url: str = "",
 ) -> None:
     # pylint: disable=too-many-locals
     corpus_variants = get_corpus_variants(config, split, include)
@@ -237,6 +309,21 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         (r["corpus"], r["record_id"])
         for r in fetch_gold(config, mode, split, data_dir, include=include)
     }
+
+    comparison_config = load_comparison(comparison) if comparison else None
+    # A comparison with no `current: true` variant reads the predictions store alone, and
+    # the store is already there -- so this run told it nothing, and scoring it alone
+    # would have taken minutes. Said once here rather than left to be noticed in a report
+    # whose columns all predate the run.
+    if comparison_config is not None and not any(
+        variant.current for variant in comparison_config.variants
+    ):
+        LOGGER.warning(
+            "Comparison %r names no `current: true` variant, so it compares stored"
+            " predictions only and this run adds no column to it. --comparison-only"
+            " renders it without a run.",
+            comparison_config.name,
+        )
 
     labeled_paths: List[Tuple[str, Path]] = []
     for baseline in config.get("baselines", []):
@@ -250,6 +337,17 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         )
         if entry:
             labeled_paths.append(entry)
+
+    # A comparison names runs of its own, which are rarely all of `eval.yml`'s baselines.
+    # They are scored here so the comparison has something to read, and deliberately not
+    # added to `labeled_paths`: the report CI always posts keeps the columns it has.
+    for variant in _comparison_only_variants(config, comparison_config):
+        _run_baseline(
+            config, mode, split, data_dir, runs_dir,
+            str(variant.tool), str(variant.version), variant.profile,
+            False,
+            expected_ids, corpus_variants, store, concurrency, include, None,
+        )
 
     if baseline_only:
         return
@@ -281,9 +379,21 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     labeled_paths.append((current_label, primary_run_dir / "summary.json"))
 
     if len(labeled_paths) >= 2:
+        # No charts: this is the report CI has always posted, and a comparison file is
+        # how a run asks for one of its own.
         run_compare(labeled_paths, primary_run_dir / "comparison.md")
     else:
         LOGGER.info("Only one summary available; skipping comparison report")
+
+    # Beside the report CI always posts, never instead of it: a named comparison answers
+    # a question of its own, and the regression check stays what it was.
+    if comparison_config is not None:
+        run_compare(
+            resolve_variants(comparison_config, runs_dir, split, primary_run_dir),
+            primary_run_dir / f"comparison-{comparison_config.name}.md",
+            to_selection(comparison_config), chart_prefix, chart_base_url,
+            primary_index(comparison_config), variant_descriptions(comparison_config),
+        )
 
 
 # The restricted set lives with the code that sends documents; see
@@ -350,6 +460,39 @@ def main(argv=None) -> None:
             " asked"
         ),
     )
+    parser.add_argument(
+        "--comparison", default=None, metavar="NAME",
+        help=(
+            "Also render a named comparison from benchmarks/comparisons/, beside the"
+            " report this run already produces"
+        ),
+    )
+    parser.add_argument(
+        "--chart-prefix", default="",
+        help="Prefix for chart filenames, so runs published together stay apart",
+    )
+    parser.add_argument(
+        "--chart-base-url", default="",
+        help="Link charts under this URL rather than by relative path",
+    )
+    parser.add_argument(
+        "--comparison-only", action="store_true",
+        help=(
+            "Render --comparison from predictions the store already holds: fetch, score"
+            " and compare, with no parser and nothing generated"
+        ),
+    )
+    parser.add_argument(
+        "--current-run", default=None, metavar="DIR",
+        help="The run directory a comparison's `current: true` variant refers to",
+    )
+    parser.add_argument(
+        "--comparison-out", default=None, metavar="DIR",
+        help=(
+            "Where to write the comparison and its charts. Defaults beside the runs,"
+            " which is the wrong place when those are read from somewhere else"
+        ),
+    )
     parser.add_argument("--baseline-only", action="store_true")
     parser.add_argument(
         "--push-current", action="store_true",
@@ -364,10 +507,34 @@ def main(argv=None) -> None:
 
     check_llm_profile_corpora(config, args.profile, args.include_corpus)
 
+    if args.comparison_only and not args.comparison:
+        parser.error("--comparison-only needs --comparison")
+
     if args.predictions_repo:
         store: PredictionsStore = RepoPredictionsStore(Path(args.predictions_repo))
     else:
         store = LocalPredictionsStore(Path(args.runs))
+
+    if args.comparison_only:
+        try:
+            run_stored_comparison(
+                config=config,
+                mode=args.mode,
+                split=args.split,
+                data_dir=Path(args.data),
+                runs_dir=Path(args.runs),
+                store=store,
+                comparison=args.comparison,
+                current_run=Path(args.current_run) if args.current_run else None,
+                out_dir=Path(args.comparison_out) if args.comparison_out else None,
+                concurrency=args.concurrency,
+                include=args.include_corpus,
+                chart_prefix=args.chart_prefix,
+                chart_base_url=args.chart_base_url,
+            )
+        except SelectionError as error:
+            parser.error(str(error))
+        return
 
     run_benchmark(
         config=config,
@@ -384,6 +551,9 @@ def main(argv=None) -> None:
         concurrency=args.concurrency,
         include=args.include_corpus,
         retry_passes=args.retry_passes,
+        comparison=args.comparison,
+        chart_prefix=args.chart_prefix,
+        chart_base_url=args.chart_base_url,
     )
 
 

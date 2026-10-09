@@ -294,14 +294,9 @@ baselines:
     profile: grobid_crf
     generate: false
   # Predictions stored in sciencebeam-eval-predictions (offline run of the RL step-20
-  # checkpoint on the benchmark markdown); no endpoint serves it yet.
+  # checkpoint on the benchmark markdown); no endpoint serves it yet. Stored for
+  # `validation` only, so a run against another split finds none and skips it.
   - tool: jats-agentic-annotation
     version: qwen3.5-9b-rl-v5full-s20
     profile: default
     generate: false
-  # Mid-training checkpoint, kept for reference; its scores describe neither the
-  # model nor the approach.
-  # - tool: jats-agentic-annotation
-  #   version: qwen3.5-9b-teacher-distill-v1
-  #   profile: default
-  #   generate: false

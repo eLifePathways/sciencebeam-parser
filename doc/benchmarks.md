@@ -121,6 +121,183 @@ neither is ignored by all of them.
 The report names what the set was measured on, and warns when the runs behind
 one column, or the columns being compared, differ in hardware or concurrency,
 since a timing delta is then partly a property of the measurement.
+## A comparison of your own
+
+A comparison is a file under `benchmarks/comparisons/`, naming the variants to
+put side by side, the rows to keep and what each chart shows. It is a view over
+summaries that already exist, so adding one costs no run and moves no figure.
+
+```yaml
+# benchmarks/comparisons/models.yml
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: crf, tool: sciencebeam-parser, version: main, profile: grobid_crf,
+     primary: true}                       # the deltas are to this one
+  - {label: retrained, tool: sciencebeam-parser, version: main,
+     profile: delft_all_scielo_preprints_ore}
+
+corpora: [biorxiv, pkp, scielo_br]        # optional; every corpus otherwise
+
+rows:
+  - {field: reference_title, method: levenshtein, type: partial_list}
+  - {field: acknowledgement, methods: [levenshtein, edit_sim], scope: gold}
+
+charts:
+  - row: {field: reference_title, method: levenshtein}
+    title: Reference titles by corpus
+    corpora: [biorxiv, pkp]               # optional; the table's corpora otherwise
+  - rows:                                 # several rows, fields along the axis
+      - {field: title, method: levenshtein}
+      - {field: reference_title, method: levenshtein}
+    title: Key fields
+  - {compute: cpu_seconds_per_doc}        # what it spent, rather than what it scored
+  - {compute: estimated_cost_per_1k, cpu_usd_per_hour: 0.03}
+```
+
+```sh
+# Fetch each named variant's predictions from the store, score them, and render:
+make dev-comparison-with-baselines COMPARISON=stored-baselines
+
+# Or, where every variant has already been scored, just render:
+make dev-comparison COMPARISON=stored-baselines
+```
+
+The first is the one to reach for. Predictions are the expensive part of a benchmark
+and the store keeps them, so a question asked after the fact costs only the scoring --
+no parser, no docker and nothing generated. The second skips even that, and is for
+iterating on rows and charts once the summaries exist.
+
+`BENCHMARK_PREDICTIONS_REPO` points at a checked-out `sciencebeam-eval-predictions`, so
+a comparison reads the variants CI sees rather than only those predicted on this machine.
+That repo holds `validation` for the GROBID and `sciencebeam-parser` baselines, which is
+the split CI runs; `train` is there only where a run pushed it. Comparing what CI compares
+therefore means `BENCHMARK_SPLIT=validation`, which is a deliberate choice rather than a
+default — the point of leaving `validation` alone is what makes its numbers worth quoting.
+
+`stored-baselines` is the one checked in: it names only variants the store holds, so it
+compares what CI compares without a parser or a benchmark run. `make dev-comparisons-list`
+names what is there. `BENCHMARK_DATA` and
+`BENCHMARK_RUNS` say where the gold and the runs are, which a git worktree needs since
+neither is in one: both are gitignored and stay in the checkout that produced them. The
+comparison itself is written to `COMPARISON_OUT_DIR`, which stays in the tree being worked
+in rather than following `BENCHMARK_RUNS` — the runs are an input and may be read from
+elsewhere.
+`COMPARISON_CURRENT_RUN` points a `current: true` variant at a run directory. A comparison compares runs
+that have already been scored, so it fails until they have been — naming each variant
+it could not find and listing the baselines that *are* there. A git worktree has no
+`benchmarks/runs` of its own, since it is gitignored and stays in the checkout that
+produced it, so comparing from one means `BENCHMARK_RUNS=<that checkout>/benchmarks/runs`. The target resolves the
+comparison's variants against `benchmarks/runs` for `BENCHMARK_SPLIT`, writes
+`comparison-<name>.md` into `BENCHMARK_RUN` and prints where the charts went; the
+underlying command is `python -m benchmarks.report --comparison <name>`, which takes
+`--runs`, `--split` and `--current-run` directly.
+
+Charts name a corpus, a field and a scoring method the way a reader would — `SciELO
+Preprints` rather than `scielo_preprints-jats`, `Authors` rather than
+`author_full_names`, `edit similarity` rather than `levenshtein`. The identifiers stay as they are in the tables and everywhere a
+name has to match `eval.yml` or the predictions store; a corpus with no friendlier name
+charts under its own.
+
+`label` is optional. Left out, a column is named for its tool, version and profile —
+`sciencebeam-parser main (llm_all)` — which is what tells two profiles of one version
+apart. Set it where that runs long, since it is the column heading and the chart's legend
+entry; keep the profile in it.
+
+The order of `variants:` is the order the columns and bars appear in. `primary: true`
+says which column the deltas measure against — without it the last one, as `--summary`
+has always worked — so moving a variant for the sake of reading moves nothing else.
+
+A variant is **named rather than pointed at** — by `tool`, `version` and `profile`,
+the way the predictions store holds it — so a checked-in file carries no run id and
+resolves against whichever run is at hand. `current: true` is the run under test, and
+`summary: <path>` takes a file directly, for something ad hoc. A variant that cannot
+be resolved is an error saying which one; nothing is generated to satisfy a comparison.
+
+A **row** is a field, a scoring method and a scope. Omit `method` for every method the
+field carries, and `scope` for whichever rows it earns — `gold` exists only where some
+variant produced a value the gold has none of. `type` is **asserted, not selected**: a
+summary gives a field exactly one scoring type, so naming it catches a run that re-typed
+the field instead of comparing across the change.
+
+Charts are drawn in the order the file declares them, whatever their kind, and written to `charts/` beside the report. They are drawn in Source Sans Pro, which ships as a dependency rather than being looked for on the machine, so a chart drawn in CI matches one drawn on a laptop; without the package they fall back to matplotlib's own font.
+
+A **score chart** names one row with `row:` and draws it as a grouped bar chart, the variants as series and the corpora along the axis. Its caption says how the field was scored — `exact match`, `edit similarity`, or `edit similarity, ignoring punctuation` for `edit_sim`, which strips punctuation and whitespace from both sides before measuring — so a `title:` of your own cannot hide it. It reads the same cells the table does, so a variant that scored nothing for a corpus leaves a gap there rather than a bar at zero, and nothing is drawn below two corpora. `rows:` instead of `row:` draws several rows side by side with the fields along the axis, which says which fields a difference reaches rather than where it lives; it needs two rows or more, and having no corpus axis it needs no two corpora either.
+
+A **compute chart** says what a run spent rather than what it scored. `compute:` takes `cpu_seconds_per_doc`, `latency_median`, `latency_p90`, `docs_per_hour` or `estimated_cost_per_1k`, reading the same record the Compute cost section states as text, and draws one bar per variant. Nothing is drawn until two variants recorded the figure — one bar is a number with a rectangle around it, and a run that predates the measurement records none — and the axis says how many did where some did not.
+
+The `latency_` metrics are named for the record they read. What they measure is a whole document being converted, so the charts call it time per document and name the unit as wall-clock seconds.
+
+`estimated_cost_per_1k` prices the CPU at `cpu_usd_per_hour` and adds what an LLM provider charged, each over the documents it was measured over, and stacks the two so the bar says which part it is. Colour there says which part rather than which variant, since that is what the segments differ by; every other chart keeps a variant's colour the same throughout. The default rate is a sustained general-purpose on-demand vCPU-hour, checked October 2026 against AWS `c7g.medium` at $0.036 for its one vCPU and GCP `e2-standard-4` at $0.134 for four — both about $0.035. Burstable families such as `t4g` are roughly half that per vCPU but are credit-limited, which is not what a converter running flat out would get. It is a sense of scale rather than a quote: rates move, differ by region and fall with commitment, so check before quoting any of it, and nothing here is billed at any rate anyway, since CI's CPU costs us nothing. The axis says which rate it used.
+
+The report opens with a collapsed block naming what each column is — the tool, version
+and profile behind the label, and which column the deltas measure against — because a
+label says what distinguishes a column rather than what produced it, and the comparison
+file that knows is somewhere the reader is not.
+
+Anything named that no summary can answer for — a field, method, corpus, scope, variant
+or asserted type — is an error that says so, rather than an empty column.
+
+### Ad-hoc narrowing
+
+For a one-off, the same selection is available as flags over `--summary` pairs:
+
+```sh
+python -m benchmarks.report \
+  --summary "grobid=benchmarks/runs/<run>/summary.json" \
+  --summary "head=benchmarks/runs/<run>/validation/summary.json" \
+  --field acknowledgement --method levenshtein \
+  --corpus biorxiv --corpus pkp \
+  --chart acknowledgement --out comparison.md
+```
+
+`--field`, `--method` and `--corpus` are repeatable and render in the order given. They
+select what is displayed and never what is computed, so a narrowed view shows the same
+numbers as the full one, and each is checked against every summary rather than only the
+primary. `--chart <field>` draws every method and scope of that field; `--chart-method`
+narrows which images without touching the tables.
+
+### Where the images are linked from
+
+The report links charts by relative path, which renders in an editor preview, in the
+repository's own view of the file, and for whatever posts the comment. `--chart-base-url`
+rewrites them to an absolute URL for a surface that needs one — the files still have to be
+published there — and `--chart-prefix` keeps runs published together from overwriting each
+other.
+
+### In CI
+
+A `comparison:<name>` label on a PR renders that comparison in CI. On its own it runs
+`benchmark-comparison.yml`, which fetches the gold, scores what the predictions store
+holds and posts the result — minutes, with no parser and nothing generated, so it is
+cheap to re-run whenever the comparison file changes. Its `mode` names which documents
+the comparison is over and should match the mode the stored predictions were produced at:
+the sample is seeded and nested, so a mode is a defined set of documents rather than
+whatever each variant happens to hold, and a variant with more stored predictions than
+the others would otherwise be scored over more of them. The comment is posted with
+`cml comment create`, which uploads the images the report refers to and rewrites the
+links — GitHub serves `img` over http(s) only, and the web UI's own attachment upload has
+no API a workflow can call. The images are hosted by CML rather than by GitHub.
+
+A comparison names every variant the way the predictions store files it, so what it
+compares does not depend on the branch it is labelled on, and it runs whether or not a
+`benchmark:` label is there too. `current: true` is the exception and is a local
+arrangement: it points at a run directory rather than at the store, so CI cannot resolve
+it and the checked-in comparisons do not use it.
+
+The report CI always posts is unchanged and never carries charts, and a benchmark run
+renders no comparison. A chart cannot be asked for by flag in CI — a comparison file is how a run asks for one, and `--chart` on
+`benchmarks.report` covers the ad-hoc case locally.
+
+A comparison names variants of its own, which is most of why it exists — they do not
+have to be among `eval.yml`'s `baselines:`. Any it names that `eval.yml` does not already
+run are fetched from the predictions store and scored before it is rendered. That is not
+generating: a variant whose predictions were never pushed to the store cannot be
+compared, and fails saying so. In practice that means a profile becomes comparable once
+some run has pushed it, which `--push-current` does on `main`.
+
+Those extra variants stay out of the report CI always posts: its columns are still the
+`baselines:` entries plus the one profile the run under test uses, which `profile:<name>`
+chooses.
 
 ## Where the gold does not record a field
 

@@ -56,7 +56,8 @@ SCIENCEBEAM_PARSER_URL = http://localhost:$(SCIENCEBEAM_PARSER_PORT)
 BENCHMARK_CONFIG ?= benchmarks/eval.yml
 BENCHMARK_MODE ?= smoke
 BENCHMARK_SPLIT ?= train
-BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+BENCHMARK_RUNS ?= benchmarks/runs
+BENCHMARK_RUN ?= $(BENCHMARK_RUNS)/$(BENCHMARK_SPLIT)
 
 # GROBID baseline version and the path benchmarks.run writes it to (note the
 # 'default' profile segment). The baseline (run-b) is produced by benchmarks.run on
@@ -95,6 +96,24 @@ SOURCE_TRAINING_ROOT ?= data/source-training-data
 SOURCE_TRAINING_DATA ?= $(SOURCE_TRAINING_ROOT)/$(SOURCE_TRAINING_MODE)
 SOURCE_TRAINING_SPLIT ?= train
 
+# A comparison file under benchmarks/comparisons/, by name. It names its own
+# variants, so the only thing it needs from here is where to resolve them.
+COMPARISON ?=
+# Deliberately not under BENCHMARK_RUNS: the runs are an input and may be read from
+# another checkout, while what a comparison produces belongs in the tree being worked in.
+COMPARISON_OUT_DIR ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+COMPARISON_OUT ?= $(COMPARISON_OUT_DIR)/comparison-$(COMPARISON).md
+# Where a comparison's named variants are resolved from. A git worktree has no
+# benchmarks/runs of its own -- it is gitignored and stays in the checkout that
+# produced it -- so point this at that checkout when comparing from one.
+BENCHMARK_DATA ?= benchmarks/data
+# A checked-out sciencebeam-eval-predictions. Set it to compare the variants CI sees
+# rather than only those predicted on this machine; unset falls back to the local runs.
+BENCHMARK_PREDICTIONS_REPO ?=
+# Where a comparison's `current: true` variant resolves to, if it declares one. The
+# run under test writes its summary here, so a local run satisfies it without being named.
+COMPARISON_CURRENT_RUN ?= $(BENCHMARK_RUN)
+
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
 SHOW_CORPUS ?= biorxiv
@@ -110,7 +129,7 @@ COMPARE_DOC_DIR = .temp/compare-with-grobid/by-doc/$(COMPARE_DOC_ID)
 
 .require-%:
 	@if [ -z "$($(*))" ]; then \
-		echo "Error: $* is required. Usage: make $(@:.require-%=%) $*=<value>"; \
+		echo "Error: $* is required. Usage: make $(or $(firstword $(MAKECMDGOALS)),<target>) $*=<value>"; \
 		exit 1; \
 	fi
 
@@ -276,6 +295,50 @@ dev-benchmark-score:
 dev-benchmark-compare:
 	$(PYTHON) -m benchmarks.report \
 		$(ARGS)
+
+
+# Renders a named comparison and its charts from summaries that already exist, so it
+# needs no parser and no network -- run it as often as the question changes.
+dev-comparison: .require-COMPARISON
+	$(PYTHON) -m benchmarks.report \
+		--comparison $(COMPARISON) \
+		--runs $(BENCHMARK_RUNS) \
+		--split $(BENCHMARK_SPLIT) \
+		--current-run $(BENCHMARK_RUN) \
+		--out $(COMPARISON_OUT) \
+		$(ARGS)
+	@echo
+	@echo "Wrote $(COMPARISON_OUT)"
+	@ls $(COMPARISON_OUT_DIR)/charts/*.png 2>/dev/null || true
+
+
+# The end-to-end one: fetches each named variant's predictions from the store, scores
+# them and renders the comparison. No parser and no docker -- predictions are the
+# expensive part and they are already kept, so a question asked after the fact costs
+# only the scoring.
+dev-comparison-with-baselines: .require-COMPARISON
+	$(PYTHON) -m benchmarks.run \
+		--config $(BENCHMARK_CONFIG) \
+		--mode $(BENCHMARK_MODE) \
+		--split $(BENCHMARK_SPLIT) \
+		--data $(BENCHMARK_DATA) \
+		--runs $(BENCHMARK_RUNS) \
+		--comparison $(COMPARISON) \
+		--comparison-only \
+		--comparison-out $(COMPARISON_OUT_DIR) \
+		--concurrency $(BENCHMARK_CONCURRENCY) \
+		$(if $(BENCHMARK_PREDICTIONS_REPO),--predictions-repo $(BENCHMARK_PREDICTIONS_REPO),) \
+		$(if $(COMPARISON_CURRENT_RUN),--current-run $(COMPARISON_CURRENT_RUN),) \
+		$(ARGS)
+	@echo
+	@echo "Wrote $(COMPARISON_OUT)"
+	@ls $(COMPARISON_OUT_DIR)/charts/*.png 2>/dev/null || true
+
+
+dev-comparisons-list:
+	@ls benchmarks/comparisons/*.yml 2>/dev/null \
+		| sed -e 's|benchmarks/comparisons/||' -e 's|\.yml$$||' \
+		|| echo "No comparisons yet - add one under benchmarks/comparisons/"
 
 
 dev-benchmark: dev-benchmark-predict dev-benchmark-score
@@ -454,6 +517,14 @@ docker-benchmark-score:
 
 docker-benchmark-compare:
 	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-compare
+
+
+docker-comparison:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-comparison
+
+
+docker-comparison-with-baselines:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-comparison-with-baselines
 
 
 docker-benchmark: docker-benchmark-predict docker-benchmark-score

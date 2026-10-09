@@ -1,0 +1,55 @@
+# The baselines the predictions store holds, against each other. Names no run under
+# test, so it needs no parser and no benchmark of its own -- point it at a checked-out
+# sciencebeam-eval-predictions and it compares what CI compares.
+#
+# The last variant is the primary, so deltas are measured against sciencebeam-parser.
+# `label` is optional: left out, a column is named for its tool, version and profile,
+# which is what tells two profiles of one version apart. Set it where that runs long --
+# it is the column heading and the chart's legend entry, so it wants to stay short.
+# The labels say what distinguishes a column rather than what the profile is called:
+# wapiti and delft are the same training documents on a CRF and a deep-learning engine,
+# which `non-DL` and `DL` say to someone who does not know either name. `refs` retrains
+# the reference-segmenter and citation models; `all` adds segmentation. The profile beside
+# each label is what actually selects it.
+#
+# The order is the order columns and bars appear in. `primary: true` says which
+# column the deltas measure against, so reordering for the sake of reading moves
+# nothing else; without it the last variant is the primary.
+variants:
+  - {label: GROBID 0.9.1 (non-DL), tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: ScienceBeam (non-DL), tool: sciencebeam-parser, version: main, profile: grobid_crf,
+     primary: true}
+  - {label: ScienceBeam refs retrained (non-DL), tool: sciencebeam-parser, version: main,
+     profile: wapiti_references_scielo_preprints_ore}
+  - {label: ScienceBeam refs retrained (DL), tool: sciencebeam-parser, version: main,
+     profile: delft_references_scielo_preprints_ore}
+  - {label: ScienceBeam all retrained (DL), tool: sciencebeam-parser, version: main,
+     profile: delft_all_scielo_preprints_ore}
+  - {label: ScienceBeam + LLM references, tool: sciencebeam-parser, version: main,
+     profile: llm_references}
+  - {label: ScienceBeam + LLM throughout, tool: sciencebeam-parser, version: main,
+     profile: llm_all}
+  - {label: Agentic LLM (v5full-s20), tool: jats-agentic-annotation, version: qwen3.5-9b-rl-v5full-s20, profile: default}
+
+rows:
+  - {field: title, method: levenshtein, type: string}
+  - {field: abstract_anywhere, method: levenshtein, type: best_match}
+  - {field: author_full_names, method: levenshtein, type: partial_ulist}
+  - {field: reference_title, method: levenshtein, type: partial_list}
+  - {field: first_reference_text, method: levenshtein, type: string}
+
+charts:
+  - rows:
+      - {field: title, method: levenshtein}
+      - {field: abstract_anywhere, method: levenshtein}
+      - {field: author_full_names, method: levenshtein}
+      - {field: reference_title, method: levenshtein}
+      - {field: first_reference_text, method: levenshtein}
+    title: Key fields, over every scored document
+  - row: {field: title, method: levenshtein}
+    title: Document titles by corpus
+  - row: {field: reference_title, method: levenshtein}
+    title: Reference titles by corpus
+  - {compute: latency_median}
+  - {compute: cpu_seconds_per_doc}
+  - {compute: estimated_cost_per_1k}
