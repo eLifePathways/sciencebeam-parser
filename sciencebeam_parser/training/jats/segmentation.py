@@ -363,6 +363,24 @@ def _is_deposit_notice(text: str) -> bool:
     return any(pattern.search(text) for pattern in _DEPOSIT_NOTICE_PATTERNS)
 
 
+# The status line with its value set somewhere the line does not reach, which
+# leaves the label on its own.
+_DEPOSIT_LABEL_PATTERN = re.compile(
+    r'^\s*(situa[\u00e7c][\u00e3a]o|status|estado)\s*:\s*$', re.IGNORECASE
+)
+
+# What only the deposit form prints: the legend telling the depositor how to
+# write a date, and the server's own identifier for the deposit.
+_DEPOSIT_MARKER_PATTERNS = (
+    re.compile(r'\(\s*(AAAA|YYYY)\s*[-/]\s*MM\s*[-/]\s*(DD|JJ)\s*\)', re.IGNORECASE),
+    re.compile(r'doi\.org/10\.1590/SciELOPreprints', re.IGNORECASE),
+)
+
+
+def _is_deposit_marker(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _DEPOSIT_MARKER_PATTERNS)
+
+
 def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
     """Take the whole of a page the publisher wraps the article in.
 
@@ -387,12 +405,28 @@ def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
         page_number = _get_page_number(seg_line)
         if page_number is not None:
             pages.setdefault(page_number, []).append(seg_line)
-    for page_lines in pages.values():
+    cover_pages: Set[int] = set()
+    for page_number in sorted(pages):
+        page_lines = pages[page_number]
         first = next((sl for sl in page_lines if sl.text.strip()), None)
-        if first is None or not _is_deposit_notice(first.text):
+        if first is None:
             continue
         if any(sl.seg_label in _ARTICLE_CONTENT_LABELS for sl in page_lines):
             continue
+        opens_a_deposit_page = _is_deposit_notice(first.text) or (
+            _DEPOSIT_LABEL_PATTERN.match(first.text)
+            and any(_is_deposit_marker(sl.text) for sl in page_lines)
+        )
+        # The form can run past the page it starts on, leaving the dates and the
+        # generator's footer by themselves overleaf.  That is the rest of the
+        # cover rather than the article starting.
+        continues_one = page_number - 1 in cover_pages and all(
+            sl.seg_label in _FURNITURE_LABELS or _is_deposit_marker(sl.text)
+            for sl in page_lines if sl.text.strip()
+        )
+        if not opens_a_deposit_page and not continues_one:
+            continue
+        cover_pages.add(page_number)
         for seg_line in page_lines:
             seg_line.seg_label = SEG_COVER
 

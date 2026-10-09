@@ -11,6 +11,7 @@ from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLay
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
     SEG_ANNEX,
+    SEG_COVER,
     SEG_BODY,
     SEG_FOOTNOTE,
     SEG_REVIEW,
@@ -112,6 +113,53 @@ class TestMajorityVoteLabeling:
         annotated.set_token_label(tokens[3], JatsFieldNames.BODY_SECTION_PARAGRAPH)
         labels = _derive_labels(doc, annotated)
         assert labels[id(line)] == SEG_FRONT
+
+
+class TestDepositCoverPage:
+    @staticmethod
+    def _pages(*pages_of_text) -> LayoutDocument:
+        """One page per argument, each a list of line texts."""
+        return LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[
+                    _make_line(
+                        *text.split(' '), y=100.0 + 20 * i, page_number=page_number
+                    )
+                    for i, text in enumerate(texts)
+                ])],
+                meta=_make_page_meta(page_number=page_number, height=1000.0),
+            )
+            for page_number, texts in enumerate(pages_of_text, 1)
+        ])
+
+    def _labels(self, doc: LayoutDocument):
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        labels = _derive_labels(doc, annotated)
+        return [labels[id(line)] for line in doc.iter_all_lines()]
+
+    def test_a_status_label_with_its_value_elsewhere_still_opens_a_cover(self):
+        # PPR459581 and PPR459643 set "Estado:" on a line of its own, so the
+        # word "preprint" the notice is recognised by is not on it.
+        doc = self._pages([
+            'Estado:',
+            'Actitudes y percepciones de la poblacion',
+            'https://doi.org/10.1590/SciELOPreprints.3158',
+            '(AAAA-MM-DD)',
+        ])
+        assert self._labels(doc) == [SEG_COVER] * 4
+
+    def test_a_status_label_alone_on_a_page_does_not(self):
+        doc = self._pages(['Estado:', 'Some ordinary sentence of the article.'])
+        assert SEG_COVER not in self._labels(doc)
+
+    def test_the_dates_a_cover_runs_over_to_are_part_of_it(self):
+        # The form overflows to a page holding only its date legend and the
+        # generator's footer.
+        doc = self._pages(
+            ['Estado: El preprint no ha sido enviado', 'Titulo del articulo'],
+            ['Envi ado en (AAAA-MM-DD): 2020-09-23', 'Postado en (AAAA-MM-DD): 2020-09-24'],
+        )
+        assert self._labels(doc) == [SEG_COVER] * 4
 
 
 class TestCoordinateBasedDetection:
