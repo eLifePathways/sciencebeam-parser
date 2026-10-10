@@ -115,6 +115,31 @@ class TestMajorityVoteLabeling:
         assert labels[id(line)] == SEG_FRONT
 
 
+class TestSupplementaryAnnex:
+    def test_a_supplementary_heading_opens_an_annex(self):
+        # PPR458963 prints "MATERIAL SUPLEMENTARIO" and 14 pages under it; its
+        # JATS carries only a pointer to an attached file, so nothing grounds
+        # them and they fall to the body.
+        heading = _make_line('MATERIAL', 'SUPLEMENTARIO', y=200.0)
+        under = _make_line('Archivo', 'S1.', 'Descripcion', 'del', 'proceso', y=300.0)
+        doc = _make_doc_with_page(LayoutBlock(lines=[heading, under]))
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        labels = _derive_labels(doc, annotated)
+        assert [labels[id(heading)], labels[id(under)]] == [SEG_ANNEX, SEG_ANNEX]
+
+    def test_a_sentence_mentioning_supplementary_material_does_not(self):
+        # The heading has to be a heading: a paragraph the JATS carries is
+        # already labelled, and a longer line is not one either way.
+        line = _make_line(
+            'Supplementary', 'material', 'is', 'available', 'online', 'for',
+            'this', 'article', 'and', 'may', 'be', 'requested', 'from', 'the',
+            'corresponding', 'author', 'at', 'any', 'time', y=300.0,
+        )
+        doc = _make_doc_with_page(LayoutBlock(lines=[line]))
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        assert _derive_labels(doc, annotated)[id(line)] != SEG_ANNEX
+
+
 class TestDepositCoverPage:
     @staticmethod
     def _pages(*pages_of_text) -> LayoutDocument:

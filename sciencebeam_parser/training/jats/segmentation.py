@@ -472,7 +472,14 @@ def _claim_amendments_box(seg_lines: List[_SegLine]) -> None:
 
 
 _APPENDIX_HEADING_PATTERN = re.compile(
-    r'^\s*(ap[\u00eae]ndices?|appendix|appendices|anexos?|annexe?s?)\b',
+    r'^\s*('
+    r'ap[e\u00ea\u00e9]ndices?|appendix|appendices|anexos?|annexe?s?'
+    # What GROBID's corpus most often opens an annex with: "Supporting
+    # information" 73 times against "Appendix" 6.
+    r'|supporting\s+information'
+    r'|supplementary\s+(material|information|data|file)'
+    r'|materi(al|ais|ales)\s+suplementar\w*'
+    r')\b',
     re.IGNORECASE,
 )
 
