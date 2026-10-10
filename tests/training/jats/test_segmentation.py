@@ -483,6 +483,34 @@ class TestRegionStartsAtThePageTop:
         doc, annotated, heading = self._make_doc(heading_is_grounded=True)
         assert _derive_labels(doc, annotated)[id(heading)] == SEG_BODY
 
+    def test_the_region_reaches_back_over_an_entry_the_jats_does_not_carry(self):
+        # PPR459453's list starts with an entry the JATS has no record of, so
+        # the region begins four lines and a page break after its heading.
+        heading = _make_line('References', y=700.0, page_number=1)
+        first = _make_line('Alfaro,', 'J.', '(2020).', 'BCCR:', 'actividades', y=720.0,
+                           page_number=1)
+        second = _make_line('transporte', 'y', 'construccion', y=740.0, page_number=1)
+        number = _make_line('18', y=960.0, page_number=1)
+        third = _make_line('demia.', 'AmeliaRueda.com,', y=100.0, page_number=2)
+        entry = _make_line('Almeida,', 'P.', '(2020).', 'Movimientos', 'sociales.',
+                           y=120.0, page_number=2)
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[heading, first, second]),
+                        LayoutBlock(lines=[number])],
+                meta=_make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[third, entry])], meta=_make_page_meta(2),
+            ),
+        ])
+        annotated = _annotate(doc, {5: JatsFieldNames.REFERENCE})
+        labels = _derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in (heading, first, second, third, entry)] == (
+            [SEG_REFERENCES] * 5
+        )
+        assert labels[id(number)] == SEG_PAGE
+
 
 class TestPageFootNotes:
     """A numbered note says what it is; where it prints does not decide it."""

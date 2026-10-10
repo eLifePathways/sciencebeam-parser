@@ -974,6 +974,9 @@ def _release_trailing_heading(seg_lines: List[_SegLine], label: str) -> None:
         last.seg_label = following.seg_label
 
 
+_REGION_HEADING_MAX_GAP = 5
+
+
 def _claim_region_heading(
     seg_lines: List[_SegLine],
     label: str,
@@ -984,18 +987,30 @@ def _claim_region_heading(
 
     Most JATS gives `<ref-list>` no `<title>`, so the "References" the page
     prints above the list has nothing to match and the list starts one line too
-    late.  The heading is only claimed where it sits directly above the region
-    and nothing else has a claim on it.
+    late.  The heading is only claimed where nothing else has a claim on it.
+
+    It is not always the line directly above.  A list whose first entry the
+    JATS does not carry starts further down, leaving the heading and the entry
+    between them unclaimed; both belong to the list.  Only unclaimed lines are
+    read over, and only a few of them, so a heading further off than that is a
+    heading for something else.
     """
     for run in _iter_label_runs(seg_lines, label):
-        index = run[0] - 1
-        if index < 0:
-            continue
-        seg_line = seg_lines[index]
-        if seg_line.seg_label is not None or _is_grounded(seg_line, annotated):
-            continue
-        if _normalised_heading(seg_line.text) in headings:
-            seg_line.seg_label = label
+        read_over = 0
+        for index in range(run[0] - 1, -1, -1):
+            seg_line = seg_lines[index]
+            if seg_line.seg_label in _FURNITURE_LABELS:
+                continue
+            if seg_line.seg_label is not None or _is_grounded(seg_line, annotated):
+                break
+            if _normalised_heading(seg_line.text) in headings:
+                for position in range(index, run[0]):
+                    if seg_lines[position].seg_label not in _FURNITURE_LABELS:
+                        seg_lines[position].seg_label = label
+                break
+            read_over += 1
+            if read_over > _REGION_HEADING_MAX_GAP:
+                break
 
 
 def _get_running_texts(seg_lines: List[_SegLine]) -> Set[str]:
