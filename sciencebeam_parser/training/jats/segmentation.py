@@ -164,6 +164,46 @@ def _get_line_y_ratio(
 
 # ── Heuristic passes ──────────────────────────────────────────────────────────
 
+# What a title page names its corresponding author with, set as a note at the
+# foot of the page.  GROBID's corpus labels such a line `<front>` 339 times and
+# `<footnote>` never: the note is the front matter's, wherever it is printed.
+_CORRESPONDING_AUTHOR_PATTERN = re.compile(
+    r'(corresponding\s+author'
+    r'|autor\s+(correspondente|de\s+correspond\w+)'
+    r'|correspond[e\u00ea]ncia\s*:'
+    r'|autor\s+para\s+correspond\w+)',
+    re.IGNORECASE,
+)
+
+
+def _get_corresponding_author_lines(
+    seg_lines: List[_SegLine],
+    y_ratio_by_line: Mapping[int, Optional[float]],
+    config: SegmentationConfig,
+) -> Set[int]:
+    """The note at the foot of the title page naming the corresponding author.
+
+    Front matter, and so is what it carries on into: the addresses and the
+    e-mails under it are set as blocks of their own.  It stops at a line
+    opening with a digit, which is where a numbered footnote starts instead.
+    """
+    lines: Set[int] = set()
+    in_note = False
+    for seg_line in seg_lines:
+        if _get_page_number(seg_line) != 1:
+            continue
+        y_ratio = y_ratio_by_line[id(seg_line)]
+        if y_ratio is None or y_ratio <= config.footnote_y_ratio:
+            continue
+        if _CORRESPONDING_AUTHOR_PATTERN.search(seg_line.text):
+            in_note = True
+        elif in_note and re.match(r'^\s*\d', seg_line.text):
+            in_note = False
+        if in_note:
+            lines.add(id(seg_line))
+    return lines
+
+
 def _tag_by_coordinates(
     seg_lines: List[_SegLine],
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -204,6 +244,9 @@ def _tag_by_coordinates(
             block_is_margin.get(seg_line.block_index, True)
             and is_in_margin(y_ratio_by_line[id(seg_line)])
         )
+    corresponding_author_lines = _get_corresponding_author_lines(
+        seg_lines, y_ratio_by_line, config
+    )
     for seg_line in seg_lines:
         if seg_line.seg_label is not None:
             continue
@@ -215,7 +258,10 @@ def _tag_by_coordinates(
         if _is_valid_page_number_candidate(seg_line.text):
             seg_line.seg_label = SEG_PAGE
         elif y_ratio > config.footnote_y_ratio:
-            seg_line.seg_label = SEG_FOOTNOTE
+            seg_line.seg_label = (
+                SEG_FRONT if id(seg_line) in corresponding_author_lines
+                else SEG_FOOTNOTE
+            )
         elif len(pages_by_text.get(seg_line.text, ())) > 1:
             seg_line.seg_label = SEG_HEADNOTE
 

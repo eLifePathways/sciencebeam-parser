@@ -115,6 +115,48 @@ class TestMajorityVoteLabeling:
         assert labels[id(line)] == SEG_FRONT
 
 
+class TestCorrespondingAuthorNote:
+    @staticmethod
+    def _title_page(*texts):
+        """A page whose foot carries the given lines, each a block of its own."""
+        lines = [
+            _make_line(*s.split(' '), y=940.0 + 10 * i, page_number=1)
+            for i, s in enumerate(texts)
+        ]
+        doc = LayoutDocument(pages=[LayoutPage(
+            blocks=[LayoutBlock(lines=[line]) for line in lines],
+            meta=_make_page_meta(page_number=1, height=1000.0),
+        )])
+        return doc, lines
+
+    def test_the_note_at_the_foot_of_the_title_page_is_front_matter(self):
+        # PPR459133 sets "*Autor correspondente" and the e-mail addresses under
+        # it at the foot of page one, in two blocks.  GROBID's corpus labels
+        # such a line `<front>` 339 times and `<footnote>` never.
+        doc, lines = self._title_page(
+            '*Autor correspondente',
+            'Enderecos de e-mail: a@example.com; b@example.com',
+        )
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        labels = [_derive_labels(doc, annotated)[id(line)] for line in lines]
+        assert labels == [SEG_FRONT, SEG_FRONT]
+
+    def test_a_numbered_note_under_it_is_still_a_footnote(self):
+        doc, lines = self._title_page(
+            '*Autor correspondente',
+            'Enderecos de e-mail: a@example.com',
+            '1 This work was funded by a grant from the council.',
+        )
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        labels = [_derive_labels(doc, annotated)[id(line)] for line in lines]
+        assert labels == [SEG_FRONT, SEG_FRONT, SEG_FOOTNOTE]
+
+    def test_an_ordinary_footnote_is_untouched(self):
+        doc, lines = self._title_page('1 A note about the method used here.')
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        assert _derive_labels(doc, annotated)[id(lines[0])] == SEG_FOOTNOTE
+
+
 class TestTrailingHeading:
     @staticmethod
     def _two_pages(first_page, second_page):
