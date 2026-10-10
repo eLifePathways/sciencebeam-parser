@@ -426,6 +426,19 @@ _DEPOSIT_MARKER_PATTERNS = (
 )
 
 
+# The sheet a submission system wraps a manuscript in for review.  It restates
+# the title and carries the system's own identifier for the manuscript, which
+# is the publisher's page rather than the article's.
+_SUBMISSION_COVER_PATTERNS = (
+    re.compile(r'manuscriptcentral\.com', re.IGNORECASE),
+    re.compile(r'^\s*manuscript\s+id\b', re.IGNORECASE),
+)
+
+
+def _is_submission_cover_marker(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _SUBMISSION_COVER_PATTERNS)
+
+
 def _is_deposit_marker(text: str) -> bool:
     return any(pattern.search(text) for pattern in _DEPOSIT_MARKER_PATTERNS)
 
@@ -465,6 +478,12 @@ def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
         opens_a_deposit_page = _is_deposit_notice(first.text) or (
             _DEPOSIT_LABEL_PATTERN.match(first.text)
             and any(_is_deposit_marker(sl.text) for sl in page_lines)
+        )
+        # A submission sheet opens with the watermark printed across it, set a
+        # letter to a line, so what names it is not the line the page starts
+        # with.
+        opens_a_deposit_page = opens_a_deposit_page or any(
+            _is_submission_cover_marker(sl.text) for sl in page_lines
         )
         # The form can run past the page it starts on, leaving the dates and the
         # generator's footer by themselves overleaf.  That is the rest of the

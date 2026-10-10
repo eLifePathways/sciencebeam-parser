@@ -352,6 +352,25 @@ class TestDepositCoverPage:
         doc = self._pages(['Estado:', 'Some ordinary sentence of the article.'])
         assert SEG_COVER not in self._labels(doc)
 
+    def test_a_submission_sheet_is_a_cover_whatever_it_opens_with(self):
+        # PPR458890 carries the review system's sheet on its second page.  The
+        # "For Review Only" watermark is set a letter to a line, so the page
+        # does not open with anything that names it.
+        doc = self._pages(
+            ['Estado: El preprint no ha sido enviado', 'Titulo del articulo'],
+            ['F', 'o', 'r', 'Economic impact of new recommendations',
+             'Manuscript ID PBOCI-2020-0133',
+             'https://mc04.manuscriptcentral.com/pboci-scielo'],
+        )
+        assert self._labels(doc) == [SEG_COVER] * 8
+
+    def test_an_ordinary_page_is_not(self):
+        doc = self._pages(
+            ['Estado: El preprint no ha sido enviado', 'Titulo del articulo'],
+            ['The argument of the article continues over the page here.'],
+        )
+        assert self._labels(doc)[2:] == [SEG_BODY]
+
     def test_the_dates_a_cover_runs_over_to_are_part_of_it(self):
         # The form overflows to a page holding only its date legend and the
         # generator's footer.
