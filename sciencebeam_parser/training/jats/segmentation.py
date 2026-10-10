@@ -14,7 +14,10 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
-from sciencebeam_parser.training.jats.field_vocab import SEGMENTATION_LABEL_BY_FIELD
+from sciencebeam_parser.training.jats.field_vocab import (
+    SEGMENTATION_LABEL_BY_FIELD,
+    JatsFieldNames,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -1078,9 +1081,26 @@ def _find_missing_page_numbers(
         min_page_number = known.page_number + 1
 
 
+# Front matter a paper may print after its reference list.  An author note
+# carries the corresponding author, which a preprint server sets at the end.
+_LATE_FRONT_FIELDS = frozenset({JatsFieldNames.AUTHOR_NOTES})
+
+
+def _is_grounded_in(
+    seg_line: _SegLine,
+    annotated: JatsAnnotatedLayoutDocument,
+    fields: FrozenSet[str],
+) -> bool:
+    return any(
+        annotated.get_token_field(token) in fields
+        for token in seg_line.layout_line.tokens
+    )
+
+
 def _clear_front_beyond_threshold(
     seg_lines: List[_SegLine],
     max_block_start_line_index: int,
+    annotated: JatsAnnotatedLayoutDocument,
 ) -> None:
     """Drop a block of front matter that starts too late to be front matter.
 
@@ -1094,6 +1114,12 @@ def _clear_front_beyond_threshold(
     page continues onto a second -- keywords, corresponding author, competing
     interests, grant information -- puts them past any index that a one-page
     front matter would suggest.
+
+    An author note is the exception the boundary has to make.  A preprint
+    server prints the corresponding author's address at the end, after the
+    references, and that block is the front matter wherever it is set -- unlike
+    the licence sentence, which is a field that matched somewhere it does not
+    belong.  The field the line is grounded in is what tells them apart.
     """
     first_reference = next(
         (index for index, sl in enumerate(seg_lines) if sl.seg_label == SEG_REFERENCES),
@@ -1113,7 +1139,7 @@ def _clear_front_beyond_threshold(
             block_start_idx >= first_reference if first_reference is not None
             else block_start_idx > max_block_start_line_index
         )
-        if beyond:
+        if beyond and not _is_grounded_in(sl, annotated, _LATE_FRONT_FIELDS):
             sl.seg_label = None
 
 
@@ -1214,7 +1240,7 @@ class SegmentationLabelDeriver:
 
         # ── Tier 3: heuristic passes ──
         _clear_front_beyond_threshold(
-            seg_lines, self.config.front_max_start_line_index
+            seg_lines, self.config.front_max_start_line_index, annotated
         )
         _find_missing_page_numbers(seg_lines, page_meta_by_number, self.config)
         _tag_headnotes_by_text_repetition(
