@@ -115,6 +115,48 @@ class TestMajorityVoteLabeling:
         assert labels[id(line)] == SEG_FRONT
 
 
+class TestTrailingHeading:
+    @staticmethod
+    def _two_pages(first_page, second_page):
+        """Reference lines then a heading at the foot of page one; tables on two."""
+        pages = []
+        for page_number, texts in enumerate((first_page, second_page), 1):
+            lines = [
+                _make_line(*s.split(' '), y=100.0 + 60 * i, page_number=page_number)
+                for i, s in enumerate(texts)
+            ]
+            pages.append((LayoutPage(
+                blocks=[LayoutBlock(lines=lines)],
+                meta=_make_page_meta(page_number=page_number, height=1000.0),
+            ), lines))
+        return LayoutDocument(pages=[pg for pg, _ in pages]), [
+            line for _, lines in pages for line in lines
+        ]
+
+    def test_a_heading_under_the_last_reference_goes_with_what_follows(self):
+        # PPR458963 sets "TABLAS" under its last reference, at the foot of the
+        # page, where the region grown to the page end takes it.
+        doc, lines = self._two_pages(
+            ['Smith J. A study of things. Journal. 2020;1(2):3-4.', 'TABLAS'],
+            ['Tabla 1. Los resultados del estudio presentado.'],
+        )
+        annotated = _annotate(doc, {0: JatsFieldNames.REFERENCE})
+        labels = [_derive_labels(doc, annotated)[id(line)] for line in lines]
+        assert labels == [SEG_REFERENCES, SEG_BODY, SEG_BODY]
+
+    def test_a_doi_the_last_reference_ends_with_stays_in_the_list(self):
+        # PPR458937's list ends "10.1016/S2213-2600(20)30132-6", which is part
+        # of the reference rather than a heading for what follows.
+        doc, lines = self._two_pages(
+            ['Smith J. A study of things. Journal. 2020;1(2):3-4. doi:',
+             '10.1016/S2213-2600(20)30132-6'],
+            ['Tabla 1. Los resultados del estudio presentado.'],
+        )
+        annotated = _annotate(doc, {0: JatsFieldNames.REFERENCE})
+        labels = [_derive_labels(doc, annotated)[id(line)] for line in lines]
+        assert labels[1] == SEG_REFERENCES
+
+
 class TestSupplementaryAnnex:
     def test_a_supplementary_heading_opens_an_annex(self):
         # PPR458963 prints "MATERIAL SUPLEMENTARIO" and 14 pages under it; its

@@ -889,6 +889,42 @@ def _normalised_heading(text: str) -> str:
     return ''.join(_HEADING_NOISE_PATTERN.sub(' ', text.lower()).split())
 
 
+_TRAILING_HEADING_MAX_LENGTH = 30
+_TRAILING_HEADING_PATTERN = re.compile(r'^[^\W\d_][^\W\d_\s]*(\s+[^\W\d_][^\W\d_\s]*)*\s*:?$')
+
+
+def _release_trailing_heading(seg_lines: List[_SegLine], label: str) -> None:
+    """Give back the heading a region swallowed off the end of itself.
+
+    A region grown to the foot of a page takes the line under it, and where
+    that line is the heading of what comes next the region ends one line late
+    -- "TABLAS" set under the last reference belongs to the tables, not to the
+    list.  Letters only, so the DOI a reference ends with is not mistaken for
+    one, and set in capitals, which is what tells a heading from a sentence
+    that happens to be short.
+    """
+    runs = list(_iter_label_runs(seg_lines, label))
+    for run in runs:
+        last = seg_lines[run[-1]]
+        text = last.text.strip()
+        if (
+            len(text) > _TRAILING_HEADING_MAX_LENGTH
+            or not text.isupper()
+            or not _TRAILING_HEADING_PATTERN.match(text)
+        ):
+            continue
+        following = next(
+            (
+                sl for sl in seg_lines[run[-1] + 1:]
+                if sl.seg_label not in _FURNITURE_LABELS
+            ),
+            None,
+        )
+        if following is None or following.seg_label in (None, label):
+            continue
+        last.seg_label = following.seg_label
+
+
 def _claim_region_heading(
     seg_lines: List[_SegLine],
     label: str,
@@ -1248,6 +1284,10 @@ class SegmentationLabelDeriver:
         for sl in seg_lines:
             if sl.seg_label is None:
                 sl.seg_label = SEG_BODY
+
+        # Last, because it reads the label of what follows the region, and what
+        # follows is only settled once the default has been applied.
+        _release_trailing_heading(seg_lines, SEG_REFERENCES)
 
         # Build id(LayoutLine) → label mapping — safe because layout_document holds strong refs
         result: Dict[int, str] = {}
