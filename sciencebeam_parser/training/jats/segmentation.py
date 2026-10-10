@@ -1032,6 +1032,50 @@ def _get_running_texts(seg_lines: List[_SegLine]) -> Set[str]:
     return {text for text, pages in pages_by_text.items() if len(pages) > threshold}
 
 
+# What tells a column from an indent.  A page's columns are set about 258pt
+# apart in this corpus; a hanging indent or a list number moves a line 17 to
+# 32pt.  An edge nearer than this to one already taken is the same column.
+_MIN_COLUMN_SEPARATION = 150.0
+_COLUMN_EDGE_TOLERANCE = 10.0
+_MIN_COLUMN_LINES = 3
+
+
+def _get_page_column_edges(
+    seg_lines: List[_SegLine], page_number: int
+) -> List[float]:
+    """Where each column of a page starts, read from the lines it is set in.
+
+    A column is a left edge that many lines share.  Comparing a line with the
+    last line of a region does not say which column it is in: a region covers
+    both columns of a page, and its last line can be a fragment set anywhere
+    along a row.
+    """
+    counts: Counter = Counter()
+    for seg_line in seg_lines:
+        position = _get_line_position(seg_line)
+        if position is None or _get_page_number(seg_line) != page_number:
+            continue
+        counts[round(position[0] / _COLUMN_EDGE_TOLERANCE) * _COLUMN_EDGE_TOLERANCE] += 1
+    edges: List[float] = []
+    for edge in sorted(counts):
+        if counts[edge] < _MIN_COLUMN_LINES:
+            continue
+        if edges and edge - edges[-1] < _MIN_COLUMN_SEPARATION:
+            continue
+        edges.append(edge)
+    return edges
+
+
+def _get_column_index(x: float, edges: List[float]) -> int:
+    """Which column a line starting at `x` is set in; 0 where there is one."""
+    index = 0
+    for position in range(1, len(edges)):
+        boundary = (edges[position - 1] + edges[position]) / 2
+        if x >= boundary:
+            index = position
+    return index
+
+
 def _extend_region_to_page_end(
     seg_lines: List[_SegLine],
     label: str,
@@ -1057,13 +1101,21 @@ def _extend_region_to_page_end(
     for run in _iter_label_runs(seg_lines, label):
         page_number = _get_page_number(seg_lines[run[-1]])
         edge_position = _get_line_position(seg_lines[run[-1]])
+        column_edges = (
+            _get_page_column_edges(seg_lines, page_number)
+            if page_number is not None else []
+        )
+        edge_column = (
+            _get_column_index(edge_position[0], column_edges)
+            if edge_position is not None else None
+        )
         for seg_line in seg_lines[run[-1] + 1:]:
             if _get_page_number(seg_line) != page_number:
                 break
             position = _get_line_position(seg_line)
             if (
-                edge_position is not None and position is not None
-                and abs(position[0] - edge_position[0]) > _SAME_COLUMN_MAX_X_GAP
+                edge_column is not None and position is not None
+                and _get_column_index(position[0], column_edges) != edge_column
             ):
                 break
             if seg_line.seg_label in _FURNITURE_LABELS:

@@ -115,6 +115,59 @@ class TestMajorityVoteLabeling:
         assert labels[id(line)] == SEG_FRONT
 
 
+class TestPageColumns:
+    @staticmethod
+    def _page(*specs):
+        """The given (text, x, grounded) lines on page two, after a page of body.
+
+        Two pages, because on a one-page document every line is printed on
+        every page and so reads as a running text the regions step over.
+        """
+        def _line(text, x, y, page_number):
+            return LayoutLine(tokens=[
+                LayoutToken(text=word, coordinates=LayoutPageCoordinates(
+                    x=x, y=y, width=200, height=10, page_number=page_number,
+                ))
+                for word in text.split(' ')
+            ])
+
+        first = [
+            _line(f'The argument of the article continues {i}.', 56.7, 100.0 + 12 * i, 1)
+            for i in range(4)
+        ]
+        lines, fields = [], {}
+        for i, (text, x, grounded) in enumerate(specs):
+            lines.append(_line(text, x, 100.0 + 12 * i, 2))
+            if grounded:
+                fields[len(first) + i] = JatsFieldNames.REFERENCE
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=first)],
+                       meta=_make_page_meta(1, height=1000.0)),
+            LayoutPage(blocks=[LayoutBlock(lines=lines)],
+                       meta=_make_page_meta(2, height=1000.0)),
+        ])
+        return doc, lines, _annotate(doc, fields)
+
+    def test_a_region_reaches_a_fragment_set_right_on_a_one_column_page(self):
+        # PPR458890 ends a reference with its DOI set further along the row;
+        # the column is the page's, not wherever the last line happens to start.
+        doc, lines, annotated = self._page(
+            *[(f'Reference entry number {i} here.', 89.7, True) for i in range(5)],
+            ('doi:10.1590/1413-', 416.0, False),
+            ('81232020253.14532018', 89.7, False),
+        )
+        labels = _derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in lines[-2:]] == [SEG_REFERENCES] * 2
+
+    def test_a_region_stops_at_the_other_column_of_a_two_column_page(self):
+        doc, lines, annotated = self._page(
+            *[(f'Reference entry number {i} here.', 56.7, True) for i in range(5)],
+            *[(f'Body text of the article {i}.', 314.3, False) for i in range(5)],
+        )
+        labels = _derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in lines[5:]] == [SEG_BODY] * 5
+
+
 class TestFootnoteReach:
     @staticmethod
     def _page(*specs):
