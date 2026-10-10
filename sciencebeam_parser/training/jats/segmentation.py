@@ -1212,6 +1212,15 @@ def _bridge_footnote_block(seg_lines: List[_SegLine]) -> None:
     nothing.  The gap merge cannot reach it: it treats a footnote as furniture
     to step over rather than as a region to bridge.
 
+    A note can also have the note on one side only: a line of it the JATS does
+    not carry, with nothing but a page number or a page break past it.  That is
+    the same gap with no far side, and it is taken the same way.
+
+    Reading order, not the page: the line taken is the one that follows the
+    note in the file, which for a glyph the renderer emits last can be set
+    above it.  Only where the note is what precedes the gap, though, because a
+    line before a note belongs to whatever the note is set under.
+
     A marker is a line or two, so only a gap that short is bridged.  A page can
     carry notes at its head and foot with an appendix between them, and that is
     not one note.
@@ -1227,8 +1236,25 @@ def _bridge_footnote_block(seg_lines: List[_SegLine]) -> None:
         gap = seg_lines[index:end]
         sides = [seg_lines[index - 1] if index else None,
                  seg_lines[end] if end < len(seg_lines) else None]
-        enclosed = all(sl is not None and sl.seg_label == SEG_FOOTNOTE for sl in sides)
-        pages = {_get_page_number(sl) for sl in gap + sides if sl is not None}
+        before = sides[0]
+        if before is None or before.seg_label != SEG_FOOTNOTE:
+            index = end + 1
+            continue
+        # Page furniture only: a footnote is what this is looking for, and
+        # `_FURNITURE_LABELS` counts one as furniture to step over.
+        after = next(
+            (
+                sl for sl in seg_lines[end:]
+                if sl.seg_label not in (SEG_PAGE, SEG_HEADNOTE)
+            ),
+            None,
+        )
+        enclosed = (
+            after is None
+            or after.seg_label == SEG_FOOTNOTE
+            or _get_page_number(after) != _get_page_number(before)
+        )
+        pages = {_get_page_number(sl) for sl in [before, *gap]}
         if enclosed and len(gap) <= _FOOTNOTE_MARKER_MAX_LINES and len(pages) == 1:
             for seg_line in gap:
                 seg_line.seg_label = SEG_FOOTNOTE

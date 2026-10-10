@@ -115,6 +115,44 @@ class TestMajorityVoteLabeling:
         assert labels[id(line)] == SEG_FRONT
 
 
+class TestFootnoteReach:
+    @staticmethod
+    def _page(*specs):
+        """One block per (text, label-field) pair, plus a page number at the foot."""
+        lines, fields = [], {}
+        for i, (text, field) in enumerate(specs):
+            line = _make_line(*text.split(' '), y=600.0 + 12 * i, page_number=1)
+            lines.append(line)
+            if field is not None:
+                fields[i] = field
+        number = _make_line('6', y=960.0, page_number=1)
+        doc = LayoutDocument(pages=[LayoutPage(
+            blocks=[LayoutBlock(lines=lines), LayoutBlock(lines=[number])],
+            meta=_make_page_meta(1),
+        )])
+        return doc, lines, number, fields
+
+    def test_a_note_reaches_its_last_line_with_only_a_page_number_past_it(self):
+        # PPR459453 ends a note one line short of what the page prints, with
+        # the page number the only thing under it.
+        doc, lines, number, fields = self._page(
+            ('se han senalado las relaciones cercanas', JatsFieldNames.BACK_FOOTNOTE),
+            ('han senalado que el gobierno no los ha', JatsFieldNames.BACK_FOOTNOTE),
+            ('efectos economicos de la pandemia (Chacon, 2020).', None),
+        )
+        labels = _derive_labels(doc, _annotate(doc, fields))
+        assert [labels[id(line)] for line in lines] == [SEG_FOOTNOTE] * 3
+        assert labels[id(number)] == SEG_PAGE
+
+    def test_a_line_before_a_note_is_not_taken_into_it(self):
+        doc, lines, _, fields = self._page(
+            ('The argument of the article continues here.', None),
+            ('1 Marks, Robert B. Exhausting the Earth.', JatsFieldNames.BACK_FOOTNOTE),
+        )
+        labels = _derive_labels(doc, _annotate(doc, fields))
+        assert labels[id(lines[0])] != SEG_FOOTNOTE
+
+
 class TestCorrespondingAuthorNote:
     @staticmethod
     def _title_page(*texts):
