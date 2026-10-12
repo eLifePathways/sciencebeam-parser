@@ -389,3 +389,26 @@ class TestWhatAReviewDecided:
         )
         texts, _labels, _features = load_data_and_labels_crf_file(str(output_path))
         assert len(texts) == 1
+
+    def test_should_say_where_it_wrote_and_how_much(self, tmp_path: Path, caplog):
+        tei_source_path, record_path = self._write_corpus(
+            tmp_path, {'accepted1': 'accepted', 'refused1': 'rejected'}
+        )
+        with caplog.at_level('INFO'):
+            output_path = self._run(
+                tmp_path, tei_source_path, record_path,
+                '--require-config-path='
+                + self._write_require_config(tmp_path, 'accepted')
+            )
+        assert f'wrote 1 documents to {str(output_path)!r}' in caplog.text
+
+    def test_should_not_say_it_wrote_anything_where_it_refused(self, tmp_path: Path):
+        tei_source_path, record_path = self._write_corpus(
+            tmp_path, {f'unread{index}': '' for index in range(10)}
+        )
+        with pytest.raises(CorpusMostlyUnreviewedError):
+            self._run(
+                tmp_path, tei_source_path, record_path,
+                '--require-config-path='
+                + self._write_require_config(tmp_path, 'accepted')
+            )

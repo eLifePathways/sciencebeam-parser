@@ -636,10 +636,8 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
                 data_fp.write('\n\n')
             data_fp.writelines(result.data_lines)
             written_document_count += 1
-    write_assembly_records(
-        quality_output_path or delft_output_path + '.quality.jsonl',
-        assembled_records
-    )
+    assembly_record_path = quality_output_path or delft_output_path + '.quality.jsonl'
+    write_assembly_records(assembly_record_path, assembled_records)
     log_assembly_summary(
         model_name, assembled_records, generated_record_by_document_id
     )
@@ -650,6 +648,12 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
             max_unreviewed_ratio=max_unreviewed_ratio,
             delft_output_path=delft_output_path
         )
+    # Last, so that it is the line left on the screen -- and only where the gate
+    # let the assembly stand, since a refusal removes what was written.
+    LOGGER.info(
+        'wrote %d documents to %r, with what was measured about each in %r',
+        written_document_count, delft_output_path, assembly_record_path
+    )
 
 
 def run(args: argparse.Namespace):
