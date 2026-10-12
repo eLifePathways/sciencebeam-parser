@@ -85,6 +85,10 @@ _ETHICS_TITLES = frozenset({
     'ethical statement',
     'ethics statement',
     'consent',
+    'consent to participate',
+    'consent to publish',
+    'consent for publication',
+    'patient consent for publication',
     'institutional review board',
     'aspectos eticos',
     'consideracoes eticas',
@@ -201,12 +205,19 @@ def _get_sections(
     sec_type_predicate: str,
     titles: FrozenSet[str],
     fn_kind: Optional[str] = None,
+    any_depth: bool = False,
 ) -> Set[etree._Element]:
     """Sections of one kind, however the JATS happens to say so.
 
+    A section nested inside another is claimed only for a kind that goes on to
+    test where it sits: "Author contributions" under Methods is the article
+    describing its method, while an article can nest its declarations inside
+    the last section it argues, which is where they print rather than what they
+    are.
     """
     sections = set(root.xpath(f'//sec[{sec_type_predicate}]'))
-    for el in root.xpath('(body|back)/sec[not(@sec-type)]'):
+    step = '//' if any_depth else '/'
+    for el in root.xpath(f'(body|back){step}sec[not(@sec-type)]'):
         if _normalised_section_title(el) in titles:
             sections.add(el)
     if fn_kind is not None:
@@ -235,7 +246,7 @@ def _get_funding_sections(root: etree._Element) -> Set[etree._Element]:
 
 
 def _get_ethics_sections(root: etree._Element) -> Set[etree._Element]:
-    return _get_sections(root, _ETHICS_SEC, _ETHICS_TITLES, 'ethics')
+    return _get_sections(root, _ETHICS_SEC, _ETHICS_TITLES, 'ethics', any_depth=True)
 
 
 # A named declaration GROBID files under `<div type="annex">`.
@@ -258,7 +269,7 @@ _NOTICE_TITLES = frozenset({
 
 def _get_notice_sections(root: etree._Element) -> Set[etree._Element]:
     return {
-        el for el in root.xpath('(body|back)/sec[not(@sec-type)]')
+        el for el in root.xpath('(body|back)//sec[not(@sec-type)]')
         if _normalised_section_title(el) in _NOTICE_TITLES
     }
 
@@ -280,13 +291,23 @@ def _get_back_matter_ethics_sections(
     """
     sections = _get_ethics_sections(root) | _get_notice_sections(root)
     back_matter = already_placed | sections
+    ordered = root.xpath('body//sec')
+    position_by_section = {el: index for index, el in enumerate(ordered)}
+
+    def _is_back_matter(el: etree._Element, candidate: etree._Element) -> bool:
+        """A section of the candidate's own, or one a back-matter section holds."""
+        if candidate in back_matter or candidate in el.iterdescendants('sec'):
+            return True
+        return any(
+            ancestor in back_matter for ancestor in candidate.iterancestors('sec')
+        )
+
     return {
         el for el in sections
-        if el.getparent() is None
-        or el.getparent().tag != 'body'
+        if el not in position_by_section
         or all(
-            following in back_matter
-            for following in el.itersiblings('sec')
+            _is_back_matter(el, following)
+            for following in ordered[position_by_section[el] + 1:]
         )
     }
 
