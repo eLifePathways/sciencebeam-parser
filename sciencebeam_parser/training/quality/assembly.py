@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from sciencebeam_parser.training.quality.gate import QualityVerdict
+from sciencebeam_parser.training.quality.review import ReviewStanding, read_review_standing
 from sciencebeam_parser.utils.io import auto_uploading_output_file, glob
 
 
@@ -20,10 +21,20 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class GeneratedDocumentRecord:
-    """A row generation wrote, and which corpus it was read from."""
+    """A row generation wrote, which corpus it came from, and where review left it.
+
+    The review is read beside the record rather than being part of it: generation
+    measures and a reader judges, at different times and into different files.
+    """
     document_id: str
     corpus: Optional[str]
     json_dict: Mapping[str, Any]
+    review: str = ReviewStanding.UNREVIEWED
+
+    @property
+    def labelled_content_hash(self) -> Optional[str]:
+        """What a verdict about this document has to be pinned to."""
+        return self.json_dict.get('labelled_content_hash')
 
     @property
     def jats_reference_count(self) -> Optional[int]:
@@ -82,6 +93,9 @@ def read_generated_document_records(
             document_id=json_dict['document_id'],
             corpus=corpus,
             json_dict=json_dict,
+            review=read_review_standing(
+                record_file_path, json_dict.get('labelled_content_hash')
+            ),
         )
     return record_by_document_id
 
@@ -97,6 +111,7 @@ class AssembledDocumentRecord:
     label_start_counts: Optional[Dict[str, int]] = None
     generated: Optional[GeneratedDocumentRecord] = None
     verdict: Optional['QualityVerdict'] = None
+    review: str = ReviewStanding.UNREVIEWED
 
     @property
     def entity_element_count(self) -> Optional[int]:
@@ -116,6 +131,9 @@ class AssembledDocumentRecord:
             'model': self.model_name,
             'corpus': self.corpus,
             'sequence_count': self.sequence_count,
+            # Recorded for every document, so that a rejection a regeneration
+            # lapsed is visible rather than only absent.
+            'review': self.review,
         }
         if self.entity_start_count is not None:
             json_dict['entity_start_count'] = self.entity_start_count
