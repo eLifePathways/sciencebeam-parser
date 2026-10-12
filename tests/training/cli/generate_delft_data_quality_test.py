@@ -114,7 +114,8 @@ class TestQualityFilter:
             '--model-name=reference_segmenter',
             f'--tei-source-path={tei_source_path}/*.tei.xml',
             f'--quality-record-path={record_path}',
-            f'--delft-output-path={output_path}'
+            f'--delft-output-path={output_path}',
+            '--no-quality-filter'
         ])
         texts, _labels, _features = load_data_and_labels_crf_file(str(output_path))
         assert len(texts) == 1

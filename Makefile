@@ -80,6 +80,8 @@ TRAINING_DATA_NUM_WORKERS ?= 1
 TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
 # Where dev-generate-delft-training-data writes, and which model it converts.
 # It converts one model at a time, because the delft CLI takes one model's paths.
+# It writes beside the corpus it assembled, which that repo ignores: derived from
+# what it commits rather than part of it, like the review's own output.
 DELFT_TRAINING_DATA_OUTPUT ?= $(TRAINING_DATA_OUTPUT)/delft
 DELFT_TRAINING_DATA_MODEL ?= segmentation
 
@@ -448,6 +450,13 @@ dev-training-data-state:
 		$(ARGS)
 
 
+## Assemble one model's delft training data from the generated corpus.
+## The quality gate applies: a document the thresholds exclude, or that the
+## corpus requires a review for and has not got one, is left out, and assembly
+## refuses a corpus it would lose too much of.  ARGS=--no-quality-filter records
+## the counts without acting on them.
+## Usage: make dev-generate-delft-training-data [DELFT_TRAINING_DATA_MODEL=header]
+##        [TRAINING_DATA_OUTPUT=/path/to/data-repo] [DELFT_TRAINING_DATA_OUTPUT=...]
 dev-generate-delft-training-data:
 	@test -d "$(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT)" || { \
 		echo "ERROR: no '$(SOURCE_TRAINING_SPLIT)' under TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)'."; \

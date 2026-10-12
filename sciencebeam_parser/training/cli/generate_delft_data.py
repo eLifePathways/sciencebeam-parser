@@ -121,11 +121,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         '--quality-filter',
-        action='store_true',
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
-            'Exclude documents failing the quality thresholds, rather than only'
-            ' recording their counts. Assembly refuses when a corpus loses more than'
-            ' the configured share of its documents.'
+            'Exclude documents failing the quality thresholds, and documents a'
+            ' corpus requires a review for. Assembly refuses when a corpus loses'
+            ' more than the configured share of its documents. On by default,'
+            ' because assembling data the gate would have refused is the unusual'
+            ' case; --no-quality-filter records the counts without acting on them.'
         )
     )
     parser.add_argument(

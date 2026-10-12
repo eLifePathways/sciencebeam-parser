@@ -671,7 +671,10 @@ class TestQualityRecord:
             '--model-name=reference_segmenter',
             f'--tei-source-path={tei_source_path}/*.tei.xml',
             f'--quality-record-path={generated_records_path}/*.quality.json',
-            f'--delft-output-path={output_path}'
+            f'--delft-output-path={output_path}',
+            # The document is short of its JATS, which is the subject here
+            # rather than whether the gate would have refused it.
+            '--no-quality-filter'
         ])
         row = json.loads(
             Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
