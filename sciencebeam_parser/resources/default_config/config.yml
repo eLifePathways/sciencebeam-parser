@@ -335,7 +335,7 @@ sequence_model_profiles:
   # word embeddings largely fix. It needs the glove-840B vectors, found as an LMDB
   # under data/db/glove-840B, else downloaded (1.8GB) and indexed on first load.
   delft_hub:
-    extends: biorxiv_elife
+    extends: grobid_crf
     header:
       path: 'hf://sciencialab/grobid-model-header@a2b0279ec0605ce8a835a45c9cf3c093b24d181d/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
       feature_flavour: 'grobid'
@@ -442,7 +442,7 @@ profiles:
         noise_filter:
           enabled: false
   delft_hub:
-    sequence_models: delft_hub
+    sequence_models: grobid_crf
 
 profile_aliases:
   grobid_crf: grobid_crf_0_9_0
