@@ -11,6 +11,8 @@ from sciencebeam_parser.training.jats.aligner import (
     AlignmentConfig,
     LayoutDocumentJatsAligner,
     narrow_search_range_to_window,
+    get_search_stride,
+    get_search_window_size,
 )
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
@@ -1520,3 +1522,43 @@ class TestNarrowSearchRangeToWindow:
 
     def test_a_window_that_leaves_nothing_keeps_the_range(self):
         assert narrow_search_range_to_window(100, 900, (0, 100)) == (100, 900)
+
+
+class TestSearchStride:
+    """How far the sliding search advances, which decides how often it reads a character."""
+
+    def test_a_needle_that_fits_the_window_keeps_its_overlap(self):
+        window_size = get_search_window_size(100, max_window=8000)
+        assert get_search_stride(window_size, 100) == window_size - 100 - 20
+
+    def test_a_needle_longer_than_the_window_still_advances_by_half_of_it(self):
+        max_window = 8000
+        window_size = get_search_window_size(max_window * 2, max_window=max_window)
+        assert window_size == max_window
+        assert get_search_stride(window_size, max_window * 2) == max_window // 2
+
+    def test_the_stride_never_falls_below_half_a_window(self):
+        max_window = 8000
+        window_size = get_search_window_size(max_window, max_window=max_window)
+        for needle_length in range(max_window - 100, max_window + 100):
+            assert get_search_stride(window_size, needle_length) >= window_size // 2
+
+    def test_a_value_longer_than_the_window_is_still_found(self):
+        max_window = 2000
+        sentences = [
+            f'Sentence {index} of a reviewer report that runs on past the search window.'
+            for index in range(40)
+        ]
+        review = ' '.join(sentences)
+        assert len(normalize_for_alignment(review)) > max_window
+        doc = _make_doc('Introduction', *sentences)
+        annotated = LayoutDocumentJatsAligner(
+            AlignmentConfig(max_window=max_window)
+        ).align(doc, [_fv(review, JatsFieldNames.SUB_ARTICLE)])
+        review_tokens = [
+            token for line in list(doc.iter_all_lines())[1:] for token in line.tokens
+        ]
+        assert all(
+            annotated.get_token_field(token) == JatsFieldNames.SUB_ARTICLE
+            for token in review_tokens
+        )

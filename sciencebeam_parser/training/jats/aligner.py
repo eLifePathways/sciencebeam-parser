@@ -133,6 +133,13 @@ _SCORING = SimpleScoring(match_score=2, mismatch_score=-1, gap_score=-1)
 # Window size limits to keep LocalSequenceMatcher fast (O(window * needle))
 _DEFAULT_MIN_WINDOW = 2000
 _WINDOW_NEEDLE_MULTIPLIER = 6
+# Each window overlaps the last by the needle's length, so a value straddling a
+# boundary is still found whole in the next one.  Where the needle is longer than
+# the window there is no such boundary to cover, and this is the share of a window
+# the search advances by instead.
+_MIN_WINDOW_STRIDE_RATIO = 2
+# Slack beyond the needle, for the punctuation and line breaks the page sets in it.
+_WINDOW_OVERLAP_BUFFER = 20
 
 # Sub-field containment buffer: search sub-fields this many chars beyond the parent's
 # matched range.  Keeps short sub-field values (e.g. "USA", "2020") from matching
@@ -908,6 +915,29 @@ def _match_field_value_in_pieces(
     )
 
 
+def get_search_window_size(needle_length: int, max_window: int) -> int:
+    return max(
+        _DEFAULT_MIN_WINDOW,
+        min(max_window, needle_length * _WINDOW_NEEDLE_MULTIPLIER),
+    )
+
+
+def get_search_stride(window_size: int, needle_length: int) -> int:
+    """How far the sliding search advances between windows.
+
+    A window overlaps the last by the needle's length so that a value lying across
+    a boundary is still found whole.  A needle longer than the window cannot lie
+    wholly inside one at any offset, so that overlap buys nothing and the leftover
+    shrinks to nothing: the search then advances a character at a time and reads
+    every one of them window_size times over.  Half a window is the floor, which
+    still reads everything twice.
+    """
+    return max(
+        window_size // _MIN_WINDOW_STRIDE_RATIO,
+        window_size - needle_length - _WINDOW_OVERLAP_BUFFER,
+    )
+
+
 def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
     token_index: _TokenIndex,
     field_value: JatsFieldValue,
@@ -944,11 +974,8 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
         exact = _exact_substring_match(haystack, needle, segments, token_index)
         if exact is not None:
             return exact
-    window_size = max(
-        _DEFAULT_MIN_WINDOW,
-        min(config.max_window, need_len * _WINDOW_NEEDLE_MULTIPLIER),
-    )
-    stride = max(1, window_size - need_len - 20)
+    window_size = get_search_window_size(need_len, config.max_window)
+    stride = get_search_stride(window_size, need_len)
 
     gap_match: Optional[_MatchResult] = None
     for seg_start, seg_end in segments:
