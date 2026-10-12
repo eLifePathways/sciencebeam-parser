@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import yaml
 
 from sciencebeam_parser.training.quality.requirement import Requirement
-from sciencebeam_parser.training.quality.review import ReviewStanding
+from sciencebeam_parser.training.quality.review import REFUSING_STANDINGS, ReviewStanding
 
 
 LOGGER = logging.getLogger(__name__)
@@ -205,6 +205,12 @@ def _get_reviewed_reasons(
 ) -> List[str]:
     """What the corpus's requirement makes of a measurement, given the review.
 
+    A refusal binds until somebody withdraws it, so a rejection a regeneration
+    lapsed still excludes: the document changed, which is not the same as anyone
+    saying it is now sound. An acceptance is about the content and does not
+    survive the regeneration, so a document whose acceptance lapsed is one
+    nobody has read, which `accepted` excludes and the weaker demands do not.
+
     An absence is not a threshold to overrule, so it leads whatever was decided
     and survives an acceptance. What a measurement said about an admitted
     document is kept beside the admission rather than discarded, because the
@@ -214,7 +220,7 @@ def _get_reviewed_reasons(
     measured = [reason for reason in measured_reasons if reason not in ABSENCE_REASONS]
     if requirement == Requirement.MEASURED:
         return list(measured_reasons)
-    if review == ReviewStanding.REJECTED:
+    if review in REFUSING_STANDINGS:
         return absences + [ExclusionReason.REJECTED_BY_REVIEW] + measured
     if review == ReviewStanding.ACCEPTED:
         if measured:

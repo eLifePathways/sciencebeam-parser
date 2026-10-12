@@ -5,9 +5,11 @@ quality record is written by generation, the verdict by whoever read the
 document, and they sit in sibling directories of the same model.
 
 A verdict is pinned to the content it judged. Regenerating a document moves the
-pin, which lapses the verdict: it then says nothing about the document as it
-stands, and is kept rather than removed so that a document once refused still
-says so.
+pin, which lapses the verdict -- but a lapsed verdict is not the same as none,
+and the two are reported apart. An acceptance is about the content: regenerate
+the document and nobody has approved what is now there. A refusal is about the
+document, and regenerating it does not withdraw it; it stands until somebody
+reads the document again and says otherwise.
 """
 from __future__ import annotations
 
@@ -28,12 +30,30 @@ LABELLED_CONTENT_HASH_KEY = 'labelled_content_hash'
 
 
 class ReviewStanding:
-    """Where a document stands, as the gate reads it."""
+    """Where a document stands, as the gate reads it.
 
-    # Nobody has read it, or what they read is not what it holds now.
+    A verdict the pin no longer matches is reported as lapsed rather than as
+    absent, because a decision somebody took is not the same as one nobody ever
+    took, and what each demand makes of the two differs.
+    """
+
+    # Nobody ever judged it.
     UNREVIEWED = 'unreviewed'
     ACCEPTED = 'accepted'
     REJECTED = 'rejected'
+    ACCEPTANCE_LAPSED = 'acceptance-lapsed'
+    REJECTION_LAPSED = 'rejection-lapsed'
+
+
+LAPSED_BY_VERDICT = {
+    ReviewStanding.ACCEPTED: ReviewStanding.ACCEPTANCE_LAPSED,
+    ReviewStanding.REJECTED: ReviewStanding.REJECTION_LAPSED,
+}
+
+# A refusal stands until somebody reads the document again and withdraws it.
+REFUSING_STANDINGS = frozenset({
+    ReviewStanding.REJECTED, ReviewStanding.REJECTION_LAPSED
+})
 
 
 def get_verdict_file_path(record_file_path: str) -> str:
@@ -57,19 +77,23 @@ def get_review_standing(
     verdict_json_dict: Optional[Mapping[str, Any]],
     labelled_content_hash: Optional[str]
 ) -> str:
-    """What a verdict says about the content a document holds now.
+    """What a verdict says, and whether it is about the content held now.
 
-    A model with no span record has no pin, so there is nothing a verdict could
-    be about and the document reads as unreviewed however it was judged.
+    A decision that cannot be confirmed to be about this content reads as
+    lapsed rather than as never taken -- including where there is no pin to
+    confirm it against, as for a model that writes no span record.
     """
-    if not verdict_json_dict or not labelled_content_hash:
-        return ReviewStanding.UNREVIEWED
-    if verdict_json_dict.get(LABELLED_CONTENT_HASH_KEY) != labelled_content_hash:
+    if not verdict_json_dict:
         return ReviewStanding.UNREVIEWED
     verdict = verdict_json_dict.get('verdict')
-    if verdict in (ReviewStanding.ACCEPTED, ReviewStanding.REJECTED):
+    if verdict not in LAPSED_BY_VERDICT:
+        return ReviewStanding.UNREVIEWED
+    if (
+        labelled_content_hash
+        and verdict_json_dict.get(LABELLED_CONTENT_HASH_KEY) == labelled_content_hash
+    ):
         return verdict
-    return ReviewStanding.UNREVIEWED
+    return LAPSED_BY_VERDICT[verdict]
 
 
 def read_review_standing(

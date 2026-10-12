@@ -47,18 +47,25 @@ class TestGetReviewStanding:
             {'verdict': 'rejected', 'labelled_content_hash': HASH_1}, HASH_1
         ) == ReviewStanding.REJECTED
 
-    def test_should_lapse_a_verdict_the_document_has_moved_under(self):
-        # Regenerating a document moves the pin; what was judged is no longer
-        # what is there.
+    def test_should_lapse_an_acceptance_the_document_has_moved_under(self):
+        # Regenerating a document moves the pin; nobody has approved what is
+        # there now.
         assert get_review_standing(
             {'verdict': 'accepted', 'labelled_content_hash': HASH_1}, HASH_2
-        ) == ReviewStanding.UNREVIEWED
+        ) == ReviewStanding.ACCEPTANCE_LAPSED
 
-    def test_should_report_a_document_with_no_pin_as_unreviewed(self):
-        # A model with no span record has nothing a verdict could be about.
+    def test_should_keep_a_lapsed_refusal_apart_from_never_having_been_judged(self):
+        # A decision somebody took is not a decision nobody took.
+        assert get_review_standing(
+            {'verdict': 'rejected', 'labelled_content_hash': HASH_1}, HASH_2
+        ) == ReviewStanding.REJECTION_LAPSED
+
+    def test_should_lapse_a_verdict_with_no_pin_to_confirm_it_against(self):
+        # A model with no span record writes no pin, so nothing says the verdict
+        # is about the content the document holds.
         assert get_review_standing(
             {'verdict': 'accepted', 'labelled_content_hash': HASH_1}, None
-        ) == ReviewStanding.UNREVIEWED
+        ) == ReviewStanding.ACCEPTANCE_LAPSED
 
     def test_should_report_comments_without_a_decision_as_unreviewed(self):
         assert get_review_standing(

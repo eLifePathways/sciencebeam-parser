@@ -418,3 +418,43 @@ class TestCountingTheTwoKindsOfLossApart:
              for index in range(excluded_count)]
             + [(QualityVerdict(f'kept{index}'), 'ore') for index in range(kept_count)]
         )
+
+
+class TestAPriorDecisionWithNoNewOneYet:
+    """A regeneration changes the document; it does not answer for it."""
+
+    def _verdict_for(self, requirement, review):
+        return _verdict(
+            thresholds=SEGMENTATION_THRESHOLDS, sequence_count=1,
+            requirement=requirement, review=review
+        )
+
+    def test_should_keep_a_refusal_binding_after_the_document_was_regenerated(self):
+        verdict = self._verdict_for(
+            Requirement.NOT_REJECTED, ReviewStanding.REJECTION_LAPSED
+        )
+        assert verdict.primary_reason == ExclusionReason.REJECTED_BY_REVIEW
+
+    def test_should_keep_it_binding_where_acceptance_is_required_too(self):
+        verdict = self._verdict_for(
+            Requirement.ACCEPTED, ReviewStanding.REJECTION_LAPSED
+        )
+        assert verdict.primary_reason == ExclusionReason.REJECTED_BY_REVIEW
+
+    def test_should_not_let_an_acceptance_survive_the_regeneration(self):
+        # An acceptance is about the content, which is what changed.
+        verdict = self._verdict_for(
+            Requirement.ACCEPTED, ReviewStanding.ACCEPTANCE_LAPSED
+        )
+        assert verdict.primary_reason == ExclusionReason.NOT_REVIEWED
+
+    def test_should_let_a_lapsed_acceptance_fall_through_to_the_thresholds(self):
+        verdict = self._verdict_for(
+            Requirement.NOT_REJECTED, ReviewStanding.ACCEPTANCE_LAPSED
+        )
+        assert not verdict.is_excluded
+
+    def test_should_ignore_both_where_only_the_measurement_is_required(self):
+        assert not self._verdict_for(
+            Requirement.MEASURED, ReviewStanding.REJECTION_LAPSED
+        ).is_excluded

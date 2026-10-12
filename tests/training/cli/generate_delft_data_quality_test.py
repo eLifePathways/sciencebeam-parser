@@ -179,13 +179,17 @@ class TestQualityFilter:
 
 
 HASH_1 = 'v1:sha256:aaaa'
+HASH_SINCE_REGENERATED = 'v1:sha256:bbbb'
 
 
 class TestWhatAReviewDecided:
     """The gate reading verdicts, from the files a reviewed corpus commits."""
 
     def _write_corpus(
-        self, tmp_path: Path, verdict_by_document_id: Mapping[str, str]
+        self,
+        tmp_path: Path,
+        verdict_by_document_id: Mapping[str, str],
+        verdict_hash: str = HASH_1
     ) -> Tuple[Path, str]:
         model_path = tmp_path / 'train' / 'ore' / 'reference-segmenter'
         tei_source_path = model_path / 'corpus' / 'tei'
@@ -210,7 +214,7 @@ class TestWhatAReviewDecided:
                     / f'{document_id}.reference-segmenter.verdict.json'
                 ).write_text(json.dumps({
                     'document_id': document_id, 'verdict': verdict,
-                    'labelled_content_hash': HASH_1,
+                    'labelled_content_hash': verdict_hash,
                 }) + '\n', encoding='utf-8')
         return tei_source_path, str(records_path / '*.quality.json')
 
@@ -333,3 +337,40 @@ class TestWhatAReviewDecided:
                 tmp_path, tei_source_path, record_path,
                 f'--require-config-path={config_file_path}'
             )
+
+    def test_should_keep_a_refusal_binding_after_the_document_was_regenerated(
+        self, tmp_path: Path
+    ):
+        # The document changed, which is not anybody saying it is now sound.
+        tei_source_path, record_path = self._write_corpus(
+            tmp_path, {'refused1': 'rejected'},
+            verdict_hash=HASH_SINCE_REGENERATED
+        )
+        output_path = self._run(
+            tmp_path, tei_source_path, record_path,
+            '--require-config-path='
+            + self._write_require_config(tmp_path, 'not-rejected'),
+            '--max-excluded-ratio=1.0'
+        )
+        row = json.loads(
+            Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
+        )
+        assert row['review'] == 'rejection-lapsed'
+        assert row['exclusion_reasons'][0] == 'rejected-by-review'
+
+    def test_should_not_let_an_acceptance_survive_the_regeneration(
+        self, tmp_path: Path
+    ):
+        tei_source_path, record_path = self._write_corpus(
+            tmp_path, {'stale1': 'accepted'}, verdict_hash=HASH_SINCE_REGENERATED
+        )
+        output_path = self._run(
+            tmp_path, tei_source_path, record_path,
+            f'--require-config-path={self._write_require_config(tmp_path, "accepted")}',
+            '--max-unreviewed-ratio=1.0'
+        )
+        row = json.loads(
+            Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
+        )
+        assert row['review'] == 'acceptance-lapsed'
+        assert row['exclusion_reasons'][0] == 'not-reviewed'
