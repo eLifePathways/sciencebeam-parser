@@ -379,10 +379,25 @@ class TestCountingTheTwoKindsOfLossApart:
         assert summary.excluded_count == 1
         assert summary.unreviewed_count == 0
 
-    def test_should_count_a_rejection_as_excluded_rather_than_unread(self):
+    def test_should_count_a_rejection_apart_from_both(self):
         summary = self._summary(ExclusionReason.REJECTED_BY_REVIEW)
-        assert summary.excluded_count == 1
+        assert summary.rejected_count == 1
+        assert summary.excluded_count == 0
         assert summary.unreviewed_count == 0
+
+    def test_should_say_the_share_a_reader_refused(self):
+        assert 'refused by a reader' in str(
+            self._summary(ExclusionReason.REJECTED_BY_REVIEW)
+        )
+
+    def test_should_not_refuse_however_much_a_reader_refused(self):
+        # A rejection is neither inferred nor silent, so there is no fault a
+        # ratio could catch -- and refusing would punish a careful review.
+        check_corpus_loss_or_fail(
+            self._summary_by_corpus(ExclusionReason.REJECTED_BY_REVIEW, 9, 1),
+            max_excluded_ratio=0.2,
+            max_unreviewed_ratio=0.1
+        )
 
     def test_should_say_both_shares(self):
         assert 'not reviewed' in str(self._summary(ExclusionReason.NOT_REVIEWED))

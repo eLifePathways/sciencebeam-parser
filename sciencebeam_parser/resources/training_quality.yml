@@ -46,7 +46,22 @@ corpus:
   # whoever first meets a merely unread corpus raise it, which costs the
   # pipeline-breakage signal that threshold exists for.  This is lower, because
   # a corpus a model trains on only once it is read is not read at nine tenths.
+  #
+  # It catches the systemic case rather than judging any document: a pin recipe
+  # that changes lapses every verdict at once, and a corpus demanding acceptance
+  # would then quietly assemble almost nothing.
   max_unreviewed_ratio: 0.1
+
+  # There is deliberately no threshold on the share a reader refused.  Both of
+  # the above exist because their cause can be silent -- a measurement is
+  # inferred from proxies that misfire together, and a lapse can take a whole
+  # corpus at once -- and a ratio is how a silent fault announces itself.  A
+  # rejection is neither: somebody read the document and said no, and the
+  # decision is recorded against that document.  Refusing over it would decline
+  # the data a reader approved because other data was not, and would refuse more
+  # readily the more carefully a corpus had been read.  The share is reported
+  # with every assembly, because how much of a corpus a reader refuses is worth
+  # knowing; it is a finding about generation rather than a reason to stop.
 
 # What each corpus demands of a document before its data is used -- accepted,
 # not rejected, or measured only -- is declared with the data, in the corpus's

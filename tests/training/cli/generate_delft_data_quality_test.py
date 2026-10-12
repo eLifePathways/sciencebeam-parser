@@ -349,8 +349,7 @@ class TestWhatAReviewDecided:
         output_path = self._run(
             tmp_path, tei_source_path, record_path,
             '--require-config-path='
-            + self._write_require_config(tmp_path, 'not-rejected'),
-            '--max-excluded-ratio=1.0'
+            + self._write_require_config(tmp_path, 'not-rejected')
         )
         row = json.loads(
             Path(str(output_path) + '.quality.jsonl').read_text(encoding='utf-8')
@@ -374,3 +373,18 @@ class TestWhatAReviewDecided:
         )
         assert row['review'] == 'acceptance-lapsed'
         assert row['exclusion_reasons'][0] == 'not-reviewed'
+
+    def test_should_assemble_a_corpus_a_reader_refused_most_of(
+        self, tmp_path: Path
+    ):
+        # The one kind of loss held to no threshold: refusing here would decline
+        # the document the reader approved because the others were not.
+        verdicts = {f'refused{index}': 'rejected' for index in range(9)}
+        verdicts['accepted1'] = 'accepted'
+        tei_source_path, record_path = self._write_corpus(tmp_path, verdicts)
+        output_path = self._run(
+            tmp_path, tei_source_path, record_path,
+            f'--require-config-path={self._write_require_config(tmp_path, "accepted")}'
+        )
+        texts, _labels, _features = load_data_and_labels_crf_file(str(output_path))
+        assert len(texts) == 1

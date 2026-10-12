@@ -276,20 +276,28 @@ class CorpusMostlyUnreviewedError(CorpusRefusedError):
 class CorpusGateSummary:
     """What a corpus lost, counted by the kind of finding rather than in one total.
 
-    A document excluded for not having been read is counted apart from one that
-    failed a measurement: "the pipeline lost most of a corpus" and "most of this
-    corpus has not been read yet" are different findings needing different
-    actions, and one total for both costs the first its meaning.
+    Three kinds, because they are three findings needing three actions: a
+    measurement excluded it, nobody has read it, or a reader refused it. Only
+    the first two are held to a threshold. A measurement is inferred from
+    proxies that can misfire together, and a corpus nobody has started reading
+    collapses to nothing without saying so, so both want a tripwire for the
+    silent case. A rejection is neither inferred nor silent -- somebody looked
+    at the document and said no -- so the number is worth reporting and there is
+    nothing for a threshold to catch.
     """
     corpus: Optional[str]
     kept_count: int = 0
     excluded_count: int = 0
     unreviewed_count: int = 0
+    rejected_count: int = 0
     excluded_by_reason: Dict[str, List[str]] = field(default_factory=dict)
 
     @property
     def total_count(self) -> int:
-        return self.kept_count + self.excluded_count + self.unreviewed_count
+        return (
+            self.kept_count + self.excluded_count
+            + self.unreviewed_count + self.rejected_count
+        )
 
     @property
     def excluded_ratio(self) -> float:
@@ -303,10 +311,17 @@ class CorpusGateSummary:
             return 0.0
         return self.unreviewed_count / self.total_count
 
+    @property
+    def rejected_ratio(self) -> float:
+        if not self.total_count:
+            return 0.0
+        return self.rejected_count / self.total_count
+
     def __str__(self) -> str:
         parts = [
             f'kept {self.kept_count} of {self.total_count} documents'
             f' ({self.excluded_ratio:.0%} excluded,'
+            f' {self.rejected_ratio:.0%} refused by a reader,'
             f' {self.unreviewed_ratio:.0%} not reviewed)'
         ]
         for reason, document_ids in sorted(self.excluded_by_reason.items()):
@@ -327,6 +342,8 @@ def get_gate_summary_by_corpus(
         assert verdict.primary_reason is not None
         if verdict.primary_reason == ExclusionReason.NOT_REVIEWED:
             summary.unreviewed_count += 1
+        elif verdict.primary_reason == ExclusionReason.REJECTED_BY_REVIEW:
+            summary.rejected_count += 1
         else:
             summary.excluded_count += 1
         summary.excluded_by_reason.setdefault(verdict.primary_reason, []).append(
@@ -354,11 +371,17 @@ def check_corpus_loss_or_fail(
 ) -> None:
     """Refuse rather than proceed when a corpus loses more than the stated share.
 
-    Each kind of loss is refused against its own threshold, and the refusal says
-    which one caused it. Reading the rest of a corpus and fixing a pipeline that
-    drops documents are different pieces of work, so one threshold for both would
-    make whoever first meets a merely unread corpus raise it -- which costs the
+    Each threshold covers one kind of loss, and the refusal says which one caused
+    it: reading the rest of a corpus and fixing a pipeline that drops documents
+    are different pieces of work, so one threshold for both would make whoever
+    first meets a merely unread corpus raise it -- which costs the
     pipeline-breakage signal the threshold exists for.
+
+    Documents a reader refused are held to no threshold. They are the one kind
+    of loss that is neither inferred nor silent, so there is no fault for a
+    tripwire to catch, and refusing over them would decline the data a reader
+    approved because other data was not -- and would refuse more readily the more
+    carefully a corpus was read.
     """
     mostly_excluded = [
         summary
