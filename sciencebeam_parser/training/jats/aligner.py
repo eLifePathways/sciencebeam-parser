@@ -984,6 +984,34 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
     return gap_match
 
 
+def is_contained_in_parent_match(
+    fv: JatsFieldValue,
+    parent_match_by_field: Dict[str, Tuple[int, int, int]],
+) -> bool:
+    """Whether this value's search range is containment rather than a floor.
+
+    A floor says where a value probably is not, from the order the document
+    reads in, and may be wrong where the page disagrees with the JATS.  A
+    sub-field whose parent has been matched is not that kind of statement: a
+    reference's author is inside that reference, and no evidence about reading
+    order makes it otherwise.
+    """
+    return fv.sub_field_name is not None and fv.field_name in parent_match_by_field
+
+
+def narrow_search_range_to_window(
+    search_start: int,
+    search_end: Optional[int],
+    window: Tuple[int, int],
+) -> Tuple[int, Optional[int]]:
+    """The containment range, narrowed to the window without escaping it."""
+    narrowed_start = max(search_start, window[0])
+    narrowed_end = window[1] if search_end is None else min(search_end, window[1])
+    if narrowed_end <= narrowed_start + 1:
+        return search_start, search_end
+    return narrowed_start, narrowed_end
+
+
 # The per-field window rules have outgrown one function; splitting them is worth
 # doing next time this needs a branch.
 def _search_range(  # pylint: disable=too-many-locals
@@ -998,7 +1026,7 @@ def _search_range(  # pylint: disable=too-many-locals
     post_body_text_end: Optional[Dict[str, int]] = None,
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
-    if fv.sub_field_name is not None and fv.field_name in parent_match_by_field:
+    if is_contained_in_parent_match(fv, parent_match_by_field):
         p_start, p_end, pre_parent_ref_floor = parent_match_by_field[fv.field_name]
         if fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL and _is_pure_number(fv.text):
             pre = _SUB_FIELD_PARENT_PRE_BUFFER
@@ -1409,12 +1437,20 @@ class LayoutDocumentJatsAligner:
             )
             window = expected_window.get(value_index)
             if window is not None:
-                # Where the anchors either side say this value belongs.  The
-                # floors describe where a value cannot have been; this says
-                # where it should be, which is the better question when the
-                # document's order and the page's disagree.
-                search_start = window[0]
-                search_end = window[1] if window[1] > window[0] + 1 else None
+                # Where the anchors either side say this value belongs.  A floor
+                # describes where a value cannot have been, and the window is the
+                # better question when the document's order and the page's
+                # disagree, so it replaces one.  Containment is not a floor, and
+                # there the window narrows the range rather than replacing it:
+                # steered out of its own reference, a sub-field lands in a
+                # neighbouring one, which writes an element that is not there.
+                if is_contained_in_parent_match(fv, parent_match_by_field):
+                    search_start, search_end = narrow_search_range_to_window(
+                        search_start, search_end, window
+                    )
+                else:
+                    search_start = window[0]
+                    search_end = window[1] if window[1] > window[0] + 1 else None
             masked = (
                 sub_field_masked_ranges.get(fv.field_name)
                 if fv.sub_field_name is not None

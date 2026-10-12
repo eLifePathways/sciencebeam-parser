@@ -7,7 +7,11 @@ from sciencebeam_parser.document.layout_document import (
     LayoutLine,
     LayoutPage,
 )
-from sciencebeam_parser.training.jats.aligner import AlignmentConfig, LayoutDocumentJatsAligner
+from sciencebeam_parser.training.jats.aligner import (
+    AlignmentConfig,
+    LayoutDocumentJatsAligner,
+    narrow_search_range_to_window,
+)
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
@@ -1428,3 +1432,91 @@ class TestPostBodyRegionFloor:
             ),
         ])
         assert all(annotated.get_token_field(t) is None for t in doc.iter_all_tokens())
+
+
+class TestReferenceSubFieldContainment:
+    """A reference's sub-field belongs to that reference, whatever the anchors say."""
+
+    ANCHOR_BEFORE = 'A unique opening sentence about autophagy in cultured plant cells'
+    ANCHOR_AFTER = 'A unique closing sentence about the limitations of the present study'
+    REFERENCE_ONE = (
+        'Fleming PS, Koletsi D, Ioannidis JP: The first cited title.'
+        ' J Clin Epidemiol. 2016; 78: 34-42.'
+    )
+    REFERENCE_TWO = (
+        'Howick J, Koletsi D, Pandis N: The second cited title.'
+        ' J Clin Epidemiol. 2020; 126: 154-159.'
+    )
+
+    def _align(self):
+        doc = _make_doc(
+            'Introduction',
+            self.ANCHOR_BEFORE,
+            'References',
+            f'1. {self.REFERENCE_ONE}',
+            f'2. {self.REFERENCE_TWO}',
+            self.ANCHOR_AFTER,
+        )
+        field_values = [
+            _fv(self.ANCHOR_BEFORE, JatsFieldNames.BODY_SECTION_PARAGRAPH),
+            _fv(self.REFERENCE_ONE, JatsFieldNames.REFERENCE),
+            _fv('Fleming PS', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Koletsi D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('J Clin Epidemiol', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_SOURCE),
+            _fv(self.REFERENCE_TWO, JatsFieldNames.REFERENCE),
+            _fv('Howick J', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Koletsi D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('J Clin Epidemiol', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_SOURCE),
+            _fv(self.ANCHOR_AFTER, JatsFieldNames.BODY_SECTION_PARAGRAPH),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _reference_instances_of_line(self, doc, annotated, line_index: int):
+        line = list(doc.iter_all_lines())[line_index]
+        return {
+            annotated.get_token_instance(token)
+            for token in line.tokens
+            if annotated.get_token_field(token) == JatsFieldNames.REFERENCE
+        }
+
+    def test_each_printed_reference_carries_one_instance(self):
+        doc, annotated = self._align()
+        first = self._reference_instances_of_line(doc, annotated, 3)
+        second = self._reference_instances_of_line(doc, annotated, 4)
+        assert len(first) == 1, (
+            f'the first reference holds instances {sorted(first)};'
+            ' a shared author or journal title has been matched into it'
+        )
+        assert len(second) == 1, (
+            f'the second reference holds instances {sorted(second)};'
+            ' a shared author or journal title has been matched into it'
+        )
+        assert first != second
+
+    def test_the_shared_author_stays_in_its_own_reference(self):
+        doc, annotated = self._align()
+        lines = list(doc.iter_all_lines())
+        shared = [
+            (line_index, token)
+            for line_index in (3, 4)
+            for token in lines[line_index].tokens
+            if token.text == 'Koletsi'
+        ]
+        assert len(shared) == 2
+        assert {
+            annotated.get_token_instance(token) for _, token in shared
+        } == {1, 2}, 'both copies of the shared author were given to one reference'
+
+
+class TestNarrowSearchRangeToWindow:
+    def test_a_window_inside_the_range_narrows_it(self):
+        assert narrow_search_range_to_window(100, 900, (200, 400)) == (200, 400)
+
+    def test_a_window_reaching_outside_the_range_does_not_widen_it(self):
+        assert narrow_search_range_to_window(100, 900, (0, 5000)) == (100, 900)
+
+    def test_an_open_ended_range_takes_the_window_end(self):
+        assert narrow_search_range_to_window(100, None, (0, 5000)) == (100, 5000)
+
+    def test_a_window_that_leaves_nothing_keeps_the_range(self):
+        assert narrow_search_range_to_window(100, 900, (0, 100)) == (100, 900)
