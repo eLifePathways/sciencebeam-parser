@@ -1249,6 +1249,14 @@ def _split_references_by_jats_instance(
 
 class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'reference-segmenter'
+    SPANS_FILENAME_SUFFIX = '.reference-segmenter.spans.jsonl'
+    SPANS_SUB_DIRECTORY = 'reference-segmenter/corpus/spans'
+
+    def get_spans_filename_suffix(self) -> Optional[str]:
+        return ReferenceSegmenterModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+
+    def get_spans_sub_directory(self) -> Optional[str]:
+        return ReferenceSegmenterModelTrainingDataGenerator.SPANS_SUB_DIRECTORY
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.reference_segmenter_model

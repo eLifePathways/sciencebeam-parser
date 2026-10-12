@@ -20,6 +20,10 @@ from sciencebeam_parser.models.header.training_data import (
     ROOT_TRAINING_XML_ELEMENT_PATH as HEADER_ROOT_ELEMENT_PATH,
     TRAINING_XML_ELEMENT_PATH_BY_LABEL as HEADER_ELEMENT_PATH_BY_LABEL
 )
+from sciencebeam_parser.models.reference_segmenter.training_data import (
+    ReferenceSegmenterTeiTrainingDataGenerator,
+    TRAINING_XML_ELEMENT_PATH_BY_LABEL as REFERENCE_SEGMENTER_ELEMENT_PATH_BY_LABEL
+)
 from sciencebeam_parser.models.segmentation.training_data import (
     SegmentationTeiTrainingDataGenerator,
     TRAINING_XML_ELEMENT_PATH_BY_LABEL as SEGMENTATION_ELEMENT_PATH_BY_LABEL
@@ -112,6 +116,20 @@ AUTHOR_THEN_AFFILIATION_LINE = [
 ]
 
 
+def _get_reference_segmenter_spans(
+    token_label_line_list: Sequence[Tuple[str, str, int]]
+) -> List[LabelledSpan]:
+    generator = ReferenceSegmenterTeiTrainingDataGenerator()
+    _, trace = generator.get_training_tei_xml_and_trace([
+        _get_header_model_data_list(token_label_line_list)
+    ])
+    return list(iter_labelled_spans(
+        trace,
+        REFERENCE_SEGMENTER_ELEMENT_PATH_BY_LABEL,
+        generator.root_training_xml_element_path
+    ))
+
+
 class TestIterLabelledSpans:
     def test_should_split_a_line_carrying_two_labels_into_two_spans(self):
         spans, _ = _get_header_spans(AUTHOR_THEN_AFFILIATION_LINE)
@@ -144,6 +162,53 @@ class TestIterLabelledSpans:
         assert [(span.label, span.text.strip()) for span in spans] == [
             ('<affiliation>', 'A'), ('<affiliation>', 'B')
         ]
+
+    def test_should_number_two_sibling_elements_of_one_label_apart(self):
+        spans, _ = _get_header_spans([
+            ('A', 'B-<affiliation>', 1),
+            ('B', 'B-<affiliation>', 1)
+        ])
+        assert [span.instance for span in spans] == [1, 2]
+
+    def test_should_give_every_span_of_one_element_the_same_instance(self):
+        spans = _get_reference_segmenter_spans([
+            ('1', 'B-<label>', 1),
+            ('Bloggs', 'I-<reference>', 1),
+            ('J', 'I-<reference>', 2)
+        ])
+        assert [(span.label, span.instance) for span in spans] == [
+            ('<label>', 1), ('<reference>', 1), ('<reference>', 1)
+        ]
+
+    def test_should_number_each_reference_apart_across_a_line_break(self):
+        spans = _get_reference_segmenter_spans([
+            ('First', 'B-<reference>', 1),
+            ('Second', 'B-<reference>', 2)
+        ])
+        assert [(span.label, span.instance) for span in spans] == [
+            ('<reference>', 1), ('<reference>', 2)
+        ]
+
+    def test_should_leave_text_in_the_root_element_without_an_instance(self):
+        spans, _ = _get_header_spans([
+            ('Loose', 'O', 1),
+            ('Title', 'B-<title>', 2)
+        ])
+        assert [(span.label, span.instance) for span in spans] == [
+            ('<other>', None), ('<title>', 1)
+        ]
+
+    def test_should_number_instances_across_a_root_boundary(self):
+        generator = HeaderTeiTrainingDataGenerator()
+        _, trace = generator.get_training_tei_xml_and_trace([
+            _get_header_model_data_list([('First', 'B-<title>', 1)]),
+            _get_header_model_data_list([('Second', 'B-<title>', 1)])
+        ])
+        spans = list(iter_labelled_spans(
+            trace, HEADER_ELEMENT_PATH_BY_LABEL,
+            generator.root_training_xml_element_path
+        ))
+        assert [span.instance for span in spans] == [1, 2]
 
     def test_should_label_a_span_in_the_root_element_as_the_parser_reads_it(self):
         """`<note>` and unlabelled text both sit bare under `<front>`, and the
@@ -288,16 +353,22 @@ class TestGetLabelledContentHash:
         )
 
     def test_should_name_the_version_and_the_algorithm_it_used(self):
-        assert get_labelled_content_hash([self._get_span()]).startswith('v1:sha256:')
+        assert get_labelled_content_hash([self._get_span()]).startswith('v2:sha256:')
 
     def test_should_stay_at_the_value_a_corpus_has_already_committed(self):
         """A corpus commits these, so changing how one is taken invalidates them all."""
         assert get_labelled_content_hash([
-            LabelledSpan(line_index=0, label='<title>', text='A title', coordinates=None),
-            LabelledSpan(line_index=1, label='<author>', text='\nJo Bloggs', coordinates=None)
+            LabelledSpan(
+                line_index=0, label='<title>', text='A title',
+                coordinates=None, instance=1
+            ),
+            LabelledSpan(
+                line_index=1, label='<author>', text='\nJo Bloggs',
+                coordinates=None, instance=2
+            )
         ]) == (
-            'v1:sha256:'
-            'b6208f0c3b9b25f77e2da405101a7e5aeacc8ac5f365ee38a604b6345f73f354'
+            'v2:sha256:'
+            '84a128404bb391de2450ec4d04b266e0376c50bd5d6b95643df60c235f8e3144'
         )
 
     def test_should_not_change_where_a_span_only_moved_on_the_page(self):
@@ -351,6 +422,41 @@ class TestGetLabelledContentHash:
             self._get_span(label='<affiliation>', text=' B')
         ])
 
+    def test_should_change_where_a_reference_boundary_moved_across_a_line_break(self):
+        """A reference list meets at a line break, where the text cannot show it."""
+        one_reference = [
+            LabelledSpan(
+                line_index=index, label='<reference>', text=text,
+                coordinates=None, instance=1
+            )
+            for index, text in enumerate(['Bloggs J,', ' Smith A: A title.'])
+        ]
+        two_references = [
+            one_reference[0],
+            one_reference[1]._replace(instance=2)
+        ]
+        assert (
+            get_labelled_content_hash(one_reference)
+            != get_labelled_content_hash(two_references)
+        )
+
+    def test_should_not_change_where_an_earlier_instance_renumbered_the_rest(self):
+        """Inserting a reference moves every ordinal after it and changes nothing."""
+        def _get_spans(first: int, second: int) -> List[LabelledSpan]:
+            return [
+                LabelledSpan(
+                    line_index=index, label='<reference>', text=text,
+                    coordinates=None, instance=instance
+                )
+                for index, (text, instance) in enumerate(
+                    [('First', first), ('Second', second)]
+                )
+            ]
+        assert (
+            get_labelled_content_hash(_get_spans(1, 2))
+            == get_labelled_content_hash(_get_spans(7, 8))
+        )
+
 
 class TestFormatSpansRecord:
     def _get_json_dicts(self, record: str) -> List[dict]:
@@ -399,6 +505,26 @@ class TestFormatSpansRecord:
         ))
         assert json_dicts[0]['page_count'] == 3
         assert json_dicts[0]['pages'] == [{'page': 2, 'width': 595.0, 'height': 842.0}]
+
+    def test_should_name_the_instance_of_a_span_and_leave_it_out_in_the_root(self):
+        json_dicts = self._get_json_dicts(format_spans_record(
+            document_id='document1',
+            model_name='reference-segmenter',
+            layout_document=self._get_layout_document(1),
+            spans=[
+                LabelledSpan(
+                    line_index=0, label='<other>', text='References',
+                    coordinates=None, instance=None
+                ),
+                LabelledSpan(
+                    line_index=1, label='<reference>', text='Bloggs J',
+                    coordinates=None, instance=1
+                )
+            ],
+            labels=[]
+        ))
+        assert 'instance' not in json_dicts[1]
+        assert json_dicts[2]['instance'] == 1
 
     def test_should_write_the_line_position_label_and_text_of_every_span(self):
         json_dicts = self._get_json_dicts(format_spans_record(

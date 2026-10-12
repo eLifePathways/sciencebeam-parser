@@ -335,6 +335,45 @@ def _check_tei_training_data_generator_output(
 
 @log_on_exception
 class TestGenerateTrainingDataForLayoutDocument:
+    def test_should_name_the_reference_each_span_sits_in(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=True
+        )
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'reference-segmenter' / 'corpus' / 'spans',
+            SOURCE_FILENAME_1,
+            ReferenceSegmenterModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        instance_by_label = {
+            json_dict['label']: json_dict.get('instance')
+            for json_dict in json_dicts[1:]
+        }
+        assert instance_by_label['<reference>'] == 1
+        assert instance_by_label['<label>'] == 1
+        assert instance_by_label.get('<other>') is None
+
+
     def test_should_generate_data_using_mock_models(  # noqa pylint: disable=too-many-locals, too-many-statements
         self,
         tmp_path: Path,
@@ -856,6 +895,43 @@ class TestMain:
         )
         assert json_dicts[0]['labels']
         assert json_dicts[0]['span_count'] == len(json_dicts) - 1
+
+    def test_should_write_a_span_record_for_the_reference_segmenter_model(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'reference-segmenter' / 'corpus' / 'spans',
+            MINIMAL_EXAMPLE_PDF,
+            ReferenceSegmenterModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        tei_path = _get_expected_file_path_with_suffix(
+            output_path / 'reference-segmenter' / 'corpus' / 'tei',
+            MINIMAL_EXAMPLE_PDF,
+            ReferenceSegmenterTeiTrainingDataGenerator().get_default_tei_filename_suffix()
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        assert json_dicts[0]['model'] == 'reference-segmenter'
+        assert json_dicts[0]['line_count'] == len(
+            etree.parse(str(tei_path)).getroot().xpath('//lb')
+        )
+        assert json_dicts[0]['span_count'] == len(json_dicts) - 1
+        assert json_dicts[0]['labels']
 
     def test_should_not_write_a_span_record_for_another_model(
         self,
