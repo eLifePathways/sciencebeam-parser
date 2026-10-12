@@ -3,6 +3,7 @@ import pytest
 from sciencebeam_parser.training.quality.counting import MODELS_WITHOUT_ENTITY_COUNT
 from sciencebeam_parser.training.quality.gate import (
     CorpusMostlyExcludedError,
+    CorpusMostlyUnreviewedError,
     ExclusionReason,
     ModelQualityThresholds,
     QualityVerdict,
@@ -11,6 +12,8 @@ from sciencebeam_parser.training.quality.gate import (
     get_quality_verdict,
     load_training_quality_config
 )
+from sciencebeam_parser.training.quality.requirement import Requirement
+from sciencebeam_parser.training.quality.review import ReviewStanding
 
 
 REFERENCE_SEGMENTER = 'reference-segmenter'
@@ -40,6 +43,7 @@ class TestLoadTrainingQualityConfig:
         assert thresholds.min_entity_ratio == 0.8
         assert thresholds.has_cardinality_check
         assert 0 < config.max_excluded_ratio < 1
+        assert 0 < config.max_unreviewed_ratio < 1
 
     def test_should_declare_a_region_model_as_having_no_cardinality(self):
         thresholds = load_training_quality_config().get_thresholds_for_model('segmentation')
@@ -271,3 +275,146 @@ class TestConfiguredModelsAgainstCounting:
         for thresholds in config.thresholds_by_model.values():
             if not thresholds.has_cardinality_check:
                 assert thresholds.reason, thresholds.model_name
+
+
+SEGMENTATION_THRESHOLDS = ModelQualityThresholds(
+    model_name='segmentation', cardinality='none', reason='regions occur once'
+)
+
+
+def _measured_verdict(**kwargs) -> QualityVerdict:
+    """A document the thresholds would have excluded, judged under a requirement."""
+    return _verdict(
+        jats_status='ok', jats_reference_count=40, written=True,
+        entity_element_count=10, entity_start_count=10, sequence_count=1,
+        **kwargs
+    )
+
+
+class TestGetQualityVerdictUnderARequirement:
+    def test_should_ignore_a_verdict_where_only_the_measurement_is_required(self):
+        verdict = _measured_verdict(
+            requirement=Requirement.MEASURED, review=ReviewStanding.ACCEPTED
+        )
+        assert verdict.exclusion_reasons == [ExclusionReason.ELEMENTS_SHORT_OF_JATS]
+
+    def test_should_admit_a_document_a_reader_accepted(self):
+        verdict = _measured_verdict(
+            requirement=Requirement.ACCEPTED, review=ReviewStanding.ACCEPTED
+        )
+        assert not verdict.is_excluded
+
+    def test_should_keep_what_the_measurement_said_about_an_admitted_document(self):
+        verdict = _measured_verdict(
+            requirement=Requirement.ACCEPTED, review=ReviewStanding.ACCEPTED
+        )
+        assert verdict.detail['overruled_by_review'] == [
+            ExclusionReason.ELEMENTS_SHORT_OF_JATS
+        ]
+
+    def test_should_not_admit_a_document_with_nothing_to_train_on(self):
+        # Acceptance overrules a measurement, not an absence.
+        verdict = _verdict(
+            thresholds=SEGMENTATION_THRESHOLDS, sequence_count=0,
+            requirement=Requirement.ACCEPTED, review=ReviewStanding.ACCEPTED
+        )
+        assert verdict.exclusion_reasons == [ExclusionReason.NO_TRAINING_SEQUENCES]
+
+    def test_should_exclude_a_document_a_reader_rejected(self):
+        verdict = _verdict(
+            thresholds=SEGMENTATION_THRESHOLDS, sequence_count=1,
+            requirement=Requirement.ACCEPTED, review=ReviewStanding.REJECTED
+        )
+        assert verdict.primary_reason == ExclusionReason.REJECTED_BY_REVIEW
+
+    def test_should_exclude_a_rejection_even_where_only_that_is_required(self):
+        verdict = _verdict(
+            thresholds=SEGMENTATION_THRESHOLDS, sequence_count=1,
+            requirement=Requirement.NOT_REJECTED, review=ReviewStanding.REJECTED
+        )
+        assert verdict.primary_reason == ExclusionReason.REJECTED_BY_REVIEW
+
+    def test_should_exclude_a_document_nobody_has_read_where_acceptance_is_required(
+        self
+    ):
+        verdict = _verdict(
+            thresholds=SEGMENTATION_THRESHOLDS, sequence_count=1,
+            requirement=Requirement.ACCEPTED, review=ReviewStanding.UNREVIEWED
+        )
+        assert verdict.primary_reason == ExclusionReason.NOT_REVIEWED
+
+    def test_should_keep_a_document_nobody_has_read_where_only_rejection_excludes(self):
+        # A rejection a regeneration lapsed is visible rather than binding.
+        verdict = _verdict(
+            thresholds=SEGMENTATION_THRESHOLDS, sequence_count=1,
+            requirement=Requirement.NOT_REJECTED, review=ReviewStanding.UNREVIEWED
+        )
+        assert not verdict.is_excluded
+
+    def test_should_still_measure_a_document_nobody_has_read_where_rejection_excludes(
+        self
+    ):
+        verdict = _measured_verdict(
+            requirement=Requirement.NOT_REJECTED, review=ReviewStanding.UNREVIEWED
+        )
+        assert verdict.exclusion_reasons == [ExclusionReason.ELEMENTS_SHORT_OF_JATS]
+
+
+class TestCountingTheTwoKindsOfLossApart:
+    def _summary(self, reason, excluded_count=1, kept_count=9):
+        return get_gate_summary_by_corpus(
+            [(QualityVerdict(f'dropped{index}', [reason]), 'ore')
+             for index in range(excluded_count)]
+            + [(QualityVerdict(f'kept{index}'), 'ore') for index in range(kept_count)]
+        )['ore']
+
+    def test_should_count_an_unread_document_apart_from_a_failed_measurement(self):
+        summary = self._summary(ExclusionReason.NOT_REVIEWED)
+        assert summary.unreviewed_count == 1
+        assert summary.excluded_count == 0
+        assert summary.total_count == 10
+
+    def test_should_count_a_failed_measurement_as_excluded(self):
+        summary = self._summary(ExclusionReason.ELEMENTS_SHORT_OF_JATS)
+        assert summary.excluded_count == 1
+        assert summary.unreviewed_count == 0
+
+    def test_should_count_a_rejection_as_excluded_rather_than_unread(self):
+        summary = self._summary(ExclusionReason.REJECTED_BY_REVIEW)
+        assert summary.excluded_count == 1
+        assert summary.unreviewed_count == 0
+
+    def test_should_say_both_shares(self):
+        assert 'not reviewed' in str(self._summary(ExclusionReason.NOT_REVIEWED))
+
+    def test_should_not_refuse_over_the_excluded_ratio_for_documents_merely_unread(
+        self
+    ):
+        check_corpus_loss_or_fail(
+            self._summary_by_corpus(ExclusionReason.NOT_REVIEWED, 3, 7),
+            max_excluded_ratio=0.2,
+            max_unreviewed_ratio=0.5
+        )
+
+    def test_should_refuse_against_the_unreviewed_threshold_and_name_it(self):
+        with pytest.raises(CorpusMostlyUnreviewedError) as exc_info:
+            check_corpus_loss_or_fail(
+                self._summary_by_corpus(ExclusionReason.NOT_REVIEWED, 3, 7),
+                max_excluded_ratio=0.2,
+                max_unreviewed_ratio=0.1
+            )
+        assert 'unreviewed' in str(exc_info.value)
+        assert 'ore' in str(exc_info.value)
+
+    def test_should_not_check_the_unreviewed_share_where_none_is_stated(self):
+        check_corpus_loss_or_fail(
+            self._summary_by_corpus(ExclusionReason.NOT_REVIEWED, 9, 1),
+            max_excluded_ratio=0.2
+        )
+
+    def _summary_by_corpus(self, reason, excluded_count, kept_count):
+        return get_gate_summary_by_corpus(
+            [(QualityVerdict(f'dropped{index}', [reason]), 'ore')
+             for index in range(excluded_count)]
+            + [(QualityVerdict(f'kept{index}'), 'ore') for index in range(kept_count)]
+        )

@@ -49,13 +49,18 @@ from sciencebeam_parser.training.quality.assembly import (
 )
 from sciencebeam_parser.training.quality.gate import (
     TRAINING_QUALITY_CONFIG_FILE,
-    CorpusMostlyExcludedError,
     TrainingQualityConfig,
+    CorpusRefusedError,
     check_corpus_loss_or_fail,
     get_gate_summary_by_corpus,
     get_quality_verdict,
     load_training_quality_config
 )
+from sciencebeam_parser.training.quality.requirement import (
+    get_requirement,
+    load_requirement_by_corpus_and_model
+)
+from sciencebeam_parser.training.quality.review import ReviewStanding
 from sciencebeam_parser.training.quality.counting import (
     count_entity_starts,
     count_label_starts_per_sequence,
@@ -128,6 +133,26 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         type=str,
         default=TRAINING_QUALITY_CONFIG_FILE,
         help='Thresholds the quality filter applies (default: the shipped config).'
+    )
+    parser.add_argument(
+        '--require-config-path',
+        type=str,
+        required=False,
+        help=(
+            'The corpus\'s own training-source.yml, whose `require` block states what'
+            ' each corpus and model demands before its data is used: accepted, not'
+            ' rejected, or measured only. Without it nothing is demanded beyond the'
+            ' thresholds, which is what `measured` means.'
+        )
+    )
+    parser.add_argument(
+        '--max-unreviewed-ratio',
+        type=float,
+        required=False,
+        help=(
+            'Override the configured share of a corpus that may go unreviewed before'
+            ' assembly refuses. Counted apart from the share excluded by a measurement.'
+        )
     )
     parser.add_argument(
         '--max-excluded-ratio',
@@ -380,18 +405,27 @@ def get_assembled_document_record(
     result: DelftDocumentResult,
     generated_record_by_document_id: Mapping[str, GeneratedDocumentRecord],
     quality_config: Optional[TrainingQualityConfig] = None,
+    requirement_by_pair: Optional[Mapping[Tuple[str, str], str]] = None,
 ) -> AssembledDocumentRecord:
     generated = generated_record_by_document_id.get(document_id)
     entity_start_count = count_entity_starts(
         model_name, result.labeled_layout_tokens_list
     )
+    canonical_model_name = get_canonical_model_name(model_name)
+    review = generated.review if generated else ReviewStanding.UNREVIEWED
     verdict = None
     if quality_config is not None:
         verdict = get_quality_verdict(
             document_id=document_id,
             thresholds=quality_config.get_thresholds_for_model(
-                get_canonical_model_name(model_name)
+                canonical_model_name
             ),
+            requirement=get_requirement(
+                requirement_by_pair,
+                generated.corpus if generated else None,
+                canonical_model_name
+            ),
+            review=review,
             jats_status=generated.jats_status if generated else None,
             jats_reference_count=generated.jats_reference_count if generated else None,
             written=generated.written if generated else None,
@@ -401,8 +435,9 @@ def get_assembled_document_record(
         )
     return AssembledDocumentRecord(
         document_id=document_id,
-        model_name=get_canonical_model_name(model_name),
+        model_name=canonical_model_name,
         corpus=generated.corpus if generated else None,
+        review=review,
         sequence_count=len(result.labeled_layout_tokens_list),
         entity_start_count=entity_start_count,
         label_start_counts=(
@@ -438,6 +473,7 @@ def log_gate_summary(
     assembled_records: Sequence[AssembledDocumentRecord],
     quality_config: TrainingQualityConfig,
     max_excluded_ratio: Optional[float] = None,
+    max_unreviewed_ratio: Optional[float] = None,
     delft_output_path: Optional[str] = None,
 ) -> None:
     summary_by_corpus = get_gate_summary_by_corpus([
@@ -460,9 +496,12 @@ def log_gate_summary(
             summary_by_corpus,
             max_excluded_ratio
             if max_excluded_ratio is not None
-            else quality_config.max_excluded_ratio
+            else quality_config.max_excluded_ratio,
+            max_unreviewed_ratio
+            if max_unreviewed_ratio is not None
+            else quality_config.max_unreviewed_ratio
         )
-    except CorpusMostlyExcludedError:
+    except CorpusRefusedError:
         if delft_output_path:
             discard_refused_output(delft_output_path)
         raise
@@ -503,7 +542,9 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     quality_output_path: Optional[str] = None,
     quality_filter: bool = False,
     quality_config_path: str = TRAINING_QUALITY_CONFIG_FILE,
-    max_excluded_ratio: Optional[float] = None
+    require_config_path: Optional[str] = None,
+    max_excluded_ratio: Optional[float] = None,
+    max_unreviewed_ratio: Optional[float] = None
 ):
     training_tei_parser = get_training_tei_parser_for_model_name(
         model_name,
@@ -543,10 +584,20 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     quality_config = (
         load_training_quality_config(quality_config_path) if quality_filter else None
     )
+    requirement_by_pair = (
+        load_requirement_by_corpus_and_model(require_config_path)
+        if require_config_path
+        else None
+    )
     if quality_filter and not quality_record_path:
         LOGGER.warning(
             'no --quality-record-path given, so the thresholds against the JATS and'
             ' the generated elements cannot be applied and are reported as unchecked'
+        )
+    if quality_filter and not require_config_path:
+        LOGGER.warning(
+            'no --require-config-path given, so nothing is demanded of a document'
+            ' beyond the thresholds and every verdict is recorded rather than read'
         )
     assembled_records: List[AssembledDocumentRecord] = []
     LOGGER.info('writing to : %r', delft_output_path)
@@ -571,6 +622,7 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
                 result=result,
                 generated_record_by_document_id=generated_record_by_document_id,
                 quality_config=quality_config,
+                requirement_by_pair=requirement_by_pair,
             )
             assembled_records.append(record)
             if record.verdict is not None and record.verdict.is_excluded:
@@ -592,6 +644,7 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
         log_gate_summary(
             model_name, assembled_records, quality_config,
             max_excluded_ratio=max_excluded_ratio,
+            max_unreviewed_ratio=max_unreviewed_ratio,
             delft_output_path=delft_output_path
         )
 
@@ -613,7 +666,9 @@ def run(args: argparse.Namespace):
         quality_output_path=args.quality_output_path,
         quality_filter=args.quality_filter,
         quality_config_path=args.quality_config_path,
-        max_excluded_ratio=args.max_excluded_ratio
+        require_config_path=args.require_config_path,
+        max_excluded_ratio=args.max_excluded_ratio,
+        max_unreviewed_ratio=args.max_unreviewed_ratio
     )
 
 
