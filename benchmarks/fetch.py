@@ -26,7 +26,7 @@ from benchmarks.corpus_source import (
     resolve_source,
 )
 from benchmarks.sampling import positional_ids, stratified_ids
-from benchmarks.training_records import SourceManifest
+from benchmarks.training_records import SourceManifest, read_source_manifest
 from benchmarks.training_selection import (
     ModeSelection,
     read_selection,
@@ -109,7 +109,7 @@ def resolved_sources(
         source.corpus: {
             "repo_id": source.repo_id,
             "revision": source.revision,
-            "location": source.path or str(source.file),
+            "location": source.location,
             **({"manifest": source.manifest} if source.manifest else {}),
         }
         for source in iter_corpus_sources(cfg, split, include)
@@ -254,6 +254,7 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     include: Optional[Iterable[str]] = None,
     write_manifest: bool = False,
     selection_dir: Optional[Path] = None,
+    recheck_upstream: bool = True,
 ) -> List[Dict[str, str]]:
     """Materialise gold XML, and PDFs when asked, for each corpus of one split.
 
@@ -286,9 +287,75 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 with_pdf=with_pdf,
                 write_manifest=write_manifest,
                 selection_dir=selection_dir,
+                recheck_upstream=recheck_upstream,
             )
         )
     return records
+
+
+def _records_without_reading_upstream(
+    source: CorpusSource,
+    raw_n: Optional[int],
+    seed: int,
+    mode: str,
+    split: str,
+    corpus_dir: Path,
+    with_pdf: bool,
+    selection_dir: Path,
+) -> Optional[List[Dict[str, str]]]:
+    """What the mode names, from the record a previous fetch left, or None.
+
+    The manifest says what that fetch asked of which revision and what it got, so
+    where it still describes the configuration and the documents are still on disk,
+    reading the dataset again cannot change the answer: the revision is pinned, and
+    the one question upstream decides -- whether the selection can grow -- was asked
+    of that revision and recorded here.
+
+    None wherever any of that stops holding, which puts the caller back on the
+    fetching path.
+    """
+    manifest = read_source_manifest(corpus_dir)
+    if manifest is None:
+        return None
+    declared = (source.corpus, split, mode, seed, raw_n)
+    recorded = (
+        manifest.corpus,
+        manifest.split,
+        manifest.mode,
+        manifest.seed,
+        manifest.requested_document_count,
+    )
+    if declared != recorded:
+        return None
+    if (source.repo_id, source.revision, source.location) != (
+        manifest.repo_id, manifest.revision, manifest.location
+    ):
+        return None
+
+    prefix = read_selection(selection_dir, split, source.corpus)
+    if raw_n is not None:
+        prefix = prefix[:raw_n]
+    # The selection holds the id the dataset stores, the manifest the name the
+    # document is materialised under.
+    if sorted(_record_id_of(raw_id) for raw_id in prefix) != sorted(
+        list(manifest.selected_document_ids) + list(manifest.missing_document_ids)
+    ):
+        return None
+
+    paths_by_record_id = {
+        record_id: _record_paths(corpus_dir, record_id, with_pdf)
+        for record_id in manifest.selected_document_ids
+    }
+    if not all(
+        path.exists()
+        for paths in paths_by_record_id.values()
+        for path in paths.values()
+    ):
+        return None
+    return [
+        _record(source.corpus, record_id, paths_by_record_id[record_id])
+        for record_id in manifest.selected_document_ids
+    ]
 
 
 def _fetch_corpus(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -302,6 +369,42 @@ def _fetch_corpus(  # pylint: disable=too-many-arguments,too-many-positional-arg
     split: str = "train",
     write_manifest: bool = False,
     selection_dir: Optional[Path] = None,
+    recheck_upstream: bool = True,
+) -> List[Dict[str, str]]:
+    """This corpus's records for one mode, from the record where that still answers.
+
+    `recheck_upstream` is what decides: a caller whose job is to fetch leaves it on
+    and reads the dataset every time, and a caller rebuilding from these trees turns
+    it off and reads nothing it does not have to.
+    """
+    if not recheck_upstream and selection_dir is not None:
+        recorded = _records_without_reading_upstream(
+            source, raw_n, seed, mode, split, corpus_dir, with_pdf, selection_dir
+        )
+        if recorded is not None:
+            LOGGER.info(
+                "Corpus %r: the manifest in %s still answers for mode %r, so its "
+                "%d record(s) are taken as they are and %s is not read",
+                source.corpus, corpus_dir, mode, len(recorded), source.describe(),
+            )
+            return recorded
+    return _fetch_corpus_from_upstream(
+        reader, source, raw_n, seed, mode, corpus_dir, with_pdf,
+        split, write_manifest, selection_dir,
+    )
+
+
+def _fetch_corpus_from_upstream(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    reader: RepoReader,
+    source: CorpusSource,
+    raw_n: Optional[int],
+    seed: int,
+    mode: str,
+    corpus_dir: Path,
+    with_pdf: bool,
+    split: str,
+    write_manifest: bool,
+    selection_dir: Optional[Path],
 ) -> List[Dict[str, str]]:
     LOGGER.info(
         "Fetching corpus %r from %s (mode=%s, n=%s)",
@@ -359,7 +462,7 @@ def _write_source_manifest(  # pylint: disable=too-many-arguments,too-many-posit
         seed=seed,
         repo_id=source.repo_id,
         revision=source.revision,
-        location=source.path or str(source.file),
+        location=source.location,
         commit=reader.resolve_commit(source),
         requested_document_count=raw_n,
         selected_document_ids=[_record_id_of(raw_id) for raw_id in picked],
@@ -407,6 +510,7 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
     data_dir: Path,
     include: Optional[Iterable[str]] = None,
     selection_dir: Optional[Path] = None,
+    recheck_upstream: bool = True,
 ) -> List[Dict[str, str]]:
     """Fetch PDF + JATS XML for CC-BY corpora only.
 
@@ -417,6 +521,11 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
     `include` narrows the fetch to corpora that are already allowed; it cannot
     widen it. A corpus outside `cc_by_corpora` is not opt-in here, it is refused,
     because this path generates training data that is published elsewhere.
+
+    `recheck_upstream=False` lets a corpus whose recorded selection and manifest
+    still describe what is on disk be taken from them, without reading the dataset
+    at all. It needs `selection_dir`, and is for a caller rebuilding from these
+    trees rather than one whose job is to fetch.
     """
     allowed: Set[str] = set(cfg.get("cc_by_corpora", []))
     filtered_sampling = {
@@ -436,6 +545,7 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
         include=in_split,
         write_manifest=True,
         selection_dir=selection_dir,
+        recheck_upstream=recheck_upstream,
     )
 
 

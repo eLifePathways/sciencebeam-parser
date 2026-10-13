@@ -184,6 +184,7 @@ def _fetch_modes(
         fetch_training_source(
             cfg, mode, split, source_root / mode,
             include=corpora, selection_dir=selection_dir,
+            recheck_upstream=False,
         )
 
 

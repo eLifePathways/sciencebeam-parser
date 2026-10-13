@@ -73,8 +73,17 @@ class CorpusSource:
     def is_stratified(self) -> bool:
         return self.stratum_column is not None
 
+    @property
+    def location(self) -> str:
+        """The prefix or the file this corpus is read from.
+
+        Named here because a source manifest records it and a later run compares
+        what it recorded against what the configuration now resolves.
+        """
+        return self.path or str(self.file)
+
     def describe(self) -> str:
-        return f"{self.repo_id}@{self.revision}/{self.path or self.file}"
+        return f"{self.repo_id}@{self.revision}/{self.location}"
 
 
 def resolve_source(
