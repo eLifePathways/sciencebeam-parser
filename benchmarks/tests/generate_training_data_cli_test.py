@@ -227,6 +227,16 @@ class TestRegenerate:
         assert by_mode["medium"][1] == ["ore"]
         assert by_mode["smoke"][0] == tmp_path / "source" / "smoke"
 
+    def test_does_not_ask_the_dataset_what_the_source_trees_already_answer(
+        self, config_file: Path, tmp_path: Path
+    ):
+        """Rebuilding is not fetching, and should not need a credential to do it."""
+        mock_fetch, _ = _run(config_file, tmp_path)
+
+        assert mock_fetch.call_args_list
+        for call in mock_fetch.call_args_list:
+            assert call.kwargs["recheck_upstream"] is False
+
     def test_generates_one_run_per_corpus_and_mode(
         self, config_file: Path, tmp_path: Path
     ):
