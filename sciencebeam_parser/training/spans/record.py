@@ -20,6 +20,14 @@ model is taught to find -- the `<bibl>` here, the region for segmentation, the
 field element for header.  Text written directly into the root is in no instance
 and leaves the field out rather than borrowing a neighbour's ordinal.
 
+A document is one root element for every model but `citation`, whose training TEI
+opens a `<bibl>` per reference: there the root is the reference and the instance
+is the field inside it.  A span names both, each as an ordinal over the document,
+because one cannot answer for the other -- the instance separates two authors and
+the root separates two references, and a reader that had only the instance could
+not tell a new field from a new reference.  A span outside every root, which is
+the whitespace the writer leaves after the last of them, names neither.
+
 Whatever reads it cannot import this package, so the format name, its version,
 the field names and the model's labels travel with the data.  A span the layout
 could not place keeps its place in the file, with its label and text and no
@@ -45,7 +53,7 @@ from sciencebeam_parser.utils.xml_writer import TracedElement, TracedItem, Trace
 
 
 SPANS_FORMAT = 'sciencebeam-training-spans'
-SPANS_FORMAT_VERSION = 2
+SPANS_FORMAT_VERSION = 3
 
 LINE_BREAK_TAG = 'lb'
 
@@ -55,6 +63,7 @@ class LabelledSpan(NamedTuple):
     label: str
     text: str
     coordinates: Optional[LayoutPageCoordinates]
+    root: Optional[int] = None
     instance: Optional[int] = None
 
 
@@ -154,6 +163,22 @@ def get_coordinates_json_dict(
     }
 
 
+def get_root_element(
+    element: Optional[etree.ElementBase],
+    path: Tuple[str, ...],
+    root_training_xml_element_path: Sequence[str]
+) -> Optional[etree.ElementBase]:
+    """The root element the span sits in, or None where it sits outside every one."""
+    steps = len(path) - len(root_training_xml_element_path)
+    if element is None or steps < 0:
+        return None
+    for _ in range(steps):
+        element = element.getparent()
+        if element is None:
+            return None
+    return element
+
+
 def get_instance_element(
     element: Optional[etree.ElementBase],
     path: Tuple[str, ...],
@@ -175,10 +200,12 @@ class _PendingSpan:
         self,
         element: etree.ElementBase,
         path: Tuple[str, ...],
+        root: Optional[int] = None,
         instance: Optional[int] = None
     ):
         self.element = element
         self.path = path
+        self.root = root
         self.instance = instance
         self.text_parts: List[str] = []
         self.layout_tokens: List[LayoutToken] = []
@@ -206,7 +233,8 @@ def iter_labelled_spans(
 
     Each span names the root's child it sits in, numbered in the order the writer
     opens them over the whole document: two sibling elements of one label are two
-    instances, where their path and their label are identical.
+    instances, where their path and their label are identical.  It names its root
+    the same way, which separates two references where the root is the reference.
     """
     label_by_element_path = get_label_by_element_path(
         training_xml_element_path_by_label, root_training_xml_element_path
@@ -219,6 +247,19 @@ def iter_labelled_spans(
     pending: Optional[_PendingSpan] = None
     pending_text = ''
     instance_by_element: Dict[Any, int] = {}
+    root_by_element: Dict[Any, int] = {}
+
+    def _get_root(
+        element: Optional[etree.ElementBase], path: Tuple[str, ...]
+    ) -> Optional[int]:
+        root_element = get_root_element(
+            element, path, root_training_xml_element_path
+        )
+        if root_element is None:
+            return None
+        return root_by_element.setdefault(
+            root_element, 1 + len(root_by_element)
+        )
 
     def _get_instance(
         element: Optional[etree.ElementBase], path: Tuple[str, ...]
@@ -238,6 +279,7 @@ def iter_labelled_spans(
             label=_get_label(span.path),
             text=''.join(span.text_parts),
             coordinates=get_tokens_coordinates(span.layout_tokens),
+            root=span.root,
             instance=span.instance
         )
 
@@ -246,7 +288,9 @@ def iter_labelled_spans(
             if pending is None:
                 parent = item.element.getparent()
                 pending = _PendingSpan(
-                    parent, item.path, _get_instance(parent, item.path)
+                    parent, item.path,
+                    _get_root(parent, item.path),
+                    _get_instance(parent, item.path)
                 )
             pending.add(pending_text, None)
             pending_text = ''
@@ -264,7 +308,9 @@ def iter_labelled_spans(
             pending = None
         if pending is None:
             pending = _PendingSpan(
-                item.element, item.path, _get_instance(item.element, item.path)
+                item.element, item.path,
+                _get_root(item.element, item.path),
+                _get_instance(item.element, item.path)
             )
         pending.add(pending_text + item.text, item.source)
         pending_text = ''
@@ -274,6 +320,22 @@ def iter_labelled_spans(
         pending = _PendingSpan(None, ())
     pending.add(pending_text, None)
     yield _completed(pending)
+
+
+def iter_children_by_local_name(
+    parent: etree.ElementBase, local_name: str
+) -> Iterator[etree.ElementBase]:
+    """The children of that name, whatever namespace the writer put them in.
+
+    `citation` writes in the TEI namespace and the other models do not, while the
+    root path names elements and not namespaces, so the name is compared the way
+    `is_line_break` and `get_element_descriptor` compare one.
+    """
+    for child in parent:
+        if not isinstance(child.tag, str):
+            continue
+        if etree.QName(child).localname == local_name:
+            yield child
 
 
 def iter_tei_line_texts(
@@ -287,11 +349,13 @@ def iter_tei_line_texts(
     read across them rather than restarted at each.  The whitespace left after the
     final ``<lb/>`` ends no line and is not one.
     """
-    parent = training_tei_root
+    parent: Optional[etree.ElementBase] = training_tei_root
     for local_name in root_training_xml_element_path[:-1]:
-        parent = parent.find(local_name)
+        assert parent is not None
+        parent = next(iter_children_by_local_name(parent, local_name), None)
         if parent is None:
             return
+    assert parent is not None
     root_local_name = root_training_xml_element_path[-1]
     parts: List[str] = []
 
@@ -308,7 +372,7 @@ def iter_tei_line_texts(
             if child.tail:
                 yield child.tail
 
-    for root_element in parent.findall(root_local_name):
+    for root_element in iter_children_by_local_name(parent, root_local_name):
         for text in _iter_text(root_element):
             if text is None:
                 yield ''.join(parts)
@@ -362,27 +426,39 @@ def get_labelled_content_hash(spans: Sequence[LabelledSpan]) -> str:
     The boundary is carried as its own value rather than left to the text, which
     only shows it where two siblings meet inside a line.  A reference list meets
     at a line break instead, and there the line index and the label say the same
-    thing whether the list is one element or thirty: a span says whether its
-    instance is the one the span before it was in, and a reference that gains or
-    loses a ``<bibl>`` edge moves the pin.  The ordinal itself is not in it --
-    inserting a reference renumbers every one after it without changing what any
-    of them says.
+    thing whether the list is one element or thirty: a span says whether it sits
+    in the same element as the span before it, and a reference that gains or
+    loses a ``<bibl>`` edge moves the pin.  The ordinals themselves are not in it
+    -- inserting a reference renumbers every one after it without changing what
+    any of them says.
+
+    The element is the root and the instance together, so that a reference
+    boundary counts as one where the root is the reference.  Where a document is
+    one root the pair moves exactly where the instance moves, which is why the
+    first span's root rather than nothing is what the comparison starts from: the
+    boolean is then the one this wrote before the root existed, and a digest
+    taken over data that has not changed comes back the value it already had.
 
     The digest is over, per span and in order, the JSON array of its zero-based
-    line index, its label, its text and whether it opens a new instance, encoded
+    line index, its label, its text and whether it opens a new element, encoded
     as UTF-8 with non-ASCII left as it is and Python's default separators, each
     followed by a newline.  The version leads the value because a corpus commits
     these: changing how the digest is taken has to read as a different pin rather
     than as data nobody recognises any more.
     """
     digest = hashlib.sha256()
+    previous_root: Optional[int] = spans[0].root if spans else None
     previous_instance: Optional[int] = None
     for span in spans:
+        starts_element = (
+            span.instance != previous_instance or span.root != previous_root
+        )
         digest.update(json.dumps(
-            [span.line_index, span.label, span.text, span.instance != previous_instance],
+            [span.line_index, span.label, span.text, starts_element],
             ensure_ascii=False
         ).encode('utf-8'))
         digest.update(b'\n')
+        previous_root = span.root
         previous_instance = span.instance
     return LABELLED_CONTENT_HASH_PREFIX + digest.hexdigest()
 
@@ -415,6 +491,7 @@ def format_spans_record(
         {
             'line': 1 + span.line_index,
             **get_coordinates_json_dict(span.coordinates),
+            **({} if span.root is None else {'root': span.root}),
             **({} if span.instance is None else {'instance': span.instance}),
             'label': span.label,
             'text': span.text

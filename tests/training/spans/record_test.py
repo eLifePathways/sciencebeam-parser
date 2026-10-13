@@ -15,6 +15,11 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken
 )
 from sciencebeam_parser.models.data import LabeledLayoutModelData, LayoutModelData
+from sciencebeam_parser.models.citation.training_data import (
+    CitationTeiTrainingDataGenerator,
+    ROOT_TRAINING_XML_ELEMENT_PATH as CITATION_ROOT_ELEMENT_PATH,
+    TRAINING_XML_ELEMENT_PATH_BY_LABEL as CITATION_ELEMENT_PATH_BY_LABEL
+)
 from sciencebeam_parser.models.header.training_data import (
     HeaderTeiTrainingDataGenerator,
     ROOT_TRAINING_XML_ELEMENT_PATH as HEADER_ROOT_ELEMENT_PATH,
@@ -71,7 +76,7 @@ def _get_model_data(
     )
 
 
-def _get_header_model_data_list(
+def _get_model_data_list(
     token_label_line_list: Sequence[Tuple[str, str, int]]
 ) -> List[LabeledLayoutModelData]:
     layout_line_by_id: dict = {}
@@ -97,7 +102,7 @@ def _get_header_spans(
 ) -> Tuple[List[LabelledSpan], List[str]]:
     generator = HeaderTeiTrainingDataGenerator()
     training_tei_root, trace = generator.get_training_tei_xml_and_trace([
-        _get_header_model_data_list(token_label_line_list)
+        _get_model_data_list(token_label_line_list)
     ])
     spans = list(iter_labelled_spans(
         trace, HEADER_ELEMENT_PATH_BY_LABEL, generator.root_training_xml_element_path
@@ -106,6 +111,39 @@ def _get_header_spans(
         training_tei_root, generator.root_training_xml_element_path
     ))
     return spans, tei_line_texts
+
+
+def _get_citation_spans(
+    reference_token_label_line_lists: Sequence[Sequence[Tuple[str, str, int]]]
+) -> Tuple[List[LabelledSpan], List[str]]:
+    """Spans for a citation document, which opens one root element per reference."""
+    generator = CitationTeiTrainingDataGenerator()
+    training_tei_root, trace = generator.get_training_tei_xml_and_trace([
+        _get_model_data_list(token_label_line_list)
+        for token_label_line_list in reference_token_label_line_lists
+    ])
+    spans = list(iter_labelled_spans(
+        trace, CITATION_ELEMENT_PATH_BY_LABEL, generator.root_training_xml_element_path
+    ))
+    tei_line_texts = list(iter_tei_line_texts(
+        training_tei_root, generator.root_training_xml_element_path
+    ))
+    return spans, tei_line_texts
+
+
+TWO_REFERENCES = [
+    [('Bloggs', 'B-<author>', 1), ('J', 'I-<author>', 1), ('Title', 'B-<title>', 1)],
+    [('Smith', 'B-<author>', 2), ('A', 'I-<author>', 2), ('Other', 'B-<title>', 2)]
+]
+
+
+# One reference ends with the punctuation after its last field and the next opens
+# with text no label covers, so the two spans meeting at the boundary are both in
+# their root and the instance is None on either side of it.
+TWO_REFERENCES_MEETING_IN_THE_ROOT = [
+    [('Bloggs', 'B-<author>', 1), ('J', 'I-<author>', 1), ('.', 'B-<other>', 1)],
+    [('Smith', 'B-<other>', 2), ('A', 'B-<author>', 2)]
+]
 
 
 AUTHOR_THEN_AFFILIATION_LINE = [
@@ -121,7 +159,7 @@ def _get_reference_segmenter_spans(
 ) -> List[LabelledSpan]:
     generator = ReferenceSegmenterTeiTrainingDataGenerator()
     _, trace = generator.get_training_tei_xml_and_trace([
-        _get_header_model_data_list(token_label_line_list)
+        _get_model_data_list(token_label_line_list)
     ])
     return list(iter_labelled_spans(
         trace,
@@ -201,14 +239,24 @@ class TestIterLabelledSpans:
     def test_should_number_instances_across_a_root_boundary(self):
         generator = HeaderTeiTrainingDataGenerator()
         _, trace = generator.get_training_tei_xml_and_trace([
-            _get_header_model_data_list([('First', 'B-<title>', 1)]),
-            _get_header_model_data_list([('Second', 'B-<title>', 1)])
+            _get_model_data_list([('First', 'B-<title>', 1)]),
+            _get_model_data_list([('Second', 'B-<title>', 1)])
         ])
         spans = list(iter_labelled_spans(
             trace, HEADER_ELEMENT_PATH_BY_LABEL,
             generator.root_training_xml_element_path
         ))
         assert [span.instance for span in spans] == [1, 2]
+
+    def test_should_number_each_root_element_apart(self):
+        spans, _ = _get_citation_spans(TWO_REFERENCES)
+        assert [(span.root, span.instance) for span in spans] == [
+            (1, 1), (1, 2), (2, 3), (2, 4)
+        ]
+
+    def test_should_give_every_span_of_a_one_root_document_the_same_root(self):
+        spans, _ = _get_header_spans(AUTHOR_THEN_AFFILIATION_LINE)
+        assert {span.root for span in spans} == {1}
 
     def test_should_label_a_span_in_the_root_element_as_the_parser_reads_it(self):
         """`<note>` and unlabelled text both sit bare under `<front>`, and the
@@ -269,8 +317,8 @@ class TestIterTeiLineTexts:
     def test_should_read_every_root_element_rather_than_only_the_first(self):
         generator = HeaderTeiTrainingDataGenerator()
         training_tei_root, _ = generator.get_training_tei_xml_and_trace([
-            _get_header_model_data_list([('First', 'B-<title>', 1)]),
-            _get_header_model_data_list([('Second', 'B-<title>', 1)])
+            _get_model_data_list([('First', 'B-<title>', 1)]),
+            _get_model_data_list([('Second', 'B-<title>', 1)])
         ])
         assert len(training_tei_root.xpath('text/front')) == 2
         tei_line_texts = list(iter_tei_line_texts(
@@ -281,8 +329,8 @@ class TestIterTeiLineTexts:
     def test_should_number_lines_across_a_root_boundary(self):
         generator = HeaderTeiTrainingDataGenerator()
         training_tei_root, trace = generator.get_training_tei_xml_and_trace([
-            _get_header_model_data_list([('First', 'B-<title>', 1)]),
-            _get_header_model_data_list([('Second', 'B-<title>', 1)])
+            _get_model_data_list([('First', 'B-<title>', 1)]),
+            _get_model_data_list([('Second', 'B-<title>', 1)])
         ])
         spans = list(iter_labelled_spans(
             trace, HEADER_ELEMENT_PATH_BY_LABEL,
@@ -292,6 +340,11 @@ class TestIterTeiLineTexts:
         check_spans_against_tei('document1', spans, list(iter_tei_line_texts(
             training_tei_root, generator.root_training_xml_element_path
         )))
+
+    def test_should_read_a_training_tei_written_in_a_namespace(self):
+        spans, tei_line_texts = _get_citation_spans(TWO_REFERENCES)
+        assert tei_line_texts == ['Bloggs J Title', '\nSmith A Other']
+        check_spans_against_tei('document1', spans, tei_line_texts)
 
     def test_should_return_nothing_without_the_root_element(self):
         assert not list(iter_tei_line_texts(
@@ -333,6 +386,13 @@ class TestGetModelLabels:
         assert '<other>' in labels
         assert '<submission>' in labels
 
+    def test_should_cover_every_label_a_citation_span_carries(self):
+        spans, _ = _get_citation_spans(TWO_REFERENCES)
+        labels = get_model_labels(
+            CITATION_ELEMENT_PATH_BY_LABEL, CITATION_ROOT_ELEMENT_PATH
+        )
+        assert not {span.label for span in spans} - set(labels)
+
     def test_should_keep_the_order_the_table_declares(self):
         labels = get_model_labels(
             HEADER_ELEMENT_PATH_BY_LABEL, HEADER_ROOT_ELEMENT_PATH
@@ -369,6 +429,31 @@ class TestGetLabelledContentHash:
         ]) == (
             'v2:sha256:'
             '84a128404bb391de2450ec4d04b266e0376c50bd5d6b95643df60c235f8e3144'
+        )
+
+    def test_should_stay_at_that_value_where_the_document_is_one_root(self):
+        """Which every model but citation is, and which is where the verdicts are."""
+        assert get_labelled_content_hash([
+            LabelledSpan(
+                line_index=0, label='<title>', text='A title',
+                coordinates=None, root=1, instance=1
+            ),
+            LabelledSpan(
+                line_index=1, label='<author>', text='\nJo Bloggs',
+                coordinates=None, root=1, instance=2
+            )
+        ]) == (
+            'v2:sha256:'
+            '84a128404bb391de2450ec4d04b266e0376c50bd5d6b95643df60c235f8e3144'
+        )
+
+    def test_should_change_where_a_reference_boundary_met_in_the_root(self):
+        """The instance cannot see this one: neither span either side of it has one."""
+        spans, _ = _get_citation_spans(TWO_REFERENCES_MEETING_IN_THE_ROOT)
+        assert [span.instance for span in spans] == [1, None, None, 2]
+        assert (
+            get_labelled_content_hash(spans)
+            != get_labelled_content_hash([span._replace(root=1) for span in spans])
         )
 
     def test_should_not_change_where_a_span_only_moved_on_the_page(self):
@@ -525,6 +610,25 @@ class TestFormatSpansRecord:
         ))
         assert 'instance' not in json_dicts[1]
         assert json_dicts[2]['instance'] == 1
+
+    def test_should_name_the_root_element_of_a_span(self):
+        json_dicts = self._get_json_dicts(format_spans_record(
+            document_id='document1',
+            model_name='citation',
+            layout_document=self._get_layout_document(1),
+            spans=[
+                LabelledSpan(
+                    line_index=0, label='<author>', text='Bloggs J',
+                    coordinates=None, root=1, instance=1
+                ),
+                LabelledSpan(
+                    line_index=1, label='<author>', text='Smith A',
+                    coordinates=None, root=2, instance=2
+                )
+            ],
+            labels=[]
+        ))
+        assert [json_dict['root'] for json_dict in json_dicts[1:]] == [1, 2]
 
     def test_should_write_the_line_position_label_and_text_of_every_span(self):
         json_dicts = self._get_json_dicts(format_spans_record(
