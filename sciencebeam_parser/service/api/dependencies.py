@@ -117,7 +117,8 @@ PROFILE_PARAMETER_NAME = 'profile'
 
 PROFILE_QUERY_DESCRIPTION = (
     'Name of the profile to serve this request with, from those the deployment '
-    'declares selectable. Defaults to the deployment\'s own profile.'
+    'declares selectable. Defaults to the deployment\'s own profile. '
+    '`GET /api/profiles` says what each one is for.'
 )
 
 

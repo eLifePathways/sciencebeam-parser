@@ -87,6 +87,12 @@ class RepoPredictionsStore:
     def _prefix(self, tool: str, version: str, profile: str) -> str:
         return f"{tool}/{version}/{profile}"
 
+    def _is_sparse(self) -> bool:
+        """CI clones this repo sparsely and widens it per prefix; a full clone already
+        has every file, and asking it to widen fails."""
+        result = self._git("config", "core.sparseCheckout", check=False)
+        return result.stdout.strip() == "true"
+
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", "-C", str(self.repo_dir), *args],
@@ -140,8 +146,9 @@ class RepoPredictionsStore:
         local_dir: Path, corpus_variants: dict,
     ) -> None:
         prefix = self._prefix(tool, version, profile)
-        self._git("sparse-checkout", "add", prefix)
-        self._git("checkout")
+        if self._is_sparse():
+            self._git("sparse-checkout", "add", prefix)
+            self._git("checkout")
         for corpus, variant in corpus_variants.items():
             src = self.repo_dir / prefix / corpus / variant / split
             if not src.is_dir():

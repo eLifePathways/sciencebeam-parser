@@ -2,7 +2,7 @@ import logging
 import os
 import copy
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import yaml
 
@@ -19,6 +19,12 @@ DEFAULT_DOWNLOAD_DIR = 'data/download'
 # `llm_response_cache_dir` would be served the deployment's value alongside its
 # own models, with nothing able to observe the mismatch.
 PROFILE_OVERLAY_KEYS = frozenset({'sequence_models', 'models', 'processors'})
+
+
+# What a profile may say about itself. Permitted beside the overlay keys and left
+# out of the overlay: prose for a reader is not configuration, and merging it
+# would make it a key of every config resolved from that profile.
+PROFILE_METADATA_KEYS = frozenset({'label', 'description'})
 
 
 # What `selectable_profiles` says to mean every declared profile. A word rather
@@ -163,7 +169,7 @@ class AppConfig:
             overlay['models'] = _resolve_sequence_model_profile(seq_profiles, seq_name)
 
         for key, value in profile.items():
-            if key != 'sequence_models':
+            if key != 'sequence_models' and key not in PROFILE_METADATA_KEYS:
                 overlay[key] = value
 
         return AppConfig(_deep_merge(self.props, overlay))
@@ -178,6 +184,26 @@ class AppConfig:
     def get_profile_names(self) -> List[str]:
         return sorted(self.props.get('profiles', {}))
 
+    def get_profile_props(self, profile_name: str) -> dict:
+        return self.props.get('profiles', {}).get(profile_name) or {}
+
+    def get_profile_label(self, profile_name: str) -> Optional[str]:
+        return self.get_profile_props(profile_name).get('label')
+
+    def get_profile_description(self, profile_name: str) -> Optional[str]:
+        return self.get_profile_props(profile_name).get('description')
+
+    def get_alias_names_by_profile_name(self) -> Dict[str, List[str]]:
+        """The synonyms each profile answers to, so one choice is named once.
+
+        Reversed from `profile_aliases`, which maps the name a caller may send to
+        the profile it means: what a caller needs told is the other direction.
+        """
+        alias_names_map: Dict[str, List[str]] = {}
+        for alias_name, profile_name in sorted(self.props.get('profile_aliases', {}).items()):
+            alias_names_map.setdefault(profile_name, []).append(alias_name)
+        return alias_names_map
+
     def validate_profiles(self) -> 'AppConfig':
         profiles = self.props.get('profiles', {})
         if ALL_PROFILES in profiles:
@@ -186,11 +212,14 @@ class AppConfig:
                 '`selectable_profiles` says to mean every profile'
             )
         for name, profile in sorted(profiles.items()):
-            invalid_keys = sorted(set(profile) - PROFILE_OVERLAY_KEYS)
+            invalid_keys = sorted(
+                set(profile) - PROFILE_OVERLAY_KEYS - PROFILE_METADATA_KEYS
+            )
             if invalid_keys:
                 raise InvalidProfileError(
                     f'Profile {name!r} may not set {invalid_keys}. '
-                    f'A profile may only set {sorted(PROFILE_OVERLAY_KEYS)}'
+                    f'A profile may only set '
+                    f'{sorted(PROFILE_OVERLAY_KEYS | PROFILE_METADATA_KEYS)}'
                 )
         return self
 

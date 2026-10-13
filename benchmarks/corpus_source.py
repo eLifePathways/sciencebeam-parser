@@ -35,7 +35,7 @@ from typing import (
 )
 
 import pyarrow.parquet as pq
-from huggingface_hub import HfFileSystem, hf_hub_download
+from huggingface_hub import HfApi, HfFileSystem, hf_hub_download
 
 LOGGER = logging.getLogger(__name__)
 
@@ -141,6 +141,9 @@ class RepoReader:
     token: Optional[str] = None
     local_root: Optional[str] = None
     _fs: Optional[HfFileSystem] = None
+    _commit_by_revision: Dict[Tuple[str, str], Optional[str]] = dataclasses.field(
+        default_factory=dict
+    )
 
     @classmethod
     def from_env(cls) -> "RepoReader":
@@ -153,6 +156,24 @@ class RepoReader:
         if self._fs is None:
             self._fs = HfFileSystem(token=self.token)
         return self._fs
+
+    def resolve_commit(self, source: CorpusSource) -> Optional[str]:
+        """The commit a revision points at, so that `main` names a specific one.
+
+        None for a local stand-in, which has no revision to resolve. Cached per
+        repo and revision because a run resolves the same one for every corpus.
+        """
+        if self.local_root:
+            return None
+        key = (source.repo_id, source.revision)
+        if key not in self._commit_by_revision:
+            info = HfApi(token=self.token).repo_info(
+                repo_id=source.repo_id,
+                revision=source.revision,
+                repo_type="dataset",
+            )
+            self._commit_by_revision[key] = info.sha
+        return self._commit_by_revision[key]
 
     def download(self, source: CorpusSource, filename: str) -> str:
         """A whole small file — a manifest, or a one-file corpus."""

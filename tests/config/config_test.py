@@ -364,6 +364,66 @@ class TestAppConfigValidateProfiles:
             'profile_a', 'profile_b', 'profile_b_extended', 'profile_with_extra'
         ]
 
+    def test_accepts_a_label_and_a_description(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profiles': {'a': {'label': 'A', 'description': 'What a serves.'}}
+        })
+        assert config.validate_profiles() is config
+
+
+class TestAppConfigProfileMetadata:
+    """What a profile says about itself, which is prose rather than configuration."""
+
+    LABELLED_PROFILE_CONFIG = {
+        **MINIMAL_PROFILE_CONFIG,
+        'profiles': {
+            'profile_a': {
+                'sequence_models': 'profile_a',
+                'label': 'Profile A',
+                'description': 'What profile A serves.',
+            },
+            'profile_b': {'sequence_models': 'profile_b'},
+        },
+    }
+
+    def test_should_report_the_label_and_description_a_profile_declares(self):
+        config = AppConfig(self.LABELLED_PROFILE_CONFIG)
+        assert config.get_profile_label('profile_a') == 'Profile A'
+        assert config.get_profile_description('profile_a') == 'What profile A serves.'
+
+    def test_should_report_no_label_for_a_profile_without_one(self):
+        config = AppConfig(self.LABELLED_PROFILE_CONFIG)
+        assert config.get_profile_label('profile_b') is None
+        assert config.get_profile_description('profile_b') is None
+
+    def test_should_report_no_label_for_a_name_that_is_not_a_profile(self):
+        config = AppConfig(self.LABELLED_PROFILE_CONFIG)
+        assert config.get_profile_label('not_a_profile') is None
+
+    def test_should_keep_metadata_out_of_the_resolved_config(self):
+        """A resolved config is what serves a document; prose is not part of it."""
+        resolved = AppConfig(self.LABELLED_PROFILE_CONFIG).resolve_profile('profile_a')
+        assert 'label' not in resolved.props
+        assert 'description' not in resolved.props
+
+    def test_should_still_apply_what_a_labelled_profile_configures(self):
+        resolved = AppConfig(self.LABELLED_PROFILE_CONFIG).resolve_profile('profile_a')
+        assert resolved['models']['segmentation']['path'] == 'path_a/segmentation'
+
+    def test_should_report_the_aliases_a_profile_answers_to(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profile_aliases': {'alias_a': 'profile_a', 'also_a': 'profile_a'},
+        })
+        assert config.get_alias_names_by_profile_name() == {
+            'profile_a': ['alias_a', 'also_a']
+        }
+
+    def test_should_report_no_aliases_where_the_config_declares_none(self):
+        props = {k: v for k, v in MINIMAL_PROFILE_CONFIG.items() if k != 'profile_aliases'}
+        assert not AppConfig(props).get_alias_names_by_profile_name()
+
 
 @pytest.fixture(name='env_vars_mock')
 def _env_vars_mock() -> Iterable[dict]:

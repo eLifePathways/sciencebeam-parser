@@ -101,6 +101,14 @@ class TestBuildFieldScoringTypes:
         )
         assert result == {"abstract": "string"}
 
+    def test_should_give_the_linked_field_its_own_type_whatever_the_config_says(self):
+        result = _build_field_scoring_types(
+            ["title", "affiliation_linked"],
+            "string",
+            {"affiliation_linked": {"type": "partial_ulist"}},
+        )
+        assert result == {"title": "string", "affiliation_linked": "linked"}
+
 
 class TestDocScoresToDict:
     def _make_score(self, field, method, tp, fp=0, fn=0, scoring_type="string"):
@@ -425,6 +433,48 @@ class TestRunScoreLlmUsage:
         ])
         assert "llm_usage" not in summary
 
+    def test_should_aggregate_latency_from_the_manifest(self, tmp_path: Path):
+        summary = self._run(tmp_path, [
+            {
+                "corpus": "biorxiv", "record_id": f"doc{index}", "status": "ok",
+                "elapsed_ms": elapsed_ms,
+            }
+            for index, elapsed_ms in enumerate([1000, 2000, 3000, 4000, 60000])
+        ])
+        assert summary["cost"]["latency_ms"] == {"n": 5, "median": 3000, "p90": 60000}
+
+    def test_should_aggregate_what_every_run_in_the_manifest_cost(self, tmp_path: Path):
+        summary = self._run(tmp_path, [
+            {
+                "corpus": "biorxiv", "record_id": "doc1", "status": "ok",
+                "elapsed_ms": 1000,
+            },
+            {
+                "type": "run", "started_at": "2026-10-05T10:00:00.1+00:00",
+                "concurrency": 4, "n_processed": 40, "n_predicted": 40, "elapsed_s": 400.0,
+                "machine": {"cpu_model": "AMD EPYC 7763", "cpu_count": 4,
+                            "cpu_seconds": 1200.0},
+            },
+            {
+                "type": "run", "started_at": "2026-10-06T10:00:00.1+00:00",
+                "concurrency": 4, "n_processed": 20, "n_predicted": 20, "elapsed_s": 200.0,
+                "machine": {"cpu_model": "AMD EPYC 7763", "cpu_count": 4,
+                            "cpu_seconds": 600.0},
+            },
+        ])
+        assert summary["cost"]["n_runs"] == 2
+        assert summary["cost"]["n_predicted"] == 60
+        assert summary["cost"]["cpu_seconds"] == 1800.0
+
+    def test_should_leave_the_summary_unchanged_without_a_prediction(self, tmp_path: Path):
+        summary = self._run(tmp_path, [
+            {
+                "corpus": "biorxiv", "record_id": "doc1", "status": "error",
+                "elapsed_ms": 60000,
+            },
+        ])
+        assert "cost" not in summary
+
 
 GOLD_JATS_1 = b"""<article>
   <front>
@@ -525,6 +575,84 @@ class TestAttributionIsNotScored:
             for score in without
             if score["scoring_method"] == "exact"
         )
+
+
+class TestFurtherAbstractIsNotScored:
+    """A prediction carrying more than one abstract is scored on the first."""
+
+    def test_should_score_the_first_abstract_rather_than_the_abstracts_joined(self):
+        predicted_tei = PREDICTED_TEI_1.format(encoding_desc="").replace(
+            "<abstract><p>The abstract</p></abstract>",
+            "<abstract><p>The abstract</p></abstract>"
+            "<abstract><p>O resumo</p></abstract>"
+        ).encode("utf-8")
+        scores = _score_pair(
+            GOLD_JATS_1, predicted_tei, ["abstract"], ["exact"], prepare_judge(),
+        )
+        assert [score["match_score"]["true_positive"] for score in scores] == [1]
+
+
+# GOLD_JATS_1 with the link its author and affiliation only have by position made explicit.
+GOLD_JATS_LINKED_1 = GOLD_JATS_1.replace(
+    b"</name>", b'</name><xref ref-type="aff" rid="aff1"/>'
+).replace(b"<aff>", b'<aff id="aff1">')
+
+
+class TestScoreLinkedAffiliationField:
+    """`affiliation_linked` has no xpath in the judge's mapping, so it is scored beside
+    the fields that do and has to come out of a run looking like one of them."""
+
+    _CONFIG = {
+        "fields": ["title", "affiliation_linked"],
+        "scoring": {"default_methods": ["levenshtein", "edit_sim"], "default_type": "string"},
+    }
+
+    def test_should_score_the_linked_field_beside_the_fields_the_judge_reads(self):
+        doc_scores = _score_pair(
+            GOLD_JATS_LINKED_1,
+            PREDICTED_TEI_1.format(encoding_desc="").encode("utf-8"),
+            ["title", "affiliation_linked"], ["levenshtein"], prepare_judge(),
+        )
+        fields = _doc_scores_to_dict(doc_scores)
+        assert set(fields) == {"title", "affiliation_linked"}
+        assert fields["title"]["levenshtein"]["true_positive"] == 1
+        assert fields["affiliation_linked"]["scoring_type"] == "linked"
+        assert fields["affiliation_linked"]["levenshtein"]["true_positive"] == 1
+        assert fields["affiliation_linked"]["levenshtein"]["f1"] == 1.0
+
+    def test_should_report_the_linked_field_over_the_documents_with_an_explicit_link(
+        self, tmp_path: Path
+    ):
+        run_dir = tmp_path / "run"
+        gold_dir = tmp_path / "data" / "train" / "biorxiv"
+        pred_dir = run_dir / "predictions" / "biorxiv"
+        gold_dir.mkdir(parents=True)
+        pred_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(json.dumps(
+            {"split": "train", "corpora": ["biorxiv"]}
+        ))
+        for record_id, gold_xml in (("linked", GOLD_JATS_LINKED_1), ("positional", GOLD_JATS_1)):
+            (gold_dir / f"{record_id}.jats.xml").write_bytes(gold_xml)
+            (pred_dir / f"{record_id}.tei.xml").write_text(
+                PREDICTED_TEI_1.format(encoding_desc=""), encoding="utf-8"
+            )
+
+        run_score(
+            config=self._CONFIG, run_dir=run_dir, data_dir=tmp_path / "data", out_path=None,
+        )
+
+        summary = json.loads((run_dir / "summary.json").read_text())
+        assert summary["field_scoring_types"]["affiliation_linked"] == "linked"
+        corpus = summary["corpora"]["biorxiv"]
+        assert corpus["gold_presence"]["affiliation_linked"] == {
+            "n": 2, "n_gold": 1, "no_gold_docs": 0, "no_gold_values": 0,
+        }
+        for method in ("levenshtein", "edit_sim"):
+            assert _f1_from_aggregated(
+                corpus["aggregated"], "affiliation_linked", "linked", method
+            ) == 1.0
+        report = (run_dir / "report.md").read_text()
+        assert "| affiliation_linked | linked | 2 | 1.000 | 1.000 |" in report
 
 
 class TestCoverageNote:

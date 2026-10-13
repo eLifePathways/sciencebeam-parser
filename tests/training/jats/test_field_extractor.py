@@ -429,6 +429,97 @@ class TestCopyright:
         assert 'CC-BY' in cr[0].text
 
 
+class TestAvailability:
+    def test_a_data_availability_section_has_its_own_field(self):
+        fvs = _field_values_for(
+            '<article><back>'
+            '<sec sec-type="data-availability"><title>Data availability</title>'
+            '<p>The original data is available from the archive.</p></sec>'
+            '<sec><title>Author contributions</title><p>AB wrote the paper.</p></sec>'
+            '</back></article>'
+        )
+        by_field = {v.field_name: v.text for v in fvs}
+        assert by_field[JatsFieldNames.AVAILABILITY_SECTION_TITLE] == 'Data availability'
+        assert 'available from the archive' in (
+            by_field[JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH]
+        )
+
+    def test_it_is_not_also_emitted_as_back_matter(self):
+        fvs = _field_values_for(
+            '<article><back>'
+            '<sec sec-type="data-availability"><title>Data availability</title>'
+            '<p>The original data is available from the archive.</p></sec>'
+            '<sec><title>Ethics</title><p>Approved by the review board.</p></sec>'
+            '</back></article>'
+        )
+        back = [
+            v.text for v in fvs
+            if v.field_name in (
+                JatsFieldNames.BACK_SECTION_TITLE, JatsFieldNames.BACK_SECTION_PARAGRAPH
+            )
+        ]
+        assert back == ['Ethics', 'Approved by the review board.']
+
+
+def _back_matter_values(xml: str):
+    return [
+        v.text for v in _field_values_for(xml)
+        if v.field_name in (
+            JatsFieldNames.BACK_SECTION_TITLE,
+            JatsFieldNames.BACK_SECTION_PARAGRAPH,
+        )
+    ]
+
+
+class TestEthicsSection:
+    def test_an_ethics_section_among_the_declarations_is_back_matter(self):
+        back = _back_matter_values(
+            '<article><body>'
+            '<sec sec-type="methods"><title>Methods</title><p>We measured it.</p></sec>'
+            '<sec><title>Ethical considerations</title><p>The board approved it.</p></sec>'
+            '<sec sec-type="data-availability"><title>Data availability</title>'
+            '<p>In the archive.</p></sec>'
+            '</body></article>'
+        )
+        assert back == ['Ethical considerations', 'The board approved it.']
+
+    def test_an_ethics_section_the_results_follow_stays_in_the_body(self):
+        # PPR458963 and PPR459581 both print "Aspectos éticos" between their
+        # methods and their results, which is the article arguing rather than
+        # declaring.
+        back = _back_matter_values(
+            '<article><body>'
+            '<sec sec-type="methods"><title>Methods</title><p>We measured it.</p></sec>'
+            '<sec><title>Ethical considerations</title><p>The board approved it.</p></sec>'
+            '<sec sec-type="results"><title>Results</title><p>It went up.</p></sec>'
+            '</body></article>'
+        )
+        assert back == []
+
+
+class TestNoticeSection:
+    def test_a_legal_notice_at_the_end_is_back_matter(self):
+        # PPR459239 prints "Aviso legal" after its conclusions, and 5-271_v1
+        # prints "Patents" there; GROBID files a publisher's note under annex.
+        back = _back_matter_values(
+            '<article><body>'
+            '<sec><title>Considerac oes Finais</title><p>We conclude it.</p></sec>'
+            '<sec><title>Aviso legal</title><p>The views are the authors.</p></sec>'
+            '</body></article>'
+        )
+        assert back == ['Aviso legal', 'The views are the authors.']
+
+    def test_a_disclaimer_the_article_follows_stays_in_the_body(self):
+        # 6-35_v1 opens with "Disclaimer" before its introduction.
+        back = _back_matter_values(
+            '<article><body>'
+            '<sec><title>Disclaimer</title><p>Not an official position.</p></sec>'
+            '<sec sec-type="intro"><title>Introduction</title><p>We begin.</p></sec>'
+            '</body></article>'
+        )
+        assert back == []
+
+
 class TestSubArticle:
     def test_extracts_sub_article_paragraphs(self):
         fvs = _field_values_for(
@@ -455,6 +546,46 @@ class TestSubArticle:
         texts = [v.text for v in sub]
         assert any('Reviewer Report' in t for t in texts)
         assert any('comments' in t for t in texts)
+
+    def test_extracts_the_report_heading_from_the_front_stub(self):
+        fvs = _field_values_for(
+            '<article>'
+            '<sub-article article-type="reviewer-report">'
+            '<front-stub>'
+            '<article-id pub-id-type="doi">10.21956/openreseurope.1.r1</article-id>'
+            '<contrib-group>'
+            '<contrib contrib-type="author"><name>'
+            '<surname>Heine</surname><given-names>Martin</given-names></name></contrib>'
+            '<aff id="a1"><label>1</label>University Medical Centre Utrecht</aff>'
+            '</contrib-group>'
+            '<permissions><license><license-p>This is an open access peer review report.'
+            '</license-p></license></permissions>'
+            '</front-stub>'
+            '<body><p>Thank you for addressing the comments.</p></body>'
+            '</sub-article>'
+            '</article>'
+        )
+        sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
+        texts = [v.text for v in sub]
+        assert 'Martin Heine' in texts
+        assert 'University Medical Centre Utrecht' in texts
+        assert 'This is an open access peer review report.' in texts
+        assert '10.21956/openreseurope.1.r1' not in texts
+        by_text = {v.text: v for v in sub}
+        assert by_text['Martin Heine'].exact_only
+        assert by_text['University Medical Centre Utrecht'].exact_only
+        assert by_text['This is an open access peer review report.'].exact_only
+
+    def test_a_report_paragraph_is_not_exact_only(self):
+        fvs = _field_values_for(
+            '<article>'
+            '<sub-article article-type="peer-review">'
+            '<body><p>This manuscript is well written.</p></body>'
+            '</sub-article>'
+            '</article>'
+        )
+        sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
+        assert not sub[0].exact_only
 
     def test_main_article_body_not_labeled_as_sub_article(self):
         fvs = _field_values_for(
@@ -535,3 +666,81 @@ class TestIterReferenceSubFieldNames:
         assert not list(iter_reference_sub_field_names(_parse_jats(
             '<article><back><sec><p>Some appendix text.</p></sec></back></article>'
         )))
+
+
+class TestFloatsGroup:
+    def test_should_extract_table_and_figure_captions_from_floats_group(self):
+        fields = _fields_by_name(_field_values_for("""
+            <article>
+              <body><sec><p>Body text citing Table 1.</p></sec></body>
+              <floats-group>
+                <table-wrap id="T1">
+                  <label>Tabela 1</label>
+                  <caption><p>Measures for control</p></caption>
+                  <table><tr><td>cell</td></tr></table>
+                </table-wrap>
+                <fig id="F1">
+                  <label>Figura 1</label>
+                  <caption><p>Model fit</p></caption>
+                </fig>
+              </floats-group>
+            </article>
+        """))
+        assert [v.text for v in fields[JatsFieldNames.FLOAT_TABLE]] == [
+            'Tabela 1 Measures for control'
+        ]
+        assert [v.text for v in fields[JatsFieldNames.FLOAT_FIGURE]] == ['Figura 1 Model fit']
+
+    def test_should_not_take_the_cells_of_a_float_table(self):
+        fields = _fields_by_name(_field_values_for("""
+            <article>
+              <floats-group>
+                <table-wrap id="T1">
+                  <label>Tabela 1</label>
+                  <caption><p>Measures</p></caption>
+                  <table><tr><td>a distinctive cell value</td></tr></table>
+                </table-wrap>
+              </floats-group>
+            </article>
+        """))
+        assert 'distinctive cell value' not in fields[JatsFieldNames.FLOAT_TABLE][0].text
+
+    def test_should_not_confuse_a_body_table_with_a_float(self):
+        fields = _fields_by_name(_field_values_for("""
+            <article>
+              <body><sec>
+                <table-wrap id="T1">
+                  <label>Table 1</label><caption><p>In body</p></caption>
+                </table-wrap>
+              </sec></body>
+            </article>
+        """))
+        assert fields[JatsFieldNames.BODY_TABLE]
+        assert not fields[JatsFieldNames.FLOAT_TABLE]
+
+
+class TestContribution:
+    def test_it_should_use_the_section_title_when_sec_type_is_absent(self):
+        fvs = _field_values_for(
+            '<article><back>'
+            "<sec><title>Authors' contributions</title><p>AB wrote the paper.</p></sec>"
+            '</back></article>'
+        )
+        assert [
+            (v.field_name, v.text) for v in fvs
+        ] == [
+            (JatsFieldNames.CONTRIBUTION_SECTION_TITLE, "Authors' contributions"),
+            (JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH, 'AB wrote the paper.'),
+        ]
+
+    def test_it_should_not_claim_a_nested_section(self):
+        fvs = _field_values_for(
+            '<article><body>'
+            '<sec><title>Methods</title>'
+            '<sec><title>Author contributions</title><p>AB ran the model.</p></sec>'
+            '</sec>'
+            '</body></article>'
+        )
+        assert JatsFieldNames.CONTRIBUTION_SECTION_TITLE not in {
+            v.field_name for v in fvs
+        }

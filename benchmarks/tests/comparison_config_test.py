@@ -1,0 +1,446 @@
+from __future__ import annotations
+
+import pytest
+import yaml
+
+from benchmarks.comparison_config import (
+    available_baselines,
+    load_comparison,
+    parse_comparison,
+    primary_index,
+    resolve_variants,
+    to_selection,
+    variant_descriptions,
+)
+from benchmarks.report_grid import (
+    ChartConfig,
+    ComputeChartConfig,
+    FieldsChartConfig,
+    SelectionError,
+)
+
+TWO_VARIANTS = """
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
+  - {label: head, current: true}
+"""
+
+
+def _parse(text: str):
+    return parse_comparison(yaml.safe_load(text))
+
+
+def _first(config, kind):
+    """The first declared chart of a kind, for a test that is about that kind."""
+    return next(chart for chart in config.charts if isinstance(chart, kind))
+
+
+def _kinds(config) -> list:
+    """The declared charts' kinds, in the order the file declares them."""
+    return [type(chart) for chart in config.charts]
+
+
+class TestVariants:
+    def test_should_keep_the_declared_order(self):
+        assert [v.label for v in _parse(TWO_VARIANTS).variants] == ["grobid", "head"]
+
+    def test_should_default_the_profile(self):
+        config = _parse("""
+variants:
+  - {label: a, tool: grobid, version: 1}
+  - {label: b, current: true}
+""")
+        assert config.variants[0].profile == "default"
+
+    def test_should_need_at_least_two(self):
+        with pytest.raises(SelectionError, match="at least two variants"):
+            _parse("variants:\n  - {label: a, current: true}\n")
+
+    def test_should_name_a_column_for_its_coordinates_without_a_label(self):
+        config = _parse("""
+variants:
+  - {tool: sciencebeam-parser, version: main, profile: grobid_crf}
+  - {tool: sciencebeam-parser, version: main, profile: llm_all}
+""")
+        assert [v.label for v in config.variants] == [
+            "sciencebeam-parser main (grobid_crf)",
+            "sciencebeam-parser main (llm_all)",
+        ]
+
+    def test_should_name_the_run_under_test_by_its_profile(self):
+        config = _parse(
+            "variants:\n  - {current: true, profile: llm_all}\n"
+            "  - {tool: grobid, version: 1}\n"
+        )
+        assert config.variants[0].label == "this run (llm_all)"
+
+    def test_should_keep_a_label_that_was_given(self):
+        config = _parse(
+            "variants:\n  - {label: mine, tool: grobid, version: 1}\n"
+            "  - {current: true}\n"
+        )
+        assert config.variants[0].label == "mine"
+
+    def test_should_reject_a_variant_naming_nothing(self):
+        with pytest.raises(SelectionError, match="exactly one of"):
+            _parse("variants:\n  - {label: a}\n  - {label: b, current: true}\n")
+
+    def test_should_reject_a_variant_naming_two_things(self):
+        with pytest.raises(SelectionError, match="exactly one of"):
+            _parse(
+                "variants:\n  - {label: a, current: true, summary: x.json}\n"
+                "  - {label: b, current: true}\n"
+            )
+
+    def test_should_reject_an_unknown_key(self):
+        with pytest.raises(SelectionError, match="profil"):
+            _parse(
+                "variants:\n  - {label: a, tool: t, version: v, profil: x}\n"
+                "  - {label: b, current: true}\n"
+            )
+
+
+class TestRows:
+    def test_should_accept_a_single_method(self):
+        config = _parse(TWO_VARIANTS + "rows:\n  - {field: title, method: exact}\n")
+        assert config.rows[0].methods == ("exact",)
+
+    def test_should_accept_several_methods(self):
+        config = _parse(
+            TWO_VARIANTS + "rows:\n  - {field: title, methods: [exact, levenshtein]}\n"
+        )
+        assert config.rows[0].methods == ("exact", "levenshtein")
+
+    def test_should_reject_method_and_methods_together(self):
+        with pytest.raises(SelectionError, match="use one"):
+            _parse(
+                TWO_VARIANTS
+                + "rows:\n  - {field: title, method: exact, methods: [exact]}\n"
+            )
+
+    def test_should_reject_an_unknown_scope(self):
+        with pytest.raises(SelectionError, match="scope"):
+            _parse(TWO_VARIANTS + "rows:\n  - {field: title, scope: some}\n")
+
+    def test_should_need_a_field(self):
+        with pytest.raises(SelectionError, match="needs a field"):
+            _parse(TWO_VARIANTS + "rows:\n  - {method: exact}\n")
+
+
+class TestToSelection:
+    def test_should_take_the_fields_from_the_rows_in_order(self):
+        selection = to_selection(_parse(
+            TWO_VARIANTS + "rows:\n  - {field: abstract}\n  - {field: title}\n"
+        ))
+        assert selection.fields == ("abstract", "title")
+
+    def test_should_leave_the_fields_open_without_rows(self):
+        assert to_selection(_parse(TWO_VARIANTS)).fields is None
+
+    def test_should_not_constrain_the_scope_by_default(self):
+        selection = to_selection(_parse(
+            TWO_VARIANTS + "rows:\n  - {field: title, method: exact}\n"
+        ))
+        assert selection.row_filter == {"title": (("exact", ""),)}
+
+    def test_should_constrain_an_explicit_scope(self):
+        selection = to_selection(_parse(
+            TWO_VARIANTS + "rows:\n  - {field: title, method: exact, scope: gold}\n"
+        ))
+        assert selection.row_filter == {"title": (("exact", "gold"),)}
+
+    def test_should_stand_for_every_method_where_none_is_named(self):
+        selection = to_selection(_parse(TWO_VARIANTS + "rows:\n  - {field: title}\n"))
+        assert selection.row_filter == {"title": (("", ""),)}
+
+    def test_should_carry_an_asserted_type(self):
+        selection = to_selection(_parse(
+            TWO_VARIANTS + "rows:\n  - {field: title, type: string}\n"
+        ))
+        assert selection.expected_types == {"title": "string"}
+
+    def test_should_carry_the_corpora(self):
+        selection = to_selection(_parse(TWO_VARIANTS + "corpora: [biorxiv, pkp]\n"))
+        assert selection.corpora == ("biorxiv", "pkp")
+
+    def test_should_carry_each_declared_chart(self):
+        selection = to_selection(_parse(
+            TWO_VARIANTS
+            + "charts:\n  - {row: {field: title, method: exact}, title: Titles}\n"
+        ))
+        chart = selection.declared_charts[0]
+        assert isinstance(chart, ChartConfig)
+        assert (chart.field, chart.title) == ("title", "Titles")
+
+    def test_should_default_a_chart_to_the_all_documents_row(self):
+        selection = to_selection(_parse(
+            TWO_VARIANTS + "charts:\n  - {row: {field: title, method: exact}}\n"
+        ))
+        chart = selection.declared_charts[0]
+        assert isinstance(chart, ChartConfig) and chart.scope == "all"
+
+    def test_should_reject_a_chart_without_a_method(self):
+        with pytest.raises(SelectionError, match="field and a method"):
+            _parse(TWO_VARIANTS + "charts:\n  - {row: {field: title}}\n")
+
+
+class TestResolveVariants:
+    def _config(self):
+        return _parse(TWO_VARIANTS)
+
+    def test_should_find_a_named_variant_where_the_run_put_it(self, tmp_path):
+        stored = tmp_path / "baselines/grobid/0.9.1-crf/default/train"
+        stored.mkdir(parents=True)
+        (stored / "summary.json").write_text("{}")
+        current = tmp_path / "train"
+        current.mkdir()
+        (current / "summary.json").write_text("{}")
+        resolved = resolve_variants(self._config(), tmp_path, "train", current)
+        assert [label for label, _ in resolved] == ["grobid", "head"]
+
+    def test_should_fail_naming_what_it_could_not_find(self, tmp_path):
+        with pytest.raises(SelectionError, match="grobid"):
+            resolve_variants(self._config(), tmp_path, "train", tmp_path)
+
+    def test_should_say_that_nothing_is_generated(self, tmp_path):
+        (tmp_path / "baselines").mkdir()
+        with pytest.raises(SelectionError, match="Nothing is generated"):
+            resolve_variants(self._config(), tmp_path, "train", tmp_path)
+
+    def test_should_say_when_there_is_no_runs_directory_at_all(self, tmp_path):
+        with pytest.raises(SelectionError, match="does not get one"):
+            resolve_variants(self._config(), tmp_path / "absent", "train", tmp_path)
+
+    def test_should_list_the_baselines_that_were_scored(self, tmp_path):
+        stored = tmp_path / "baselines/grobid/0.9.0-crf/default/train"
+        stored.mkdir(parents=True)
+        (stored / "summary.json").write_text("{}")
+        with pytest.raises(SelectionError, match="grobid/0.9.0-crf/default/train"):
+            resolve_variants(self._config(), tmp_path, "train", tmp_path)
+
+    def test_should_say_a_current_variant_needs_a_run_under_test(self, tmp_path):
+        stored = tmp_path / "baselines/grobid/0.9.1-crf/default/train"
+        stored.mkdir(parents=True)
+        (stored / "summary.json").write_text("{}")
+        with pytest.raises(SelectionError, match="pass --current-run"):
+            resolve_variants(self._config(), tmp_path, "train", None)
+
+    def test_should_take_an_explicit_summary_path(self, tmp_path):
+        summary = tmp_path / "given.json"
+        summary.write_text("{}")
+        config = _parse(
+            f"variants:\n  - {{label: a, summary: {summary}}}\n"
+            f"  - {{label: b, summary: {summary}}}\n"
+        )
+        assert [path for _, path in resolve_variants(config, tmp_path, "train")] == [
+            summary, summary,
+        ]
+
+
+class TestLoadComparison:
+    def test_should_resolve_a_name_under_the_comparisons_directory(self, tmp_path):
+        (tmp_path / "models.yml").write_text(TWO_VARIANTS)
+        assert load_comparison("models", tmp_path).name == "models"
+
+    def test_should_accept_a_path(self, tmp_path):
+        path = tmp_path / "models.yml"
+        path.write_text(TWO_VARIANTS)
+        assert load_comparison(str(path), tmp_path).name == "models"
+
+    def test_should_say_where_it_looked(self, tmp_path):
+        with pytest.raises(SelectionError, match="No comparison file at"):
+            load_comparison("nope", tmp_path)
+
+
+class TestShippedComparisons:
+    def test_every_checked_in_comparison_parses(self):
+        from pathlib import Path  # pylint: disable=import-outside-toplevel
+        paths = sorted(Path("benchmarks/comparisons").glob("*.yml"))
+        assert paths, "expected at least one worked example"
+        for path in paths:
+            assert load_comparison(str(path)).variants
+
+    def test_every_checked_in_comparison_names_only_stored_variants(self):
+        from pathlib import Path  # pylint: disable=import-outside-toplevel
+        for path in sorted(Path("benchmarks/comparisons").glob("*.yml")):
+            config = load_comparison(str(path))
+            assert not any(variant.current for variant in config.variants), (
+                f"{config.name} names the run under test, which CI cannot resolve"
+            )
+
+
+class TestAvailableBaselines:
+    def test_should_be_empty_without_a_baselines_directory(self, tmp_path):
+        assert not available_baselines(tmp_path)
+
+    def test_should_name_a_scored_baseline_by_its_coordinates(self, tmp_path):
+        stored = tmp_path / "baselines/grobid/0.9.0-crf/default/train"
+        stored.mkdir(parents=True)
+        (stored / "summary.json").write_text("{}")
+        assert available_baselines(tmp_path) == ["grobid/0.9.0-crf/default/train"]
+
+    def test_should_skip_a_baseline_that_was_never_scored(self, tmp_path):
+        (tmp_path / "baselines/grobid/0.9.0-crf/default/train").mkdir(parents=True)
+        assert not available_baselines(tmp_path)
+
+
+class TestComputeCharts:
+    def test_should_parse_a_compute_chart(self):
+        config = _parse(TWO_VARIANTS + "charts:\n  - {compute: cpu_seconds_per_doc}\n")
+        metrics = [c.metric for c in config.charts if isinstance(c, ComputeChartConfig)]
+        assert metrics == ["cpu_seconds_per_doc"]
+
+    def test_should_keep_score_and_compute_charts_apart(self):
+        config = _parse(
+            TWO_VARIANTS
+            + "charts:\n  - {row: {field: title, method: exact}}\n"
+            + "  - {compute: latency_median}\n"
+        )
+        assert _kinds(config) == [ChartConfig, ComputeChartConfig]
+
+    def test_should_carry_a_title(self):
+        config = _parse(
+            TWO_VARIANTS + "charts:\n  - {compute: docs_per_hour, title: How fast}\n"
+        )
+        assert _first(config, ComputeChartConfig).title == "How fast"
+
+    def test_should_reject_an_unknown_metric(self):
+        with pytest.raises(SelectionError, match="cpu_secs"):
+            _parse(TWO_VARIANTS + "charts:\n  - {compute: cpu_secs}\n")
+
+    def test_should_name_the_known_metrics_in_the_error(self):
+        with pytest.raises(SelectionError, match="latency_median"):
+            _parse(TWO_VARIANTS + "charts:\n  - {compute: nope}\n")
+
+    def test_should_reject_an_unknown_key_beside_compute(self):
+        with pytest.raises(SelectionError, match="corpora"):
+            _parse(
+                TWO_VARIANTS
+                + "charts:\n  - {compute: latency_median, corpora: [biorxiv]}\n"
+            )
+
+    def test_should_reach_the_selection(self):
+        selection = to_selection(
+            _parse(TWO_VARIANTS + "charts:\n  - {compute: latency_p90}\n")
+        )
+        assert [
+            c.metric for c in selection.declared_charts
+            if isinstance(c, ComputeChartConfig)
+        ] == ["latency_p90"]
+
+
+class TestPrimaryVariant:
+    def test_should_default_to_the_last(self):
+        config = _parse(TWO_VARIANTS)
+        assert primary_index(config) == len(config.variants) - 1
+
+    def test_should_take_the_one_that_says_so(self):
+        config = _parse("""
+variants:
+  - {tool: grobid, version: 1, primary: true}
+  - {tool: grobid, version: 2}
+  - {current: true}
+""")
+        assert primary_index(config) == 0
+
+    def test_should_reject_two_primaries(self):
+        with pytest.raises(SelectionError, match="only one variant"):
+            _parse("""
+variants:
+  - {tool: grobid, version: 1, primary: true}
+  - {tool: grobid, version: 2, primary: true}
+""")
+
+    def test_should_survive_reordering_the_others(self):
+        config = _parse("""
+variants:
+  - {tool: grobid, version: "1"}
+  - {tool: grobid, version: "2", primary: true}
+  - {current: true}
+""")
+        assert config.variants[primary_index(config)].version == "2"
+
+
+class TestFieldsChartConfig:
+    _ROWS = """charts:
+  - rows:
+      - {field: title, method: levenshtein}
+      - {field: abstract, method: levenshtein}
+    title: Key fields
+"""
+
+    def test_should_parse_a_rows_chart(self):
+        config = _parse(TWO_VARIANTS + self._ROWS)
+        assert _first(config, FieldsChartConfig).rows == (
+            ("title", "levenshtein", "all"), ("abstract", "levenshtein", "all"),
+        )
+
+    def test_should_carry_the_title(self):
+        config = _parse(TWO_VARIANTS + self._ROWS)
+        assert _first(config, FieldsChartConfig).title == "Key fields"
+
+    def test_should_keep_it_apart_from_a_single_row_chart(self):
+        config = _parse(
+            TWO_VARIANTS + self._ROWS + "  - {row: {field: title, method: exact}}\n"
+        )
+        assert _kinds(config) == [FieldsChartConfig, ChartConfig]
+
+    def test_should_need_more_than_one_row(self):
+        with pytest.raises(SelectionError, match="at least two rows"):
+            _parse(
+                TWO_VARIANTS
+                + "charts:\n  - rows:\n      - {field: title, method: exact}\n"
+            )
+
+    def test_should_need_a_method_on_every_row(self):
+        with pytest.raises(SelectionError, match="rows\\[1\\]"):
+            _parse(
+                TWO_VARIANTS + "charts:\n  - rows:\n"
+                "      - {field: title, method: exact}\n      - {field: abstract}\n"
+            )
+
+    def test_should_reach_the_selection(self):
+        assert len(to_selection(_parse(TWO_VARIANTS + self._ROWS)).declared_charts) == 1
+
+
+class TestCostChartRate:
+    def test_should_default_to_no_rate_of_its_own(self):
+        config = _parse(TWO_VARIANTS + "charts:\n  - {compute: estimated_cost_per_1k}\n")
+        assert _first(config, ComputeChartConfig).cpu_usd_per_hour is None
+
+    def test_should_take_a_rate(self):
+        config = _parse(
+            TWO_VARIANTS
+            + "charts:\n  - {compute: estimated_cost_per_1k, cpu_usd_per_hour: 0.05}\n"
+        )
+        assert _first(config, ComputeChartConfig).cpu_usd_per_hour == 0.05
+
+    def test_should_reject_a_rate_that_is_not_a_positive_number(self):
+        with pytest.raises(SelectionError, match="positive number"):
+            _parse(
+                TWO_VARIANTS
+                + "charts:\n  - {compute: estimated_cost_per_1k, cpu_usd_per_hour: 0}\n"
+            )
+
+
+class TestVariantDescriptions:
+    def test_should_name_the_store_coordinates(self):
+        config = _parse(TWO_VARIANTS)
+        assert variant_descriptions(config)[0][1] == (
+            "`grobid` `0.9.1-crf`, profile `default`"
+        )
+
+    def test_should_say_which_is_the_run_under_test(self):
+        config = _parse(TWO_VARIANTS)
+        assert "the run under test" in variant_descriptions(config)[1][1]
+
+    def test_should_fall_back_to_the_path_it_was_given(self):
+        config = _parse(
+            "variants:\n  - {label: a, summary: some/summary.json}\n"
+            "  - {label: b, current: true}\n"
+        )
+        assert variant_descriptions(config)[0][1] == "`some/summary.json`"
+
+    def test_should_keep_the_declared_order(self):
+        config = _parse(TWO_VARIANTS)
+        assert [label for label, _ in variant_descriptions(config)] == ["grobid", "head"]

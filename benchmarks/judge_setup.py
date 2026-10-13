@@ -17,6 +17,10 @@ from benchmarks.best_match_scoring import (
     BEST_MATCH_SCORING_TYPE_NAME,
     BEST_MATCH_SCORING_TYPE,
 )
+from benchmarks.matched_property_scoring import (
+    MATCHED_PROPERTY_SCORING_TYPE_NAME,
+    MATCHED_PROPERTY_SCORING_TYPE,
+)
 from benchmarks.variant_xpath import register_variant_functions
 
 XML_MAPPING_OVERRIDE_PATH = str(Path(__file__).parent / "xml-mapping.conf")
@@ -27,6 +31,7 @@ def prepare_judge() -> Dict[str, Dict[str, str]]:
     register_functions()
     register_variant_functions()
     SCORING_TYPE_MAP[BEST_MATCH_SCORING_TYPE_NAME] = BEST_MATCH_SCORING_TYPE
+    SCORING_TYPE_MAP[MATCHED_PROPERTY_SCORING_TYPE_NAME] = MATCHED_PROPERTY_SCORING_TYPE
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
     for section, entries in parse_xml_mapping(XML_MAPPING_OVERRIDE_PATH).items():
         xml_mapping.setdefault(section, {}).update(entries)

@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,7 +8,9 @@ import yaml
 
 from sciencebeam_parser.app.profiles import ProfileRegistry
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.models.header.extract import ABSTRACTS_MODES
 from sciencebeam_parser.models.model_impl_factory import EngineNames, get_engine_name_for_config
+from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.processors.fulltext.models import SEQUENCE_MODEL_CLASS_BY_NAME
 
 
@@ -21,11 +23,21 @@ SHARED_BASE_PROFILE = 'grobid_crf_0_9_0'
 
 # Profiles combining single-model profiles, and the profile each model comes from.
 COMBINED_PROFILES: Dict[str, Dict[str, str]] = {
-    'wapiti_scielo_preprints_ore': {
+    'wapiti_references_scielo_preprints_ore': {
         'reference_segmenter': 'wapiti_refseg_scielo_preprints_ore',
         'citation': 'wapiti_citation_scielo_preprints_ore',
     },
-    'delft_scielo_preprints_ore': {
+    'delft_references_scielo_preprints_ore': {
+        'reference_segmenter': 'delft_refseg_scielo_preprints_ore',
+        'citation': 'delft_citation_scielo_preprints_ore',
+    },
+    'wapiti_all_scielo_preprints_ore': {
+        'segmentation': 'wapiti_seg_scielo_preprints_ore',
+        'reference_segmenter': 'wapiti_refseg_scielo_preprints_ore',
+        'citation': 'wapiti_citation_scielo_preprints_ore',
+    },
+    'delft_all_scielo_preprints_ore': {
+        'segmentation': 'delft_seg_scielo_preprints_ore',
         'reference_segmenter': 'delft_refseg_scielo_preprints_ore',
         'citation': 'delft_citation_scielo_preprints_ore',
     },
@@ -54,12 +66,6 @@ COMPOSED_MODEL_PARAMS = sorted({
 # The profile serving models from the Hugging Face Hub, and the base it extends.
 HUB_PROFILE = 'delft_hub'
 
-# Left out of the budget the other profiles are held to. `delft_hub` extends
-# `biorxiv_elife` and shares eight of its ten models with it, adding only the
-# two it takes from the Hub -- the same sharing the budget is there to check --
-# but the budget is a fixed multiple of one profile's models, so it is an
-# allowance every profile spends rather than a measure of how well each shares.
-PROFILES_OUTSIDE_THE_SHARING_BUDGET = frozenset({HUB_PROFILE})
 HUB_PROFILE_BASE = 'biorxiv_elife'
 
 # What the delft engine recognises as a Hub reference
@@ -70,8 +76,46 @@ def get_shipped_config() -> dict:
     return yaml.safe_load(CONFIG_PATH.read_text(encoding='utf-8'))
 
 
-def get_resolved_models(profile_name: str) -> dict:
+def get_resolved_models(profile_name: Optional[str]) -> dict:
     return AppConfig(get_shipped_config()).resolve_profile(profile_name)['models']
+
+
+def get_fulltext_processor_config(profile_name: Optional[str]) -> FullTextProcessorConfig:
+    return FullTextProcessorConfig.from_app_config(
+        AppConfig(get_shipped_config()).resolve_profile(profile_name)
+    )
+
+
+ABSTRACTS_MODE_PROFILES = [
+    'grobid_crf_abstract_variants',
+    'grobid_crf_abstract_merged_by_language'
+]
+
+
+class TestAbstractsModeProfiles:
+    """Each exists to be compared with the default, so one setting may differ and no other."""
+
+    @pytest.mark.parametrize('profile_name', ABSTRACTS_MODE_PROFILES)
+    def test_should_differ_from_the_default_profile_in_abstracts_mode_only(
+        self, profile_name: str
+    ):
+        default_config = get_fulltext_processor_config(None)
+        variant_config = get_fulltext_processor_config(profile_name)
+        assert variant_config.abstracts_mode != default_config.abstracts_mode
+        assert variant_config._replace(  # pylint: disable=protected-access
+            abstracts_mode=default_config.abstracts_mode
+        ) == default_config
+
+    @pytest.mark.parametrize('profile_name', ABSTRACTS_MODE_PROFILES)
+    def test_should_serve_the_models_the_default_profile_serves(self, profile_name: str):
+        assert get_resolved_models(profile_name) == get_resolved_models(None)
+
+    def test_should_cover_every_mode_other_than_the_default(self):
+        default_mode = get_fulltext_processor_config(None).abstracts_mode
+        assert {
+            get_fulltext_processor_config(name).abstracts_mode
+            for name in ABSTRACTS_MODE_PROFILES
+        } == set(ABSTRACTS_MODES) - {default_mode}
 
 
 class TestShippedCombinedProfiles:
@@ -105,6 +149,15 @@ class TestShippedCombinedProfiles:
 class TestShippedProfilesOnlyChangeWhatIsPerRequest:
     def test_should_only_set_keys_a_profile_may_set(self):
         AppConfig(get_shipped_config()).validate_profiles()
+
+    def test_should_say_what_every_profile_is_for(self):
+        """A caller choosing between them is not reading this file."""
+        config = AppConfig(get_shipped_config())
+        unlabelled = [
+            name for name in config.get_profile_names()
+            if not config.get_profile_label(name) or not config.get_profile_description(name)
+        ]
+        assert not unlabelled
 
     def test_should_declare_no_extra_selectable_profiles(self):
         """What production serves is unchanged by adding a per-request parameter."""
@@ -156,16 +209,14 @@ class TestShippedProfilesShareTheirModels:
             is not citation.fulltext_models.reference_segmenter_model
         )
 
-    def test_should_hold_every_shipped_profile_for_less_than_three_unshared_ones(
+    def test_should_hold_every_shipped_profile_for_a_quarter_of_what_unshared_would_cost(
         self, registry: ProfileRegistry
     ):
-        for profile_name in AppConfig(get_shipped_config()).get_profile_names():
-            if profile_name in PROFILES_OUTSIDE_THE_SHARING_BUDGET:
-                continue
+        profile_names = AppConfig(get_shipped_config()).get_profile_names()
+        for profile_name in profile_names:
             registry.get_bundle(profile_name)
-        assert registry.model_cache.get_loaded_model_count() < 3 * len(
-            SEQUENCE_MODEL_CLASS_BY_NAME
-        )
+        unshared_count = len(profile_names) * len(SEQUENCE_MODEL_CLASS_BY_NAME)
+        assert registry.model_cache.get_loaded_model_count() < unshared_count / 4
 
     def test_should_attribute_two_profiles_to_different_digests(
         self, registry: ProfileRegistry

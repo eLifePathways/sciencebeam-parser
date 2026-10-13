@@ -10,6 +10,7 @@ import pytest
 from benchmarks.show_cases import (
     _comparison_label,
     _copy_if_exists,
+    _extract_field_values,
     _fetch_pdfalto_xml,
     _get_doc_score,
     _run_label,
@@ -40,6 +41,31 @@ class TestGetDocScore:
         ms = {"sim_sum": 0.6, "expected_count": 1, "predicted_count": 2, "f1": 0.0}
         result = _get_doc_score({"edit_sim": ms}, "edit_sim")
         assert result == pytest.approx(0.4, abs=1e-6)
+
+
+class TestExtractFieldValues:
+    def test_should_show_each_author_with_the_affiliations_linked_to_them_as_one_value(
+        self, tmp_path: Path
+    ):
+        # A field the judge's mapping does not have, so an empty mapping is enough.
+        xml_path = tmp_path / "doc1.jats.xml"
+        xml_path.write_text(
+            "<article><front><article-meta><contrib-group>"
+            '<contrib contrib-type="author"><name><surname>Smith</surname>'
+            '<given-names>Jo</given-names></name><xref ref-type="aff" rid="aff1"/></contrib>'
+            '<contrib contrib-type="author"><name><surname>Jones</surname></name></contrib>'
+            '<aff id="aff1"><label>1</label>Institute 1</aff>'
+            "</contrib-group></article-meta></front></article>",
+            encoding="utf-8",
+        )
+        assert _extract_field_values(xml_path, "affiliation_linked", {}) == [
+            "smith j: Institute 1 | jones: (none)"
+        ]
+
+    def test_should_return_no_value_for_a_document_without_authors(self, tmp_path: Path):
+        xml_path = tmp_path / "doc1.jats.xml"
+        xml_path.write_text("<article><front/></article>", encoding="utf-8")
+        assert not _extract_field_values(xml_path, "affiliation_linked", {})
 
 
 class TestWordDiff:

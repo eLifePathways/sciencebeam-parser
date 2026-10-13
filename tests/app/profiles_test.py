@@ -7,6 +7,7 @@ import pytest
 
 from sciencebeam_parser.app import profiles as profiles_module
 from sciencebeam_parser.app.profiles import (
+    ProfileDescription,
     ProfileNotSelectableError,
     ProfileRegistry,
     SequenceModelCache,
@@ -361,6 +362,55 @@ class TestGetSelectableProfileNames:
 
     def test_should_return_nothing_without_a_default_profile(self):
         assert get_selectable_profile_names(AppConfig(BASE_CONFIG_PROPS), None) == []
+
+
+class TestGetProfileDescriptions:
+    LABELLED_CONFIG_PROPS = {
+        **BASE_CONFIG_PROPS,
+        'profiles': {
+            'a': {'sequence_models': 'a', 'label': 'A', 'description': 'What a serves.'},
+            'b': {'sequence_models': 'b', 'label': 'B', 'description': 'What b serves.'},
+            'c': {'sequence_models': 'c'},
+        },
+    }
+
+    def _get_descriptions(
+        self, selectable_profile_names: Optional[List[str]] = None
+    ) -> List[ProfileDescription]:
+        return create_registry(
+            AppConfig(self.LABELLED_CONFIG_PROPS),
+            selectable_profile_names=selectable_profile_names
+        ).get_profile_descriptions()
+
+    def test_should_say_what_each_profile_is_for(self):
+        assert self._get_descriptions()[:2] == [
+            ProfileDescription(
+                name='a', label='A', description='What a serves.',
+                alias_names=[], is_default=True
+            ),
+            ProfileDescription(
+                name='b', label='B', description='What b serves.',
+                alias_names=['alias_b'], is_default=False
+            ),
+        ]
+
+    def test_should_describe_a_profile_without_a_label_by_its_name_alone(self):
+        assert self._get_descriptions()[2] == ProfileDescription(
+            name='c', label=None, description=None, alias_names=[], is_default=False
+        )
+
+    def test_should_only_describe_what_the_deployment_serves(self):
+        assert [
+            description.name for description in self._get_descriptions(['a', 'b'])
+        ] == ['a', 'b']
+
+    def test_should_report_an_alias_beside_the_profile_rather_than_as_a_choice(self):
+        names = [description.name for description in self._get_descriptions()]
+        assert 'alias_b' not in names
+        assert [
+            description.alias_names for description in self._get_descriptions()
+            if description.name == 'b'
+        ] == [['alias_b']]
 
 
 class TestSelectableProfilesFromEnvironment:

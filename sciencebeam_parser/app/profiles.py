@@ -162,6 +162,19 @@ class ProfileBundle(NamedTuple):
         )
 
 
+class ProfileDescription(NamedTuple):
+    """What a caller is told about a profile it may select.
+
+    `label` and `description` are optional because a profile is not waiting for
+    prose to be selectable; a client building a menu falls back to the name.
+    """
+    name: str
+    label: Optional[str]
+    description: Optional[str]
+    alias_names: Sequence[str]
+    is_default: bool
+
+
 def get_selectable_profile_names(
     config: AppConfig,
     default_profile_name: Optional[str]
@@ -220,6 +233,26 @@ class ProfileRegistry:
 
     def get_available_profile_names(self) -> List[str]:
         return sorted(self.selectable_profile_names)
+
+    def get_profile_descriptions(self) -> List[ProfileDescription]:
+        """What this deployment serves, said in words rather than in names only.
+
+        Over the selectable names rather than the declared ones, so a deployment
+        that narrows the set does not advertise what it withheld. An alias is
+        reported beside the profile it resolves to, which is the only name the
+        list itself carries.
+        """
+        alias_names_map = self.base_config.get_alias_names_by_profile_name()
+        return [
+            ProfileDescription(
+                name=name,
+                label=self.base_config.get_profile_label(name),
+                description=self.base_config.get_profile_description(name),
+                alias_names=alias_names_map.get(name, []),
+                is_default=name == self.default_profile_name
+            )
+            for name in self.get_available_profile_names()
+        ]
 
     def get_resolved_profile_name(self, profile_name: Optional[str]) -> Optional[str]:
         """The name a request asked for, after aliases, checked against what is served.

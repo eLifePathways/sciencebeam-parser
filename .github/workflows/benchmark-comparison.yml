@@ -1,0 +1,149 @@
+name: Benchmark comparison
+
+# Renders a named comparison from predictions the store already holds: fetch the gold,
+# score what is stored, compare. No parser, no container and nothing generated, so this
+# takes minutes where a benchmark takes hours -- which is the point, since a comparison
+# is a question asked of runs that already happened and is worth re-asking freely.
+#
+# Every variant is named the way the predictions store files it -- tool, version, profile
+# -- so a comparison is a question about runs that already happened, and is independent of
+# the branch it is labelled on. A `current: true` variant names a run directory instead,
+# which is a local arrangement: labelled here it fails saying which variant it could not
+# resolve.
+
+on:
+  workflow_dispatch:
+    inputs:
+      comparison:
+        description: 'Named comparison from benchmarks/comparisons/'
+        required: true
+        type: string
+      split:
+        description: 'Split the stored predictions were produced against'
+        required: false
+        default: 'validation'
+        type: string
+      mode:
+        description: 'Document sample to compare over; match the mode the predictions were produced at'
+        required: false
+        default: 'medium'
+        type: choice
+        options: [smoke, small, medium, large, full]
+  pull_request:
+    types: [labeled, synchronize]
+
+# One comparison at a time per branch; a later label supersedes an earlier one.
+concurrency:
+  group: benchmark-comparison-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  comparison:
+    # `contains` over the labels needs the name in full, and the name is the comparison's,
+    # so the list is matched as text instead.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(toJson(github.event.pull_request.labels.*.name), 'comparison:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: benchmark
+    permissions:
+      contents: read
+      pull-requests: write
+
+    env:
+      BENCHMARK_SPLIT: ${{ inputs.split || 'validation' }}
+      # The mode names which documents the comparison is over, and the sample is seeded
+      # and nested -- a smaller mode is a subset of a larger one -- so it is a defined
+      # denominator rather than whatever each variant happens to hold. It wants to match
+      # the mode the stored predictions were produced at: `full` would let a variant with
+      # more stored predictions than the others score more documents than them, which is
+      # not a comparison.
+      BENCHMARK_MODE: ${{ inputs.mode || 'medium' }}
+      BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/comparison
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: uv sync --frozen --group benchmark
+
+      - name: Resolve the comparison
+        env:
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          DISPATCH_COMPARISON: ${{ inputs.comparison }}
+        run: |
+          LABEL_COMPARISON=$(echo "$PR_LABELS_JSON" \
+            | jq -r '.[]? | select(startswith("comparison:")) | sub("^comparison:"; "")' \
+            | head -n1)
+          COMPARISON="${LABEL_COMPARISON:-${DISPATCH_COMPARISON}}"
+          if ! [[ "$COMPARISON" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::Invalid comparison '$COMPARISON' - only letters, digits, dashes and underscores"
+            exit 1
+          fi
+          if [ ! -f "benchmarks/comparisons/${COMPARISON}.yml" ]; then
+            echo "::error::No benchmarks/comparisons/${COMPARISON}.yml on this branch"
+            exit 1
+          fi
+          echo "::notice::Comparison: $COMPARISON"
+          echo "BENCHMARK_COMPARISON=${COMPARISON}" >> "$GITHUB_ENV"
+
+      - name: Checkout predictions repo
+        uses: actions/checkout@v5
+        with:
+          repository: elifepathways/sciencebeam-eval-predictions
+          path: sciencebeam-eval-predictions
+          token: ${{ secrets.PREDICTIONS_REPO_PAT }}
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: .gitignore
+          sparse-checkout-cone-mode: false
+
+      - name: Render the comparison
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run python -m benchmarks.run \
+            --config benchmarks/eval.yml \
+            --mode ${{ env.BENCHMARK_MODE }} \
+            --split ${{ env.BENCHMARK_SPLIT }} \
+            --data benchmarks/data \
+            --runs benchmarks/runs \
+            --predictions-repo sciencebeam-eval-predictions \
+            --comparison "${BENCHMARK_COMPARISON}" \
+            --comparison-only \
+            --comparison-out "${BENCHMARK_RUN}"
+
+      - name: Write job summary
+        run: cat "${BENCHMARK_RUN}/comparison-${BENCHMARK_COMPARISON}.md" >> $GITHUB_STEP_SUMMARY
+
+      # CML uploads the images a report refers to and rewrites the links, which is how a
+      # chart reaches a comment: GitHub serves `img` over http(s) only, and the web UI's
+      # own attachment upload has no API a workflow can use.
+      - name: Install CML
+        run: npm install -g @dvcorg/cml
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # From the run directory, so the report's own `charts/x.png` resolves whether
+          # CML reads them relative to the file or to where it was invoked.
+          cd "${BENCHMARK_RUN}"
+          cml comment create "comparison-${BENCHMARK_COMPARISON}.md"
+
+      - name: Upload the comparison
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-comparison-${{ github.sha }}
+          path: |
+            ${{ env.BENCHMARK_RUN }}/*.md
+            ${{ env.BENCHMARK_RUN }}/charts/*.png
+          if-no-files-found: ignore
+          retention-days: 30

@@ -10,6 +10,7 @@ from typing import Dict, FrozenSet, Iterable, Iterator, Mapping, Optional, Seque
 from lxml import etree
 
 from sciencebeam_parser.models.data import LabeledLayoutToken, LayoutModelData
+from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_vocab import CITATION_LABEL_BY_SUB_FIELD
 
 
@@ -134,6 +135,39 @@ def count_citation_labels(
     for model_data_list in model_data_list_list:
         for label in get_labels_for_model_data_list(model_data_list):
             _entry(label)['marked'] += 1
+    return counts
+
+
+def count_segmentation_lines(
+    model_data_list_list: Sequence[Sequence[LayoutModelData]],
+    annotated: JatsAnnotatedLayoutDocument,
+) -> Dict[str, Dict[str, int]]:
+    """Per region label, the lines the gold assigns it and the lines JATS grounded.
+
+    `<body>` is the aligner's sink: a line it did not match is labelled `<body>`
+    rather than left alone, so an ungrounded `<body>` line means the JATS had no
+    opinion about it and a model trained on it is being taught the default.
+
+    The two counts are kept apart per label instead of reduced to one share,
+    because the line count of a region is the other thing worth comparing across
+    regenerations, and because only `<body>` has a sink to read into the
+    difference.
+    """
+    counts: Dict[str, Dict[str, int]] = {}
+    for model_data_list in model_data_list_list:
+        for model_data in model_data_list:
+            label = getattr(model_data, 'label', None)
+            if not label:
+                continue
+            if label.startswith('B-') or label.startswith('I-'):
+                label = label[2:]
+            entry = counts.setdefault(label, {'lines': 0, 'grounded': 0})
+            entry['lines'] += 1
+            layout_line = model_data.layout_line
+            if layout_line is not None and any(
+                annotated.get_token_field(token) for token in layout_line.tokens
+            ):
+                entry['grounded'] += 1
     return counts
 
 

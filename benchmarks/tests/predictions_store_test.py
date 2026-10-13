@@ -380,3 +380,35 @@ class TestRepoPredictionsStorePushRace:
         with patch.object(store, "_git", side_effect=[self._result(1), self._result(1)]):
             with pytest.raises(RuntimeError, match="could not rebase"):
                 store._push_rebasing()  # pylint: disable=protected-access
+
+
+class TestRepoStoreOnAFullClone:
+    """CI clones the predictions repo sparsely; a clone made by hand is not sparse."""
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "predictions"
+        repo.mkdir()
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        return repo
+
+    def test_should_not_try_to_widen_a_clone_that_is_not_sparse(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        store = RepoPredictionsStore(repo)
+        # Would raise CalledProcessError from `sparse-checkout add` before this.
+        store.fetch(
+            "grobid", "0.9.1-crf", "default", "train",
+            tmp_path / "run", {"biorxiv": "v1"},
+        )
+        assert not (tmp_path / "run" / "predictions").exists()
+
+    def test_should_report_a_full_clone_as_not_sparse(self, tmp_path: Path):
+        store = RepoPredictionsStore(self._repo(tmp_path))
+        assert not store._is_sparse()  # pylint: disable=protected-access
+
+    def test_should_report_a_sparse_clone_as_sparse(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "core.sparseCheckout", "true"], check=True,
+        )
+        store = RepoPredictionsStore(repo)
+        assert store._is_sparse()  # pylint: disable=protected-access

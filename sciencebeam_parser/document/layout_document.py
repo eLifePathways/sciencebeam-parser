@@ -202,7 +202,7 @@ def retokenize_layout_token(
             whitespace=whitespace,
             coordinates=get_relative_coordinates(
                 layout_token.coordinates,
-                pending_token_text,
+                token_text,
                 text_character_offset,
                 total_text_length
             ),

@@ -21,6 +21,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPage,
     join_layout_tokens,
 )
+from sciencebeam_parser.config.config import UnknownProfileError
 from sciencebeam_parser.models.data import LayoutModelData
 from sciencebeam_parser.document.tei.common import get_tei_xpath_text_content_list
 from sciencebeam_parser.models.data import DEFAULT_DOCUMENT_FEATURES_CONTEXT
@@ -62,9 +63,18 @@ from sciencebeam_parser.training.cli.generate_data import (
     TrainingDataDocumentContext,
     _split_references_by_jats_instance,
     generate_training_data_for_layout_document,
+    get_generation_config,
     main,
 )
-from sciencebeam_parser.training.quality.record import DocumentStatus, JatsStatus
+from sciencebeam_parser.training.quality.record import (
+    DocumentStatus,
+    JatsStatus,
+    get_quality_record_filename
+)
+from sciencebeam_parser.training.spans.record import (
+    LabelledSpan,
+    get_labelled_content_hash
+)
 
 from tests.processors.fulltext.model_mocks import MockFullTextModels
 from tests.test_utils import log_on_exception
@@ -325,6 +335,45 @@ def _check_tei_training_data_generator_output(
 
 @log_on_exception
 class TestGenerateTrainingDataForLayoutDocument:
+    def test_should_name_the_reference_each_span_sits_in(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=True
+        )
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'reference-segmenter' / 'corpus' / 'spans',
+            SOURCE_FILENAME_1,
+            ReferenceSegmenterModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        instance_by_label = {
+            json_dict['label']: json_dict.get('instance')
+            for json_dict in json_dicts[1:]
+        }
+        assert instance_by_label['<reference>'] == 1
+        assert instance_by_label['<label>'] == 1
+        assert instance_by_label.get('<other>') is None
+
+
     def test_should_generate_data_using_mock_models(  # noqa pylint: disable=too-many-locals, too-many-statements
         self,
         tmp_path: Path,
@@ -463,6 +512,72 @@ class TestGenerateTrainingDataForLayoutDocument:
         assert reference_segmenter_json_dict['entity_element_count'] == 1
         assert json_dict_by_model['citation']['entity_element_count'] == 1
         assert 'entity_element_count' not in json_dict_by_model['segmentation']
+
+    def test_should_pin_a_model_with_a_span_record_to_what_that_record_says(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        """The pin has to be recoverable from the corpus, or it cannot be backfilled."""
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'segmentation' / 'corpus' / 'spans',
+            MINIMAL_EXAMPLE_PDF,
+            SegmentationModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        quality_path = (
+            output_path / 'segmentation' / 'quality'
+            / get_quality_record_filename(Path(MINIMAL_EXAMPLE_PDF).stem, 'segmentation')
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        recomputed = get_labelled_content_hash([
+            LabelledSpan(
+                line_index=json_dict['line'] - 1,
+                label=json_dict['label'],
+                text=json_dict['text'],
+                coordinates=None
+            )
+            for json_dict in json_dicts[1:]
+        ])
+        recorded = json.loads(quality_path.read_text(encoding='utf-8'))
+        assert recorded['labelled_content_hash'] == recomputed
+
+    def test_should_not_pin_a_model_that_writes_no_span_record(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        quality_path = (
+            output_path / 'citation' / 'quality'
+            / get_quality_record_filename(Path(MINIMAL_EXAMPLE_PDF).stem, 'citation')
+        )
+        assert 'labelled_content_hash' not in json.loads(
+            quality_path.read_text(encoding='utf-8')
+        )
 
     def test_should_report_a_missing_jats_without_a_reference_count(
         self,
@@ -695,7 +810,7 @@ class TestMain:
         )
         assert get_text_content_list(xml_root.xpath('text/front'))
 
-    def test_should_write_one_line_record_row_per_segmentation_line(
+    def test_should_write_one_span_record_row_per_segmentation_line(
         self,
         tmp_path: Path,
         sample_layout_document: SampleLayoutDocument,
@@ -711,10 +826,10 @@ class TestMain:
             f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
             f'--output-path={output_path}'
         ])
-        lines_path = _get_expected_file_path_with_suffix(
-            output_path / 'segmentation' / 'corpus' / 'lines',
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'segmentation' / 'corpus' / 'spans',
             MINIMAL_EXAMPLE_PDF,
-            SegmentationModelTrainingDataGenerator.LINES_FILENAME_SUFFIX
+            SegmentationModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
         )
         tei_path = _get_expected_file_path_with_suffix(
             output_path / 'segmentation' / 'corpus' / 'tei',
@@ -726,21 +841,25 @@ class TestMain:
             MINIMAL_EXAMPLE_PDF,
             SegmentationTeiTrainingDataGenerator().get_default_data_filename_suffix()
         )
-        assert lines_path.exists()
+        assert spans_path.exists()
         json_dicts = [
             json.loads(line)
-            for line in lines_path.read_text(encoding='utf-8').splitlines()
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
         ]
         line_break_count = len(etree.parse(str(tei_path)).getroot().xpath('//lb'))
         raw_row_count = len(raw_path.read_text(encoding='utf-8').splitlines())
         assert line_break_count > 0
-        assert json_dicts[0]['line_count'] == len(json_dicts) - 1
+        assert json_dicts[0]['span_count'] == len(json_dicts) - 1
         assert json_dicts[0]['line_count'] == line_break_count
         assert json_dicts[0]['line_count'] == raw_row_count
+        assert json_dicts[0]['span_count'] == json_dicts[0]['line_count']
+        assert [json_dict['line'] for json_dict in json_dicts[1:]] == list(
+            range(1, 1 + json_dicts[0]['line_count'])
+        )
         assert all('label' in json_dict for json_dict in json_dicts[1:])
         assert all('text' in json_dict for json_dict in json_dicts[1:])
 
-    def test_should_not_write_a_line_record_for_another_model(
+    def test_should_write_a_span_record_for_the_header_model(
         self,
         tmp_path: Path,
         sample_layout_document: SampleLayoutDocument,
@@ -756,7 +875,81 @@ class TestMain:
             f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
             f'--output-path={output_path}'
         ])
-        assert not (output_path / 'header' / 'corpus' / 'lines').exists()
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'header' / 'corpus' / 'spans',
+            MINIMAL_EXAMPLE_PDF,
+            HeaderModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        tei_path = _get_expected_file_path_with_suffix(
+            output_path / 'header' / 'corpus' / 'tei',
+            MINIMAL_EXAMPLE_PDF,
+            HeaderTeiTrainingDataGenerator().get_default_tei_filename_suffix()
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        assert json_dicts[0]['model'] == 'header'
+        assert json_dicts[0]['line_count'] == len(
+            etree.parse(str(tei_path)).getroot().xpath('//lb')
+        )
+        assert json_dicts[0]['labels']
+        assert json_dicts[0]['span_count'] == len(json_dicts) - 1
+
+    def test_should_write_a_span_record_for_the_reference_segmenter_model(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'reference-segmenter' / 'corpus' / 'spans',
+            MINIMAL_EXAMPLE_PDF,
+            ReferenceSegmenterModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        tei_path = _get_expected_file_path_with_suffix(
+            output_path / 'reference-segmenter' / 'corpus' / 'tei',
+            MINIMAL_EXAMPLE_PDF,
+            ReferenceSegmenterTeiTrainingDataGenerator().get_default_tei_filename_suffix()
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        assert json_dicts[0]['model'] == 'reference-segmenter'
+        assert json_dicts[0]['line_count'] == len(
+            etree.parse(str(tei_path)).getroot().xpath('//lb')
+        )
+        assert json_dicts[0]['span_count'] == len(json_dicts) - 1
+        assert json_dicts[0]['labels']
+
+    def test_should_not_write_a_span_record_for_another_model(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        assert not (output_path / 'citation' / 'corpus' / 'spans').exists()
 
     def test_should_add_gz_suffix_if_enabled(
         self,
@@ -1520,3 +1713,34 @@ class TestNameCitationModelJatsPath:
         result_text = _doc_text(result[0])
         assert 'Smith' in result_text
         assert 'Jones' in result_text
+
+
+class TestGetGenerationConfig:
+    def test_should_leave_the_default_profile_in_place_when_none_is_named(self):
+        config = get_generation_config(None)
+        assert config.get_active_profile_name() == 'grobid_crf_0_9_0'
+
+    def test_should_select_the_profile_the_parser_will_resolve(self):
+        # Not a merged overlay: ScienceBeamParser resolves the default profile
+        # against whatever configuration it is handed, so a `models:` written
+        # here would be resolved over and never reach a generator.
+        config = get_generation_config('biorxiv_elife')
+        assert config.props['profile'] == 'biorxiv_elife'
+        assert config.get_active_profile_name() == 'biorxiv_elife'
+
+    def test_should_resolve_to_the_feature_configuration_the_generator_uses(self):
+        assert (
+            get_generation_config(None)
+            .resolve_profile().props['models']['segmentation']['use_first_token_of_block']
+        ) is True
+        assert (
+            get_generation_config('biorxiv_elife')
+            .resolve_profile().props['models']['segmentation']['use_first_token_of_block']
+        ) is False
+
+    def test_should_accept_a_profile_alias(self):
+        assert get_generation_config('grobid_crf').props['profile'] == 'grobid_crf'
+
+    def test_should_fail_on_an_unknown_profile(self):
+        with pytest.raises(UnknownProfileError):
+            get_generation_config('not-a-profile')

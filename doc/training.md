@@ -68,21 +68,25 @@ Additionally the `--gzip` argument can be passed in, resulting in gzip (`.gz`) c
 
 #### The quality record
 
-Every run writes a `quality.jsonl` per model it generated for, one JSON line per
-source document, whether the document succeeded or not. It holds the count at each
-stage where the cardinality of the labels can change, so that a corpus can be
-compared against the JATS it was aligned from without counting labels in the
-generated data afterwards.
+Every run writes one record per source document and model it generated for,
+whether the document succeeded or not. It holds the count at each stage where the
+cardinality of the labels can change, so that a corpus can be compared against the
+JATS it was aligned from without counting labels in the generated data afterwards.
 
 The record is per model because generation is run per model: a corpus commonly
 holds one model's data at one document set and another model's at a different one,
 and a record covering the whole corpus would describe the last run rather than the
-data beside it. With `--use-directory-structure` each file sits beside that model's
-`corpus` directory, otherwise it is `<model>.quality.jsonl` in the output path:
+data beside it. It is per document because a run is routinely narrowed to one
+document or one model, and a record covering only what the run touched would drop
+the documents it exists for.
+
+With `--use-directory-structure` the records sit in a `quality` directory beside
+that model's `corpus`, otherwise they are flat in the output path under the same
+filenames:
 
 ```text
-reference-segmenter/quality.jsonl
-citation/quality.jsonl
+reference-segmenter/quality/PPR459453.reference-segmenter.quality.json
+citation/quality/PPR459453.citation.quality.json
 ```
 
 ```json
@@ -107,6 +111,14 @@ citation/quality.jsonl
   `reference-segmenter` and `citation`, and absent for a model whose labels mark
   regions rather than repeated entities. `written: false` is a model that found no
   entities and so wrote no file at all.
+- `labelled_content_hash` is over the labels the document carries and the text
+  each one covers, and is present for a model that writes a span record. It
+  changes when a label, the text under it, a line break or an element boundary
+  moves, and not when the same content is written to a different file format or
+  lands elsewhere on the page. It can be recomputed from the span record beside
+  it; `get_labelled_content_hash` states the recipe. The leading `v1` is the
+  recipe's version, so a corpus pinned under an older one reads as pinned
+  differently rather than as unrecognisable.
 - `label_counts` is per citation label, over references rather than occurrences:
   `jats` counts references whose JATS carries a sub-field for that label, `marked`
   counts references the training data marks it in. The two differ legitimately —
@@ -115,45 +127,64 @@ citation/quality.jsonl
 
 The record is written by the parent process as each document finishes, so a run
 that is interrupted keeps the records it had, and a document that timed out or
-failed is present with a `status` of `timeout` or `error` in every model's file
-rather than missing.
+failed gets a record with a `status` of `timeout` or `error` for every model
+rather than none at all.
 
-#### The segmentation line record
+Regenerating part of a corpus rewrites the records of the documents it covered and
+leaves the rest standing, so what a regeneration changed is a list of files in the
+diff. Nothing here removes a record: a record with no generated data beside it is
+the case the record exists for.
 
-`segmentation` additionally writes one line record per document, holding where on
-the page each of its lines sits, what it says and what it is labelled. Nothing else
-in a corpus carries a coordinate: the features carry relative position bins, and
-the `tei` carries none, so a label can only be judged against the PDF it came from.
+#### The span record
 
-The label and the text are read back out of the training `tei` this run just wrote,
-rather than recomputed, so the record cannot describe a different document to the
-one beside it. With `--use-directory-structure` it sits beside the `tei` and `raw`
-directories, otherwise it is `<document>.segmentation.lines.jsonl` in the output
-path:
+`segmentation` and `header` additionally write one span record per document,
+holding where on the page each labelled run of text sits, what it says and what it
+is labelled. Nothing else in a corpus carries a coordinate: the features carry
+relative position bins, and the `tei` carries none, so a label can only be judged
+against the PDF it came from.
+
+A span is a run of consecutive tokens inside one element and one line. A
+`segmentation` line carries one label and is therefore one span; a `header` line is
+often part one label and part another, so it is more than one.
+
+With `--use-directory-structure` the record sits beside the `tei` and `raw`
+directories, otherwise it is `<document>.<model>.spans.jsonl` in the output path:
 
 ```text
-segmentation/corpus/lines/PPR459453.segmentation.lines.jsonl
+segmentation/corpus/spans/PPR459453.segmentation.spans.jsonl
+header/corpus/spans/PPR459453.header.spans.jsonl
 ```
 
-The first line describes the document and its pages, and every line after it is one
-line of training data, in the order the `tei` writes its `<lb/>` elements and the
-`raw` file writes its rows:
+The first line describes the document, its pages and the labels the model can
+write; every line after it is one span, in the order the `tei` writes them:
 
 ```json
-{"format": "sciencebeam-training-lines", "version": 1, "document_id": "PPR459453",
- "model": "segmentation", "line_count": 1355,
+{"format": "sciencebeam-training-spans", "version": 1, "document_id": "PPR459453",
+ "model": "header", "line_count": 44, "span_count": 50, "page_count": 22,
+ "labels": ["<title>", "<author>", "<address>"],
  "pages": [{"page": 1, "width": 595.28, "height": 841.89}]}
-{"page": 1, "x": 72.0, "y": 88.9, "width": 451.2, "height": 12.0,
- "label": "<header>", "text": "RESEARCH ARTICLE"}
+{"line": 6, "page": 1, "x": 72.0, "y": 88.9, "width": 393.1, "height": 12.0,
+ "label": "<author>", "text": "Poul Holm 1 , James Barrett 2"}
 ```
 
+- `line` counts the `<lb/>` elements of the whole file from 1, so the spans of one
+  line share it. For `segmentation` it is also the row of the `raw` file.
 - coordinates are in PDF points, from the top left of the page, the same space the
   `coords` attributes of the parser's own TEI output use.
-- a line the layout could not place keeps its place in the file, with its label and
+- `pages` carries the pages a span sits on, and `page_count` says how many the
+  document has.
+- `labels` lists the labels a span can carry, in the order the model's element
+  table declares them. Two labels sharing an element path cannot be told apart in
+  the `tei`, so only the first is listed and only it appears as a span's label;
+  `header` maps `<note>` to the root element alongside unlabelled text, which the
+  training TEI parser reads back as other text, so both are `<other>` here.
+- a span keeps the whitespace before and after it, so the spans of a line
+  concatenate to that line of the `tei` exactly.
+- a span the layout could not place keeps its place in the file, with its label and
   text and no coordinates.
-- generation fails the document rather than writing a record whose line count
-  disagrees with the training `tei`, since every label after the disagreement would
-  describe the wrong line.
+- generation fails the document rather than writing a record whose spans do not
+  reproduce the training `tei`, since a label drawn over text it does not cover is
+  worse than no record.
 
 ### Annotating `tei` training data for the sequence models
 
@@ -190,14 +221,18 @@ what the training data ends up with is the entities those elements parse back to
 It writes `<delft-output-path>.quality.jsonl` (or `--quality-output-path`), one row
 per document, and logs a summary per corpus.
 
+It is one file per assembly run rather than per document, because it describes the
+corpus a run assembled rather than data committed beside it.
+
 Pass `--quality-record-path` to join what generation recorded, so that a loss can be
-attributed to a stage rather than only observed:
+attributed to a stage rather than only observed. It is a pattern over the
+per-document records:
 
 ```bash
 python -m sciencebeam_parser.training.cli.generate_delft_data \
     --model-name="reference_segmenter" \
     --tei-source-path="data/generated-training-data/train/*/reference-segmenter/corpus/tei/*.tei.xml" \
-    --quality-record-path="data/generated-training-data/train/*/reference-segmenter/quality.jsonl" \
+    --quality-record-path="data/generated-training-data/train/*/reference-segmenter/quality/*.quality.json" \
     --delft-output-path="./data/generated-training-data/delft/reference-segmenter/corpus/reference-segmenter.data"
 ```
 

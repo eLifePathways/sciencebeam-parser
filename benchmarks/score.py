@@ -17,6 +17,11 @@ from sciencebeam_judge.evaluation.score_aggregation import (
 from sciencebeam_judge.evaluation.scoring_types.scoring_types import resolve_scoring_type
 from sciencebeam_judge.parsing.xml import parse_xml
 
+from benchmarks.affiliation_linking import (
+    AFFILIATION_LINKED_FIELD,
+    LINKED_SCORING_TYPE,
+    score_linked_affiliations,
+)
 from benchmarks.fetch import included_corpora
 from benchmarks.gold_presence import (
     GOLD_PRESENCE_KEY,
@@ -28,6 +33,7 @@ from benchmarks.gold_presence import (
     summarise_gold_presence,
 )
 from benchmarks.judge_setup import prepare_judge
+from benchmarks.compute_cost import aggregate_cost
 from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
 from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
 from benchmarks.variant_match import (
@@ -48,30 +54,36 @@ def _score_pair(  # pylint: disable=too-many-arguments,too-many-positional-argum
     scoring_types_by_field_map: Optional[Dict[str, List[str]]] = None,
     field_sources: Optional[Dict[str, Tuple[str, str]]] = None,
 ) -> List[dict]:
+    # A link between two values is not something the judge's mapping can select, so the
+    # field is scored apart from the ones it reads.
+    judge_field_names = [f for f in field_names if f != AFFILIATION_LINKED_FIELD]
     sources = field_sources or {}
     source_names = sorted({
-        name for field in field_names for name in sources.get(field, (field, field))
+        name for field in judge_field_names for name in sources.get(field, (field, field))
     })
     gold_values = parse_xml(BytesIO(gold_xml), xml_mapping, fields=source_names)
     predicted_values = parse_xml(BytesIO(pred_xml), xml_mapping, fields=source_names)
     expected = {
         field: gold_values[sources.get(field, (field, field))[0]]
-        for field in field_names
+        for field in judge_field_names
         if sources.get(field, (field, field))[0] in gold_values
     }
     actual = {
         field: predicted_values[sources.get(field, (field, field))[1]]
-        for field in field_names
+        for field in judge_field_names
         if sources.get(field, (field, field))[1] in predicted_values
     }
-    return list(
+    doc_scores = list(
         iter_score_document_fields(
             expected, actual,
-            field_names=field_names,
+            field_names=judge_field_names,
             measures=measures,
             scoring_types_by_field_map=scoring_types_by_field_map,
         )
     )
+    if AFFILIATION_LINKED_FIELD in field_names:
+        doc_scores += score_linked_affiliations(gold_xml, pred_xml, measures)
+    return doc_scores
 
 
 def _match_to_prf(ms: dict) -> dict:
@@ -120,10 +132,16 @@ def _build_field_scoring_types(
     per_field: Dict[str, dict],
 ) -> Dict[str, str]:
     scoring_types = {
-        f: per_field.get(f, {}).get("type", default_type)
+        # Scored one way only, so its type is not the config's to set: the default
+        # would otherwise label it `string` and the report would look it up as that.
+        f: (
+            LINKED_SCORING_TYPE if f == AFFILIATION_LINKED_FIELD
+            else per_field.get(f, {}).get("type", default_type)
+        )
         for f in field_names
     }
-    for scoring_type in set(scoring_types.values()):
+    # `linked` is not one of the judge's types, so there is nothing of its to resolve.
+    for scoring_type in set(scoring_types.values()) - {LINKED_SCORING_TYPE}:
         # Resolved here rather than per document: scoring raises per document and the run
         # goes on, so an unknown type would warn once per document and report nothing.
         resolve_scoring_type(scoring_type)
@@ -482,7 +500,9 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
             field_scoring_types, field_sources, xml_mapping
         )
 
-    llm_usage = aggregate_llm_usage(read_manifest_entries(run_dir), corpora)
+    manifest_entries = read_manifest_entries(run_dir)
+    llm_usage = aggregate_llm_usage(manifest_entries, corpora)
+    cost = aggregate_cost(manifest_entries, list(corpora))
 
     (run_dir / "summary.json").write_text(json.dumps({
         "fields": field_names,
@@ -495,6 +515,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         },
         "corpora": corpus_results,
         **({"llm_usage": llm_usage} if llm_usage else {}),
+        **({"cost": cost} if cost else {}),
     }, indent=2))
 
     report = _render_report(corpus_results, field_names, field_scoring_types, run_record)

@@ -6,6 +6,10 @@ from pathlib import Path
 import yaml
 
 from benchmarks.fetch import fetch_training_source
+from benchmarks.training_source_config import (
+    DEFAULT_CONFIG,
+    get_default_selection_path,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,8 +20,11 @@ def main(argv=None):
     )
     parser.add_argument(
         "--config",
-        default="benchmarks/training-source.yml",
-        help="Path to training-source config YAML (default: benchmarks/training-source.yml)",
+        default=DEFAULT_CONFIG,
+        help=(
+            "Path to the training-source config in the generated repo"
+            f" (default: {DEFAULT_CONFIG})"
+        ),
     )
     parser.add_argument(
         "--mode",
@@ -34,6 +41,13 @@ def main(argv=None):
         required=True,
         help="Directory to write PDF and JATS XML files into",
     )
+    parser.add_argument(
+        "--selection-path",
+        help=(
+            "Directory holding each corpus's recorded selection"
+            " (default: a selection directory beside the config)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -42,7 +56,14 @@ def main(argv=None):
     )
 
     cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    records = fetch_training_source(cfg, args.mode, args.split, Path(args.output_path))
+    selection_dir = (
+        Path(args.selection_path) if args.selection_path
+        else get_default_selection_path(args.config)
+    )
+    records = fetch_training_source(
+        cfg, args.mode, args.split, Path(args.output_path),
+        selection_dir=selection_dir,
+    )
     LOGGER.info("Fetched %d records to %s", len(records), args.output_path)
 
 

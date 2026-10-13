@@ -1372,3 +1372,59 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             '"Smith" is ref 2\'s first author; it must be annotated even though '
             'ref 1\'s source match appears after it in the token stream'
         )
+
+
+class TestPostBodyRegionFloor:
+    """An author response quotes the paper, so a body match can land in the peer review."""
+
+    def _align(self, doc, field_values):
+        return LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def test_sub_article_before_a_quoted_body_paragraph_still_matches(self):
+        filler = ' '.join(f'filler{index}' for index in range(60))
+        review_comment = 'Reviewer report one comment about the study design'
+        quoted_paragraph = 'we changed the wording of the original claim about the outcome'
+        doc = _make_doc(
+            'Introduction',
+            'A revised sentence about the outcome',
+            'References',
+            'Smith J 2020 A title Journal of Things 1 2',
+            review_comment,
+            filler,
+            f'Response {quoted_paragraph}',
+        )
+        annotated = self._align(doc, [
+            _fv(quoted_paragraph, JatsFieldNames.BODY_SECTION_PARAGRAPH),
+            _fv('Smith J 2020 A title Journal of Things 1 2', JatsFieldNames.REFERENCE),
+            _fv(review_comment, JatsFieldNames.SUB_ARTICLE),
+        ])
+        comment_tokens = list(doc.iter_all_lines())[4].tokens
+        assert all(
+            annotated.get_token_field(t) == JatsFieldNames.SUB_ARTICLE
+            for t in comment_tokens
+        )
+
+    def test_an_exact_only_value_matches_verbatim_text(self):
+        doc = _make_doc('Introduction', 'University Medical Centre Utrecht')
+        annotated = self._align(doc, [
+            JatsFieldValue(
+                text='University Medical Centre Utrecht',
+                field_name=JatsFieldNames.SUB_ARTICLE,
+                exact_only=True,
+            ),
+        ])
+        tokens = list(doc.iter_all_lines())[1].tokens
+        assert all(
+            annotated.get_token_field(t) == JatsFieldNames.SUB_ARTICLE for t in tokens
+        )
+
+    def test_an_exact_only_value_does_not_match_near_text(self):
+        doc = _make_doc('Introduction', 'University Medical Center of Utrecht')
+        annotated = self._align(doc, [
+            JatsFieldValue(
+                text='University Medical Centre Utrecht',
+                field_name=JatsFieldNames.SUB_ARTICLE,
+                exact_only=True,
+            ),
+        ])
+        assert all(annotated.get_token_field(t) is None for t in doc.iter_all_tokens())

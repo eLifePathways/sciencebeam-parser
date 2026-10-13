@@ -56,7 +56,8 @@ SCIENCEBEAM_PARSER_URL = http://localhost:$(SCIENCEBEAM_PARSER_PORT)
 BENCHMARK_CONFIG ?= benchmarks/eval.yml
 BENCHMARK_MODE ?= smoke
 BENCHMARK_SPLIT ?= train
-BENCHMARK_RUN ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+BENCHMARK_RUNS ?= benchmarks/runs
+BENCHMARK_RUN ?= $(BENCHMARK_RUNS)/$(BENCHMARK_SPLIT)
 
 # GROBID baseline version and the path benchmarks.run writes it to (note the
 # 'default' profile segment). The baseline (run-b) is produced by benchmarks.run on
@@ -77,17 +78,43 @@ TRAINING_DATA_NUM_WORKERS ?= 1
 # Per-document timeout in seconds; 0 disables. Skips outlier PDFs (e.g. 73-page, 38 MB)
 # that cause the JATS aligner to run for many minutes.
 TRAINING_DATA_DOCUMENT_TIMEOUT ?= 120
-# Models to generate training data for (space-separated). Override to add more.
-TRAINING_DATA_MODELS ?= segmentation header affiliation-address reference-segmenter citation
+# Where dev-generate-delft-training-data writes, and which model it converts.
+# It converts one model at a time, because the delft CLI takes one model's paths.
+# It writes beside the corpus it assembled, which that repo ignores: derived from
+# what it commits rather than part of it, like the review's own output.
+DELFT_TRAINING_DATA_OUTPUT ?= $(TRAINING_DATA_OUTPUT)/delft
+DELFT_TRAINING_DATA_MODEL ?= segmentation
 
 # Source training data (PDF + JATS XML) downloaded from the HF dataset.
 # TRAINING_DATA_OUTPUT must point to a checkout of the output repo; create a
 # symlink at data/generated-training-data or override the variable directly:
 #   make dev-generate-training-data TRAINING_DATA_OUTPUT=/path/to/output-repo
-SOURCE_TRAINING_CONFIG ?= benchmarks/training-source.yml
+# The config lives in the generated data repo, beside the corpus it describes.
+SOURCE_TRAINING_CONFIG ?= $(TRAINING_DATA_OUTPUT)/training-source.yml
 SOURCE_TRAINING_MODE ?= smoke
-SOURCE_TRAINING_DATA ?= data/source-training-data/$(SOURCE_TRAINING_MODE)
+# One source tree per mode, since a corpus may want two of them: its references at
+# medium and its segmentation at smoke are two fetches and two generation runs.
+SOURCE_TRAINING_ROOT ?= data/source-training-data
+SOURCE_TRAINING_DATA ?= $(SOURCE_TRAINING_ROOT)/$(SOURCE_TRAINING_MODE)
 SOURCE_TRAINING_SPLIT ?= train
+
+# A comparison file under benchmarks/comparisons/, by name. It names its own
+# variants, so the only thing it needs from here is where to resolve them.
+COMPARISON ?=
+# Deliberately not under BENCHMARK_RUNS: the runs are an input and may be read from
+# another checkout, while what a comparison produces belongs in the tree being worked in.
+COMPARISON_OUT_DIR ?= benchmarks/runs/$(BENCHMARK_SPLIT)
+COMPARISON_OUT ?= $(COMPARISON_OUT_DIR)/comparison-$(COMPARISON).md
+# Where a comparison's named variants are resolved from. A git worktree has no
+# benchmarks/runs of its own -- it is gitignored and stays in the checkout that
+# produced it -- so point this at that checkout when comparing from one.
+BENCHMARK_DATA ?= benchmarks/data
+# A checked-out sciencebeam-eval-predictions. Set it to compare the variants CI sees
+# rather than only those predicted on this machine; unset falls back to the local runs.
+BENCHMARK_PREDICTIONS_REPO ?=
+# Where a comparison's `current: true` variant resolves to, if it declares one. The
+# run under test writes its summary here, so a local run satisfies it without being named.
+COMPARISON_CURRENT_RUN ?= $(BENCHMARK_RUN)
 
 SHOW_FIELD ?=
 SHOW_METHOD ?= edit_sim
@@ -106,7 +133,7 @@ COMPARE_DOC_DIR = .temp/compare-with-grobid/by-doc/$(COMPARE_DOC_ID)
 
 .require-%:
 	@if [ -z "$($(*))" ]; then \
-		echo "Error: $* is required. Usage: make $(@:.require-%=%) $*=<value>"; \
+		echo "Error: $* is required. Usage: make $(or $(firstword $(MAKECMDGOALS)),<target>) $*=<value>"; \
 		exit 1; \
 	fi
 
@@ -274,6 +301,50 @@ dev-benchmark-compare:
 		$(ARGS)
 
 
+# Renders a named comparison and its charts from summaries that already exist, so it
+# needs no parser and no network -- run it as often as the question changes.
+dev-comparison: .require-COMPARISON
+	$(PYTHON) -m benchmarks.report \
+		--comparison $(COMPARISON) \
+		--runs $(BENCHMARK_RUNS) \
+		--split $(BENCHMARK_SPLIT) \
+		--current-run $(BENCHMARK_RUN) \
+		--out $(COMPARISON_OUT) \
+		$(ARGS)
+	@echo
+	@echo "Wrote $(COMPARISON_OUT)"
+	@ls $(COMPARISON_OUT_DIR)/charts/*.png 2>/dev/null || true
+
+
+# The end-to-end one: fetches each named variant's predictions from the store, scores
+# them and renders the comparison. No parser and no docker -- predictions are the
+# expensive part and they are already kept, so a question asked after the fact costs
+# only the scoring.
+dev-comparison-with-baselines: .require-COMPARISON
+	$(PYTHON) -m benchmarks.run \
+		--config $(BENCHMARK_CONFIG) \
+		--mode $(BENCHMARK_MODE) \
+		--split $(BENCHMARK_SPLIT) \
+		--data $(BENCHMARK_DATA) \
+		--runs $(BENCHMARK_RUNS) \
+		--comparison $(COMPARISON) \
+		--comparison-only \
+		--comparison-out $(COMPARISON_OUT_DIR) \
+		--concurrency $(BENCHMARK_CONCURRENCY) \
+		$(if $(BENCHMARK_PREDICTIONS_REPO),--predictions-repo $(BENCHMARK_PREDICTIONS_REPO),) \
+		$(if $(COMPARISON_CURRENT_RUN),--current-run $(COMPARISON_CURRENT_RUN),) \
+		$(ARGS)
+	@echo
+	@echo "Wrote $(COMPARISON_OUT)"
+	@ls $(COMPARISON_OUT_DIR)/charts/*.png 2>/dev/null || true
+
+
+dev-comparisons-list:
+	@ls benchmarks/comparisons/*.yml 2>/dev/null \
+		| sed -e 's|benchmarks/comparisons/||' -e 's|\.yml$$||' \
+		|| echo "No comparisons yet - add one under benchmarks/comparisons/"
+
+
 dev-benchmark: dev-benchmark-predict dev-benchmark-score
 
 
@@ -317,6 +388,8 @@ dev-benchmark-with-baselines:
 		$(ARGS)
 
 
+## Fetch one mode's source documents. dev-generate-training-data does this for
+## every mode the config declares, so this is for working on a single tree.
 dev-fetch-training-source:
 	$(PYTHON) -m benchmarks.fetch_training_source_cli \
 		--config $(SOURCE_TRAINING_CONFIG) \
@@ -325,6 +398,32 @@ dev-fetch-training-source:
 		--output-path $(SOURCE_TRAINING_DATA)
 
 
+## Generate from the one source tree at SOURCE_TRAINING_MODE, for the models the
+## config declares. It neither fetches nor clears, and it takes no notice of which
+## mode each model is declared at -- it generates from the tree it is given.
+## Use dev-generate-training-data unless that is what you want.
+dev-generate-training-data-from-tree:
+	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
+		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
+		echo "       Clone the output repo and symlink it to data/generated-training-data,"; \
+		echo "       or pass TRAINING_DATA_OUTPUT=/path/to/repo on the command line."; \
+		exit 1; }
+	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
+	$(PYTHON) -m benchmarks.generate_training_data_from_tree_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--source-data $(SOURCE_TRAINING_DATA) \
+		--output-path $(TRAINING_DATA_OUTPUT) \
+		--split $(SOURCE_TRAINING_SPLIT) \
+		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
+		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
+		--debug \
+		$(ARGS)
+
+
+## Build the corpus the config declares: fetches each mode it names and generates
+## each declared pair at it, clearing the pair first so that a lowered mode takes
+## effect. This is the one to reach for.
+## Usage: make dev-generate-training-data [ARGS="--corpus ore --model segmentation"]
 dev-generate-training-data:
 	@test -d "$(TRAINING_DATA_OUTPUT)" || { \
 		echo "ERROR: TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)' does not exist."; \
@@ -334,14 +433,52 @@ dev-generate-training-data:
 	TF_CPP_MIN_LOG_LEVEL=3 TF_ENABLE_ONEDNN_OPTS=0 \
 	$(PYTHON) -m benchmarks.generate_training_data_cli \
 		--config $(SOURCE_TRAINING_CONFIG) \
-		--source-data $(SOURCE_TRAINING_DATA) \
+		--source-root $(SOURCE_TRAINING_ROOT) \
 		--output-path $(TRAINING_DATA_OUTPUT) \
 		--split $(SOURCE_TRAINING_SPLIT) \
 		--num-workers $(TRAINING_DATA_NUM_WORKERS) \
 		--document-timeout $(TRAINING_DATA_DOCUMENT_TIMEOUT) \
-		--models $(TRAINING_DATA_MODELS) \
 		--debug \
 		$(ARGS)
+
+
+## List what the generated corpus holds against what the config declares.
+## Usage: make dev-training-data-state [ARGS=--check]
+dev-training-data-state:
+	$(PYTHON) -m benchmarks.training_data_state_cli \
+		--config $(SOURCE_TRAINING_CONFIG) \
+		--training-data $(TRAINING_DATA_OUTPUT) \
+		--split $(SOURCE_TRAINING_SPLIT) \
+		$(ARGS)
+
+
+## Assemble one model's delft training data from the generated corpus.
+## The quality gate applies: a document the thresholds exclude, or that the
+## corpus requires a review for and has not got one, is left out, and assembly
+## refuses a corpus it would lose too much of.  ARGS=--no-quality-filter records
+## the counts without acting on them.
+## Usage: make dev-generate-delft-training-data [DELFT_TRAINING_DATA_MODEL=header]
+##        [TRAINING_DATA_OUTPUT=/path/to/data-repo] [DELFT_TRAINING_DATA_OUTPUT=...]
+dev-generate-delft-training-data:
+	@test -d "$(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT)" || { \
+		echo "ERROR: no '$(SOURCE_TRAINING_SPLIT)' under TRAINING_DATA_OUTPUT='$(TRAINING_DATA_OUTPUT)'."; \
+		echo "       Run dev-generate-training-data first, with the same variables."; \
+		exit 1; }
+	@mkdir -p "$(DELFT_TRAINING_DATA_OUTPUT)"
+	@for corpus in $$(ls "$(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT)"); do \
+		model_dir="$(TRAINING_DATA_OUTPUT)/$(SOURCE_TRAINING_SPLIT)/$$corpus/$(DELFT_TRAINING_DATA_MODEL)"; \
+		test -d "$$model_dir/corpus/tei" || continue; \
+		echo "converting $$corpus"; \
+		$(PYTHON) -m sciencebeam_parser.training.cli.generate_delft_data \
+			--model-name $(DELFT_TRAINING_DATA_MODEL) \
+			--tei-source-path "$$model_dir/corpus/tei/*.tei.xml*" \
+			--raw-source-path "$$model_dir/corpus/raw" \
+			--quality-record-path "$$model_dir/quality/*.quality.json" \
+			--require-config-path "$(SOURCE_TRAINING_CONFIG)" \
+			--delft-output-path \
+			"$(DELFT_TRAINING_DATA_OUTPUT)/$$corpus-$(DELFT_TRAINING_DATA_MODEL).data" \
+			$(ARGS) || exit 1; \
+	done
 
 
 docker-buildx-bake-build-all:
@@ -392,6 +529,14 @@ docker-benchmark-score:
 
 docker-benchmark-compare:
 	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-compare
+
+
+docker-comparison:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-comparison
+
+
+docker-comparison-with-baselines:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-comparison-with-baselines
 
 
 docker-benchmark: docker-benchmark-predict docker-benchmark-score
