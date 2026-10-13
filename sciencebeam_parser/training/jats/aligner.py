@@ -764,11 +764,11 @@ def _is_punct_suffix_token(
     return True
 
 
-def _exact_number_match(
+def _iter_exact_number_positions(
     token_index: _TokenIndex,
     needle: str,
     segments: List[Tuple[int, int]],
-) -> Optional[_MatchResult]:
+) -> Iterator[int]:
     haystack = token_index.haystack
     needle_len = len(needle)
     for seg_start, seg_end in segments:
@@ -782,9 +782,35 @@ def _exact_number_match(
                     and token_index.is_token_start(idx)
                     and (token_index.is_token_boundary_after(end - 1)
                          or _is_punct_suffix_token(token_index, haystack, end))):
-                return idx, end, [(idx, end)]
+                yield idx
             pos = idx + 1
-    return None
+
+
+def _exact_number_match(
+    token_index: _TokenIndex,
+    needle: str,
+    segments: List[Tuple[int, int]],
+    prefer_before: Optional[int] = None,
+) -> Optional[_MatchResult]:
+    """The number, where the page sets it.
+
+    Taking the first occurrence in range is right for a number searched forwards.
+    A reference label is not: it is searched from before its own reference, so
+    that the number the page prints ahead of the text is in range, and the tail
+    of the reference before it is in range too.  A bare number matches anything
+    there -- a year, a volume, a DOI fragment -- and does so first.  Where the
+    caller says which position the number belongs in front of, the last
+    occurrence at or before it is the one the page prints.
+    """
+    positions = list(_iter_exact_number_positions(token_index, needle, segments))
+    if not positions:
+        return None
+    if prefer_before is None:
+        idx = positions[0]
+    else:
+        before = [pos for pos in positions if pos <= prefer_before]
+        idx = before[-1] if before else positions[0]
+    return idx, idx + len(needle), [(idx, idx + len(needle))]
 
 
 # Shortest needle the exact prefilter will accept.  Below it a verbatim hit says
@@ -947,6 +973,7 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
     masked_ranges: Optional[List[Tuple[int, int]]] = None,
     prefer_exact: bool = False,
     allow_pieces: bool = False,
+    prefer_before: Optional[int] = None,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -962,7 +989,7 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
     )
 
     if _is_pure_number(needle):
-        return _exact_number_match(token_index, needle, segments)
+        return _exact_number_match(token_index, needle, segments, prefer_before)
 
     need_len = len(needle)
     if field_value.exact_only:
@@ -1483,12 +1510,23 @@ class LayoutDocumentJatsAligner:
                 if fv.sub_field_name is not None
                 else None
             )
+            # A pure-number reference label is printed immediately before the
+            # reference's own text, so its parent's match start says which of
+            # the numbers in range is the one on the page.
+            prefer_before: Optional[int] = None
+            if (
+                fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
+                and _is_pure_number(fv.text)
+                and fv.field_name in parent_match_by_field
+            ):
+                prefer_before = parent_match_by_field[fv.field_name][0]
             match_range = _fuzzy_match_field_value(
                 token_index, fv, self.config,
                 search_start=search_start, search_end=search_end,
                 masked_ranges=masked,
                 prefer_exact=fv.field_name in _POST_BODY_FIELDS,
                 allow_pieces=fv.sub_field_name is None and not fv.exact_only,
+                prefer_before=prefer_before,
             )
             # If primary match relied on a mid-token within-gap block (e.g. 't'
             # inside 'staff' matching the initial 'T' in "Guardian T"), the SW
