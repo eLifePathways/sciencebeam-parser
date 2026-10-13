@@ -149,6 +149,25 @@ class TestRetokenizeLayoutDocument:
         assert token_2_coordinates.x == 10.0 + 100 * len('token1 ') / len(text)
         assert token_2_coordinates.width == 100 * len('token2') / len(text)
 
+    def test_should_size_each_retokenized_token_by_its_own_length(self):
+        """A printed `1.` is two tokens, and the `1` is not the width of the `.`."""
+        text = 'reference1.'
+        layout_document = LayoutDocument(
+            pages=[LayoutPage(
+                blocks=[LayoutBlock.for_tokens([
+                    LayoutToken(
+                        text, whitespace='\n',
+                        coordinates=LayoutPageCoordinates(x=10, y=10, width=110, height=50)
+                    )
+                ])],
+                graphics=[]
+            )]
+        )
+        tokens = retokenize_layout_document(layout_document).pages[0].blocks[0].lines[0].tokens
+        assert [token.text for token in tokens] == ['reference1', '.']
+        widths = [token.coordinates.width for token in tokens if token.coordinates]
+        assert widths == [110 * len('reference1') / len(text), 110 * 1 / len(text)]
+
     def test_should_remove_blank_token(self):
         layout_document = LayoutDocument(
             pages=[LayoutPage(
