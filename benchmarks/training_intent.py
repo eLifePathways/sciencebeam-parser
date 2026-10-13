@@ -24,6 +24,7 @@ __all__ = [
     "NOT_WANTED",
     "PairIntent",
     "get_declared_pairs",
+    "group_corpora_by_mode",
     "group_by_corpus_and_mode",
     "validate_intent",
 ]
@@ -83,6 +84,22 @@ def group_by_corpus_and_mode(
     grouped: Dict[Tuple[str, str], List[str]] = {}
     for pair in pairs:
         grouped.setdefault((pair.corpus, pair.mode), []).append(pair.model)
+    return grouped
+
+
+def group_corpora_by_mode(
+    pairs: Iterable[PairIntent],
+) -> Dict[str, List[str]]:
+    """The corpora to fetch at each mode, which is what a fetch covers.
+
+    A fetch writes documents and knows nothing of models, so the mode and the
+    corpora at it are all of the declaration it needs.
+    """
+    grouped: Dict[str, List[str]] = {}
+    for pair in pairs:
+        corpora = grouped.setdefault(pair.mode, [])
+        if pair.corpus not in corpora:
+            corpora.append(pair.corpus)
     return grouped
 
 

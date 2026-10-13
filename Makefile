@@ -386,14 +386,16 @@ dev-benchmark-with-baselines:
 		$(ARGS)
 
 
-## Fetch one mode's source documents. dev-generate-training-data does this for
-## every mode the config declares, so this is for working on a single tree.
+## Fetch the source documents the config declares, one tree per mode. This is the
+## command that reads the dataset: dev-generate-training-data builds from the trees
+## these leave and asks the Hub for nothing it already has.
+## Usage: make dev-fetch-training-source [ARGS="--mode smoke --corpus ore"]
 dev-fetch-training-source:
 	$(PYTHON) -m benchmarks.fetch_training_source_cli \
 		--config $(SOURCE_TRAINING_CONFIG) \
-		--mode $(SOURCE_TRAINING_MODE) \
 		--split $(SOURCE_TRAINING_SPLIT) \
-		--output-path $(SOURCE_TRAINING_DATA)
+		--source-root $(SOURCE_TRAINING_ROOT) \
+		$(ARGS)
 
 
 ## Generate from the one source tree at SOURCE_TRAINING_MODE, for the models the
