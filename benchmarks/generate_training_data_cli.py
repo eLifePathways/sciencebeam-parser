@@ -17,7 +17,7 @@ import logging
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import yaml
 
@@ -35,6 +35,7 @@ from benchmarks.training_intent import (
     PairIntent,
     get_declared_pairs,
     group_by_corpus_and_mode,
+    group_corpora_by_mode,
     validate_intent,
 )
 from benchmarks.training_source_config import (
@@ -174,12 +175,7 @@ def _fetch_modes(
     pairs: Sequence[PairIntent],
     selection_dir: Path,
 ) -> None:
-    corpora_by_mode: Dict[str, List[str]] = {}
-    for pair in pairs:
-        corpora = corpora_by_mode.setdefault(pair.mode, [])
-        if pair.corpus not in corpora:
-            corpora.append(pair.corpus)
-    for mode, corpora in corpora_by_mode.items():
+    for mode, corpora in group_corpora_by_mode(pairs).items():
         LOGGER.info("Fetching %s at mode %r", ", ".join(corpora), mode)
         fetch_training_source(
             cfg, mode, split, source_root / mode,

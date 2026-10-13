@@ -385,3 +385,40 @@ class TestWhenTheRecordStopsAnswering:
                 _BASE_CONFIG, "smoke", "train", fetched / "out",
                 selection_dir=fetched / "selection",
             )
+
+
+class TestNarrowingToSomeCorpora:
+    """`include` restricts here, and still only ever admits a corpus elsewhere.
+
+    `included_corpora` uses it to let in a corpus marked `optional`, which is what
+    `--include-corpus` means for a benchmark run. Narrowing a fetch to the corpora
+    a mode declares is the opposite question, and both commands need it.
+    """
+
+    @pytest.fixture(name="both_allowed")
+    def _both_allowed(self) -> Dict[str, Any]:
+        return {**_BASE_CONFIG, "cc_by_corpora": ["ore", "biorxiv"]}
+
+    def test_naming_one_corpus_fetches_only_it(self, repo: Path, both_allowed: dict):
+        records = fetch_training_source(
+            both_allowed, "smoke", "train", repo / "out", include=["ore"]
+        )
+        assert {record["corpus"] for record in records} == {"ore"}
+        assert not (repo / "out" / "train" / "biorxiv").exists()
+
+    def test_naming_none_fetches_every_allowed_corpus(
+        self, repo: Path, both_allowed: dict
+    ):
+        records = fetch_training_source(both_allowed, "smoke", "train", repo / "out")
+        assert {record["corpus"] for record in records} == {"ore", "biorxiv"}
+
+    def test_it_still_cannot_widen_past_the_allow_list(self, repo: Path):
+        records = fetch_training_source(
+            _BASE_CONFIG, "smoke", "train", repo / "out", include=["biorxiv"]
+        )
+        assert not records
+
+    def test_the_benchmark_fetch_keeps_include_as_an_opt_in(self, repo: Path):
+        """`--include-corpus` admits an opt-in corpus; it never excludes one."""
+        records = fetch_data(_BASE_CONFIG, "smoke", "train", repo / "bench", include=["ore"])
+        assert {record["corpus"] for record in records} == {"ore", "biorxiv"}

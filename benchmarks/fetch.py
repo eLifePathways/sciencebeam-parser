@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import (
     Any,
+    Collection,
     Dict,
     Iterable,
     Iterator,
@@ -255,6 +256,7 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     write_manifest: bool = False,
     selection_dir: Optional[Path] = None,
     recheck_upstream: bool = True,
+    restrict_to: Optional[Collection[str]] = None,
 ) -> List[Dict[str, str]]:
     """Materialise gold XML, and PDFs when asked, for each corpus of one split.
 
@@ -268,6 +270,8 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
     records: List[Dict[str, str]] = []
     for source in iter_corpus_sources(cfg, split, include):
+        if restrict_to is not None and source.corpus not in restrict_to:
+            continue
         if source.corpus not in sample_sizes:
             LOGGER.warning(
                 "No sample size configured for corpus %r in mode %r, skipping",
@@ -520,7 +524,10 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
 
     `include` narrows the fetch to corpora that are already allowed; it cannot
     widen it. A corpus outside `cc_by_corpora` is not opt-in here, it is refused,
-    because this path generates training data that is published elsewhere.
+    because this path generates training data that is published elsewhere. It is
+    passed on as a restriction as well as an opt-in: `included_corpora` only ever
+    admits a corpus marked `optional`, which is what `--include-corpus` means for a
+    benchmark run and is not what narrowing a fetch to a declared corpus needs.
 
     `recheck_upstream=False` lets a corpus whose recorded selection and manifest
     still describe what is on disk be taken from them, without reading the dataset
@@ -543,6 +550,7 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
         data_dir,
         with_pdf=True,
         include=in_split,
+        restrict_to=in_split,
         write_manifest=True,
         selection_dir=selection_dir,
         recheck_upstream=recheck_upstream,
