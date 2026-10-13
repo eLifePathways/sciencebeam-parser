@@ -1337,6 +1337,14 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
 
 class CitationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'citation'
+    SPANS_FILENAME_SUFFIX = '.citation.spans.jsonl'
+    SPANS_SUB_DIRECTORY = 'citation/corpus/spans'
+
+    def get_spans_filename_suffix(self) -> Optional[str]:
+        return CitationModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+
+    def get_spans_sub_directory(self) -> Optional[str]:
+        return CitationModelTrainingDataGenerator.SPANS_SUB_DIRECTORY
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.citation_model

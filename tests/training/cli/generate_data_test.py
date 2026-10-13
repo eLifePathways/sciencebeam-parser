@@ -572,8 +572,10 @@ class TestGenerateTrainingDataForLayoutDocument:
             f'--output-path={output_path}'
         ])
         quality_path = (
-            output_path / 'citation' / 'quality'
-            / get_quality_record_filename(Path(MINIMAL_EXAMPLE_PDF).stem, 'citation')
+            output_path / 'affiliation-address' / 'quality'
+            / get_quality_record_filename(
+                Path(MINIMAL_EXAMPLE_PDF).stem, 'affiliation-address'
+            )
         )
         assert 'labelled_content_hash' not in json.loads(
             quality_path.read_text(encoding='utf-8')
@@ -933,6 +935,46 @@ class TestMain:
         assert json_dicts[0]['span_count'] == len(json_dicts) - 1
         assert json_dicts[0]['labels']
 
+    def test_should_write_a_span_record_for_the_citation_model(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        """The one model whose training TEI is namespaced, and whose root is a reference."""
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'generated-data'
+        main([
+            '--use-directory-structure',
+            f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
+            f'--output-path={output_path}'
+        ])
+        spans_path = _get_expected_file_path_with_suffix(
+            output_path / 'citation' / 'corpus' / 'spans',
+            MINIMAL_EXAMPLE_PDF,
+            CitationModelTrainingDataGenerator.SPANS_FILENAME_SUFFIX
+        )
+        tei_path = _get_expected_file_path_with_suffix(
+            output_path / 'citation' / 'corpus',
+            MINIMAL_EXAMPLE_PDF,
+            CitationTeiTrainingDataGenerator().get_default_tei_filename_suffix()
+        )
+        json_dicts = [
+            json.loads(line)
+            for line in spans_path.read_text(encoding='utf-8').splitlines()
+        ]
+        assert json_dicts[0]['model'] == 'citation'
+        assert json_dicts[0]['line_count'] == len(
+            etree.parse(str(tei_path)).getroot().xpath(
+                '//*[local-name()="lb"]'
+            )
+        )
+        assert json_dicts[0]['span_count'] == len(json_dicts) - 1
+        assert {json_dict['root'] for json_dict in json_dicts[1:]}
+
     def test_should_not_write_a_span_record_for_another_model(
         self,
         tmp_path: Path,
@@ -949,7 +991,9 @@ class TestMain:
             f'--source-path={MINIMAL_EXAMPLE_PDF_PATTERN}',
             f'--output-path={output_path}'
         ])
-        assert not (output_path / 'citation' / 'corpus' / 'spans').exists()
+        assert not (
+            output_path / 'affiliation-address' / 'corpus' / 'spans'
+        ).exists()
 
     def test_should_add_gz_suffix_if_enabled(
         self,
