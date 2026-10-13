@@ -66,7 +66,7 @@ COMPOSED_MODEL_PARAMS = sorted({
 # The profile serving models from the Hugging Face Hub, and the base it extends.
 HUB_PROFILE = 'delft_hub'
 
-HUB_PROFILE_BASE = 'biorxiv_elife'
+HUB_PROFILE_BASE = 'grobid_crf_0_9_0'
 
 # What the delft engine recognises as a Hub reference
 HUB_PATH_PREFIX = 'hf://'

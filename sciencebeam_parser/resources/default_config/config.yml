@@ -354,10 +354,11 @@ sequence_model_profiles:
   # its own repository, the repositories carrying no tags: taking a newer model
   # means changing its sha here.
   # Only the models published to the Hub are overridden here, the rest coming
-  # from the base profile. The base is an all-delft one on purpose: a profile
-  # is deep merged over the one it extends, so overriding only `path` on a
-  # wapiti entry would keep `engine: wapiti` and hand a delft directory to the
-  # wapiti loader.
+  # from the GROBID 0.9.0 wapiti models. Every override names `engine: delft`:
+  # a profile is deep merged over the one it extends, so overriding only `path`
+  # on a wapiti entry would keep `engine: wapiti` and hand a delft directory to
+  # the wapiti loader. (`grobid_crf` is a profile alias, which `extends` does
+  # not resolve.)
   # A model GROBID trained expects GROBID's features rather than the ones the
   # biorxiv models were trained on, which `feature_flavour: grobid` selects.
   # The header is the glove variant: the character-only one runs titles on into
@@ -365,16 +366,20 @@ sequence_model_profiles:
   # word embeddings largely fix. It needs the glove-840B vectors, found as an LMDB
   # under data/db/glove-840B, else downloaded (1.8GB) and indexed on first load.
   delft_hub:
-    extends: grobid_crf
+    extends: grobid_crf_0_9_0
     header:
       path: 'hf://sciencialab/grobid-model-header@a2b0279ec0605ce8a835a45c9cf3c093b24d181d/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
       feature_flavour: 'grobid'
     affiliation_address:
       path: 'hf://sciencialab/grobid-model-affiliation-address@3656dad21c4f292234c7000458a9a4a33462ddad/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
     citation:
       path: 'hf://sciencialab/grobid-model-citation@3db81cd58276cb3a446bbb274c610d1233b7ce8c/grobid-citation-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
     reference_segmenter:
       path: 'hf://sciencialab/grobid-model-reference-segmenter@c9d959488a08324fa53d40013e9b02f85af4886d/grobid-reference-segmenter-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
     name_header:
       path: 'hf://sciencialab/grobid-model-name-header@33d2b42a21cddc7439a2e058329e2dc48ecb1021/grobid-name-header-BidLSTM_CRF_FEATURES-no_embeddings'
       engine: 'delft'
@@ -554,7 +559,13 @@ profiles:
         noise_filter:
           enabled: false
   delft_hub:
-    sequence_models: grobid_crf
+    label: 'GROBID DeLFT models from the Hugging Face Hub'
+    description: 'GROBID 0.9.0 with the header, name, affiliation, reference-segmenter and citation models replaced by GROBID-trained DeLFT models from the Hugging Face Hub.'
+    sequence_models: delft_hub
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
 
 profile_aliases:
   grobid_crf: grobid_crf_0_9_0

@@ -76,8 +76,9 @@ an unpinned model can change underneath it.
 cannot be addressed this way; such a model is served over https instead, as an archive or as a
 folder of files.
 
-The shipped `delft_hub` profile serves the models published to the Hub today (`header` and
-`affiliation_address`), taking the rest from `biorxiv_elife`:
+The shipped `delft_hub` profile serves the models published to the Hub today (`header`,
+`affiliation_address`, `name_header`, `name_citation`, `reference_segmenter` and `citation`),
+taking the rest from `grobid_crf_0_9_0`:
 
 ```bash
 export SCIENCEBEAM_PARSER__PROFILE=delft_hub
