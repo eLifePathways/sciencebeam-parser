@@ -1387,6 +1387,12 @@ def get_page_furniture_line_ids(
     produces, and decides the region a line belongs to; this says only that a
     line is furniture, which does not depend on the answer.
 
+    The pass that reads text repetition alone is not among them.  It asks only
+    that a line repeat and that its first copy print near the start of the
+    document, which an author's name reprinted over their reviewer report
+    satisfies -- in `derive_labels` the JATS vote has already claimed that line,
+    and here there is nothing to stop it.
+
     The first page is left alone, as the noise filter leaves it.  Taking a line
     out joins what was printed either side of it, which is the point where a
     reference is printed around a running foot and the wrong thing where the
@@ -1397,9 +1403,6 @@ def get_page_furniture_line_ids(
     seg_lines = _build_seg_lines(layout_document)
     page_meta_by_number = _get_page_meta_by_page_number(layout_document)
     _tag_by_coordinates(seg_lines, page_meta_by_number, config or SegmentationConfig())
-    _tag_headnotes_by_text_repetition(
-        seg_lines, (config or SegmentationConfig()).page_header_max_first_line_index
-    )
     _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
     _tag_page_numbers_by_position(seg_lines, page_meta_by_number)
     # Repetition is required, not merely available.  Running the position pass
