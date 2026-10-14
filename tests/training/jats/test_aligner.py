@@ -1562,3 +1562,46 @@ class TestSearchStride:
             annotated.get_token_field(token) == JatsFieldNames.SUB_ARTICLE
             for token in review_tokens
         )
+
+
+class TestReferenceLabelPosition:
+    """A printed reference number, where the reference before it ends in digits."""
+
+    FIRST = 'Smith J. A first paper on the subject. J Something. 2020; 5: 1-9.'
+    FIRST_TAIL = 'DOI: https://doi.org/10.1016/j.example.2021.10.001'
+    TENTH = 'Jones A. A tenth paper on another subject. Other J. 2021; 7: 20-30.'
+
+    def _align(self):
+        doc = _make_doc(
+            'References',
+            f'1. {self.FIRST}',
+            self.FIRST_TAIL,
+            f'10. {self.TENTH}',
+        )
+        field_values = [
+            _fv(self.FIRST, JatsFieldNames.REFERENCE),
+            _fv('1', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+            _fv(self.TENTH, JatsFieldNames.REFERENCE),
+            _fv('10', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _labelled_tokens(self, doc, annotated, line_index: int):
+        line = list(doc.iter_all_lines())[line_index]
+        return [
+            token.text for token in line.tokens
+            if annotated.get_token_sub_field(token) == JatsSubFieldNames.REFERENCE_LABEL
+        ]
+
+    def test_the_label_is_the_number_the_page_prints_before_the_reference(self):
+        doc, annotated = self._align()
+        assert self._labelled_tokens(doc, annotated, 3) == ['10'], (
+            'the printed "10." opening the tenth reference should carry the label'
+        )
+
+    def test_a_digit_in_the_previous_reference_tail_is_not_the_label(self):
+        doc, annotated = self._align()
+        assert not self._labelled_tokens(doc, annotated, 2), (
+            'the DOI ending "...2021.10.001" is the first reference\'s, '
+            'and no part of it is the next reference\'s label'
+        )
