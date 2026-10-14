@@ -1402,11 +1402,26 @@ def get_page_furniture_line_ids(
     )
     _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
     _tag_page_numbers_by_position(seg_lines, page_meta_by_number)
+    # Repetition is required, not merely available.  Running the position pass
+    # with nothing already labelled is not what `derive_labels` does -- there the
+    # JATS vote has claimed the content first -- and on its own the margin takes
+    # a reference whose last line is set low in the column with it.  A page
+    # number is exempt because its text is different on every page, and the pass
+    # that tags one has read its position and its shape already.
+    pages_by_text: Dict[str, Set[int]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None:
+            pages_by_text.setdefault(seg_line.text, set()).add(page_number)
     return {
         id(seg_line.layout_line)
         for seg_line in seg_lines
         if seg_line.seg_label in FURNITURE_LABELS
         and _get_page_number(seg_line) != 1
+        and (
+            seg_line.seg_label == SEG_PAGE
+            or len(pages_by_text.get(seg_line.text) or ()) > 1
+        )
     }
 
 
