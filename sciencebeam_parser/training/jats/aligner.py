@@ -2,7 +2,9 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
+)
 
 from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 
@@ -200,6 +202,13 @@ _MatchResult = Tuple[int, int, List[Tuple[int, int]]]
 # PDF references (e.g. a ref whose year/volume/URL are absent, giving quality ~0.60)
 # while rejecting genuinely absent ones.
 _REFERENCE_PARENT_MIN_THRESHOLD = 0.55
+
+# How much text a sub-field needs before the relaxed threshold means anything.
+# At 0.55 nearly half the needle may be missing or spread over page it does not
+# account for.  Over a title that still leaves tens of characters agreeing; over
+# a year or a volume number it leaves two digits, which match somewhere in every
+# reference, and the retry costs more values than the furniture it is for.
+_RELAXED_SUB_FIELD_MIN_LENGTH = 40
 
 
 @dataclass
@@ -497,6 +506,10 @@ def _value_span(text: str) -> int:
     return len(normalize_for_alignment(text)) * 2 + 200
 
 
+def _is_reference_parent(fv: JatsFieldValue) -> bool:
+    return fv.sub_field_name is None and fv.field_name in _REFERENCE_FIELDS
+
+
 def _iter_anchor_positions(
     token_index: '_TokenIndex',
     field_values: Sequence[JatsFieldValue],
@@ -550,11 +563,24 @@ def _longest_increasing(anchors: List[Tuple[int, int]]) -> List[Tuple[int, int]]
     return out[::-1]
 
 
+class _ExpectedWindow(NamedTuple):
+    """Where a value is expected, and on what evidence.
+
+    An anchor window is the value's own confirmed match, which is the strongest
+    statement the aligner has about where it is.  A window between two anchors
+    is a bound derived from its neighbours, and says only that the value is
+    somewhere between them.
+    """
+    start: int
+    end: int
+    is_anchor: bool
+
+
 def _expected_windows(
     token_index: '_TokenIndex',
     field_values: Sequence[JatsFieldValue],
     config: AlignmentConfig,
-) -> Dict[int, Tuple[int, int]]:
+) -> Dict[int, _ExpectedWindow]:
     """Where each value is expected, from the anchors either side of it."""
     anchors = _longest_increasing(
         list(_iter_anchor_positions(token_index, field_values, config))
@@ -563,8 +589,10 @@ def _expected_windows(
     # the page and the whole of it matches there, so the search has nothing left
     # to decide -- and left to decide it can prefer an earlier, poorer match: the
     # byline on the title page over the correspondence line the value came from.
-    windows: Dict[int, Tuple[int, int]] = {
-        index: (position, position + _value_span(field_values[index].text))
+    windows: Dict[int, _ExpectedWindow] = {
+        index: _ExpectedWindow(
+            position, position + _value_span(field_values[index].text), True
+        )
         for index, position in anchors
     }
     if len(anchors) < 2:
@@ -574,17 +602,25 @@ def _expected_windows(
     # it only disturbs what the floors already get right.
     for (before_index, before), (after_index, after) in zip(anchors, anchors[1:]):
         for index in range(before_index + 1, after_index):
+            low = max(0, before - _EXPECTED_WINDOW_SLACK)
+            high = after + _EXPECTED_WINDOW_SLACK
+            # A reference is printed between the references either side of it,
+            # so the anchors bound it whether or not its own text is ambiguous.
+            # The bound is what it needs: a reference the page interrupts falls
+            # below the threshold where it belongs, and an unbounded search then
+            # runs on to a copy of the same citation elsewhere in the document.
+            if _is_reference_parent(field_values[index]):
+                windows[index] = _ExpectedWindow(low, high, False)
+                continue
             probe = _value_probe(field_values[index].text)
             if probe is None:
                 continue
-            low = max(0, before - _EXPECTED_WINDOW_SLACK)
-            high = after + _EXPECTED_WINDOW_SLACK
             spots = [match.start() for match in probe.finditer(token_index.haystack)]
             # Only where the value is ambiguous and one of its occurrences is
             # in the window.  Steering it somewhere its text does not appear
             # would only trade a wrong match for a worse one.
             if len(spots) > 1 and any(low <= spot < high for spot in spots):
-                windows[index] = (low, high)
+                windows[index] = _ExpectedWindow(low, high, False)
     return windows
 
 
@@ -1056,7 +1092,7 @@ def is_contained_in_parent_match(
 def narrow_search_range_to_window(
     search_start: int,
     search_end: Optional[int],
-    window: Tuple[int, int],
+    window: Sequence[int],
 ) -> Tuple[int, Optional[int]]:
     """The containment range, narrowed to the window without escaping it."""
     narrowed_start = max(search_start, window[0])
@@ -1481,6 +1517,8 @@ class LayoutDocumentJatsAligner:
         ref_id_subfield_end: Dict[str, int] = {}
         # End of the previous match of each distinct post-body value text.
         post_body_text_end: Dict[str, int] = {}
+        # Where the references were placed, masked out of the post-body search.
+        reference_match_ranges: List[Tuple[int, int]] = []
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -1498,18 +1536,38 @@ class LayoutDocumentJatsAligner:
                 # there the window narrows the range rather than replacing it:
                 # steered out of its own reference, a sub-field lands in a
                 # neighbouring one, which writes an element that is not there.
-                if is_contained_in_parent_match(fv, parent_match_by_field):
+                #
+                # A reference's place in the list is not a floor either.  The
+                # list is printed in the order the JATS declares, so a window
+                # between two anchors narrows the reading-order range rather
+                # than replacing it: widened, a reference whose opening words it
+                # shares with its neighbours is matched before the one above it,
+                # and its own printed text is left for the previous element to
+                # swallow.  Its own anchor still replaces the range, being where
+                # the reference was confirmed to be rather than where the order
+                # says it cannot be -- a floor that overshoots by a hundred
+                # characters is what the anchor is there to overrule.
+                if (
+                    is_contained_in_parent_match(fv, parent_match_by_field)
+                    or (_is_reference_parent(fv) and not window.is_anchor)
+                ):
                     search_start, search_end = narrow_search_range_to_window(
                         search_start, search_end, window
                     )
                 else:
                     search_start = window[0]
                     search_end = window[1] if window[1] > window[0] + 1 else None
-            masked = (
-                sub_field_masked_ranges.get(fv.field_name)
-                if fv.sub_field_name is not None
-                else None
-            )
+            if fv.sub_field_name is not None:
+                masked = sub_field_masked_ranges.get(fv.field_name)
+            elif fv.field_name in _POST_BODY_FIELDS:
+                # The reference list is not part of the peer review.  A post-body
+                # value searches from a floor that reaches back into the last
+                # reference, and an exact one carries no length floor, so a word
+                # the two share -- a publisher, a surname -- is matched inside a
+                # reference and takes the tokens it had already been given.
+                masked = reference_match_ranges
+            else:
+                masked = None
             # A pure-number reference label is printed immediately before the
             # reference's own text, so its parent's match start says which of
             # the numbers in range is the one on the page.
@@ -1593,16 +1651,30 @@ class LayoutDocumentJatsAligner:
                     token_index, fv, self.config,
                     search_start=retry_floor, search_end=None,
                 )
-            # Parent REFERENCE fallback: retry with a relaxed threshold when the
-            # full-text parent match just misses 0.8.  JATS may concatenate initials
-            # ("CA") or order publisher/place differently from the PDF reference list,
-            # reducing quality without indicating a wrong match.  Only applied to
-            # parent matches (sub_field_name is None) of the REFERENCE field so that
-            # sub-field containment and other fields keep the stricter threshold.
+            # REFERENCE fallback: retry with a relaxed threshold when the match
+            # just misses 0.8.  JATS may concatenate initials ("CA") or order
+            # publisher/place differently from the PDF reference list, reducing
+            # quality without indicating a wrong match; and a running header
+            # printed in the middle of a reference costs the span its quality is
+            # measured against, which is the page's doing rather than the value's.
+            #
+            # A sub-field gets the same licence as its parent, and on the same
+            # grounds: it is a part of the text the parent was already found by,
+            # inside the range that parent fixes, so it cannot land in another
+            # reference.  Holding it to a threshold the whole reference did not
+            # have to meet is what leaves a title the footer interrupts
+            # unlabelled inside a <bibl> that is otherwise right.
             if (
                 match_range is None
-                and fv.sub_field_name is None
                 and fv.field_name in _REFERENCE_FIELDS
+                and (
+                    fv.sub_field_name is None
+                    or (
+                        is_contained_in_parent_match(fv, parent_match_by_field)
+                        and len(normalize_for_alignment(fv.text))
+                        >= _RELAXED_SUB_FIELD_MIN_LENGTH
+                    )
+                )
                 and _REFERENCE_PARENT_MIN_THRESHOLD < self.config.threshold
             ):
                 _relaxed_config = AlignmentConfig(
@@ -1665,6 +1737,8 @@ class LayoutDocumentJatsAligner:
                 availability_floor = max(availability_floor, a_start)
             if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
                 reference_floor = max(reference_floor, a_end)
+            if _is_reference_parent(fv):
+                reference_match_ranges.append((a_start, a_end))
             if fv.sub_field_name is None:
                 prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
                 prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)
