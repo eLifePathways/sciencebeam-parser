@@ -1,11 +1,14 @@
 # pylint: disable=too-many-lines
-from typing import Optional
+from typing import Optional, Sequence, Tuple
 
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
     LayoutLine,
     LayoutPage,
+    LayoutPageCoordinates,
+    LayoutPageMeta,
+    LayoutToken,
 )
 from sciencebeam_parser.training.jats.aligner import (
     AlignmentConfig,
@@ -1624,17 +1627,21 @@ class TestReferenceStaysInTheList:
         ' Zenodo. 2002'
     )
     THIRD = 'Bail C Guay B: assessing the impact of research agency accounts. Science. 2003'
-    FILLER = (
+    FILLER_ONE = (
         'Competing interests: no competing interests were disclosed by any of the'
         ' authors of this article, and the grant reference numbers are listed below'
+    )
+    FILLER_TWO = (
+        'Grant information: this work was supported by a programme award whose'
+        ' number appears in the acknowledgements, and the funder had no role here'
     )
 
     def _align(self):
         doc = _make_doc(
             'A paragraph of body text that is long enough to anchor on its own words',
             'Underlying data ' + self.SECOND,
-            self.FILLER,
-            self.FILLER,
+            self.FILLER_ONE,
+            self.FILLER_TWO,
             'References',
             self.FIRST,
             self.SECOND,
@@ -1713,17 +1720,45 @@ class TestPostBodyValueLeavesTheReferenceList:
         )
 
 
+def _paged_line(text: str, page_number: int, y: float) -> LayoutLine:
+    return LayoutLine(tokens=[
+        LayoutToken(text=word, coordinates=LayoutPageCoordinates(
+            x=10, y=y, width=50, height=12, page_number=page_number
+        ))
+        for word in text.split()
+    ])
+
+
+def _paged_doc(pages: Sequence[Sequence[Tuple[str, float]]]) -> LayoutDocument:
+    """One page per entry, each line given as (text, y) on a page 1000 high."""
+    return LayoutDocument(pages=[
+        LayoutPage(
+            blocks=[LayoutBlock(lines=[
+                _paged_line(text, page_number, y) for text, y in lines
+            ])],
+            meta=LayoutPageMeta(
+                page_number=page_number,
+                coordinates=LayoutPageCoordinates(
+                    x=0, y=0, width=600, height=1000, page_number=page_number
+                ),
+            ),
+        )
+        for page_number, lines in enumerate(pages, 1)
+    ])
+
+
 class TestReferenceInterruptedByPageFurniture:
-    """A running header printed inside a reference does not cost it its sub-fields.
+    """A running foot printed inside a reference does not cost it its title.
 
     Quality counts the page a match spans as well as the text it accounts for,
-    so a footer printed between the two halves of a title drops it below the
-    threshold.  The reference itself is found on the relaxed retry its parent
-    already had; a sub-field confined to that parent's match gets the same
-    licence, because the containment is what makes it safe.
+    and Smith-Waterman is a local alignment, so a foot printed between the two
+    halves of a title costs a gap penalty per character and the best local
+    answer is to keep the longer half and drop the other.  The foot repeats at
+    the same place on every page, which is what says it is furniture rather
+    than the reference's own text, and the haystack leaves it out.
     """
 
-    FURNITURE = 'Page 17 of 24 Open Research Europe 2025, 5:251 Last updated: 13 Mar 2026'
+    FOOT = 'Page 17 of 24 Open Research Europe 2025 5:251 Last updated 13 Mar 2026'
     TITLE = (
         'Significance of Nonmetallic Inclusions for the clogging phenomenon in'
         ' continuous casting of steel - a review.'
@@ -1731,12 +1766,23 @@ class TestReferenceInterruptedByPageFurniture:
     REFERENCE = 'Michelic S, Bernhard C: ' + TITLE + ' Steel Res Int. 2022; 93(7): 2200086.'
 
     def _align(self):
-        doc = _make_doc(
-            '34. Michelic S, Bernhard C: Significance of Nonmetallic Inclusions for the',
-            self.FURNITURE,
-            'clogging phenomenon in continuous casting of steel - a review. Steel Res Int.',
-            '2022; 93(7): 2200086.',
-        )
+        doc = _paged_doc([
+            [
+                ('A title block and an author list, which the first page carries', 300.0),
+                (self.FOOT, 950.0),
+            ],
+            [
+                ('Earlier reference text that fills the page before the one of interest', 300.0),
+                ('34. Michelic S, Bernhard C: Significance of Nonmetallic'
+                 ' Inclusions for the', 700.0),
+                (self.FOOT, 950.0),
+            ],
+            [
+                ('clogging phenomenon in continuous casting of steel - a review.'
+                 ' Steel Res Int. 2022; 93(7): 2200086.', 300.0),
+                (self.FOOT, 950.0),
+            ],
+        ])
         field_values = [
             _fv(self.REFERENCE, JatsFieldNames.REFERENCE),
             JatsFieldValue(
@@ -1747,21 +1793,22 @@ class TestReferenceInterruptedByPageFurniture:
         ]
         return doc, LayoutDocumentJatsAligner().align(doc, field_values)
 
-    def _title_tokens_on_line(self, doc, annotated, line_index: int):
-        line = list(doc.iter_all_lines())[line_index]
+    def _title_tokens(self, doc, annotated):
         return [
-            token.text for token in line.tokens
+            token.text for token in doc.iter_all_tokens()
             if annotated.get_token_sub_field(token)
             == JatsSubFieldNames.REFERENCE_ARTICLE_TITLE
         ]
 
     def test_both_halves_of_the_title_are_labelled(self):
         doc, annotated = self._align()
-        assert 'Significance' in self._title_tokens_on_line(doc, annotated, 0)
-        assert 'clogging' in self._title_tokens_on_line(doc, annotated, 2)
+        labelled = self._title_tokens(doc, annotated)
+        assert 'Significance' in labelled, 'the half before the page break'
+        assert 'clogging' in labelled, 'the half after it'
 
-    def test_the_furniture_between_them_is_not(self):
+    def test_the_running_foot_is_not_part_of_the_title(self):
         doc, annotated = self._align()
-        assert not self._title_tokens_on_line(doc, annotated, 1), (
-            'the running header the title spans is not part of the title'
+        labelled = self._title_tokens(doc, annotated)
+        assert not {'Page', 'updated', '2026'} & set(labelled), (
+            'the foot the title is printed around is not part of it'
         )

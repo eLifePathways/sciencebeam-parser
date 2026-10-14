@@ -12,6 +12,7 @@ from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutTo
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
+from sciencebeam_parser.training.jats.segmentation import get_page_furniture_line_ids
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 
 
@@ -203,13 +204,6 @@ _MatchResult = Tuple[int, int, List[Tuple[int, int]]]
 # while rejecting genuinely absent ones.
 _REFERENCE_PARENT_MIN_THRESHOLD = 0.55
 
-# How much text a sub-field needs before the relaxed threshold means anything.
-# At 0.55 nearly half the needle may be missing or spread over page it does not
-# account for.  Over a title that still leaves tens of characters agreeing; over
-# a year or a volume number it leaves two digits, which match somewhere in every
-# reference, and the retry costs more values than the furniture it is for.
-_RELAXED_SUB_FIELD_MIN_LENGTH = 40
-
 
 @dataclass
 class AlignmentConfig:
@@ -314,7 +308,19 @@ def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
     all_tokens: List[LayoutToken] = []
     skip_tokens: Set[int] = set()
     no_space_after: Set[int] = set()
+    # A running head, a running foot and a page number print between the two
+    # halves of whatever the page break falls inside.  Left in the haystack they
+    # are page the match spans and does not account for, and Smith-Waterman is a
+    # local alignment: bridging them costs a gap penalty per character, so the
+    # best local answer is to keep the longer half of a reference's title and
+    # drop the other.  Out of the haystack the value reads continuously across
+    # the break.  The tokens stay in the document, so the furniture is still
+    # written out and still labelled by the segmentation deriver -- it is only
+    # the matching that does not see it.
+    furniture_line_ids = get_page_furniture_line_ids(layout_document)
     for line in layout_document.iter_all_lines():
+        if id(line) in furniture_line_ids:
+            continue
         line_tokens: List[LayoutToken] = line.tokens or []
         for i, token in enumerate(line_tokens):
             tok_global_idx = len(all_tokens)
@@ -1554,6 +1560,15 @@ class LayoutDocumentJatsAligner:
                     search_start, search_end = narrow_search_range_to_window(
                         search_start, search_end, window
                     )
+                elif search_end is not None and not window.is_anchor:
+                    # A range that already has an end is a bound of the same
+                    # kind, and the window may lower it but not raise it: the
+                    # front matter is where an affiliation is, and a window that
+                    # moved the end would let it match past the region it
+                    # belongs to.  Its start is left alone, because inside a
+                    # region the floors already place these and the window has
+                    # no better evidence than they do.
+                    search_end = min(search_end, window.end)
                 else:
                     search_start = window[0]
                     search_end = window[1] if window[1] > window[0] + 1 else None
@@ -1651,30 +1666,16 @@ class LayoutDocumentJatsAligner:
                     token_index, fv, self.config,
                     search_start=retry_floor, search_end=None,
                 )
-            # REFERENCE fallback: retry with a relaxed threshold when the match
-            # just misses 0.8.  JATS may concatenate initials ("CA") or order
-            # publisher/place differently from the PDF reference list, reducing
-            # quality without indicating a wrong match; and a running header
-            # printed in the middle of a reference costs the span its quality is
-            # measured against, which is the page's doing rather than the value's.
-            #
-            # A sub-field gets the same licence as its parent, and on the same
-            # grounds: it is a part of the text the parent was already found by,
-            # inside the range that parent fixes, so it cannot land in another
-            # reference.  Holding it to a threshold the whole reference did not
-            # have to meet is what leaves a title the footer interrupts
-            # unlabelled inside a <bibl> that is otherwise right.
+            # Parent REFERENCE fallback: retry with a relaxed threshold when the
+            # full-text parent match just misses 0.8.  JATS may concatenate initials
+            # ("CA") or order publisher/place differently from the PDF reference list,
+            # reducing quality without indicating a wrong match.  Only applied to
+            # parent matches (sub_field_name is None) of the REFERENCE field so that
+            # sub-field containment and other fields keep the stricter threshold.
             if (
                 match_range is None
+                and fv.sub_field_name is None
                 and fv.field_name in _REFERENCE_FIELDS
-                and (
-                    fv.sub_field_name is None
-                    or (
-                        is_contained_in_parent_match(fv, parent_match_by_field)
-                        and len(normalize_for_alignment(fv.text))
-                        >= _RELAXED_SUB_FIELD_MIN_LENGTH
-                    )
-                )
                 and _REFERENCE_PARENT_MIN_THRESHOLD < self.config.threshold
             ):
                 _relaxed_config = AlignmentConfig(
