@@ -294,7 +294,13 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.TITLE)
 
-        for el in root.xpath('front/article-meta/abstract'):
+        # A document that prints its abstract twice declares the second as
+        # <trans-abstract>.  Both are printed, so both are the header the page
+        # shows; read only the first and the other is left unlabelled, and which
+        # region it ends up in is decided by whatever happens to border it.
+        for el in root.xpath(
+            'front/article-meta/abstract | front/article-meta/trans-abstract'
+        ):
             text = element_text(el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.ABSTRACT)
