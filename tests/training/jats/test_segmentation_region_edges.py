@@ -461,3 +461,56 @@ class TestFrontMatterReachingTheNextPage:
     def test_a_line_on_the_front_matter_page_is_left_alone(self):
         doc, annotated, heading = self._make_doc(keywords_run_on=False)
         assert derive_labels(doc, annotated)[id(heading)] == SEG_FRONT
+
+
+class TestASecondKeywordList:
+    """A preprint prints its keywords in both of its languages."""
+
+    def _make_doc(self, second_list_text: str):
+        title = make_line('A', 'title', 'of', 'the', 'paper', y=100.0)
+        abstract = [
+            make_line('What', 'the', 'study', f'found{index}', y=120.0 + 10 * index)
+            for index in range(3)
+        ]
+        keywords = make_line('Keywords:', 'one,', 'two,', 'three', y=160.0)
+        second = make_line(*second_list_text.split(' '), y=100.0, page_number=2)
+        wrapped = make_line('and', 'five.', y=112.0, page_number=2)
+        body = [
+            make_line('The', 'argument', f'begins{index}',
+                      y=140.0 + 10 * index, page_number=2)
+            for index in range(3)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=[title] + abstract + [keywords])],
+                       meta=make_page_meta(1)),
+            LayoutPage(blocks=[LayoutBlock(lines=[second, wrapped] + body)],
+                       meta=make_page_meta(2)),
+        ])
+        index_of = {id(line): i for i, line in enumerate(doc.iter_all_lines())}
+        fields = {
+            index_of[id(title)]: JatsFieldNames.TITLE,
+            index_of[id(keywords)]: JatsFieldNames.KEYWORDS,
+        }
+        for line in abstract:
+            fields[index_of[id(line)]] = JatsFieldNames.ABSTRACT
+        for line in body:
+            fields[index_of[id(line)]] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), second, wrapped, body
+
+    def test_the_second_list_is_front_matter(self):
+        doc, annotated, second, wrapped, _ = self._make_doc(
+            'Keywords: one, two, four'
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(second)], labels[id(wrapped)]] == [SEG_FRONT] * 2
+
+    def test_the_argument_under_it_is_left_alone(self):
+        doc, annotated, _, _, body = self._make_doc('Keywords: one, two, four')
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in body] == [SEG_BODY] * 3
+
+    def test_a_line_opening_with_another_word_is_left_alone(self):
+        doc, annotated, second, _, _ = self._make_doc(
+            'Introduction: the argument begins'
+        )
+        assert derive_labels(doc, annotated)[id(second)] != SEG_FRONT

@@ -1093,6 +1093,68 @@ def _release_trailing_heading(seg_lines: List[_SegLine], label: str) -> None:
         last.seg_label = following.seg_label
 
 
+# "Keywords:", "Palabras clave:" -- the word or two the page labels a field
+# with, before the colon that separates it from the values.
+_FRONT_FIELD_LABEL_PATTERN = re.compile(
+    r'^\s*([^\W\d_][^\W\d_\s]*(?:\s+[^\W\d_][^\W\d_\s]*)?)\s*:'
+)
+
+
+def _front_field_label(text: str) -> Optional[str]:
+    match = _FRONT_FIELD_LABEL_PATTERN.match(text)
+    return match.group(1).lower() if match else None
+
+
+def _claim_repeated_front_field(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take the second copy of a front-matter field the gold carries once.
+
+    A preprint prints its keywords in both of the languages it is written in,
+    and the two lists do not always hold the same terms, so the JATS can carry
+    one of them and leave the other unmatched -- directly under the front
+    matter, at the head of the page the argument begins on, where it reads as
+    the argument beginning.  It opens with the word the matched list opens
+    with, and that is what says it is the same field over again.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_FRONT):
+        labels = {
+            label
+            for label in (
+                _front_field_label(seg_lines[index].text)
+                for index in run
+                if _is_grounded(seg_lines[index], annotated)
+            )
+            if label
+        }
+        if not labels:
+            continue
+        position = run[-1] + 1
+        while (
+            position < len(seg_lines)
+            and seg_lines[position].seg_label in _FURNITURE_LABELS
+        ):
+            position += 1
+        if position >= len(seg_lines):
+            continue
+        seg_line = seg_lines[position]
+        if seg_line.seg_label is not None or _is_grounded(seg_line, annotated):
+            continue
+        if _front_field_label(seg_line.text) not in labels:
+            continue
+        seg_line.seg_label = SEG_FRONT
+        while position + 1 < len(seg_lines):
+            following = seg_lines[position + 1]
+            if (
+                following.seg_label is not None
+                or _is_grounded(following, annotated)
+                or not _follows_on_from(following, seg_lines[position])
+            ):
+                break
+            following.seg_label = SEG_FRONT
+            position += 1
+
+
 def _release_front_alone_at_the_page_top(seg_lines: List[_SegLine]) -> None:
     """End the front matter where the page the body starts on begins.
 
@@ -1841,6 +1903,7 @@ class SegmentationLabelDeriver:
         # so left unevidenced here.
         _extend_region_to_page_start(seg_lines, SEG_FRONT, annotated)
 
+        _claim_repeated_front_field(seg_lines, annotated)
         _release_references_inside_availability(seg_lines)
         _release_references_inside_body(seg_lines)
         _release_body_inside_front(seg_lines)
