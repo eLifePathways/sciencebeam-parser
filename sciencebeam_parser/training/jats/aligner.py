@@ -1485,6 +1485,23 @@ def _has_mid_token_within_gap_blocks(
     return False
 
 
+def _lies_in_furniture(
+    token_index: _TokenIndex, block_start: int, block_end: int
+) -> bool:
+    """Whether a matched block is inside the page's furniture.
+
+    A value is not the running foot it is printed around, so a block that falls
+    wholly inside one is a coincidence -- a few characters of a paragraph that
+    happen to read like the journal's name.  The chain used to lose these along
+    with everything after them; discounting the furniture from the gap keeps
+    what follows, and this keeps the coincidence out.
+    """
+    return any(
+        furniture_start <= block_start and block_end <= furniture_end
+        for furniture_start, furniture_end in token_index.furniture_ranges
+    )
+
+
 def _spans_furniture(
     token_index: _TokenIndex, previous_end: int, block_start: int
 ) -> bool:
@@ -1543,6 +1560,8 @@ def _label_tokens_for_blocks(
         return
     prev_included_end: Optional[int] = None
     for i, (block_start, block_end) in enumerate(block_ranges):
+        if _lies_in_furniture(token_index, block_start, block_end):
+            continue
         is_anchor = (block_end - block_start) >= _MIN_ANCHOR_BLOCK_SIZE
         within_gap = (
             prev_included_end is not None
