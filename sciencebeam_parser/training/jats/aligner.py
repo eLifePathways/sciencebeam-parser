@@ -3,7 +3,8 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import (
-    Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
+    Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Protocol, Sequence, Set,
+    Tuple
 )
 
 from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
@@ -19,6 +20,16 @@ from sciencebeam_parser.training.jats.text_normalizer import normalize_for_align
 LOGGER = logging.getLogger(__name__)
 
 _NO_TOKEN_INDEX = -1
+
+
+class _TokenStarts(Protocol):
+    """What the tail extension needs: the text, and where its tokens begin."""
+
+    haystack: str
+
+    def is_token_start(self, pos: int) -> bool:
+        ...
+
 
 # Fields whose matches establish the document region boundary (end of front matter).
 # Body content is searched from the end of the last anchor match, so that front-matter
@@ -261,16 +272,24 @@ class _TokenIndex:
         """The haystack covered by those tokens, merged into contiguous runs."""
         ranges: List[Tuple[int, int]] = []
         start: Optional[int] = None
+        end: Optional[int] = None
         for pos, tok_idx in enumerate(self._token_index_at):
             if tok_idx in token_indices:
                 if start is None:
                     start = pos
+                end = pos + 1
                 continue
-            if start is not None:
-                ranges.append((start, pos))
-                start = None
-        if start is not None:
-            ranges.append((start, len(self._token_index_at)))
+            # The space between two of these tokens is theirs as much as the
+            # tokens are: counted as content it leaves a gap the width of the
+            # run, which is what a value printed around it would have to cross.
+            if tok_idx == _NO_TOKEN_INDEX and start is not None:
+                continue
+            if start is not None and end is not None:
+                ranges.append((start, end))
+            start = None
+            end = None
+        if start is not None and end is not None:
+            ranges.append((start, end))
         return ranges
 
     def tokens_in_range(self, start: int, end: int) -> List[LayoutToken]:
@@ -395,7 +414,7 @@ def _match_quality(
 def _scan_tail_chars_at_token_starts(
     tail: str,
     scan_start: int,
-    token_index: '_TokenIndex',
+    token_index: '_TokenStarts',
 ) -> int:
     """Scan for each char in tail at token-start positions with gaps ≤ _MAX_HAYSTACK_GAP_TO_FILL.
 
@@ -427,7 +446,7 @@ def _extend_match_for_needle_tail(
     abs_a_end: int,
     matched_blocks: List[Tuple[int, int, int]],
     abs_block_ranges: List[Tuple[int, int]],
-    token_index: Optional['_TokenIndex'] = None,
+    token_index: Optional['_TokenStarts'] = None,
 ) -> Tuple[int, List[Tuple[int, int]]]:
     """Greedily extend the SW match to cover any unmatched needle suffix.
 
@@ -526,6 +545,35 @@ def _map_cleaned_range(
     return mapped
 
 
+class _CleanedTokenView:
+    """A token index as the cleaned window sees it.
+
+    `_extend_match_for_needle_tail` asks whether a position starts a token, and
+    what character is there.  Both questions are about the page, so they are
+    answered from the real index after mapping the position back.
+    """
+
+    def __init__(
+        self,
+        token_index: '_TokenIndex',
+        cleaned: str,
+        segments: Sequence[Tuple[int, int, int]],
+    ) -> None:
+        self.haystack = cleaned
+        self._token_index = token_index
+        self._segments = segments
+
+    def _to_haystack(self, pos: int) -> Optional[int]:
+        mapped = _map_cleaned_range(self._segments, pos, pos + 1)
+        return mapped[0][0] if mapped else None
+
+    def is_token_start(self, pos: int) -> bool:
+        haystack_pos = self._to_haystack(pos)
+        if haystack_pos is None:
+            return False
+        return self._token_index.is_token_start(haystack_pos)
+
+
 def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
     haystack: str,
     needle: str,
@@ -533,6 +581,7 @@ def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
     window_end: int,
     threshold: float,
     furniture_ranges: Sequence[Tuple[int, int]],
+    token_index: Optional['_TokenIndex'] = None,
 ) -> Optional[_MatchResult]:
     """`_fuzzy_search_in_window` over a window the furniture has been taken out of."""
     cleaned, segments = _clean_window(
@@ -550,7 +599,8 @@ def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
     cleaned_end = matched_blocks[-1][0] + matched_blocks[-1][2]
     cleaned_ranges = [(ai, ai + size) for ai, _bi, size in matched_blocks]
     cleaned_end, cleaned_ranges = _extend_match_for_needle_tail(
-        cleaned, needle, 0, cleaned_end, matched_blocks, cleaned_ranges
+        cleaned, needle, 0, cleaned_end, matched_blocks, cleaned_ranges,
+        _CleanedTokenView(token_index, cleaned, segments) if token_index else None,
     )
     abs_block_ranges: List[Tuple[int, int]] = []
     for start, end in cleaned_ranges:
@@ -586,7 +636,8 @@ def _fuzzy_search_in_window(  # pylint: disable=too-many-locals
     """
     if furniture_ranges:
         return _fuzzy_search_in_cleaned_window(
-            haystack, needle, window_start, window_end, threshold, furniture_ranges
+            haystack, needle, window_start, window_end, threshold, furniture_ranges,
+            token_index,
         )
     window = haystack[window_start:window_end]
     sm = LocalSequenceMatcher(a=window, b=needle, scoring=_SCORING)
@@ -1434,6 +1485,35 @@ def _has_mid_token_within_gap_blocks(
     return False
 
 
+def _spans_furniture(
+    token_index: _TokenIndex, previous_end: int, block_start: int
+) -> bool:
+    """Whether the page's furniture prints between two pieces of one value."""
+    return any(
+        max(furniture_start, previous_end) < min(furniture_end, block_start)
+        for furniture_start, furniture_end in token_index.furniture_ranges
+    )
+
+
+def _gap_between_blocks(
+    token_index: _TokenIndex, previous_end: int, block_start: int
+) -> int:
+    """How far apart two pieces of one value are, ignoring the page's furniture.
+
+    A running foot printed between two halves of a URL is not part of it, and
+    not a gap in it either: the halves are adjacent as far as the value is
+    concerned, which is how the match found them.  Counting the furniture here
+    would break the chain and drop whatever follows it.
+    """
+    gap = block_start - previous_end
+    for furniture_start, furniture_end in token_index.furniture_ranges:
+        overlap_start = max(furniture_start, previous_end)
+        overlap_end = min(furniture_end, block_start)
+        if overlap_start < overlap_end:
+            gap -= overlap_end - overlap_start
+    return gap
+
+
 def _label_tokens_for_blocks(
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -1466,7 +1546,8 @@ def _label_tokens_for_blocks(
         is_anchor = (block_end - block_start) >= _MIN_ANCHOR_BLOCK_SIZE
         within_gap = (
             prev_included_end is not None
-            and block_start - prev_included_end <= _MAX_HAYSTACK_GAP_TO_FILL
+            and _gap_between_blocks(token_index, prev_included_end, block_start)
+            <= _MAX_HAYSTACK_GAP_TO_FILL
         )
         if not is_anchor and not within_gap and i not in pre_anchor:
             continue
@@ -1479,7 +1560,17 @@ def _label_tokens_for_blocks(
         ):
             prev_included_end = block_end
             continue
-        fill_start = prev_included_end if within_gap else block_start
+        # Continuing across the furniture is not the same as labelling it: the
+        # two halves of a title belong to the title and the running foot
+        # between them does not, so the chain carries on but the fill starts at
+        # the block.
+        fill_start = (
+            prev_included_end
+            if within_gap and not _spans_furniture(
+                token_index, prev_included_end or block_start, block_start
+            )
+            else block_start
+        )
         assert fill_start is not None
         for token in token_index.tokens_in_range(fill_start, block_end):
             annotated.set_token_label(token, field_name, sub_field_name, instance_id)
@@ -1715,12 +1806,16 @@ class LayoutDocumentJatsAligner:
                 and fv.field_name in parent_match_by_field
             ):
                 prefer_before = parent_match_by_field[fv.field_name][0]
-            # Only a reference is matched against a window the furniture has
-            # been taken out of.  It is the value a page break is printed
-            # through -- the reference list is where the breaks fall thickest --
-            # and confining it there keeps the haystack everything else sees
-            # exactly as the page set it.
-            skip_furniture = fv.field_name in _REFERENCE_FIELDS
+            # Which values are matched against a window the furniture has been
+            # taken out of.  A reference and an abstract are both printed
+            # through page breaks, and both are long enough that a running foot
+            # inside them costs the match rather than merely blurring it.  Body
+            # content is not on the list: it borders the furniture everywhere,
+            # and a paragraph that may match across it reaches the line beyond
+            # -- which is how `REVISED` left the header for the body.
+            skip_furniture = (
+                fv.field_name in _REFERENCE_FIELDS or fv.field_name in _ANCHOR_FIELDS
+            )
             match_range = _fuzzy_match_field_value(
                 token_index, fv, self.config,
                 search_start=search_start, search_end=search_end,
