@@ -236,7 +236,9 @@ def _get_sections(
 
 
 def _get_availability_sections(root: etree._Element) -> Set[etree._Element]:
-    return _get_sections(root, _AVAILABILITY_SEC, _AVAILABILITY_TITLES)
+    return _get_sections(
+        root, _AVAILABILITY_SEC, _AVAILABILITY_TITLES, 'availability'
+    )
 
 
 def _get_contribution_sections(root: etree._Element) -> Set[etree._Element]:

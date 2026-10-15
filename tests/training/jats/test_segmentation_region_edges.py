@@ -7,7 +7,11 @@ page sets below the columns that are read before it.
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
+    LayoutFont,
+    LayoutLine,
     LayoutPage,
+    LayoutPageCoordinates,
+    LayoutToken,
 )
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
@@ -15,6 +19,7 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_BODY,
     SEG_CONFLICT,
     SEG_COVER,
+    SEG_FOOTNOTE,
     SEG_FRONT,
     SEG_HEADNOTE,
     SEG_REFERENCES,
@@ -298,3 +303,161 @@ class TestRunningHeadRepeatsAtTheHead:
     def test_a_line_printed_at_the_head_of_every_page_is_one(self):
         doc, annotated, caption = self._make_doc(60.0, 60.0)
         assert derive_labels(doc, annotated)[id(caption)] == SEG_HEADNOTE
+
+
+class TestFootnotesAcrossTwoColumns:
+    """A two-column page sets its notes in one band under both columns."""
+
+    def _make_doc(self, right_note_y: float = 700.0):
+        def _note(*texts, x, y, size):
+            return LayoutLine(tokens=[
+                LayoutToken(
+                    text=word,
+                    font=LayoutFont(font_id=f'f{size}', font_size=size),
+                    coordinates=LayoutPageCoordinates(
+                        x=x, y=y, width=200, height=8, page_number=1,
+                    ),
+                )
+                for word in texts
+            ])
+
+        # Reading order takes the right column first, so its note arrives
+        # before the left column's text, let alone the left column's notes.
+        right_text = [
+            _note('The', 'argument', f'continues{index}', x=314.0,
+                  y=600.0 + 11 * index, size=9.0)
+            for index in range(3)
+        ]
+        right_note = _note('9', 'The', 'guidelines', 'are', 'in', 'File', '4.',
+                           x=314.0, y=right_note_y, size=7.8)
+        left_note = [
+            _note('7', 'DARIAH-Campus', 'is', 'a', 'platform.', x=57.0,
+                  y=690.0, size=7.8),
+            _note('learning', 'resources', 'are', 'linked.', x=57.0,
+                  y=710.0, size=7.8),
+        ]
+        later = make_line('More', 'of', 'the', 'argument', y=300.0, page_number=2)
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=right_text + [right_note]),
+                        LayoutBlock(lines=left_note)],
+                meta=make_page_meta(1),
+            ),
+            LayoutPage(blocks=[LayoutBlock(lines=[later])], meta=make_page_meta(2)),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {lines.index(line): JatsFieldNames.BACK_FOOTNOTE for line in left_note}
+        for line in right_text:
+            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        fields[lines.index(later)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), right_note, right_text
+
+    def test_a_note_in_the_band_is_claimed(self):
+        doc, annotated, right_note, _ = self._make_doc()
+        assert derive_labels(doc, annotated)[id(right_note)] == SEG_FOOTNOTE
+
+    def test_the_text_above_the_band_is_left_alone(self):
+        doc, annotated, _, right_text = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in right_text] == [SEG_BODY] * 3
+
+    def test_a_line_above_the_band_is_left_alone(self):
+        doc, annotated, right_note, _ = self._make_doc(right_note_y=500.0)
+        assert derive_labels(doc, annotated)[id(right_note)] != SEG_FOOTNOTE
+
+
+class TestStatementMatchedOnTheCover:
+    """A deposit cover declares, in the statement's own words, that it exists."""
+
+    def _make_doc(self, after_the_declarations: bool):
+        argument = [
+            make_line('The', 'argument', f'ends{index}', y=100.0 + 10 * index)
+            for index in range(3)
+        ]
+        contribution = make_line('Both', 'authors', 'wrote', 'it', y=140.0)
+        heading = make_line('Declaracion', 'de', 'conflicto', 'de', 'intereses:',
+                            y=160.0, bold=True)
+        statement = make_line('The', 'authors', 'declare', 'none', y=180.0)
+        funding = make_line('This', 'work', 'was', 'self-funded', y=200.0)
+        lines = (
+            argument + [contribution, heading, statement, funding]
+            if after_the_declarations
+            else argument + [heading, statement, contribution, funding]
+        )
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=lines)], meta=make_page_meta(1)),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[
+                    make_line('Los', 'autores', 'declaran', 'que', 'los',
+                              'conflictos', 'de', 'intereses', 'se', 'incluyen',
+                              y=100.0, page_number=2),
+                ])],
+                meta=make_page_meta(2),
+            ),
+        ])
+        index_of = {id(line): i for i, line in enumerate(doc.iter_all_lines())}
+        fields = {
+            index_of[id(contribution)]: JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+            index_of[id(funding)]: JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
+        }
+        for line in argument:
+            fields[index_of[id(line)]] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), heading, statement
+
+    def test_a_declaration_among_the_declarations_is_claimed(self):
+        doc, annotated, heading, statement = self._make_doc(
+            after_the_declarations=True
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(heading)], labels[id(statement)]] == [SEG_CONFLICT] * 2
+
+    def test_a_heading_the_argument_runs_into_is_left_alone(self):
+        doc, annotated, heading, _ = self._make_doc(after_the_declarations=False)
+        assert derive_labels(doc, annotated)[id(heading)] != SEG_CONFLICT
+
+
+class TestFrontMatterReachingTheNextPage:
+    """A keyword list whose last term is the heading that follows it."""
+
+    def _make_doc(self, keywords_run_on: bool):
+        title = make_line('A', 'title', 'of', 'the', 'paper', y=100.0)
+        abstract = [
+            make_line('What', 'the', 'study', f'found{index}', y=120.0 + 10 * index)
+            for index in range(3)
+        ]
+        keywords = make_line('Key', 'words:', 'one,', 'two,', 'three', y=160.0)
+        # The gold ran the keyword list into the heading under it, so the
+        # heading is matched as the last of the keywords.
+        heading = make_line('Introduccion.',
+                            y=100.0 if keywords_run_on else 170.0,
+                            page_number=2 if keywords_run_on else 1)
+        body = [
+            make_line('The', 'argument', f'begins{index}',
+                      y=110.0 + 10 * index, page_number=2)
+            for index in range(3)
+        ]
+        page_one = [title] + abstract + [keywords] + ([] if keywords_run_on else [heading])
+        page_two = ([heading] if keywords_run_on else []) + body
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=page_one)], meta=make_page_meta(1)),
+            LayoutPage(blocks=[LayoutBlock(lines=page_two)], meta=make_page_meta(2)),
+        ])
+        index_of = {id(line): i for i, line in enumerate(doc.iter_all_lines())}
+        fields = {
+            index_of[id(title)]: JatsFieldNames.TITLE,
+            index_of[id(keywords)]: JatsFieldNames.KEYWORDS,
+            index_of[id(heading)]: JatsFieldNames.KEYWORDS,
+        }
+        for line in abstract:
+            fields[index_of[id(line)]] = JatsFieldNames.ABSTRACT
+        for line in body:
+            fields[index_of[id(line)]] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), heading
+
+    def test_a_line_alone_at_the_top_of_the_body_page_is_the_body(self):
+        doc, annotated, heading = self._make_doc(keywords_run_on=True)
+        assert derive_labels(doc, annotated)[id(heading)] == SEG_BODY
+
+    def test_a_line_on_the_front_matter_page_is_left_alone(self):
+        doc, annotated, heading = self._make_doc(keywords_run_on=False)
+        assert derive_labels(doc, annotated)[id(heading)] == SEG_FRONT

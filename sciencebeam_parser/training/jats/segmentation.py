@@ -14,6 +14,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
+from sciencebeam_parser.training.jats.back_matter import match_fn_keywords
 from sciencebeam_parser.training.jats.field_vocab import (
     SEGMENTATION_LABEL_BY_FIELD,
     JatsFieldNames,
@@ -1092,6 +1093,40 @@ def _release_trailing_heading(seg_lines: List[_SegLine], label: str) -> None:
         last.seg_label = following.seg_label
 
 
+def _release_front_alone_at_the_page_top(seg_lines: List[_SegLine]) -> None:
+    """End the front matter where the page the body starts on begins.
+
+    The front matter does not resume for one line at the top of a page and
+    then give way to the argument: where it reaches that far, the line is the
+    body's own opening, matched against the front because the gold ran two
+    values together -- a keyword list whose last term is the heading that
+    follows it, with no separator between them.
+
+    Over the reviewed corpus 55 front runs end in a line short enough to read
+    as a heading and one of them stands alone at the top of its page, which is
+    the one this is about.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_FRONT):
+        last = seg_lines[run[-1]]
+        page_number = _get_page_number(last)
+        if page_number is None or len(run) < 2:
+            continue
+        if _get_page_number(seg_lines[run[-2]]) == page_number:
+            continue
+        following = next(
+            (
+                sl for sl in seg_lines[run[-1] + 1:]
+                if sl.seg_label not in _FURNITURE_LABELS
+            ),
+            None,
+        )
+        if following is None or following.seg_label != SEG_BODY:
+            continue
+        if _get_page_number(following) != page_number:
+            continue
+        last.seg_label = SEG_BODY
+
+
 _REGION_HEADING_MAX_GAP = 5
 
 
@@ -1235,6 +1270,50 @@ def _claim_statement_heading(
             above = seg_lines[run[0] - 1]
             if is_heading_of(above, seg_lines[run[0]]):
                 above.seg_label = label
+
+
+_STATEMENT_LABEL_BY_KIND = {
+    'conflict': SEG_CONFLICT,
+    'contribution': SEG_CONTRIBUTION,
+    'funding': SEG_FUNDING,
+    'availability': SEG_AVAILABILITY,
+    'acknowledgement': SEG_ACKNOWLEDGEMENT,
+}
+
+
+def _claim_statement_by_heading(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take a statement whose text the aligner matched somewhere else entirely.
+
+    A deposit cover declares that the manuscript states its conflicts of
+    interest, in much the words the statement itself uses, and the aligner can
+    take the cover's sentence for the article's.  The statement then prints
+    with nothing matched against it at all.
+
+    The page still says what it is: a bold heading naming a declaration, in
+    the run of declarations the article closes with.  That last part is what
+    keeps it out of the argument, where a paragraph may well open by naming
+    one.
+    """
+    text_counts: Counter = Counter(seg_line.text for seg_line in seg_lines)
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label is not None or _is_grounded(seg_line, annotated):
+            continue
+        text = seg_line.text.strip()
+        if len(text) > _STATEMENT_HEADING_MAX_LENGTH or text_counts[seg_line.text] > 1:
+            continue
+        if not _is_bold(seg_line):
+            continue
+        label = _STATEMENT_LABEL_BY_KIND.get(match_fn_keywords(text) or '')
+        if label is None or _enclosing_label(seg_lines, index, -1) not in _STATEMENT_LABELS:
+            continue
+        for position in range(index, len(seg_lines)):
+            if seg_lines[position].seg_label in _FURNITURE_LABELS:
+                continue
+            if position > index and seg_lines[position].seg_label is not None:
+                break
+            seg_lines[position].seg_label = label
 
 
 def _get_running_texts(seg_lines: List[_SegLine]) -> Set[str]:
@@ -1540,6 +1619,49 @@ def _bridge_footnote_block(seg_lines: List[_SegLine]) -> None:
 _TRAILING_MATTER_LABELS = _FURNITURE_LABELS | {SEG_COVER}
 
 
+# A note in the other column sits in the same band as the one already found,
+# give or take the leading between two lines of it.
+_FOOTNOTE_BAND_TOLERANCE = 2.0
+
+
+def _claim_footnotes_sharing_a_band(seg_lines: List[_SegLine]) -> None:
+    """Take the note the other column sets beside a note already placed.
+
+    A two-column page sets its footnotes under both columns, in one band
+    across the foot of the page, but reading order takes the right column's
+    notes with the right column's text -- twenty-five lines before the left
+    column's notes arrive.  The page says they are one block: the same band,
+    in the same size of type, which is smaller than the text above them.
+    """
+    bands: Dict[int, Tuple[float, float, Set[float]]] = {}
+    for seg_line in seg_lines:
+        if seg_line.seg_label != SEG_FOOTNOTE:
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        font_size = _get_line_font_size(seg_line)
+        if page_number is None or position is None or font_size is None:
+            continue
+        top, bottom, sizes = bands.get(page_number, (position[1], position[1], set()))
+        bands[page_number] = (
+            min(top, position[1]), max(bottom, position[1]), sizes | {font_size}
+        )
+
+    for seg_line in seg_lines:
+        if seg_line.seg_label is not None:
+            continue
+        band = bands.get(_get_page_number(seg_line) or -1)
+        position = _get_line_position(seg_line)
+        if band is None or position is None:
+            continue
+        top, bottom, sizes = band
+        if not top - _FOOTNOTE_BAND_TOLERANCE <= position[1] <= bottom + _FOOTNOTE_BAND_TOLERANCE:
+            continue
+        if _get_line_font_size(seg_line) not in sizes:
+            continue
+        seg_line.seg_label = SEG_FOOTNOTE
+
+
 def _merge_gap_lines(
     seg_lines: List[_SegLine],
     enabled_labels: Set[str],
@@ -1691,6 +1813,7 @@ class SegmentationLabelDeriver:
             seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS
         )
         _claim_statement_heading(seg_lines, annotated)
+        _claim_statement_by_heading(seg_lines, annotated)
         # `<review>` is the peer-review sub-articles, which print as one run at the end
         # of the document.  Its values are short, repeated checklist fragments in
         # an order the page does not follow, so the aligner places only some of
@@ -1698,6 +1821,7 @@ class SegmentationLabelDeriver:
         # region to the end, recovers the rest without asking the aligner for
         # per-fragment precision it cannot give.
         _bridge_footnote_block(seg_lines)
+        _claim_footnotes_sharing_a_band(seg_lines)
         _merge_gap_lines(
             seg_lines,
             enabled_labels={
@@ -1755,6 +1879,7 @@ class SegmentationLabelDeriver:
         # Last, because it reads the label of what follows the region, and what
         # follows is only settled once the default has been applied.
         _release_trailing_heading(seg_lines, SEG_REFERENCES)
+        _release_front_alone_at_the_page_top(seg_lines)
 
         # Build id(LayoutLine) → label mapping — safe because layout_document holds strong refs
         result: Dict[int, str] = {}
