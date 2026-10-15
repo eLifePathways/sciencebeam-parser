@@ -222,16 +222,25 @@ def _tag_by_coordinates(
     to start at the top: a table caption, or the kind of article it is.  It is
     left for the regions to claim.  A page number is a page number wherever it
     prints, at the head as at the foot.
+
+    Repeating is counted at the head and nowhere else, because a running head
+    repeats *as* a head.  "Fuente: Elaboración propia." is printed under every
+    table of a document and so repeats across its pages, but it stands at the
+    top of one only where the table above it ran over, and there it is still
+    the caption of that table.
     """
     y_ratio_by_line = {
         id(seg_line): _get_line_y_ratio(seg_line, page_meta_by_number)
         for seg_line in seg_lines
     }
-    pages_by_text: Dict[str, Set[int]] = {}
+    header_pages_by_text: Dict[str, Set[int]] = {}
     for seg_line in seg_lines:
         page_number = _get_page_number(seg_line)
-        if page_number is not None:
-            pages_by_text.setdefault(seg_line.text, set()).add(page_number)
+        y_ratio = y_ratio_by_line[id(seg_line)]
+        if page_number is None or y_ratio is None:
+            continue
+        if y_ratio < config.headnote_y_ratio:
+            header_pages_by_text.setdefault(seg_line.text, set()).add(page_number)
 
     def is_in_margin(y_ratio: Optional[float]) -> bool:
         return y_ratio is not None and (
@@ -262,7 +271,7 @@ def _tag_by_coordinates(
                 SEG_FRONT if id(seg_line) in corresponding_author_lines
                 else SEG_FOOTNOTE
             )
-        elif len(pages_by_text.get(seg_line.text, ())) > 1:
+        elif len(header_pages_by_text.get(seg_line.text, ())) > 1:
             seg_line.seg_label = SEG_HEADNOTE
 
 
@@ -762,6 +771,14 @@ def _release_references_inside_availability(seg_lines: List[_SegLine]) -> None:
     for run in _iter_label_runs(seg_lines, SEG_REFERENCES):
         if len(run) > _ENCLOSED_RUN_MAX_LINES:
             continue
+        # A dataset the statement cites is not introduced by the word
+        # "References": where the run is that heading, it belongs to the list
+        # it heads, which on a two-column page is read a long way after it.
+        if any(
+            _normalised_heading(seg_lines[index].text) in _REFERENCE_HEADINGS
+            for index in run
+        ):
+            continue
         if (
             _enclosing_label(seg_lines, run[0], -1)
             == SEG_AVAILABILITY
@@ -782,6 +799,88 @@ def _release_references_inside_body(seg_lines: List[_SegLine]) -> None:
     """
     for run in _iter_label_runs(seg_lines, SEG_REFERENCES):
         if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_BODY
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = None
+
+
+def _release_body_inside_front(seg_lines: List[_SegLine]) -> None:
+    """Take back the abstract sub-heading that matched a section of the same name.
+
+    A structured abstract is set under the headings the body goes on to use --
+    Introdução, Métodos, Resultados -- and the aligner has only the text to go
+    on, so it gives those lines to the body section that repeats them.  The
+    front matter is one run, so a short stretch of body inside it is that
+    mistake rather than the article beginning and then stopping again.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_BODY):
+        if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_FRONT
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = SEG_FRONT
+
+
+# A wrapped line follows the one above it by a line of type and the leading
+# under it; three times its height covers that and a paragraph break.
+_PARAGRAPH_PITCH_RATIO = 3.0
+
+
+def _follows_on_from(seg_line: _SegLine, neighbour: _SegLine) -> bool:
+    """Whether the page sets the two as consecutive lines of one paragraph."""
+    token = seg_line.first_token
+    position = _get_line_position(seg_line)
+    neighbour_position = _get_line_position(neighbour)
+    if token is None or token.coordinates is None:
+        return False
+    if position is None or neighbour_position is None:
+        return False
+    return (
+        _get_page_number(seg_line) == _get_page_number(neighbour)
+        and abs(position[0] - neighbour_position[0]) <= _SAME_COLUMN_MAX_X_GAP
+        and abs(position[1] - neighbour_position[1])
+        <= token.coordinates.height * _PARAGRAPH_PITCH_RATIO
+    )
+
+
+def _continues_the_lines_around_it(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the run reads as more of the text set either side of it."""
+    if run[0] == 0 or run[-1] + 1 >= len(seg_lines):
+        return False
+    return (
+        _follows_on_from(seg_lines[run[0]], seg_lines[run[0] - 1])
+        and _follows_on_from(seg_lines[run[-1]], seg_lines[run[-1] + 1])
+    )
+
+
+def _release_annex_inside_body(seg_lines: List[_SegLine]) -> None:
+    """Take back a body line that matched the appendix restating it.
+
+    An appendix prints the instrument the article describes, so a sentence of
+    the body -- the aim of the study, the name of the questionnaire -- occurs
+    in both and the appendix match wins the line.  The appendix is one run at
+    the end of the document, so a short stretch of it inside the body is that
+    match rather than a second appendix.
+
+    Only where the stretch is part of the paragraph around it: the page sets
+    it in the same column at the pitch the lines either side are set at.  A
+    statement an article prints at the foot of a page stands apart from the
+    argument above it, and there the back matter the JATS named it is what it
+    is, wherever it prints.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_ANNEX):
+        if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if not _continues_the_lines_around_it(seg_lines, run):
             continue
         if (
             _enclosing_label(seg_lines, run[0], -1)
@@ -1030,6 +1129,112 @@ def _claim_region_heading(
             read_over += 1
             if read_over > _REGION_HEADING_MAX_GAP:
                 break
+
+
+# A heading is set above the region it introduces, within the space a blank
+# line and a line of type take up.
+_HEADING_ABOVE_MAX_GAP = 60.0
+
+
+def _claim_region_heading_by_position(
+    seg_lines: List[_SegLine],
+    label: str,
+    headings: FrozenSet[str],
+) -> None:
+    """Take the heading the page sets above a region that reading order puts elsewhere.
+
+    A two-column page whose reference list runs the full width underneath is
+    read column by column first, so the heading printed directly above the list
+    arrives sixteen lines before it with two other regions in between, and the
+    backward scan in reading order never gets near it.  What the page says is
+    unambiguous: the heading sits in the same column, just above the first line
+    of the list.
+    """
+    # Where the region sits is a question about the page, so it is asked of the
+    # page: the aligner places a reference list as many runs with gaps between
+    # them, and the line the heading stands over is the highest of them rather
+    # than the first in reading order.
+    highest_by_page: Dict[int, Tuple[float, float]] = {}
+    for seg_line in seg_lines:
+        if seg_line.seg_label != label:
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        highest = highest_by_page.get(page_number)
+        if highest is None or position[1] < highest[1]:
+            highest_by_page[page_number] = position
+
+    for seg_line in seg_lines:
+        if seg_line.seg_label is not None:
+            continue
+        if _normalised_heading(seg_line.text) not in headings:
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        highest = highest_by_page.get(page_number)
+        if highest is None:
+            continue
+        if not 0 < highest[1] - position[1] <= _HEADING_ABOVE_MAX_GAP:
+            continue
+        if abs(position[0] - highest[0]) > _SAME_COLUMN_MAX_X_GAP:
+            continue
+        seg_line.seg_label = label
+
+
+# The page sets a statement's heading in bold where the JATS carries no title
+# for it, which is most of the time.
+_STATEMENT_LABELS = (
+    SEG_CONFLICT, SEG_CONTRIBUTION, SEG_FUNDING, SEG_AVAILABILITY,
+    SEG_ACKNOWLEDGEMENT,
+)
+
+_STATEMENT_HEADING_MAX_LENGTH = 80
+
+
+def _is_bold(seg_line: _SegLine) -> bool:
+    token = seg_line.first_token
+    return token is not None and token.font is not None and bool(token.font.is_bold)
+
+
+def _claim_statement_heading(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take the printed heading a statement section is introduced by.
+
+    A JATS carries a conflict or a contribution statement as a bare paragraph
+    more often than as a titled section, so the line the page sets above it has
+    nothing to match and the region starts one line late.  Bold is what decides
+    it, and only against the region below: a statement set in the same type as
+    its heading has no heading to take.
+
+    A heading also prints once.  "Publisher Full Text" is set in bold under
+    every reference the list carries, and one of those happens to be the line
+    above the availability statement.
+    """
+    text_counts: Counter = Counter(seg_line.text for seg_line in seg_lines)
+
+    def is_heading_of(above: _SegLine, first: _SegLine) -> bool:
+        if above.seg_label is not None or _is_grounded(above, annotated):
+            return False
+        if len(above.text.strip()) > _STATEMENT_HEADING_MAX_LENGTH:
+            return False
+        return (
+            text_counts[above.text] == 1
+            and _is_bold(above)
+            and not _is_bold(first)
+        )
+
+    for label in _STATEMENT_LABELS:
+        for run in _iter_label_runs(seg_lines, label):
+            if run[0] == 0:
+                continue
+            above = seg_lines[run[0] - 1]
+            if is_heading_of(above, seg_lines[run[0]]):
+                above.seg_label = label
 
 
 def _get_running_texts(seg_lines: List[_SegLine]) -> Set[str]:
@@ -1332,6 +1537,9 @@ def _bridge_footnote_block(seg_lines: List[_SegLine]) -> None:
         index = end + 1
 
 
+_TRAILING_MATTER_LABELS = _FURNITURE_LABELS | {SEG_COVER}
+
+
 def _merge_gap_lines(
     seg_lines: List[_SegLine],
     enabled_labels: Set[str],
@@ -1344,9 +1552,17 @@ def _merge_gap_lines(
     broken across a page break resumes under one, and the deposit boilerplate
     that a footer used to stand in for is now a cover page in its own right.
     """
+    # A preprint server appends its deposit cover to the end of the file, so the
+    # last line of the document is not the last line of the article: a region
+    # running to the foot of the article has the cover beyond it and would
+    # otherwise stop at the page before.
+    tail = len(seg_lines)
+    while tail and seg_lines[tail - 1].seg_label in _TRAILING_MATTER_LABELS:
+        tail -= 1
+
     candidate_gap: List[_SegLine] = []
     prev_label: Optional[str] = SEG_FRONT
-    for sl in seg_lines:
+    for sl in seg_lines[:tail]:
         if sl.seg_label in _FURNITURE_LABELS:
             continue
         if sl.seg_label is not None:
@@ -1471,6 +1687,10 @@ class SegmentationLabelDeriver:
         _claim_region_heading(
             seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated
         )
+        _claim_region_heading_by_position(
+            seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS
+        )
+        _claim_statement_heading(seg_lines, annotated)
         # `<review>` is the peer-review sub-articles, which print as one run at the end
         # of the document.  Its values are short, repeated checklist fragments in
         # an order the page does not follow, so the aligner places only some of
@@ -1499,6 +1719,8 @@ class SegmentationLabelDeriver:
 
         _release_references_inside_availability(seg_lines)
         _release_references_inside_body(seg_lines)
+        _release_body_inside_front(seg_lines)
+        _release_annex_inside_body(seg_lines)
 
         for page_end_label in (SEG_REFERENCES, SEG_AVAILABILITY):
             _extend_region_to_page_end(
