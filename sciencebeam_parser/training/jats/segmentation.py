@@ -1367,6 +1367,67 @@ def _merge_gap_lines(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+FURNITURE_LABELS: FrozenSet[str] = frozenset({SEG_HEADNOTE, SEG_FOOTNOTE, SEG_PAGE})
+
+
+def get_page_furniture_line_ids(
+    layout_document: LayoutDocument,
+    config: Optional[SegmentationConfig] = None,
+) -> Set[int]:
+    """The lines the page prints around its content, by `id(LayoutLine)`.
+
+    Only the passes that need no JATS evidence run here, because this is what
+    the aligner is given before it has any: a running head, a running foot and
+    a page number are known from where they sit and from repeating across the
+    document, and that pair is what reaches the furniture without taking a
+    heading with it.  Position on its own does not, which is why no pass that
+    reads only the margin is in this list.
+
+    `derive_labels` runs the same passes again over the labels the aligner then
+    produces, and decides the region a line belongs to; this says only that a
+    line is furniture, which does not depend on the answer.
+
+    The pass that reads text repetition alone is not among them.  It asks only
+    that a line repeat and that its first copy print near the start of the
+    document, which an author's name reprinted over their reviewer report
+    satisfies -- in `derive_labels` the JATS vote has already claimed that line,
+    and here there is nothing to stop it.
+
+    The first page is left alone, as the noise filter leaves it.  Taking a line
+    out joins what was printed either side of it, which is the point where a
+    reference is printed around a running foot and the wrong thing where the
+    title block is: an author list interrupted by a deposit notice reads as one
+    affiliation running into the next, and the front matter has no page break
+    for the furniture to be hiding.
+    """
+    seg_lines = _build_seg_lines(layout_document)
+    page_meta_by_number = _get_page_meta_by_page_number(layout_document)
+    _tag_by_coordinates(seg_lines, page_meta_by_number, config or SegmentationConfig())
+    _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
+    _tag_page_numbers_by_position(seg_lines, page_meta_by_number)
+    # Repetition is required, not merely available.  Running the position pass
+    # with nothing already labelled is not what `derive_labels` does -- there the
+    # JATS vote has claimed the content first -- and on its own the margin takes
+    # a reference whose last line is set low in the column with it.  A page
+    # number is exempt because its text is different on every page, and the pass
+    # that tags one has read its position and its shape already.
+    pages_by_text: Dict[str, Set[int]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None:
+            pages_by_text.setdefault(seg_line.text, set()).add(page_number)
+    return {
+        id(seg_line.layout_line)
+        for seg_line in seg_lines
+        if seg_line.seg_label in FURNITURE_LABELS
+        and _get_page_number(seg_line) != 1
+        and (
+            seg_line.seg_label == SEG_PAGE
+            or len(pages_by_text.get(seg_line.text) or ()) > 1
+        )
+    }
+
+
 class SegmentationLabelDeriver:
     """Derives one segmentation label per LayoutLine from token-level JATS annotations."""
 

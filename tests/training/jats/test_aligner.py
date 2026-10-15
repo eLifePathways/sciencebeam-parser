@@ -1,11 +1,14 @@
 # pylint: disable=too-many-lines
-from typing import Optional
+from typing import Optional, Sequence, Tuple
 
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
     LayoutLine,
     LayoutPage,
+    LayoutPageCoordinates,
+    LayoutPageMeta,
+    LayoutToken,
 )
 from sciencebeam_parser.training.jats.aligner import (
     AlignmentConfig,
@@ -1604,4 +1607,208 @@ class TestReferenceLabelPosition:
         assert not self._labelled_tokens(doc, annotated, 2), (
             'the DOI ending "...2021.10.001" is the first reference\'s, '
             'and no part of it is the next reference\'s label'
+        )
+
+
+class TestReferenceStaysInTheList:
+    """A reference is placed between the references either side of it.
+
+    Consecutive references by the same authors share their opening words, so
+    neither can anchor and both are steered by the window the anchors around
+    them give.  Where that window replaces the reading order rather than
+    narrowing it, the second reference is matched against the mention of the
+    same work earlier in the document, its printed text is left unlabelled, and
+    the element before it takes the whole line.
+    """
+
+    FIRST = 'Arcos R Gertrudix M Arribas C: survey instrument for evaluating effects. Zenodo. 2001'
+    SECOND = (
+        'Arcos R Gertrudix M Arribas C: checklist for responses to disinformation.'
+        ' Zenodo. 2002'
+    )
+    THIRD = 'Bail C Guay B: assessing the impact of research agency accounts. Science. 2003'
+    FILLER_ONE = (
+        'Competing interests: no competing interests were disclosed by any of the'
+        ' authors of this article, and the grant reference numbers are listed below'
+    )
+    FILLER_TWO = (
+        'Grant information: this work was supported by a programme award whose'
+        ' number appears in the acknowledgements, and the funder had no role here'
+    )
+
+    def _align(self):
+        doc = _make_doc(
+            'A paragraph of body text that is long enough to anchor on its own words',
+            'Underlying data ' + self.SECOND,
+            self.FILLER_ONE,
+            self.FILLER_TWO,
+            'References',
+            self.FIRST,
+            self.SECOND,
+            self.THIRD,
+        )
+        field_values = [
+            _fv(
+                'A paragraph of body text that is long enough to anchor on its own words',
+                JatsFieldNames.BODY_SECTION_PARAGRAPH,
+            ),
+            _fv(self.FIRST, JatsFieldNames.REFERENCE),
+            _fv(self.SECOND, JatsFieldNames.REFERENCE),
+            _fv(self.THIRD, JatsFieldNames.REFERENCE),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _instances_on_line(self, doc, annotated, line_index: int):
+        line = list(doc.iter_all_lines())[line_index]
+        return {
+            annotated.get_token_instance(token)
+            for token in line.tokens
+            if annotated.get_token_field(token) == JatsFieldNames.REFERENCE
+        }
+
+    def test_each_printed_reference_carries_its_own_instance(self):
+        doc, annotated = self._align()
+        assert self._instances_on_line(doc, annotated, 5) == {1}
+        assert self._instances_on_line(doc, annotated, 6) == {2}
+        assert self._instances_on_line(doc, annotated, 7) == {3}
+
+    def test_the_earlier_mention_is_not_labelled_as_the_reference(self):
+        doc, annotated = self._align()
+        assert not self._instances_on_line(doc, annotated, 1), (
+            'the deposit mentioned in the body is not the reference the list prints'
+        )
+
+
+class TestPostBodyValueLeavesTheReferenceList:
+    """A post-body value may not take tokens a reference already holds.
+
+    Post-body values search from a floor that reaches back into the last
+    reference and an exact one carries no length floor, so a word the peer
+    review and the reference list share is matched inside the reference and
+    overwrites the label it had been given.
+    """
+
+    REFERENCE = 'Margaros K, Aposkiti C: Living labs in law enforcement training. Zenodo. 2025'
+
+    def _align(self):
+        doc = _make_doc(
+            'References',
+            self.REFERENCE,
+            'Reviewer report: the Zenodo deposit should be cited in full',
+        )
+        field_values = [
+            _fv(self.REFERENCE, JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text='Zenodo.',
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_SOURCE,
+            ),
+            _fv('Zenodo', JatsFieldNames.SUB_ARTICLE),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _source_tokens(self, doc, annotated):
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_sub_field(token) == JatsSubFieldNames.REFERENCE_SOURCE
+        ]
+
+    def test_the_reference_keeps_its_source(self):
+        doc, annotated = self._align()
+        assert 'Zenodo' in self._source_tokens(doc, annotated), (
+            'the review naming the same deposit does not take the source from the reference'
+        )
+
+
+def _paged_line(text: str, page_number: int, y: float) -> LayoutLine:
+    return LayoutLine(tokens=[
+        LayoutToken(text=word, coordinates=LayoutPageCoordinates(
+            x=10, y=y, width=50, height=12, page_number=page_number
+        ))
+        for word in text.split()
+    ])
+
+
+def _paged_doc(pages: Sequence[Sequence[Tuple[str, float]]]) -> LayoutDocument:
+    """One page per entry, each line given as (text, y) on a page 1000 high."""
+    return LayoutDocument(pages=[
+        LayoutPage(
+            blocks=[LayoutBlock(lines=[
+                _paged_line(text, page_number, y) for text, y in lines
+            ])],
+            meta=LayoutPageMeta(
+                page_number=page_number,
+                coordinates=LayoutPageCoordinates(
+                    x=0, y=0, width=600, height=1000, page_number=page_number
+                ),
+            ),
+        )
+        for page_number, lines in enumerate(pages, 1)
+    ])
+
+
+class TestReferenceInterruptedByPageFurniture:
+    """A running foot printed inside a reference does not cost it its title.
+
+    Quality counts the page a match spans as well as the text it accounts for,
+    and Smith-Waterman is a local alignment, so a foot printed between the two
+    halves of a title costs a gap penalty per character and the best local
+    answer is to keep the longer half and drop the other.  The foot repeats at
+    the same place on every page, which is what says it is furniture rather
+    than the reference's own text, and the haystack leaves it out.
+    """
+
+    FOOT = 'Page 17 of 24 Open Research Europe 2025 5:251 Last updated 13 Mar 2026'
+    TITLE = (
+        'Significance of Nonmetallic Inclusions for the clogging phenomenon in'
+        ' continuous casting of steel - a review.'
+    )
+    REFERENCE = 'Michelic S, Bernhard C: ' + TITLE + ' Steel Res Int. 2022; 93(7): 2200086.'
+
+    def _align(self):
+        doc = _paged_doc([
+            [
+                ('A title block and an author list, which the first page carries', 300.0),
+                (self.FOOT, 950.0),
+            ],
+            [
+                ('Earlier reference text that fills the page before the one of interest', 300.0),
+                ('34. Michelic S, Bernhard C: Significance of Nonmetallic'
+                 ' Inclusions for the', 700.0),
+                (self.FOOT, 950.0),
+            ],
+            [
+                ('clogging phenomenon in continuous casting of steel - a review.'
+                 ' Steel Res Int. 2022; 93(7): 2200086.', 300.0),
+                (self.FOOT, 950.0),
+            ],
+        ])
+        field_values = [
+            _fv(self.REFERENCE, JatsFieldNames.REFERENCE),
+            JatsFieldValue(
+                text=self.TITLE,
+                field_name=JatsFieldNames.REFERENCE,
+                sub_field_name=JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,
+            ),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _title_tokens(self, doc, annotated):
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_sub_field(token)
+            == JatsSubFieldNames.REFERENCE_ARTICLE_TITLE
+        ]
+
+    def test_both_halves_of_the_title_are_labelled(self):
+        doc, annotated = self._align()
+        labelled = self._title_tokens(doc, annotated)
+        assert 'Significance' in labelled, 'the half before the page break'
+        assert 'clogging' in labelled, 'the half after it'
+
+    def test_the_running_foot_is_not_part_of_the_title(self):
+        doc, annotated = self._align()
+        labelled = self._title_tokens(doc, annotated)
+        assert not {'Page', 'updated', '2026'} & set(labelled), (
+            'the foot the title is printed around is not part of it'
         )

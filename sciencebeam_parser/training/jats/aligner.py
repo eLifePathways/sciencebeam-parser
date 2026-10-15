@@ -2,7 +2,10 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Protocol, Sequence, Set,
+    Tuple
+)
 
 from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 
@@ -10,12 +13,23 @@ from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutTo
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
+from sciencebeam_parser.training.jats.segmentation import get_page_furniture_line_ids
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 
 
 LOGGER = logging.getLogger(__name__)
 
 _NO_TOKEN_INDEX = -1
+
+
+class _TokenStarts(Protocol):
+    """What the tail extension needs: the text, and where its tokens begin."""
+
+    haystack: str
+
+    def is_token_start(self, pos: int) -> bool:
+        ...
+
 
 # Fields whose matches establish the document region boundary (end of front matter).
 # Body content is searched from the end of the last anchor match, so that front-matter
@@ -250,6 +264,33 @@ class _TokenIndex:
         self.haystack = ''.join(parts)
         self._token_index_at = token_index_at
         self._skip_tokens = skip_tokens
+        # Where the page's own furniture lies in the haystack, as character
+        # ranges.  Set by _build_token_index; empty means nothing is skipped.
+        self.furniture_ranges: List[Tuple[int, int]] = []
+
+    def get_token_char_ranges(self, token_indices: Set[int]) -> List[Tuple[int, int]]:
+        """The haystack covered by those tokens, merged into contiguous runs."""
+        ranges: List[Tuple[int, int]] = []
+        start: Optional[int] = None
+        end: Optional[int] = None
+        for pos, tok_idx in enumerate(self._token_index_at):
+            if tok_idx in token_indices:
+                if start is None:
+                    start = pos
+                end = pos + 1
+                continue
+            # The space between two of these tokens is theirs as much as the
+            # tokens are: counted as content it leaves a gap the width of the
+            # run, which is what a value printed around it would have to cross.
+            if tok_idx == _NO_TOKEN_INDEX and start is not None:
+                continue
+            if start is not None and end is not None:
+                ranges.append((start, end))
+            start = None
+            end = None
+        if start is not None and end is not None:
+            ranges.append((start, end))
+        return ranges
 
     def tokens_in_range(self, start: int, end: int) -> List[LayoutToken]:
         seen: Set[int] = set()
@@ -305,8 +346,20 @@ def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
     all_tokens: List[LayoutToken] = []
     skip_tokens: Set[int] = set()
     no_space_after: Set[int] = set()
+    # Where the page's own furniture sits, so that a reference printed around it
+    # can be matched as though it were not there.  The haystack keeps it: taking
+    # it out would join what printed either side of it for every value, and a
+    # body paragraph or an affiliation would then match straight across the gap.
+    # Only the window a reference is searched in drops it, in
+    # _fuzzy_search_in_window.
+    furniture_line_ids = get_page_furniture_line_ids(layout_document)
+    furniture_token_indices: Set[int] = set()
     for line in layout_document.iter_all_lines():
         line_tokens: List[LayoutToken] = line.tokens or []
+        if id(line) in furniture_line_ids:
+            furniture_token_indices.update(
+                range(len(all_tokens), len(all_tokens) + len(line_tokens))
+            )
         for i, token in enumerate(line_tokens):
             tok_global_idx = len(all_tokens)
             all_tokens.append(token)
@@ -321,7 +374,13 @@ def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
                     skip_tokens.add(tok_global_idx)
                     if i > 0:
                         no_space_after.add(tok_global_idx - 1)
-    return _TokenIndex(all_tokens, skip_tokens=skip_tokens, no_space_after=no_space_after)
+    token_index = _TokenIndex(
+        all_tokens, skip_tokens=skip_tokens, no_space_after=no_space_after
+    )
+    token_index.furniture_ranges = token_index.get_token_char_ranges(
+        furniture_token_indices
+    )
+    return token_index
 
 
 # How much more page than its own length a value may span before the extra
@@ -355,7 +414,7 @@ def _match_quality(
 def _scan_tail_chars_at_token_starts(
     tail: str,
     scan_start: int,
-    token_index: '_TokenIndex',
+    token_index: '_TokenStarts',
 ) -> int:
     """Scan for each char in tail at token-start positions with gaps ≤ _MAX_HAYSTACK_GAP_TO_FILL.
 
@@ -387,7 +446,7 @@ def _extend_match_for_needle_tail(
     abs_a_end: int,
     matched_blocks: List[Tuple[int, int, int]],
     abs_block_ranges: List[Tuple[int, int]],
-    token_index: Optional['_TokenIndex'] = None,
+    token_index: Optional['_TokenStarts'] = None,
 ) -> Tuple[int, List[Tuple[int, int]]]:
     """Greedily extend the SW match to cover any unmatched needle suffix.
 
@@ -438,13 +497,128 @@ def _extend_match_for_needle_tail(
     return ext_start + match_count, abs_block_ranges + [(ext_start, ext_start + match_count)]
 
 
-def _fuzzy_search_in_window(
+def _clean_window(
+    haystack: str,
+    window_start: int,
+    window_end: int,
+    furniture_ranges: Sequence[Tuple[int, int]],
+) -> Tuple[str, List[Tuple[int, int, int]]]:
+    """The window with the page's furniture taken out, and how to get back.
+
+    Returns the text and, per surviving run, `(offset in the text, offset in the
+    haystack, length)`.  The runs are in order and their offsets increase, so a
+    range in the text maps to one or more ranges in the haystack.
+    """
+    parts: List[str] = []
+    segments: List[Tuple[int, int, int]] = []
+    cursor = window_start
+    cleaned_length = 0
+    for furniture_start, furniture_end in furniture_ranges:
+        start = max(furniture_start, cursor)
+        end = min(furniture_end, window_end)
+        if start >= end:
+            continue
+        if start > cursor:
+            parts.append(haystack[cursor:start])
+            segments.append((cleaned_length, cursor, start - cursor))
+            cleaned_length += start - cursor
+        cursor = end
+    if cursor < window_end:
+        parts.append(haystack[cursor:window_end])
+        segments.append((cleaned_length, cursor, window_end - cursor))
+    return ''.join(parts), segments
+
+
+def _map_cleaned_range(
+    segments: Sequence[Tuple[int, int, int]], start: int, end: int
+) -> List[Tuple[int, int]]:
+    """A range of the cleaned text, as the haystack ranges it came from."""
+    mapped: List[Tuple[int, int]] = []
+    for cleaned_offset, haystack_offset, length in segments:
+        piece_start = max(start, cleaned_offset)
+        piece_end = min(end, cleaned_offset + length)
+        if piece_start < piece_end:
+            mapped.append((
+                haystack_offset + piece_start - cleaned_offset,
+                haystack_offset + piece_end - cleaned_offset,
+            ))
+    return mapped
+
+
+class _CleanedTokenView:
+    """A token index as the cleaned window sees it.
+
+    `_extend_match_for_needle_tail` asks whether a position starts a token, and
+    what character is there.  Both questions are about the page, so they are
+    answered from the real index after mapping the position back.
+    """
+
+    def __init__(
+        self,
+        token_index: '_TokenIndex',
+        cleaned: str,
+        segments: Sequence[Tuple[int, int, int]],
+    ) -> None:
+        self.haystack = cleaned
+        self._token_index = token_index
+        self._segments = segments
+
+    def _to_haystack(self, pos: int) -> Optional[int]:
+        mapped = _map_cleaned_range(self._segments, pos, pos + 1)
+        return mapped[0][0] if mapped else None
+
+    def is_token_start(self, pos: int) -> bool:
+        haystack_pos = self._to_haystack(pos)
+        if haystack_pos is None:
+            return False
+        return self._token_index.is_token_start(haystack_pos)
+
+
+def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
+    haystack: str,
+    needle: str,
+    window_start: int,
+    window_end: int,
+    threshold: float,
+    furniture_ranges: Sequence[Tuple[int, int]],
+    token_index: Optional['_TokenIndex'] = None,
+) -> Optional[_MatchResult]:
+    """`_fuzzy_search_in_window` over a window the furniture has been taken out of."""
+    cleaned, segments = _clean_window(
+        haystack, window_start, window_end, furniture_ranges
+    )
+    if not cleaned:
+        return None
+    sm = LocalSequenceMatcher(a=cleaned, b=needle, scoring=_SCORING)
+    blocks = sm.get_matching_blocks()
+    if _match_quality(blocks, len(needle)) < threshold:
+        return None
+    matched_blocks = [(ai, bi, size) for ai, bi, size in blocks if size]
+    if not matched_blocks:
+        return None
+    cleaned_end = matched_blocks[-1][0] + matched_blocks[-1][2]
+    cleaned_ranges = [(ai, ai + size) for ai, _bi, size in matched_blocks]
+    cleaned_end, cleaned_ranges = _extend_match_for_needle_tail(
+        cleaned, needle, 0, cleaned_end, matched_blocks, cleaned_ranges,
+        _CleanedTokenView(token_index, cleaned, segments) if token_index else None,
+    )
+    abs_block_ranges: List[Tuple[int, int]] = []
+    for start, end in cleaned_ranges:
+        abs_block_ranges.extend(_map_cleaned_range(segments, start, end))
+    if not abs_block_ranges:
+        return None
+    abs_block_ranges.sort()
+    return abs_block_ranges[0][0], abs_block_ranges[-1][1], abs_block_ranges
+
+
+def _fuzzy_search_in_window(  # pylint: disable=too-many-locals
     haystack: str,
     needle: str,
     window_start: int,
     window_end: int,
     threshold: float,
     token_index: Optional['_TokenIndex'] = None,
+    furniture_ranges: Optional[Sequence[Tuple[int, int]]] = None,
 ) -> Optional[_MatchResult]:
     """Try to find `needle` in haystack[window_start:window_end].
 
@@ -453,7 +627,18 @@ def _fuzzy_search_in_window(
     After the SW match, a greedy tail extension fills any unmatched needle
     suffix whose first character falls within _MAX_HAYSTACK_GAP_TO_FILL chars
     of the current match end (mirrors the pre-anchor fill on the trailing side).
+
+    With `furniture_ranges`, the page's own furniture is taken out of the window
+    before the match and the result is mapped back.  A running foot printed
+    between the two halves of a title is then neither page the match has to span
+    nor a gap it has to pay for, and the value reads continuously across the
+    break -- while the haystack everything else is matched against is untouched.
     """
+    if furniture_ranges:
+        return _fuzzy_search_in_cleaned_window(
+            haystack, needle, window_start, window_end, threshold, furniture_ranges,
+            token_index,
+        )
     window = haystack[window_start:window_end]
     sm = LocalSequenceMatcher(a=window, b=needle, scoring=_SCORING)
     blocks = sm.get_matching_blocks()
@@ -495,6 +680,10 @@ def _value_probe(text: str) -> Optional['re.Pattern']:
 def _value_span(text: str) -> int:
     """How much page a value can take up, allowing for what it is printed with."""
     return len(normalize_for_alignment(text)) * 2 + 200
+
+
+def _is_reference_parent(fv: JatsFieldValue) -> bool:
+    return fv.sub_field_name is None and fv.field_name in _REFERENCE_FIELDS
 
 
 def _iter_anchor_positions(
@@ -550,11 +739,24 @@ def _longest_increasing(anchors: List[Tuple[int, int]]) -> List[Tuple[int, int]]
     return out[::-1]
 
 
+class _ExpectedWindow(NamedTuple):
+    """Where a value is expected, and on what evidence.
+
+    An anchor window is the value's own confirmed match, which is the strongest
+    statement the aligner has about where it is.  A window between two anchors
+    is a bound derived from its neighbours, and says only that the value is
+    somewhere between them.
+    """
+    start: int
+    end: int
+    is_anchor: bool
+
+
 def _expected_windows(
     token_index: '_TokenIndex',
     field_values: Sequence[JatsFieldValue],
     config: AlignmentConfig,
-) -> Dict[int, Tuple[int, int]]:
+) -> Dict[int, _ExpectedWindow]:
     """Where each value is expected, from the anchors either side of it."""
     anchors = _longest_increasing(
         list(_iter_anchor_positions(token_index, field_values, config))
@@ -563,8 +765,10 @@ def _expected_windows(
     # the page and the whole of it matches there, so the search has nothing left
     # to decide -- and left to decide it can prefer an earlier, poorer match: the
     # byline on the title page over the correspondence line the value came from.
-    windows: Dict[int, Tuple[int, int]] = {
-        index: (position, position + _value_span(field_values[index].text))
+    windows: Dict[int, _ExpectedWindow] = {
+        index: _ExpectedWindow(
+            position, position + _value_span(field_values[index].text), True
+        )
         for index, position in anchors
     }
     if len(anchors) < 2:
@@ -574,17 +778,25 @@ def _expected_windows(
     # it only disturbs what the floors already get right.
     for (before_index, before), (after_index, after) in zip(anchors, anchors[1:]):
         for index in range(before_index + 1, after_index):
+            low = max(0, before - _EXPECTED_WINDOW_SLACK)
+            high = after + _EXPECTED_WINDOW_SLACK
+            # A reference is printed between the references either side of it,
+            # so the anchors bound it whether or not its own text is ambiguous.
+            # The bound is what it needs: a reference the page interrupts falls
+            # below the threshold where it belongs, and an unbounded search then
+            # runs on to a copy of the same citation elsewhere in the document.
+            if _is_reference_parent(field_values[index]):
+                windows[index] = _ExpectedWindow(low, high, False)
+                continue
             probe = _value_probe(field_values[index].text)
             if probe is None:
                 continue
-            low = max(0, before - _EXPECTED_WINDOW_SLACK)
-            high = after + _EXPECTED_WINDOW_SLACK
             spots = [match.start() for match in probe.finditer(token_index.haystack)]
             # Only where the value is ambiguous and one of its occurrences is
             # in the window.  Steering it somewhere its text does not appear
             # would only trade a wrong match for a worse one.
             if len(spots) > 1 and any(low <= spot < high for spot in spots):
-                windows[index] = (low, high)
+                windows[index] = _ExpectedWindow(low, high, False)
     return windows
 
 
@@ -974,6 +1186,7 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
     prefer_exact: bool = False,
     allow_pieces: bool = False,
     prefer_before: Optional[int] = None,
+    skip_furniture: bool = False,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -1003,6 +1216,7 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
             return exact
     window_size = get_search_window_size(need_len, config.max_window)
     stride = get_search_stride(window_size, need_len)
+    furniture_ranges = token_index.furniture_ranges if skip_furniture else None
 
     gap_match: Optional[_MatchResult] = None
     for seg_start, seg_end in segments:
@@ -1010,7 +1224,8 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
         while start < seg_end:
             end = min(start + window_size, seg_end)
             result = _fuzzy_search_in_window(
-                haystack, needle, start, end, config.threshold, token_index
+                haystack, needle, start, end, config.threshold, token_index,
+                furniture_ranges=furniture_ranges,
             )
             if result is not None:
                 if _is_exact_sw_match(result, need_len):
@@ -1031,7 +1246,7 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
         if prefix_match is not None:
             return prefix_match
 
-    if gap_match is None and allow_pieces and need_len >= _FRAGMENT_MIN_NEEDLE_LENGTH:
+    if gap_match is None and allow_pieces and need_len >= _FRAGMENT_MIN_NEEDLE_LENGTH:  # noqa: E501
         return _match_field_value_in_pieces(
             token_index, field_value, config, search_start, search_end, masked_ranges
         )
@@ -1056,7 +1271,7 @@ def is_contained_in_parent_match(
 def narrow_search_range_to_window(
     search_start: int,
     search_end: Optional[int],
-    window: Tuple[int, int],
+    window: Sequence[int],
 ) -> Tuple[int, Optional[int]]:
     """The containment range, narrowed to the window without escaping it."""
     narrowed_start = max(search_start, window[0])
@@ -1270,6 +1485,52 @@ def _has_mid_token_within_gap_blocks(
     return False
 
 
+def _lies_in_furniture(
+    token_index: _TokenIndex, block_start: int, block_end: int
+) -> bool:
+    """Whether a matched block is inside the page's furniture.
+
+    A value is not the running foot it is printed around, so a block that falls
+    wholly inside one is a coincidence -- a few characters of a paragraph that
+    happen to read like the journal's name.  The chain used to lose these along
+    with everything after them; discounting the furniture from the gap keeps
+    what follows, and this keeps the coincidence out.
+    """
+    return any(
+        furniture_start <= block_start and block_end <= furniture_end
+        for furniture_start, furniture_end in token_index.furniture_ranges
+    )
+
+
+def _spans_furniture(
+    token_index: _TokenIndex, previous_end: int, block_start: int
+) -> bool:
+    """Whether the page's furniture prints between two pieces of one value."""
+    return any(
+        max(furniture_start, previous_end) < min(furniture_end, block_start)
+        for furniture_start, furniture_end in token_index.furniture_ranges
+    )
+
+
+def _gap_between_blocks(
+    token_index: _TokenIndex, previous_end: int, block_start: int
+) -> int:
+    """How far apart two pieces of one value are, ignoring the page's furniture.
+
+    A running foot printed between two halves of a URL is not part of it, and
+    not a gap in it either: the halves are adjacent as far as the value is
+    concerned, which is how the match found them.  Counting the furniture here
+    would break the chain and drop whatever follows it.
+    """
+    gap = block_start - previous_end
+    for furniture_start, furniture_end in token_index.furniture_ranges:
+        overlap_start = max(furniture_start, previous_end)
+        overlap_end = min(furniture_end, block_start)
+        if overlap_start < overlap_end:
+            gap -= overlap_end - overlap_start
+    return gap
+
+
 def _label_tokens_for_blocks(
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -1299,10 +1560,13 @@ def _label_tokens_for_blocks(
         return
     prev_included_end: Optional[int] = None
     for i, (block_start, block_end) in enumerate(block_ranges):
+        if _lies_in_furniture(token_index, block_start, block_end):
+            continue
         is_anchor = (block_end - block_start) >= _MIN_ANCHOR_BLOCK_SIZE
         within_gap = (
             prev_included_end is not None
-            and block_start - prev_included_end <= _MAX_HAYSTACK_GAP_TO_FILL
+            and _gap_between_blocks(token_index, prev_included_end, block_start)
+            <= _MAX_HAYSTACK_GAP_TO_FILL
         )
         if not is_anchor and not within_gap and i not in pre_anchor:
             continue
@@ -1315,7 +1579,17 @@ def _label_tokens_for_blocks(
         ):
             prev_included_end = block_end
             continue
-        fill_start = prev_included_end if within_gap else block_start
+        # Continuing across the furniture is not the same as labelling it: the
+        # two halves of a title belong to the title and the running foot
+        # between them does not, so the chain carries on but the fill starts at
+        # the block.
+        fill_start = (
+            prev_included_end
+            if within_gap and not _spans_furniture(
+                token_index, prev_included_end or block_start, block_start
+            )
+            else block_start
+        )
         assert fill_start is not None
         for token in token_index.tokens_in_range(fill_start, block_end):
             annotated.set_token_label(token, field_name, sub_field_name, instance_id)
@@ -1481,6 +1755,8 @@ class LayoutDocumentJatsAligner:
         ref_id_subfield_end: Dict[str, int] = {}
         # End of the previous match of each distinct post-body value text.
         post_body_text_end: Dict[str, int] = {}
+        # Where the references were placed, masked out of the post-body search.
+        reference_match_ranges: List[Tuple[int, int]] = []
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -1498,18 +1774,47 @@ class LayoutDocumentJatsAligner:
                 # there the window narrows the range rather than replacing it:
                 # steered out of its own reference, a sub-field lands in a
                 # neighbouring one, which writes an element that is not there.
-                if is_contained_in_parent_match(fv, parent_match_by_field):
+                #
+                # A reference's place in the list is not a floor either.  The
+                # list is printed in the order the JATS declares, so a window
+                # between two anchors narrows the reading-order range rather
+                # than replacing it: widened, a reference whose opening words it
+                # shares with its neighbours is matched before the one above it,
+                # and its own printed text is left for the previous element to
+                # swallow.  Its own anchor still replaces the range, being where
+                # the reference was confirmed to be rather than where the order
+                # says it cannot be -- a floor that overshoots by a hundred
+                # characters is what the anchor is there to overrule.
+                if (
+                    is_contained_in_parent_match(fv, parent_match_by_field)
+                    or (_is_reference_parent(fv) and not window.is_anchor)
+                ):
                     search_start, search_end = narrow_search_range_to_window(
                         search_start, search_end, window
                     )
+                elif search_end is not None and not window.is_anchor:
+                    # A range that already has an end is a bound of the same
+                    # kind, and the window may lower it but not raise it: the
+                    # front matter is where an affiliation is, and a window that
+                    # moved the end would let it match past the region it
+                    # belongs to.  Its start is left alone, because inside a
+                    # region the floors already place these and the window has
+                    # no better evidence than they do.
+                    search_end = min(search_end, window.end)
                 else:
                     search_start = window[0]
                     search_end = window[1] if window[1] > window[0] + 1 else None
-            masked = (
-                sub_field_masked_ranges.get(fv.field_name)
-                if fv.sub_field_name is not None
-                else None
-            )
+            if fv.sub_field_name is not None:
+                masked = sub_field_masked_ranges.get(fv.field_name)
+            elif fv.field_name in _POST_BODY_FIELDS:
+                # The reference list is not part of the peer review.  A post-body
+                # value searches from a floor that reaches back into the last
+                # reference, and an exact one carries no length floor, so a word
+                # the two share -- a publisher, a surname -- is matched inside a
+                # reference and takes the tokens it had already been given.
+                masked = reference_match_ranges
+            else:
+                masked = None
             # A pure-number reference label is printed immediately before the
             # reference's own text, so its parent's match start says which of
             # the numbers in range is the one on the page.
@@ -1520,6 +1825,16 @@ class LayoutDocumentJatsAligner:
                 and fv.field_name in parent_match_by_field
             ):
                 prefer_before = parent_match_by_field[fv.field_name][0]
+            # Which values are matched against a window the furniture has been
+            # taken out of.  A reference and an abstract are both printed
+            # through page breaks, and both are long enough that a running foot
+            # inside them costs the match rather than merely blurring it.  Body
+            # content is not on the list: it borders the furniture everywhere,
+            # and a paragraph that may match across it reaches the line beyond
+            # -- which is how `REVISED` left the header for the body.
+            skip_furniture = (
+                fv.field_name in _REFERENCE_FIELDS or fv.field_name in _ANCHOR_FIELDS
+            )
             match_range = _fuzzy_match_field_value(
                 token_index, fv, self.config,
                 search_start=search_start, search_end=search_end,
@@ -1527,6 +1842,7 @@ class LayoutDocumentJatsAligner:
                 prefer_exact=fv.field_name in _POST_BODY_FIELDS,
                 allow_pieces=fv.sub_field_name is None and not fv.exact_only,
                 prefer_before=prefer_before,
+                skip_furniture=skip_furniture,
             )
             # If primary match relied on a mid-token within-gap block (e.g. 't'
             # inside 'staff' matching the initial 'T' in "Guardian T"), the SW
@@ -1613,6 +1929,7 @@ class LayoutDocumentJatsAligner:
                     token_index, fv, _relaxed_config,
                     search_start=search_start, search_end=search_end,
                     masked_ranges=masked,
+                    skip_furniture=skip_furniture,
                 )
             # Sub-field fallback: retry with fallback_text (e.g. surname only)
             # when the primary JATS name text does not match the PDF text.
@@ -1626,6 +1943,7 @@ class LayoutDocumentJatsAligner:
                     token_index, fallback_fv, self.config,
                     search_start=search_start, search_end=search_end,
                     masked_ranges=masked,
+                    skip_furniture=skip_furniture,
                 )
                 if match_range is not None:
                     # Extend surname-only match with given-names initial from
@@ -1665,6 +1983,8 @@ class LayoutDocumentJatsAligner:
                 availability_floor = max(availability_floor, a_start)
             if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
                 reference_floor = max(reference_floor, a_end)
+            if _is_reference_parent(fv):
+                reference_match_ranges.append((a_start, a_end))
             if fv.sub_field_name is None:
                 prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
                 prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)
