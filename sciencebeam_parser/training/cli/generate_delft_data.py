@@ -75,6 +75,9 @@ from sciencebeam_parser.app.parser import ScienceBeamParser
 LOGGER = logging.getLogger(__name__)
 
 
+_TEI_XML_PARSER = etree.XMLParser(recover=True)
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         'ScienceBeam Parser: Generate DELFT Training Data'
@@ -316,7 +319,9 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
         tei_file,
         auto_decompress=True
     ) as local_tei_file:
-        tei_root = etree.parse(local_tei_file).getroot()
+        # GROBID's own corpus carries xml:id values that are not NCNames, which a
+        # validating parse refuses outright
+        tei_root = etree.parse(local_tei_file, _TEI_XML_PARSER).getroot()
     labeled_layout_tokens_list = (
         training_tei_parser.parse_training_tei_to_labeled_layout_tokens_list(
             tei_root

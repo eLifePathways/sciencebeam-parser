@@ -90,5 +90,4 @@ class HeaderTrainingTeiParser(AbstractTrainingTeiParser):
             training_xml_element_path_by_label=(
                 TRAINING_XML_ELEMENT_PATH_BY_LABEL_WITHOUT_ALIAS
             ),
-            use_tei_namespace=False
         )

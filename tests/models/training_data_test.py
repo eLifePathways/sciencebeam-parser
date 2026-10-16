@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from typing import Sequence, Union
 
 import pytest
@@ -58,7 +59,6 @@ class SampleTrainingTeiParser(AbstractTrainingTeiParser):
             training_xml_element_path_by_label=(
                 TRAINING_XML_ELEMENT_PATH_BY_LABEL
             ),
-            use_tei_namespace=False
         )
 
 
@@ -170,6 +170,73 @@ class TestTrainingTeiParser:
             SampleTrainingTeiParser().parse_training_tei_to_tag_result(
                 tei_root
             )
+
+    def test_should_match_an_element_path_whatever_namespace_it_is_in(self):
+        # GROBID's own segmentation corpus ships both dialects: 230 of its 925 TEI
+        # files are in the TEI namespace and the rest are not
+        xml_writer = XmlTreeWriter(TEI_E('tei'), element_maker=TEI_E)
+        xml_writer.require_path(ROOT_TRAINING_XML_ELEMENT_PATH)
+        xml_writer.append_all(TEI_E('head', TOKEN_1, TEI_E('lb')), '\n')
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            xml_writer.root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<head>')
+        ]]
+
+    def test_should_take_the_label_of_the_innermost_recognised_element(self):
+        tei_root = _get_training_tei_with_text([
+            E('back', E('head', TOKEN_1, E('lb'))),
+            '\n'
+        ])
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<head>')
+        ]]
+
+    def test_should_fall_back_to_the_enclosing_label_for_an_unrecognised_element(self):
+        tei_root = _get_training_tei_with_text([
+            E('head', E('unknown', TOKEN_1, E('lb'))),
+            '\n'
+        ])
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<head>')
+        ]]
+
+    def test_should_count_an_element_path_it_did_not_recognise(self):
+        tei_root = _get_training_tei_with_text([
+            E('back', E('head', TOKEN_1, E('lb'))),
+            '\n',
+            E('head', TOKEN_2, E('lb')),
+            '\n'
+        ])
+        unrecognised_path_counts: Counter = Counter()
+        SampleTrainingTeiParser().parse_training_tei_to_labeled_layout_tokens_list(
+            tei_root,
+            unrecognised_path_counts=unrecognised_path_counts
+        )
+        assert dict(unrecognised_path_counts) == {'back/head': 1}
+
+    def test_should_ignore_a_comment_between_lines(self):
+        tei_root = _get_training_tei_with_text([
+            E('head', TOKEN_1, E('lb')),
+            etree.Comment('a note the annotator left'),
+            '\n',
+            E('p', TOKEN_2, E('lb')),
+            '\n'
+        ])
+        tag_result = SampleTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<head>'),
+            (TOKEN_2, 'B-<paragraph>')
+        ]]
 
     def test_should_start_a_new_entity_for_each_sibling_element_with_the_same_label(self):
         tei_root = _get_training_tei_with_text([
