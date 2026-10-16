@@ -127,6 +127,11 @@ _FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ('contribution', ('contribution', 'contribuicao', 'contribucion',
                       'colabora', 'authorship')),
     ('acknowledgement', ('acknowledg', 'agradecimento', 'agradecimiento')),
+    # The same statement the `data-availability` sec-type marks, filed as a
+    # footnote instead -- which is where a preprint server puts it.
+    ('availability', ('data availability', 'disponibilidad de datos',
+                      'disponibilidade dos dados', 'disponibilidade de dados',
+                      'availability of data')),
     ('ethics', ('ethic', 'etico', 'etica', 'consent', 'comite de etica',
                 'institutional review')),
 )
@@ -197,6 +202,9 @@ _CONTRIBUTION_TITLES = frozenset({
     'contribuicoes dos autores',
     'contribucion de los autores',
     'contribuciones de los autores',
+    # The heading an article gives the section when it names who took part
+    # rather than what they did.
+    'contributors',
 })
 
 
@@ -228,7 +236,9 @@ def _get_sections(
 
 
 def _get_availability_sections(root: etree._Element) -> Set[etree._Element]:
-    return _get_sections(root, _AVAILABILITY_SEC, _AVAILABILITY_TITLES)
+    return _get_sections(
+        root, _AVAILABILITY_SEC, _AVAILABILITY_TITLES, 'availability'
+    )
 
 
 def _get_contribution_sections(root: etree._Element) -> Set[etree._Element]:

@@ -4,7 +4,6 @@ from sciencebeam_parser.document.layout_document import (
     LayoutLine,
     LayoutPage,
     LayoutPageCoordinates,
-    LayoutPageMeta,
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
@@ -19,99 +18,55 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_HEADNOTE,
     SEG_PAGE,
     SEG_REFERENCES,
-    SegmentationConfig,
-    SegmentationLabelDeriver,
 )
-
-
-def _make_page_meta(page_number: int = 1, height: float = 1000.0) -> LayoutPageMeta:
-    return LayoutPageMeta(
-        page_number=page_number,
-        coordinates=LayoutPageCoordinates(
-            x=0, y=0, width=600, height=height, page_number=page_number
-        ),
-    )
-
-
-def _make_token(
-    text: str,
-    page_number: int = 1,
-    y: float = 500.0,
-) -> LayoutToken:
-    return LayoutToken(
-        text=text,
-        coordinates=LayoutPageCoordinates(
-            x=10, y=y, width=50, height=12, page_number=page_number
-        ),
-    )
-
-
-def _make_line(*texts: str, y: float = 500.0, page_number: int = 1) -> LayoutLine:
-    tokens = [_make_token(t, page_number=page_number, y=y) for t in texts]
-    return LayoutLine(tokens=tokens)
-
-
-def _make_doc_with_page(
-    *blocks: LayoutBlock, page_height: float = 1000.0, page_number: int = 1
-) -> LayoutDocument:
-    page_meta = _make_page_meta(page_number=page_number, height=page_height)
-    page = LayoutPage(blocks=list(blocks), meta=page_meta)
-    return LayoutDocument(pages=[page])
-
-
-def _annotate(doc: LayoutDocument, field_by_line_index: dict) -> JatsAnnotatedLayoutDocument:
-    annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-    lines = list(doc.iter_all_lines())
-    for line_idx, field_name in field_by_line_index.items():
-        for token in lines[line_idx].tokens:
-            annotated.set_token_label(token, field_name)
-    return annotated
-
-
-def _derive_labels(doc, annotated, **config_kwargs):
-    config = SegmentationConfig(**config_kwargs) if config_kwargs else None
-    return SegmentationLabelDeriver(config).derive_labels(doc, annotated)
+from tests.training.jats.segmentation_fixtures import (
+    annotate,
+    derive_labels,
+    make_doc_with_page,
+    make_line,
+    make_page_meta,
+)
 
 
 class TestMajorityVoteLabeling:
     def test_title_tokens_give_header_label(self):
-        line = _make_line('My', 'Title')
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]))
-        annotated = _annotate(doc, {0: JatsFieldNames.TITLE})
-        labels = _derive_labels(doc, annotated)
+        line = make_line('My', 'Title')
+        doc = make_doc_with_page(LayoutBlock(lines=[line]))
+        annotated = annotate(doc, {0: JatsFieldNames.TITLE})
+        labels = derive_labels(doc, annotated)
         assert labels[id(line)] == SEG_FRONT
 
     def test_body_paragraph_gives_body_label(self):
-        line = _make_line('Some', 'body', 'text')
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]))
-        annotated = _annotate(doc, {0: JatsFieldNames.BODY_SECTION_PARAGRAPH})
-        labels = _derive_labels(doc, annotated)
+        line = make_line('Some', 'body', 'text')
+        doc = make_doc_with_page(LayoutBlock(lines=[line]))
+        annotated = annotate(doc, {0: JatsFieldNames.BODY_SECTION_PARAGRAPH})
+        labels = derive_labels(doc, annotated)
         assert labels[id(line)] == SEG_BODY
 
     def test_reference_tokens_give_references_label(self):
-        line = _make_line('Smith', '2020')
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]))
-        annotated = _annotate(doc, {0: JatsFieldNames.REFERENCE})
-        labels = _derive_labels(doc, annotated)
+        line = make_line('Smith', '2020')
+        doc = make_doc_with_page(LayoutBlock(lines=[line]))
+        annotated = annotate(doc, {0: JatsFieldNames.REFERENCE})
+        labels = derive_labels(doc, annotated)
         assert labels[id(line)] == SEG_REFERENCES
 
     def test_unannotated_line_defaults_to_body(self):
-        line = _make_line('Unknown', 'content')
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]))
+        line = make_line('Unknown', 'content')
+        doc = make_doc_with_page(LayoutBlock(lines=[line]))
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert labels[id(line)] == SEG_BODY
 
     def test_majority_vote_mixed_line(self):
         # 3 tokens labeled as TITLE, 1 as BODY_SECTION_PARAGRAPH → should give FRONT (header)
-        line = _make_line('My', 'Title', 'Here', 'text')
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]))
+        line = make_line('My', 'Title', 'Here', 'text')
+        doc = make_doc_with_page(LayoutBlock(lines=[line]))
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         tokens = line.tokens
         for t in tokens[:3]:
             annotated.set_token_label(t, JatsFieldNames.TITLE)
         annotated.set_token_label(tokens[3], JatsFieldNames.BODY_SECTION_PARAGRAPH)
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert labels[id(line)] == SEG_FRONT
 
 
@@ -142,11 +97,11 @@ class TestPageColumns:
                 fields[len(first) + i] = JatsFieldNames.REFERENCE
         doc = LayoutDocument(pages=[
             LayoutPage(blocks=[LayoutBlock(lines=first)],
-                       meta=_make_page_meta(1, height=1000.0)),
+                       meta=make_page_meta(1, height=1000.0)),
             LayoutPage(blocks=[LayoutBlock(lines=lines)],
-                       meta=_make_page_meta(2, height=1000.0)),
+                       meta=make_page_meta(2, height=1000.0)),
         ])
-        return doc, lines, _annotate(doc, fields)
+        return doc, lines, annotate(doc, fields)
 
     def test_a_region_reaches_a_fragment_set_right_on_a_one_column_page(self):
         # PPR458890 ends a reference with its DOI set further along the row;
@@ -156,7 +111,7 @@ class TestPageColumns:
             ('doi:10.1590/1413-', 416.0, False),
             ('81232020253.14532018', 89.7, False),
         )
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in lines[-2:]] == [SEG_REFERENCES] * 2
 
     def test_a_region_stops_at_the_other_column_of_a_two_column_page(self):
@@ -164,7 +119,7 @@ class TestPageColumns:
             *[(f'Reference entry number {i} here.', 56.7, True) for i in range(5)],
             *[(f'Body text of the article {i}.', 314.3, False) for i in range(5)],
         )
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in lines[5:]] == [SEG_BODY] * 5
 
 
@@ -174,14 +129,14 @@ class TestFootnoteReach:
         """One block per (text, label-field) pair, plus a page number at the foot."""
         lines, fields = [], {}
         for i, (text, field) in enumerate(specs):
-            line = _make_line(*text.split(' '), y=600.0 + 12 * i, page_number=1)
+            line = make_line(*text.split(' '), y=600.0 + 12 * i, page_number=1)
             lines.append(line)
             if field is not None:
                 fields[i] = field
-        number = _make_line('6', y=960.0, page_number=1)
+        number = make_line('6', y=960.0, page_number=1)
         doc = LayoutDocument(pages=[LayoutPage(
             blocks=[LayoutBlock(lines=lines), LayoutBlock(lines=[number])],
-            meta=_make_page_meta(1),
+            meta=make_page_meta(1),
         )])
         return doc, lines, number, fields
 
@@ -193,7 +148,7 @@ class TestFootnoteReach:
             ('han senalado que el gobierno no los ha', JatsFieldNames.BACK_FOOTNOTE),
             ('efectos economicos de la pandemia (Chacon, 2020).', None),
         )
-        labels = _derive_labels(doc, _annotate(doc, fields))
+        labels = derive_labels(doc, annotate(doc, fields))
         assert [labels[id(line)] for line in lines] == [SEG_FOOTNOTE] * 3
         assert labels[id(number)] == SEG_PAGE
 
@@ -202,7 +157,7 @@ class TestFootnoteReach:
             ('The argument of the article continues here.', None),
             ('1 Marks, Robert B. Exhausting the Earth.', JatsFieldNames.BACK_FOOTNOTE),
         )
-        labels = _derive_labels(doc, _annotate(doc, fields))
+        labels = derive_labels(doc, annotate(doc, fields))
         assert labels[id(lines[0])] != SEG_FOOTNOTE
 
 
@@ -211,12 +166,12 @@ class TestCorrespondingAuthorNote:
     def _title_page(*texts):
         """A page whose foot carries the given lines, each a block of its own."""
         lines = [
-            _make_line(*s.split(' '), y=940.0 + 10 * i, page_number=1)
+            make_line(*s.split(' '), y=940.0 + 10 * i, page_number=1)
             for i, s in enumerate(texts)
         ]
         doc = LayoutDocument(pages=[LayoutPage(
             blocks=[LayoutBlock(lines=[line]) for line in lines],
-            meta=_make_page_meta(page_number=1, height=1000.0),
+            meta=make_page_meta(page_number=1, height=1000.0),
         )])
         return doc, lines
 
@@ -229,7 +184,7 @@ class TestCorrespondingAuthorNote:
             'Enderecos de e-mail: a@example.com; b@example.com',
         )
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = [_derive_labels(doc, annotated)[id(line)] for line in lines]
+        labels = [derive_labels(doc, annotated)[id(line)] for line in lines]
         assert labels == [SEG_FRONT, SEG_FRONT]
 
     def test_a_numbered_note_under_it_is_still_a_footnote(self):
@@ -239,13 +194,13 @@ class TestCorrespondingAuthorNote:
             '1 This work was funded by a grant from the council.',
         )
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = [_derive_labels(doc, annotated)[id(line)] for line in lines]
+        labels = [derive_labels(doc, annotated)[id(line)] for line in lines]
         assert labels == [SEG_FRONT, SEG_FRONT, SEG_FOOTNOTE]
 
     def test_an_ordinary_footnote_is_untouched(self):
         doc, lines = self._title_page('1 A note about the method used here.')
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        assert _derive_labels(doc, annotated)[id(lines[0])] == SEG_FOOTNOTE
+        assert derive_labels(doc, annotated)[id(lines[0])] == SEG_FOOTNOTE
 
 
 class TestTrailingHeading:
@@ -255,12 +210,12 @@ class TestTrailingHeading:
         pages = []
         for page_number, texts in enumerate((first_page, second_page), 1):
             lines = [
-                _make_line(*s.split(' '), y=100.0 + 60 * i, page_number=page_number)
+                make_line(*s.split(' '), y=100.0 + 60 * i, page_number=page_number)
                 for i, s in enumerate(texts)
             ]
             pages.append((LayoutPage(
                 blocks=[LayoutBlock(lines=lines)],
-                meta=_make_page_meta(page_number=page_number, height=1000.0),
+                meta=make_page_meta(page_number=page_number, height=1000.0),
             ), lines))
         return LayoutDocument(pages=[pg for pg, _ in pages]), [
             line for _, lines in pages for line in lines
@@ -273,8 +228,8 @@ class TestTrailingHeading:
             ['Smith J. A study of things. Journal. 2020;1(2):3-4.', 'TABLAS'],
             ['Tabla 1. Los resultados del estudio presentado.'],
         )
-        annotated = _annotate(doc, {0: JatsFieldNames.REFERENCE})
-        labels = [_derive_labels(doc, annotated)[id(line)] for line in lines]
+        annotated = annotate(doc, {0: JatsFieldNames.REFERENCE})
+        labels = [derive_labels(doc, annotated)[id(line)] for line in lines]
         assert labels == [SEG_REFERENCES, SEG_BODY, SEG_BODY]
 
     def test_a_doi_the_last_reference_ends_with_stays_in_the_list(self):
@@ -285,8 +240,8 @@ class TestTrailingHeading:
              '10.1016/S2213-2600(20)30132-6'],
             ['Tabla 1. Los resultados del estudio presentado.'],
         )
-        annotated = _annotate(doc, {0: JatsFieldNames.REFERENCE})
-        labels = [_derive_labels(doc, annotated)[id(line)] for line in lines]
+        annotated = annotate(doc, {0: JatsFieldNames.REFERENCE})
+        labels = [derive_labels(doc, annotated)[id(line)] for line in lines]
         assert labels[1] == SEG_REFERENCES
 
 
@@ -295,24 +250,24 @@ class TestSupplementaryAnnex:
         # PPR458963 prints "MATERIAL SUPLEMENTARIO" and 14 pages under it; its
         # JATS carries only a pointer to an attached file, so nothing grounds
         # them and they fall to the body.
-        heading = _make_line('MATERIAL', 'SUPLEMENTARIO', y=200.0)
-        under = _make_line('Archivo', 'S1.', 'Descripcion', 'del', 'proceso', y=300.0)
-        doc = _make_doc_with_page(LayoutBlock(lines=[heading, under]))
+        heading = make_line('MATERIAL', 'SUPLEMENTARIO', y=200.0)
+        under = make_line('Archivo', 'S1.', 'Descripcion', 'del', 'proceso', y=300.0)
+        doc = make_doc_with_page(LayoutBlock(lines=[heading, under]))
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert [labels[id(heading)], labels[id(under)]] == [SEG_ANNEX, SEG_ANNEX]
 
     def test_a_sentence_mentioning_supplementary_material_does_not(self):
         # The heading has to be a heading: a paragraph the JATS carries is
         # already labelled, and a longer line is not one either way.
-        line = _make_line(
+        line = make_line(
             'Supplementary', 'material', 'is', 'available', 'online', 'for',
             'this', 'article', 'and', 'may', 'be', 'requested', 'from', 'the',
             'corresponding', 'author', 'at', 'any', 'time', y=300.0,
         )
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]))
+        doc = make_doc_with_page(LayoutBlock(lines=[line]))
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        assert _derive_labels(doc, annotated)[id(line)] != SEG_ANNEX
+        assert derive_labels(doc, annotated)[id(line)] != SEG_ANNEX
 
 
 class TestDepositCoverPage:
@@ -322,19 +277,19 @@ class TestDepositCoverPage:
         return LayoutDocument(pages=[
             LayoutPage(
                 blocks=[LayoutBlock(lines=[
-                    _make_line(
+                    make_line(
                         *text.split(' '), y=100.0 + 20 * i, page_number=page_number
                     )
                     for i, text in enumerate(texts)
                 ])],
-                meta=_make_page_meta(page_number=page_number, height=1000.0),
+                meta=make_page_meta(page_number=page_number, height=1000.0),
             )
             for page_number, texts in enumerate(pages_of_text, 1)
         ])
 
     def _labels(self, doc: LayoutDocument):
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         return [labels[id(line)] for line in doc.iter_all_lines()]
 
     def test_a_status_label_with_its_value_elsewhere_still_opens_a_cover(self):
@@ -388,7 +343,7 @@ class TestCoordinateBasedDetection:
         return LayoutDocument(pages=[
             LayoutPage(
                 blocks=[LayoutBlock(lines=[line])],
-                meta=_make_page_meta(page_number=page_number, height=1000.0),
+                meta=make_page_meta(page_number=page_number, height=1000.0),
             )
             for page_number, line in enumerate(top_lines, 1)
         ])
@@ -396,30 +351,30 @@ class TestCoordinateBasedDetection:
     def test_a_line_repeated_at_the_top_of_pages_becomes_headnote(self):
         # 20/1000 = 2% < 8%, and a running header is what runs across pages.
         lines = [
-            _make_line('Running', 'header', y=20.0, page_number=page_number)
+            make_line('Running', 'header', y=20.0, page_number=page_number)
             for page_number in (1, 2)
         ]
         doc = self._two_pages(*lines)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        labels = derive_labels(doc, annotated, headnote_y_ratio=0.08)
         assert [labels[id(line)] for line in lines] == [SEG_HEADNOTE, SEG_HEADNOTE]
 
     def test_a_line_printed_once_at_the_top_is_not_a_headnote(self):
-        caption = _make_line('Table', '6:', 'results', y=20.0, page_number=1)
-        other = _make_line('Running', 'header', y=20.0, page_number=2)
+        caption = make_line('Table', '6:', 'results', y=20.0, page_number=1)
+        other = make_line('Running', 'header', y=20.0, page_number=2)
         doc = self._two_pages(caption, other)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        labels = derive_labels(doc, annotated, headnote_y_ratio=0.08)
         assert labels[id(caption)] != SEG_HEADNOTE
 
     def test_a_page_number_at_the_top_becomes_page(self):
         numbers = [
-            _make_line(str(page_number), y=20.0, page_number=page_number)
+            make_line(str(page_number), y=20.0, page_number=page_number)
             for page_number in (1, 2)
         ]
         doc = self._two_pages(*numbers)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        labels = derive_labels(doc, annotated, headnote_y_ratio=0.08)
         assert [labels[id(line)] for line in numbers] == [SEG_PAGE, SEG_PAGE]
 
     def test_a_page_number_the_jats_vote_claimed_still_becomes_page(self):
@@ -427,7 +382,7 @@ class TestCoordinateBasedDetection:
         # aligner matched 7 of them into the article's text, which is where the
         # number stopped being furniture.
         numbers = [
-            _make_line(str(page_number), y=20.0, page_number=page_number)
+            make_line(str(page_number), y=20.0, page_number=page_number)
             for page_number in (1, 2, 3)
         ]
         doc = self._two_pages(*numbers)
@@ -435,66 +390,66 @@ class TestCoordinateBasedDetection:
         annotated.set_token_label(
             numbers[1].tokens[0], JatsFieldNames.BODY_SECTION_PARAGRAPH
         )
-        labels = _derive_labels(doc, annotated, headnote_y_ratio=0.08)
+        labels = derive_labels(doc, annotated, headnote_y_ratio=0.08)
         assert [labels[id(line)] for line in numbers] == [
             SEG_PAGE, SEG_PAGE, SEG_PAGE
         ]
 
     def test_line_in_middle_of_page_is_not_headnote(self):
-        line = _make_line('Normal', 'content', y=500.0)  # 50% of page
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)
+        line = make_line('Normal', 'content', y=500.0)  # 50% of page
+        doc = make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert labels[id(line)] != SEG_HEADNOTE
 
     def test_numeric_line_at_bottom_becomes_page(self):
-        line = _make_line('42', y=950.0)  # 95% of page > 92%
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)
+        line = make_line('42', y=950.0)  # 95% of page > 92%
+        doc = make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated, footnote_y_ratio=0.92)
+        labels = derive_labels(doc, annotated, footnote_y_ratio=0.92)
         assert labels[id(line)] == SEG_PAGE
 
     def test_spelled_out_page_marker_at_bottom_becomes_page(self):
-        line = _make_line('Page', '3', 'of', '12', y=950.0)
-        doc = _make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)
+        line = make_line('Page', '3', 'of', '12', y=950.0)
+        doc = make_doc_with_page(LayoutBlock(lines=[line]), page_height=1000.0)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(doc, annotated, footnote_y_ratio=0.92)
+        labels = derive_labels(doc, annotated, footnote_y_ratio=0.92)
         assert labels[id(line)] == SEG_PAGE
 
     def test_numeric_line_away_from_the_footer_is_not_a_page_number(self):
-        page_marker = _make_line('Page', '3', 'of', '12', y=950.0)
-        row_number = _make_line('2', y=500.0)
-        doc = _make_doc_with_page(LayoutBlock(lines=[row_number, page_marker]))
+        page_marker = make_line('Page', '3', 'of', '12', y=950.0)
+        row_number = make_line('2', y=500.0)
+        doc = make_doc_with_page(LayoutBlock(lines=[row_number, page_marker]))
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        assert _derive_labels(doc, annotated)[id(row_number)] != SEG_PAGE
+        assert derive_labels(doc, annotated)[id(row_number)] != SEG_PAGE
 
 
 class TestGapMerge:
     def test_untagged_line_between_front_lines_gets_front(self):
-        line_front1 = _make_line('Title', 'text', y=200.0)
-        line_gap = _make_line('Some', 'untagged', 'stuff', y=220.0)
-        line_front2 = _make_line('More', 'header', y=240.0)
+        line_front1 = make_line('Title', 'text', y=200.0)
+        line_gap = make_line('Some', 'untagged', 'stuff', y=220.0)
+        line_front2 = make_line('More', 'header', y=240.0)
         block = LayoutBlock(lines=[line_front1, line_gap, line_front2])
-        doc = _make_doc_with_page(block)
+        doc = make_doc_with_page(block)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         for t in line_front1.tokens:
             annotated.set_token_label(t, JatsFieldNames.TITLE)
         for t in line_front2.tokens:
             annotated.set_token_label(t, JatsFieldNames.AUTHOR)
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert labels[id(line_front1)] == SEG_FRONT
         assert labels[id(line_front2)] == SEG_FRONT
         assert labels[id(line_gap)] == SEG_FRONT
 
     def test_untagged_line_after_body_stays_body(self):
-        line_body = _make_line('Body', 'paragraph', y=400.0)
-        line_gap = _make_line('More', 'stuff', y=420.0)
+        line_body = make_line('Body', 'paragraph', y=400.0)
+        line_gap = make_line('More', 'stuff', y=420.0)
         block = LayoutBlock(lines=[line_body, line_gap])
-        doc = _make_doc_with_page(block)
+        doc = make_doc_with_page(block)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         for t in line_body.tokens:
             annotated.set_token_label(t, JatsFieldNames.BODY_SECTION_PARAGRAPH)
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert labels[id(line_body)] == SEG_BODY
         # gap after body → body (default)
         assert labels[id(line_gap)] == SEG_BODY
@@ -504,26 +459,26 @@ class TestGapMergeAcrossPageFurniture:
     """A page break interrupts a region without ending it, footer and all."""
 
     def _make_doc(self, middle_text: str):
-        first = _make_line('Smith,', 'J.', '(2020).', 'A', 'title', page_number=1)
-        middle = _make_line(*middle_text.split(), y=950.0, page_number=1)
-        gap = _make_line('and', 'the', 'rest', 'of', 'it', page_number=2)
-        last = _make_line('Jones,', 'K.', '(2021).', 'Another', page_number=2)
+        first = make_line('Smith,', 'J.', '(2020).', 'A', 'title', page_number=1)
+        middle = make_line(*middle_text.split(), y=950.0, page_number=1)
+        gap = make_line('and', 'the', 'rest', 'of', 'it', page_number=2)
+        last = make_line('Jones,', 'K.', '(2021).', 'Another', page_number=2)
         # The foot of the second page too: a running foot is what repeats, and
         # that is what tells it apart from a line the margin rules took by
         # accident.
-        trailing = _make_line(*middle_text.split(), y=950.0, page_number=2)
+        trailing = make_line(*middle_text.split(), y=950.0, page_number=2)
         doc = LayoutDocument(pages=[
             LayoutPage(
                 blocks=[LayoutBlock(lines=[first]), LayoutBlock(lines=[middle])],
-                meta=_make_page_meta(1),
+                meta=make_page_meta(1),
             ),
             LayoutPage(
                 blocks=[LayoutBlock(lines=[gap, last]), LayoutBlock(lines=[trailing])],
-                meta=_make_page_meta(2),
+                meta=make_page_meta(2),
             ),
         ])
         lines = list(doc.iter_all_lines())
-        annotated = _annotate(doc, {
+        annotated = annotate(doc, {
             lines.index(first): JatsFieldNames.REFERENCE,
             lines.index(last): JatsFieldNames.REFERENCE,
         })
@@ -531,13 +486,13 @@ class TestGapMergeAcrossPageFurniture:
 
     def test_a_page_number_between_two_reference_lines_is_stepped_over(self):
         doc, annotated, middle, gap = self._make_doc('Page 3 of 12')
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert labels.get(id(middle)) == SEG_PAGE
         assert labels.get(id(gap)) == SEG_REFERENCES
 
     def test_a_footer_between_two_reference_lines_is_stepped_over(self):
         doc, annotated, middle, gap = self._make_doc('Powered by TCPDF')
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert labels.get(id(middle)) == SEG_FOOTNOTE
         assert labels.get(id(gap)) == SEG_REFERENCES
 
@@ -545,36 +500,36 @@ class TestGapMergeAcrossPageFurniture:
 class TestReclaimRepeatedHeadnote:
     def test_a_running_header_a_match_absorbed_is_taken_back(self):
         header_lines = [
-            _make_line('Journal', 'of', 'Things', y=20.0, page_number=page)
+            make_line('Journal', 'of', 'Things', y=20.0, page_number=page)
             for page in (1, 2, 3)
         ]
         absorbed = header_lines[2]
-        body = _make_line('a', 'paragraph', 'spanning', 'the', 'break', page_number=3)
+        body = make_line('a', 'paragraph', 'spanning', 'the', 'break', page_number=3)
         pages = [
-            LayoutPage(blocks=[LayoutBlock(lines=[header_lines[0]])], meta=_make_page_meta(1)),
-            LayoutPage(blocks=[LayoutBlock(lines=[header_lines[1]])], meta=_make_page_meta(2)),
-            LayoutPage(blocks=[LayoutBlock(lines=[absorbed, body])], meta=_make_page_meta(3)),
+            LayoutPage(blocks=[LayoutBlock(lines=[header_lines[0]])], meta=make_page_meta(1)),
+            LayoutPage(blocks=[LayoutBlock(lines=[header_lines[1]])], meta=make_page_meta(2)),
+            LayoutPage(blocks=[LayoutBlock(lines=[absorbed, body])], meta=make_page_meta(3)),
         ]
         doc = LayoutDocument(pages=pages)
         lines = list(doc.iter_all_lines())
-        annotated = _annotate(doc, {
+        annotated = annotate(doc, {
             lines.index(absorbed): JatsFieldNames.BODY_SECTION_PARAGRAPH,
             lines.index(body): JatsFieldNames.BODY_SECTION_PARAGRAPH,
         })
-        assert _derive_labels(doc, annotated)[id(absorbed)] == SEG_HEADNOTE
+        assert derive_labels(doc, annotated)[id(absorbed)] == SEG_HEADNOTE
 
 
 class TestRegionStartsAtThePageTop:
     """A section's heading is above the first line the JATS can evidence."""
 
     def _make_doc(self, heading_is_grounded: bool):
-        body = _make_line('The', 'article', 'body', 'ends', 'here', page_number=1)
-        heading = _make_line('Open', 'Peer', 'Review', y=80.0, page_number=2)
-        report = _make_line('Thank', 'you', 'for', 'addressing', 'the', 'comments',
-                            y=300.0, page_number=2)
+        body = make_line('The', 'article', 'body', 'ends', 'here', page_number=1)
+        heading = make_line('Open', 'Peer', 'Review', y=80.0, page_number=2)
+        report = make_line('Thank', 'you', 'for', 'addressing', 'the', 'comments',
+                           y=300.0, page_number=2)
         doc = LayoutDocument(pages=[
-            LayoutPage(blocks=[LayoutBlock(lines=[body])], meta=_make_page_meta(1)),
-            LayoutPage(blocks=[LayoutBlock(lines=[heading, report])], meta=_make_page_meta(2)),
+            LayoutPage(blocks=[LayoutBlock(lines=[body])], meta=make_page_meta(1)),
+            LayoutPage(blocks=[LayoutBlock(lines=[heading, report])], meta=make_page_meta(2)),
         ])
         lines = list(doc.iter_all_lines())
         fields = {
@@ -583,39 +538,39 @@ class TestRegionStartsAtThePageTop:
         }
         if heading_is_grounded:
             fields[lines.index(heading)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
-        return doc, _annotate(doc, fields), heading
+        return doc, annotate(doc, fields), heading
 
     def test_the_region_takes_the_unevidenced_heading_above_it(self):
         doc, annotated, heading = self._make_doc(heading_is_grounded=False)
-        assert _derive_labels(doc, annotated)[id(heading)] == SEG_REVIEW
+        assert derive_labels(doc, annotated)[id(heading)] == SEG_REVIEW
 
     def test_an_evidenced_line_above_keeps_the_region_where_it_was(self):
         doc, annotated, heading = self._make_doc(heading_is_grounded=True)
-        assert _derive_labels(doc, annotated)[id(heading)] == SEG_BODY
+        assert derive_labels(doc, annotated)[id(heading)] == SEG_BODY
 
     def test_the_region_reaches_back_over_an_entry_the_jats_does_not_carry(self):
         # PPR459453's list starts with an entry the JATS has no record of, so
         # the region begins four lines and a page break after its heading.
-        heading = _make_line('References', y=700.0, page_number=1)
-        first = _make_line('Alfaro,', 'J.', '(2020).', 'BCCR:', 'actividades', y=720.0,
-                           page_number=1)
-        second = _make_line('transporte', 'y', 'construccion', y=740.0, page_number=1)
-        number = _make_line('18', y=960.0, page_number=1)
-        third = _make_line('demia.', 'AmeliaRueda.com,', y=100.0, page_number=2)
-        entry = _make_line('Almeida,', 'P.', '(2020).', 'Movimientos', 'sociales.',
-                           y=120.0, page_number=2)
+        heading = make_line('References', y=700.0, page_number=1)
+        first = make_line('Alfaro,', 'J.', '(2020).', 'BCCR:', 'actividades', y=720.0,
+                          page_number=1)
+        second = make_line('transporte', 'y', 'construccion', y=740.0, page_number=1)
+        number = make_line('18', y=960.0, page_number=1)
+        third = make_line('demia.', 'AmeliaRueda.com,', y=100.0, page_number=2)
+        entry = make_line('Almeida,', 'P.', '(2020).', 'Movimientos', 'sociales.',
+                          y=120.0, page_number=2)
         doc = LayoutDocument(pages=[
             LayoutPage(
                 blocks=[LayoutBlock(lines=[heading, first, second]),
                         LayoutBlock(lines=[number])],
-                meta=_make_page_meta(1),
+                meta=make_page_meta(1),
             ),
             LayoutPage(
-                blocks=[LayoutBlock(lines=[third, entry])], meta=_make_page_meta(2),
+                blocks=[LayoutBlock(lines=[third, entry])], meta=make_page_meta(2),
             ),
         ])
-        annotated = _annotate(doc, {5: JatsFieldNames.REFERENCE})
-        labels = _derive_labels(doc, annotated)
+        annotated = annotate(doc, {5: JatsFieldNames.REFERENCE})
+        labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in (heading, first, second, third, entry)] == (
             [SEG_REFERENCES] * 5
         )
@@ -626,19 +581,19 @@ class TestPageFootNotes:
     """A numbered note says what it is; where it prints does not decide it."""
 
     def _make_doc(self, field_name: str, note_y: float):
-        body = _make_line('The', 'argument', 'continues', y=300.0, page_number=1)
-        note = _make_line('1', 'Marks,', 'Robert', 'B.', 'Exhausting', 'the', 'Earth',
-                          y=note_y, page_number=1)
-        later = _make_line('More', 'of', 'the', 'argument', y=300.0, page_number=2)
+        body = make_line('The', 'argument', 'continues', y=300.0, page_number=1)
+        note = make_line('1', 'Marks,', 'Robert', 'B.', 'Exhausting', 'the', 'Earth',
+                         y=note_y, page_number=1)
+        later = make_line('More', 'of', 'the', 'argument', y=300.0, page_number=2)
         doc = LayoutDocument(pages=[
             LayoutPage(
                 blocks=[LayoutBlock(lines=[body]), LayoutBlock(lines=[note])],
-                meta=_make_page_meta(1),
+                meta=make_page_meta(1),
             ),
-            LayoutPage(blocks=[LayoutBlock(lines=[later])], meta=_make_page_meta(2)),
+            LayoutPage(blocks=[LayoutBlock(lines=[later])], meta=make_page_meta(2)),
         ])
         lines = list(doc.iter_all_lines())
-        annotated = _annotate(doc, {
+        annotated = annotate(doc, {
             lines.index(body): JatsFieldNames.BODY_SECTION_PARAGRAPH,
             lines.index(note): field_name,
             lines.index(later): JatsFieldNames.BODY_SECTION_PARAGRAPH,
@@ -647,11 +602,11 @@ class TestPageFootNotes:
 
     def test_a_numbered_note_is_a_footnote_low_on_the_page(self):
         doc, annotated, note = self._make_doc(JatsFieldNames.BACK_FOOTNOTE, note_y=780.0)
-        assert _derive_labels(doc, annotated)[id(note)] == SEG_FOOTNOTE
+        assert derive_labels(doc, annotated)[id(note)] == SEG_FOOTNOTE
 
     def test_a_numbered_note_is_a_footnote_higher_up_too(self):
         doc, annotated, note = self._make_doc(JatsFieldNames.BACK_FOOTNOTE, note_y=420.0)
-        assert _derive_labels(doc, annotated)[id(note)] == SEG_FOOTNOTE
+        assert derive_labels(doc, annotated)[id(note)] == SEG_FOOTNOTE
 
     def test_a_named_back_section_stays_an_annex_low_on_the_page(self):
         # An ethics statement prints wherever the article ends, which can be the
@@ -659,29 +614,29 @@ class TestPageFootNotes:
         doc, annotated, note = self._make_doc(
             JatsFieldNames.BACK_SECTION_PARAGRAPH, note_y=780.0
         )
-        assert _derive_labels(doc, annotated)[id(note)] == SEG_ANNEX
+        assert derive_labels(doc, annotated)[id(note)] == SEG_ANNEX
 
 
 class TestFrontThreshold:
     def test_front_block_starting_within_threshold_is_kept(self):
         # A front block starting at line 0 should not be cleared
-        lines = [_make_line(f'word{i}') for i in range(5)]
+        lines = [make_line(f'word{i}') for i in range(5)]
         block = LayoutBlock(lines=lines)
-        doc = _make_doc_with_page(block)
+        doc = make_doc_with_page(block)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         for t in lines[0].tokens:
             annotated.set_token_label(t, JatsFieldNames.TITLE)
         for t in lines[4].tokens:
             annotated.set_token_label(t, JatsFieldNames.AUTHOR)
-        labels = _derive_labels(doc, annotated, front_max_start_line_index=80)
+        labels = derive_labels(doc, annotated, front_max_start_line_index=80)
         assert labels[id(lines[0])] == SEG_FRONT
         assert labels[id(lines[4])] == SEG_FRONT
 
     def test_front_block_starting_beyond_threshold_is_cleared(self):
         # A front block starting at line 100 (> 80) should be cleared → defaults to body
-        lines = [_make_line(f'word{i}') for i in range(3)]
+        lines = [make_line(f'word{i}') for i in range(3)]
         block = LayoutBlock(lines=lines)
-        doc = _make_doc_with_page(block)
+        doc = make_doc_with_page(block)
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         # Annotate only the last line as front — its block starts at index 2 which is
         # not cleared.  Use a config with a very low threshold to test the clearing logic.
@@ -689,7 +644,7 @@ class TestFrontThreshold:
         # matching late is a field that landed somewhere it does not belong.
         for t in lines[2].tokens:
             annotated.set_token_label(t, JatsFieldNames.COPYRIGHT)
-        labels = _derive_labels(doc, annotated, front_max_start_line_index=1)
+        labels = derive_labels(doc, annotated, front_max_start_line_index=1)
         # line 2 starts its own front block at index 2 > threshold 1 → cleared → body
         assert labels[id(lines[2])] == SEG_BODY
 
@@ -697,12 +652,12 @@ class TestFrontThreshold:
         # PPR458834 and PPR522900 print the corresponding author's address
         # after their reference lists; that block is front matter wherever a
         # preprint server sets it.
-        lines = [_make_line(f'word{i}') for i in range(3)]
-        doc = _make_doc_with_page(LayoutBlock(lines=lines))
+        lines = [make_line(f'word{i}') for i in range(3)]
+        doc = make_doc_with_page(LayoutBlock(lines=lines))
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         for t in lines[2].tokens:
             annotated.set_token_label(t, JatsFieldNames.AUTHOR_NOTES)
-        labels = _derive_labels(doc, annotated, front_max_start_line_index=1)
+        labels = derive_labels(doc, annotated, front_max_start_line_index=1)
         assert labels[id(lines[2])] == SEG_FRONT
 
 
@@ -713,7 +668,7 @@ class TestTextRepetitionHeadnote:
         block2 = LayoutBlock(lines=lines_no_coords)
         doc = LayoutDocument(pages=[LayoutPage(blocks=[block2])])
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
-        labels = _derive_labels(
+        labels = derive_labels(
             doc, annotated, page_header_max_first_line_index=10
         )
         for line in lines_no_coords:
@@ -724,40 +679,40 @@ class TestFloatPlacement:
     """A float is body wherever it prints, as GROBID's own corpus has it."""
 
     def test_float_after_the_references_is_still_body(self):
-        reference, table = _make_line('Smith', '2020'), _make_line('Table', '1.', 'Measures')
-        doc = _make_doc_with_page(LayoutBlock(lines=[reference, table]))
-        annotated = _annotate(doc, {
+        reference, table = make_line('Smith', '2020'), make_line('Table', '1.', 'Measures')
+        doc = make_doc_with_page(LayoutBlock(lines=[reference, table]))
+        annotated = annotate(doc, {
             0: JatsFieldNames.REFERENCE,
             1: JatsFieldNames.FLOAT_TABLE,
         })
-        assert _derive_labels(doc, annotated)[id(table)] == SEG_BODY
+        assert derive_labels(doc, annotated)[id(table)] == SEG_BODY
 
     def test_float_before_the_references_is_body(self):
-        figure, reference = _make_line('Figure', '1.', 'Model'), _make_line('Smith', '2020')
-        doc = _make_doc_with_page(LayoutBlock(lines=[figure, reference]))
-        annotated = _annotate(doc, {
+        figure, reference = make_line('Figure', '1.', 'Model'), make_line('Smith', '2020')
+        doc = make_doc_with_page(LayoutBlock(lines=[figure, reference]))
+        annotated = annotate(doc, {
             0: JatsFieldNames.FLOAT_FIGURE,
             1: JatsFieldNames.REFERENCE,
         })
-        assert _derive_labels(doc, annotated)[id(figure)] == SEG_BODY
+        assert derive_labels(doc, annotated)[id(figure)] == SEG_BODY
 
 
 class TestFurnitureInsideReferences:
     """A reference wrapping over a page break prints in the header zone."""
 
     def _make_doc(self, *header_zone_texts: str, banner_on_first_page: bool = False):
-        first_page_lines = [_make_line('Smith,', 'J.', '(2020).', 'Journal', 'of')]
+        first_page_lines = [make_line('Smith,', 'J.', '(2020).', 'Journal', 'of')]
         if banner_on_first_page:
-            first_page_lines.insert(0, _make_line(*header_zone_texts[0].split(), y=50.0))
+            first_page_lines.insert(0, make_line(*header_zone_texts[0].split(), y=50.0))
         second_page_lines = [
-            _make_line(*text.split(), y=50.0, page_number=2) for text in header_zone_texts
-        ] + [_make_line('38(2),', '279-294.', page_number=2)]
+            make_line(*text.split(), y=50.0, page_number=2) for text in header_zone_texts
+        ] + [make_line('38(2),', '279-294.', page_number=2)]
         doc = LayoutDocument(pages=[
-            LayoutPage(blocks=[LayoutBlock(lines=first_page_lines)], meta=_make_page_meta(1)),
-            LayoutPage(blocks=[LayoutBlock(lines=second_page_lines)], meta=_make_page_meta(2)),
+            LayoutPage(blocks=[LayoutBlock(lines=first_page_lines)], meta=make_page_meta(1)),
+            LayoutPage(blocks=[LayoutBlock(lines=second_page_lines)], meta=make_page_meta(2)),
         ])
         lines = list(doc.iter_all_lines())
-        annotated = _annotate(doc, {
+        annotated = annotate(doc, {
             lines.index(first_page_lines[-1]): JatsFieldNames.REFERENCE,
             lines.index(second_page_lines[-1]): JatsFieldNames.REFERENCE,
         })
@@ -767,7 +722,7 @@ class TestFurnitureInsideReferences:
         doc, annotated, second_page_lines = self._make_doc(
             'Development,', 'Infancia', 'y', 'Aprendizaje,'
         )
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         for line in second_page_lines:
             assert labels.get(id(line)) == SEG_REFERENCES
 
@@ -775,7 +730,7 @@ class TestFurnitureInsideReferences:
         doc, annotated, second_page_lines = self._make_doc(
             'Preprints - this document is a preprint', banner_on_first_page=True
         )
-        labels = _derive_labels(doc, annotated)
+        labels = derive_labels(doc, annotated)
         assert labels.get(id(second_page_lines[0])) == SEG_HEADNOTE
 
 
@@ -794,14 +749,14 @@ class TestFrontMatterBoundary:
         )
         # One row per line, down the text area of the page, as a page sets them.
         lines = [
-            _make_line(*text, y=100.0 + 5.0 * row) for row, text in enumerate(texts)
+            make_line(*text, y=100.0 + 5.0 * row) for row, text in enumerate(texts)
         ]
         title = lines[0]
         grant = lines[-1] if front_after_references else lines[-2]
         reference = lines[-2] if front_after_references else lines[-1]
-        doc = _make_doc_with_page(LayoutBlock(lines=lines))
+        doc = make_doc_with_page(LayoutBlock(lines=lines))
         index_of = {id(line): i for i, line in enumerate(lines)}
-        annotated = _annotate(doc, {
+        annotated = annotate(doc, {
             index_of[id(title)]: JatsFieldNames.TITLE,
             index_of[id(grant)]: JatsFieldNames.FUNDING,
             index_of[id(reference)]: JatsFieldNames.REFERENCE,
@@ -810,10 +765,10 @@ class TestFrontMatterBoundary:
 
     def test_front_matter_past_the_index_is_kept_before_the_references(self):
         doc, annotated, grant = self._make_doc(front_after_references=False)
-        labels = _derive_labels(doc, annotated, front_max_start_line_index=80)
+        labels = derive_labels(doc, annotated, front_max_start_line_index=80)
         assert labels[id(grant)] == SEG_FRONT
 
     def test_a_front_match_after_the_references_is_dropped(self):
         doc, annotated, grant = self._make_doc(front_after_references=True)
-        labels = _derive_labels(doc, annotated, front_max_start_line_index=80)
+        labels = derive_labels(doc, annotated, front_max_start_line_index=80)
         assert labels[id(grant)] != SEG_FRONT
