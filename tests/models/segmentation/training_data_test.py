@@ -193,6 +193,32 @@ class TestSegmentationTrainingTeiParser:
             (TOKEN_2, 'B-<body>')
         ]]
 
+    def test_should_parse_review_as_its_own_label(self):
+        # <review> is ours, for the peer-review sub-articles ORE prints; GROBID has no
+        # counterpart, which is why it has to survive our own reader unchanged
+        tei_root = E('tei', E('text', *[
+            E('div', {'type': 'review'}, TOKEN_1, E('lb')),
+            '\n'
+        ]))
+        tag_result = SegmentationTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<review>')
+        ]]
+
+    def test_should_parse_review_nested_in_a_wrapper_as_its_own_label(self):
+        tei_root = E('tei', E('text', *[
+            E('back', E('div', {'type': 'review'}, TOKEN_1, E('lb'))),
+            '\n'
+        ]))
+        tag_result = SegmentationTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<review>')
+        ]]
+
     def test_should_parse_single_label_with_multiple_lines(self):
         tei_root = E('tei', E('text', *[
             E('front', TOKEN_1, E('lb'), '\n', TOKEN_2, E('lb')),
