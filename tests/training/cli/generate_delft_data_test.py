@@ -257,6 +257,28 @@ class TestTranslateTagsIOBToGrobid:
     def test_outside_at_document_start_stays_other(self):
         assert translate_tags_IOB_to_grobid('O', prev_grobid_tag=None) == '<other>'
 
+    def test_outside_after_annotated_stays_other_where_the_model_does_not_mark_it(self):
+        # segmentation's corpus holds 7,764 <other> and no I-<other> at 0.9.0,
+        # because its writer tests `begin && !surfaceTag.equals("<other>")`
+        assert translate_tags_IOB_to_grobid(
+            'O', prev_grobid_tag='I-<title>', marks_other_span_start=False
+        ) == '<other>'
+
+    def test_translate_doc_without_marking_the_other_span_start(self):
+        tag_result = [[
+            ('token1', 'B-<title>'),
+            ('token2', 'O'),
+            ('token3', 'O'),
+        ]]
+        translated = translate_tag_result_tags_IOB_to_grobid(
+            tag_result, marks_other_span_start=False
+        )
+        assert translated == [[
+            ('token1', 'I-<title>'),
+            ('token2', '<other>'),
+            ('token3', '<other>'),
+        ]]
+
     def test_translate_doc_applies_i_other_convention(self):
         # Full document translation: O after B-<title> → I-<other>; subsequent O → <other>
         tag_result = [[

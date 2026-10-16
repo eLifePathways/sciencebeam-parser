@@ -33,6 +33,9 @@ class GrobidColumnLayout:
     generator: str
     label_slot: str
     columns: Sequence[str]
+    # The recorded layout must say so for every model, so the loader demands it;
+    # the common case is the default only for a layout built in code.
+    marks_other_span_start: bool = True
     extra_columns: Sequence[str] = field(default_factory=tuple)
     reference_training_corpus: Sequence[str] = field(default_factory=tuple)
 
@@ -84,6 +87,7 @@ def _get_grobid_column_layout(name: str, layout_config: Mapping) -> GrobidColumn
         name=name,
         generator=layout_config['generator'],
         label_slot=layout_config['label_slot'],
+        marks_other_span_start=layout_config['marks_other_span_start'],
         columns=tuple(layout_config['columns']),
         extra_columns=tuple(layout_config.get('extra_columns') or ()),
         reference_training_corpus=tuple(layout_config.get('reference_training_corpus') or ())

@@ -201,17 +201,24 @@ _GROBID_OTHER_LABELS = frozenset({'<other>', 'I-<other>'})
 
 def translate_tags_IOB_to_grobid(
     tag: str,
-    prev_grobid_tag: Optional[str] = None
+    prev_grobid_tag: Optional[str] = None,
+    marks_other_span_start: bool = True
 ) -> str:
     """
     Convert labels from IOB2 to the ones used by GROBID (expected by the wapiti model).
 
     When prev_grobid_tag is supplied the function also replicates GROBID's convention of
     emitting I-<other> for the first "other" token immediately after an annotated span.
+    Whether a corpus marks that start at all is a decision GROBID takes per model, and
+    `marks_other_span_start` in the recorded column layout says which way.
     """
     if tag == 'O':
         # GROBID uses I-<other> for the first "other" token after any annotated span
-        if prev_grobid_tag is not None and prev_grobid_tag not in _GROBID_OTHER_LABELS:
+        if (
+            marks_other_span_start
+            and prev_grobid_tag is not None
+            and prev_grobid_tag not in _GROBID_OTHER_LABELS
+        ):
             return 'I-<other>'
         return '<other>'
     if tag.startswith('B-'):
@@ -224,22 +231,28 @@ def translate_tags_IOB_to_grobid(
 
 
 def _translate_doc_tags_IOB_to_grobid(
-    doc_tag_result: Sequence[Tuple[str, str]]
+    doc_tag_result: Sequence[Tuple[str, str]],
+    marks_other_span_start: bool = True
 ) -> List[Tuple[str, str]]:
     translated: List[Tuple[str, str]] = []
     prev_grobid_tag: Optional[str] = None
     for token_text, tag in doc_tag_result:
-        grobid_tag = translate_tags_IOB_to_grobid(tag, prev_grobid_tag)
+        grobid_tag = translate_tags_IOB_to_grobid(
+            tag, prev_grobid_tag, marks_other_span_start=marks_other_span_start
+        )
         translated.append((token_text, grobid_tag))
         prev_grobid_tag = grobid_tag
     return translated
 
 
 def translate_tag_result_tags_IOB_to_grobid(
-    tag_result: Sequence[Sequence[Tuple[str, str]]]
+    tag_result: Sequence[Sequence[Tuple[str, str]]],
+    marks_other_span_start: bool = True
 ) -> List[List[Tuple[str, str]]]:
     return [
-        _translate_doc_tags_IOB_to_grobid(doc_tag_result)
+        _translate_doc_tags_IOB_to_grobid(
+            doc_tag_result, marks_other_span_start=marks_other_span_start
+        )
         for doc_tag_result in tag_result
     ]
 
@@ -440,15 +453,18 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
         ]
     # after the pairing, so that where a span starts is decided by the rows that
     # are written rather than by rows that were dropped
-    translated_tag_result = translate_tag_result_tags_IOB_to_grobid([
+    translated_tag_result = translate_tag_result_tags_IOB_to_grobid(
         [
-            (row_token, labeled_layout_token.label)
-            for row_token, labeled_layout_token
-            in zip(doc_row_tokens, labeled_layout_tokens)
-        ]
-        for doc_row_tokens, labeled_layout_tokens
-        in zip(row_tokens, labeled_layout_tokens_list)
-    ])
+            [
+                (row_token, labeled_layout_token.label)
+                for row_token, labeled_layout_token
+                in zip(doc_row_tokens, labeled_layout_tokens)
+            ]
+            for doc_row_tokens, labeled_layout_tokens
+            in zip(row_tokens, labeled_layout_tokens_list)
+        ],
+        marks_other_span_start=column_layout.marks_other_span_start
+    )
     LOGGER.debug('translated_tag_result: %r', translated_tag_result)
     LOGGER.debug('features: %r', selectable_features)
     # a document every row of which was dropped has no features to read a column
