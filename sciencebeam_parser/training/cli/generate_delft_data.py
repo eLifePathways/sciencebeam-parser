@@ -32,6 +32,15 @@ from sciencebeam_parser.models.data import (
     ModelDataGenerator
 )
 from sciencebeam_parser.models.training_data import TrainingTeiParser
+from sciencebeam_parser.training.extra_feature_columns import (
+    is_missing_extra_columns,
+    iter_rows_with_extra_columns
+)
+from sciencebeam_parser.training.tei_raw_pairing import (
+    PairingResult,
+    get_paired_rows,
+    iter_match_keys_for_labelled_line
+)
 from sciencebeam_parser.training.grobid_column_layout import (
     GrobidColumnLayout,
     get_grobid_column_layout_for_model_name,
@@ -235,21 +244,6 @@ def translate_tag_result_tags_IOB_to_grobid(
     ]
 
 
-def get_tag_result_for_labeled_layout_tokens_list(
-    labeled_layout_tokens_list: Sequence[Sequence[LabeledLayoutToken]]
-) -> List[List[Tuple[str, str]]]:
-    return [
-        [
-            (
-                labeled_layout_token.layout_token.text,
-                labeled_layout_token.label
-            )
-            for labeled_layout_token in labeled_layout_tokens
-        ]
-        for labeled_layout_tokens in labeled_layout_tokens_list
-    ]
-
-
 def get_raw_file_for_tei_file(
     tei_file: str,
     raw_source_path: str
@@ -305,6 +299,23 @@ def get_data_generator_for_model_name(
 class DelftDocumentResult(NamedTuple):
     data_lines: Sequence[str]
     labeled_layout_tokens_list: Sequence[Sequence[LabeledLayoutToken]]
+    pairing_results: Sequence[PairingResult] = ()
+
+
+def get_pairing_result_for_sequence(
+    raw_row_tokens: Sequence[str],
+    labeled_layout_tokens: Sequence[LabeledLayoutToken]
+) -> PairingResult:
+    return get_paired_rows(
+        raw_row_tokens,
+        [
+            list(iter_match_keys_for_labelled_line(
+                token_text=labeled_layout_token.layout_token.text,
+                line_text=labeled_layout_token.layout_token.line_meta.text
+            ))
+            for labeled_layout_token in labeled_layout_tokens
+        ]
+    )
 
 
 def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
@@ -328,12 +339,6 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
         )
     )
     LOGGER.debug('labeled_layout_tokens_list: %r', labeled_layout_tokens_list)
-    translated_tag_result = translate_tag_result_tags_IOB_to_grobid(
-        get_tag_result_for_labeled_layout_tokens_list(
-            labeled_layout_tokens_list
-        )
-    )
-    LOGGER.debug('translated_tag_result: %r', translated_tag_result)
     if raw_file:
         with auto_download_input_file(
             raw_file,
@@ -343,9 +348,64 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
                 texts, features = load_data_crf_lines(
                     raw_fp
                 )
-        assert len(texts) == len(translated_tag_result)
-        for doc_tokens, doc_tag_result in zip(texts, translated_tag_result):
-            assert len(doc_tokens) == len(doc_tag_result)
+        if len(texts) != len(labeled_layout_tokens_list):
+            raise ValueError(
+                '%r has %d sequence(s) and %r has %d' % (
+                    raw_file, len(texts), tei_file, len(labeled_layout_tokens_list)
+                )
+            )
+        pairing_results = [
+            get_pairing_result_for_sequence(doc_tokens, labeled_layout_tokens)
+            for doc_tokens, labeled_layout_tokens
+            in zip(texts, labeled_layout_tokens_list)
+        ]
+        # a row the TEI has no line for has no label and no line text, so it is
+        # not emitted rather than given the line before it, which is what GROBID
+        # does with it
+        labeled_layout_tokens_list = [
+            [labeled_layout_tokens[pair.labelled_index] for pair in result.paired_rows]
+            for labeled_layout_tokens, result
+            in zip(labeled_layout_tokens_list, pairing_results)
+        ]
+        selectable_features: Sequence[Sequence[Sequence[str]]] = [
+            [document_features[pair.raw_index] for pair in result.paired_rows]
+            for document_features, result in zip(features.tolist(), pairing_results)
+        ]
+        # the token column belongs to the row, not to the line it was matched
+        # against: GROBID's raw file leads with the line's first whitespace field
+        # where our tokenizer would have stopped at `LIMIX` in `LIMIX: genetic`
+        row_tokens = [
+            [doc_tokens[pair.raw_index] for pair in result.paired_rows]
+            for doc_tokens, result in zip(texts, pairing_results)
+        ]
+        if selectable_features and selectable_features[0] and is_missing_extra_columns(
+            column_layout, feature_column_count=len(selectable_features[0][0])
+        ):
+            LOGGER.info(
+                '%r stops where GROBID\'s own features do; reading %r off the TEI',
+                raw_file, list(column_layout.extra_columns)
+            )
+            extended_features: List[List[List[str]]] = []
+            extended_tokens: List[List[str]] = []
+            extended_labeled: List[List[LabeledLayoutToken]] = []
+            for document_features, doc_row_tokens, labeled_layout_tokens in zip(
+                selectable_features, row_tokens, labeled_layout_tokens_list
+            ):
+                kept = [
+                    (feature_row, row_token, labeled_layout_token)
+                    for (feature_row, labeled_layout_token), row_token in zip(
+                        iter_rows_with_extra_columns(
+                            column_layout, document_features, labeled_layout_tokens
+                        ),
+                        doc_row_tokens
+                    )
+                ]
+                extended_features.append([item[0] for item in kept])
+                extended_tokens.append([item[1] for item in kept])
+                extended_labeled.append([item[2] for item in kept])
+            selectable_features = extended_features
+            row_tokens = extended_tokens
+            labeled_layout_tokens_list = extended_labeled
     else:
         layout_documents = [
             LayoutDocument.for_blocks([
@@ -361,12 +421,51 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             layout_documents
         ))
         _texts, features = load_data_crf_lines(data_line_iterable)
-    LOGGER.debug('features: %r', features)
-    if not len(features):  # pylint: disable=len-as-condition
-        return DelftDocumentResult([], labeled_layout_tokens_list)
+        selectable_features = features.tolist()
+        row_tokens = [
+            [
+                labeled_layout_token.layout_token.text
+                for labeled_layout_token in labeled_layout_tokens
+            ]
+            for labeled_layout_tokens in labeled_layout_tokens_list
+        ]
+        pairing_results = [
+            get_paired_rows(
+                [labeled_layout_token.layout_token.text
+                 for labeled_layout_token in labeled_layout_tokens],
+                [[labeled_layout_token.layout_token.text]
+                 for labeled_layout_token in labeled_layout_tokens]
+            )
+            for labeled_layout_tokens in labeled_layout_tokens_list
+        ]
+    # after the pairing, so that where a span starts is decided by the rows that
+    # are written rather than by rows that were dropped
+    translated_tag_result = translate_tag_result_tags_IOB_to_grobid([
+        [
+            (row_token, labeled_layout_token.label)
+            for row_token, labeled_layout_token
+            in zip(doc_row_tokens, labeled_layout_tokens)
+        ]
+        for doc_row_tokens, labeled_layout_tokens
+        in zip(row_tokens, labeled_layout_tokens_list)
+    ])
+    LOGGER.debug('translated_tag_result: %r', translated_tag_result)
+    LOGGER.debug('features: %r', selectable_features)
+    # a document every row of which was dropped has no features to read a column
+    # count from, and nothing to write
+    first_feature_row = next(
+        (
+            feature_row
+            for document_features in selectable_features
+            for feature_row in document_features
+        ),
+        None
+    )
+    if first_feature_row is None:
+        return DelftDocumentResult([], labeled_layout_tokens_list, pairing_results)
     feature_indices = get_validated_training_data_feature_indices(
         column_layout,
-        feature_column_count=len(features[0][0]),
+        feature_column_count=len(first_feature_row),
         data_generator_name=type(data_generator).__name__,
         data_generator_column_names=data_generator.feature_names,
         include_extra_columns=include_extra_columns
@@ -376,9 +475,10 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             tag_result=translated_tag_result,
             output_format=TagOutputFormats.DATA,
             texts=None,
-            features=select_feature_columns(features, feature_indices)
+            features=select_feature_columns(selectable_features, feature_indices)
         )),
-        labeled_layout_tokens_list
+        labeled_layout_tokens_list,
+        pairing_results
     )
 
 

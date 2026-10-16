@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import yaml
@@ -150,13 +150,14 @@ def get_validated_training_data_feature_indices(
 
 
 def select_feature_columns(
-    features: np.ndarray,
+    features: Union[np.ndarray, Sequence[Sequence[Sequence[str]]]],
     feature_indices: Sequence[int]
 ) -> np.ndarray:
+    feature_list = features.tolist() if isinstance(features, np.ndarray) else features
     return np.asarray([
         [
             [token_features[index] for index in feature_indices]
             for token_features in document_features
         ]
-        for document_features in features.tolist()
+        for document_features in feature_list
     ], dtype=object)

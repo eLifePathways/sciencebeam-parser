@@ -396,6 +396,17 @@ class AbstractTeiTrainingDataGenerator(TeiTrainingDataGenerator):
 
 TEI_LB = 'lb'
 
+_TEI_LINE_WHITESPACE_RE = re.compile(r'[ \t\r\n]+')
+
+
+def normalise_tei_line_text(text: str) -> str:
+    """One line of a training TEI as a single line of text.
+
+    Collapses the whitespace the XML carries for its own layout, and leaves
+    anything else -- a non-breaking space is content.
+    """
+    return _TEI_LINE_WHITESPACE_RE.sub(' ', text).strip()
+
 
 def get_local_tag_name(tag) -> str:
     """The tag without its namespace, or '' for a comment or processing instruction.
@@ -646,7 +657,12 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
             )
             LOGGER.debug('tei_training_lines: %r', tei_training_lines)
             for line_index, line in enumerate(tei_training_lines):
-                line_meta = LayoutLineMeta(line_id=1 + line_index)
+                line_meta = LayoutLineMeta(
+                    line_id=1 + line_index,
+                    text=normalise_tei_line_text(
+                        ''.join(text.text for text in line.text_list)
+                    )
+                )
                 for text in line.text_list:
                     if text.text.isspace():
                         continue
