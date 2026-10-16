@@ -4,7 +4,9 @@ from typing import Iterable, Tuple
 from sciencebeam_parser.document.layout_document import LayoutBlock
 from sciencebeam_parser.document.semantic_document import SemanticDocument
 from sciencebeam_parser.models.data import (
-    DocumentFeaturesContext
+    DocumentFeaturesContext,
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM
 )
 from sciencebeam_parser.models.header.data import HeaderDataGenerator
 from sciencebeam_parser.models.header.extract import HeaderSemanticExtractor
@@ -23,11 +25,16 @@ class HeaderModel(Model):
         self,
         document_features_context: DocumentFeaturesContext
     ) -> HeaderDataGenerator:
+        feature_flavour = self.model_config.get('feature_flavour', FEATURE_FLAVOUR_SCIENCEBEAM)
         return HeaderDataGenerator(
             document_features_context=document_features_context,
+            # GROBID's HeaderParser keeps the indentation reference across blocks,
+            # so a model trained on its features expects it unless told otherwise
             persist_indentation_reference_across_blocks=self.model_config.get(
-                'persist_indentation_reference_across_blocks', False
-            )
+                'persist_indentation_reference_across_blocks',
+                feature_flavour == FEATURE_FLAVOUR_GROBID
+            ),
+            feature_flavour=feature_flavour
         )
 
     def get_semantic_extractor(self) -> HeaderSemanticExtractor:
