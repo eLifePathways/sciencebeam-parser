@@ -1,35 +1,39 @@
 from sciencebeam_parser.training.tei_raw_pairing import (
     PairedRow,
-    get_paired_rows,
-    iter_match_keys_for_labelled_line
+    get_match_key_for_labelled_line,
+    get_paired_rows
 )
 
 
 def _keys(*line_texts: str):
     return [
-        list(iter_match_keys_for_labelled_line(
+        get_match_key_for_labelled_line(
             token_text=line_text.split()[0] if line_text.split() else '',
-            line_text=line_text
-        ))
+            line_text=line_text,
+            line_as_token=True
+        )
         for line_text in line_texts
     ]
 
 
-class TestIterMatchKeysForLabelledLine:
-    def test_should_yield_the_token_text_alone_without_a_line_text(self):
-        assert list(iter_match_keys_for_labelled_line('token1', None)) == ['token1']
+class TestGetMatchKeyForLabelledLine:
+    def test_should_take_the_first_field_of_the_line_for_a_line_model(self):
+        # the raw row leads with the whole field, where our tokenizer stops short
+        assert get_match_key_for_labelled_line(
+            'LIMIX', 'LIMIX: genetic analysis', line_as_token=True
+        ) == 'LIMIX:'
 
-    def test_should_yield_the_first_field_of_the_line_as_well(self):
-        # our generator writes the first token our tokenizer produced; GROBID
-        # writes the line's first whitespace-delimited field
-        assert list(iter_match_keys_for_labelled_line(
-            'LIMIX', 'LIMIX: genetic analysis'
-        )) == ['LIMIX', 'LIMIX:']
+    def test_should_take_the_token_for_a_token_model(self):
+        # every token of a line is its own row, so the line's first field is only
+        # right for the first of them
+        assert get_match_key_for_labelled_line(
+            'genetic', 'LIMIX: genetic analysis', line_as_token=False
+        ) == 'genetic'
 
-    def test_should_not_repeat_a_first_field_equal_to_the_token(self):
-        assert list(iter_match_keys_for_labelled_line(
-            'token1', 'token1 token2'
-        )) == ['token1']
+    def test_should_fall_back_to_the_token_without_a_line_text(self):
+        assert get_match_key_for_labelled_line(
+            'token1', None, line_as_token=True
+        ) == 'token1'
 
 
 class TestGetPairedRows:

@@ -51,6 +51,30 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
 }
 
 
+# GROBID's own reader accepts several spellings for the same region, and its
+# corpus uses them -- `div[@type="acknowledgment"]` on 200 lines at 0.9.0. They
+# are read, never written: our generator emits one spelling per region.
+# From TEISegmentationSaxParser.startElement.
+ADDITIONAL_TRAINING_XML_ELEMENT_PATHS_BY_LABEL = {
+    '<acknowledgement>': [
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="acknowledgements"]'],
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="acknowledgment"]'],
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="acknowledgments"]'],
+    ],
+    '<availability>': [
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="data_availability"]'],
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="data-availability"]'],
+    ],
+    '<conflict>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="conflicts"]']],
+    '<contribution>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="contributions"]']],
+    '<footnote>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@place="foot"]']],
+    '<headnote>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@place="head"]']],
+    '<marginnote>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@place="margin"]']],
+    '<page>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['pages']],
+    '<toc>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['toc']],
+}
+
+
 def iter_tokens_from_model_data(model_data: LayoutModelData) -> Iterable[LayoutToken]:
     if model_data.layout_token is not None:
         yield model_data.layout_token
@@ -150,5 +174,8 @@ class SegmentationTrainingTeiParser(AbstractTrainingTeiParser):
             # GROBID's writer starts a new chunk wherever its accumulator flushes,
             # so a `<page>` nested in a `<body>` ends the body span and the text
             # after it starts another. Its corpus nests where ours writes siblings.
-            restarts_span_after_nested_element=True
+            restarts_span_after_nested_element=True,
+            additional_element_paths_by_label=(
+                ADDITIONAL_TRAINING_XML_ELEMENT_PATHS_BY_LABEL
+            )
         )

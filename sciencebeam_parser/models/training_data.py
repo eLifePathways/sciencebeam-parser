@@ -616,11 +616,21 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
         training_xml_element_path_by_label: Mapping[str, Sequence[str]],
         line_as_token: bool = False,
         restarts_span_after_nested_element: bool = False,
+        additional_element_paths_by_label: Optional[
+            Mapping[str, Sequence[Sequence[str]]]
+        ] = None,
     ) -> None:
         self.label_by_relative_element_path_map = {
             tuple(element_path[len(root_training_xml_element_path):]): label
             for label, element_path in training_xml_element_path_by_label.items()
         }
+        # spellings a corpus may use for a region we write only one way: read, never
+        # written, so they stay out of the map the generator picks an element from
+        for label, element_paths in (additional_element_paths_by_label or {}).items():
+            for element_path in element_paths:
+                self.label_by_relative_element_path_map[
+                    tuple(element_path[len(root_training_xml_element_path):])
+                ] = label
         for element_path in list(self.label_by_relative_element_path_map.keys()):
             if len(element_path) < 2:
                 continue

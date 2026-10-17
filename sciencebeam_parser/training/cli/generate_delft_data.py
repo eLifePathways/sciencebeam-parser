@@ -38,8 +38,8 @@ from sciencebeam_parser.training.extra_feature_columns import (
 )
 from sciencebeam_parser.training.tei_raw_pairing import (
     PairingResult,
-    get_paired_rows,
-    iter_match_keys_for_labelled_line
+    get_match_key_for_labelled_line,
+    get_paired_rows
 )
 from sciencebeam_parser.training.grobid_column_layout import (
     GrobidColumnLayout,
@@ -317,15 +317,17 @@ class DelftDocumentResult(NamedTuple):
 
 def get_pairing_result_for_sequence(
     raw_row_tokens: Sequence[str],
-    labeled_layout_tokens: Sequence[LabeledLayoutToken]
+    labeled_layout_tokens: Sequence[LabeledLayoutToken],
+    line_as_token: bool
 ) -> PairingResult:
     return get_paired_rows(
         raw_row_tokens,
         [
-            list(iter_match_keys_for_labelled_line(
+            get_match_key_for_labelled_line(
                 token_text=labeled_layout_token.layout_token.text,
-                line_text=labeled_layout_token.layout_token.line_meta.text
-            ))
+                line_text=labeled_layout_token.layout_token.line_meta.text,
+                line_as_token=line_as_token
+            )
             for labeled_layout_token in labeled_layout_tokens
         ]
     )
@@ -368,7 +370,11 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
                 )
             )
         pairing_results = [
-            get_pairing_result_for_sequence(doc_tokens, labeled_layout_tokens)
+            get_pairing_result_for_sequence(
+                doc_tokens,
+                labeled_layout_tokens,
+                line_as_token=getattr(training_tei_parser, 'line_as_token', False)
+            )
             for doc_tokens, labeled_layout_tokens
             in zip(texts, labeled_layout_tokens_list)
         ]
@@ -446,7 +452,7 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             get_paired_rows(
                 [labeled_layout_token.layout_token.text
                  for labeled_layout_token in labeled_layout_tokens],
-                [[labeled_layout_token.layout_token.text]
+                [labeled_layout_token.layout_token.text
                  for labeled_layout_token in labeled_layout_tokens]
             )
             for labeled_layout_tokens in labeled_layout_tokens_list
