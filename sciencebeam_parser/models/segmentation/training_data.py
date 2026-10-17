@@ -146,5 +146,9 @@ class SegmentationTrainingTeiParser(AbstractTrainingTeiParser):
         super().__init__(
             root_training_xml_element_path=ROOT_TRAINING_XML_ELEMENT_PATH,
             training_xml_element_path_by_label=TRAINING_XML_ELEMENT_PATH_BY_LABEL,
-            line_as_token=True
+            line_as_token=True,
+            # GROBID's writer starts a new chunk wherever its accumulator flushes,
+            # so a `<page>` nested in a `<body>` ends the body span and the text
+            # after it starts another. Its corpus nests where ours writes siblings.
+            restarts_span_after_nested_element=True
         )

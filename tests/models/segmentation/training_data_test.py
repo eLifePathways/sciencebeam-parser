@@ -219,6 +219,25 @@ class TestSegmentationTrainingTeiParser:
             (TOKEN_1, 'B-<review>')
         ]]
 
+    def test_should_restart_a_region_after_a_nested_one(self):
+        # GROBID nests a page number inside the body, and its writer starts a new
+        # chunk after it; ours writes the two as siblings, so nothing here moves
+        # for a corpus we generated
+        tei_root = E('tei', E('text', *[
+            E('body', TOKEN_1, E('lb'), '\n',
+              E('page', TOKEN_2, E('lb')), '\n',
+              TOKEN_3, E('lb')),
+            '\n'
+        ]))
+        tag_result = SegmentationTrainingTeiParser().parse_training_tei_to_tag_result(
+            tei_root
+        )
+        assert tag_result == [[
+            (TOKEN_1, 'B-<body>'),
+            (TOKEN_2, 'B-<page>'),
+            (TOKEN_3, 'B-<body>'),
+        ]]
+
     def test_should_parse_single_label_with_multiple_lines(self):
         tei_root = E('tei', E('text', *[
             E('front', TOKEN_1, E('lb'), '\n', TOKEN_2, E('lb')),
