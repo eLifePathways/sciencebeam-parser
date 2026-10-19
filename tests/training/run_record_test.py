@@ -84,3 +84,14 @@ class TestWriteRunRecord:
         path = tmp_path / 'data.train.run.json'
         write_run_record(str(path), _run_record([_record('d1')], source_name='grobid'))
         assert json.loads(path.read_text(encoding='utf-8'))['source']['name'] == 'grobid'
+
+    def test_should_write_beside_data_that_is_not_a_plain_local_file(self, tmp_path):
+        """The data often goes straight to cloud storage, and the record follows it.
+
+        A plain `open` cannot write a `gs://` path at all. Standing in for that
+        here: the writer has to go through the same uploading helper the rest of
+        the assembly uses, which `open` would fail on as well.
+        """
+        path = tmp_path / 'not' / 'yet' / 'there' / 'data.train.run.json'
+        write_run_record(str(path), _run_record([_record('d1')], source_name='grobid'))
+        assert json.loads(path.read_text(encoding='utf-8'))['source']['name'] == 'grobid'

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from sciencebeam_parser import __version__ as parser_version
+from sciencebeam_parser.utils.io import auto_uploading_output_file
 from sciencebeam_parser.training.quality.assembly import AssembledDocumentRecord
 
 
@@ -83,7 +84,11 @@ def get_run_record(
 
 
 def write_run_record(run_record_path: str, run_record: Dict[str, Any]) -> None:
-    with open(run_record_path, 'w', encoding='utf-8') as fp:
-        json.dump(run_record, fp, indent=2, sort_keys=True)
+    # beside data that is often written straight to cloud storage, so the record
+    # has to go wherever the data went
+    with auto_uploading_output_file(
+        run_record_path, mode='w', encoding='utf-8'
+    ) as fp:
+        fp.write(json.dumps(run_record, indent=2, sort_keys=True))
         fp.write('\n')
     LOGGER.info('wrote the run record to %r', run_record_path)
