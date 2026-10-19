@@ -13,7 +13,10 @@ from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutTo
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
-from sciencebeam_parser.training.jats.segmentation import get_page_furniture_line_ids
+from sciencebeam_parser.training.jats.segmentation import (
+    get_cover_page_line_ids,
+    get_page_furniture_line_ids
+)
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 
 
@@ -267,6 +270,9 @@ class _TokenIndex:
         # Where the page's own furniture lies in the haystack, as character
         # ranges.  Set by _build_token_index; empty means nothing is skipped.
         self.furniture_ranges: List[Tuple[int, int]] = []
+        # Where a publisher's cover page lies, which no value of the article's
+        # own is searched in.
+        self.cover_ranges: List[Tuple[int, int]] = []
 
     def get_token_char_ranges(self, token_indices: Set[int]) -> List[Tuple[int, int]]:
         """The haystack covered by those tokens, merged into contiguous runs."""
@@ -353,11 +359,17 @@ def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
     # Only the window a reference is searched in drops it, in
     # _fuzzy_search_in_window.
     furniture_line_ids = get_page_furniture_line_ids(layout_document)
+    cover_line_ids = get_cover_page_line_ids(layout_document)
     furniture_token_indices: Set[int] = set()
+    cover_token_indices: Set[int] = set()
     for line in layout_document.iter_all_lines():
         line_tokens: List[LayoutToken] = line.tokens or []
         if id(line) in furniture_line_ids:
             furniture_token_indices.update(
+                range(len(all_tokens), len(all_tokens) + len(line_tokens))
+            )
+        if id(line) in cover_line_ids:
+            cover_token_indices.update(
                 range(len(all_tokens), len(all_tokens) + len(line_tokens))
             )
         for i, token in enumerate(line_tokens):
@@ -379,6 +391,9 @@ def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
     )
     token_index.furniture_ranges = token_index.get_token_char_ranges(
         furniture_token_indices
+    )
+    token_index.cover_ranges = token_index.get_token_char_ranges(
+        cover_token_indices
     )
     return token_index
 
@@ -1804,6 +1819,7 @@ class LayoutDocumentJatsAligner:
                 else:
                     search_start = window[0]
                     search_end = window[1] if window[1] > window[0] + 1 else None
+            masked: Optional[List[Tuple[int, int]]]
             if fv.sub_field_name is not None:
                 masked = sub_field_masked_ranges.get(fv.field_name)
             elif fv.field_name in _POST_BODY_FIELDS:
@@ -1815,6 +1831,13 @@ class LayoutDocumentJatsAligner:
                 masked = reference_match_ranges
             else:
                 masked = None
+            # The cover restates the article's title, its authors and its
+            # identifier, and a value is matched once: matched there, the
+            # article's own front matter is left with nothing to match it, and
+            # the header region is cut away from the cover.  Nothing the JATS
+            # declares is the cover's own, so no value is searched in it.
+            if token_index.cover_ranges:
+                masked = (masked or []) + token_index.cover_ranges
             # A pure-number reference label is printed immediately before the
             # reference's own text, so its parent's match start says which of
             # the numbers in range is the one on the page.
