@@ -122,6 +122,8 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.AUTHOR_NOTES:     '<note>',
     JatsFieldNames.ARTICLE_NOTES:    '<note>',
     JatsFieldNames.MANUSCRIPT_TYPE:  '<note>',
+    JatsFieldNames.COPYRIGHT:        '<copyright>',
+    JatsFieldNames.FUNDING:          '<funding>',
 }
 
 # ── Fulltext model label mapping ──────────────────────────────────────────────

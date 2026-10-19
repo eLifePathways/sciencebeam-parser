@@ -740,6 +740,7 @@ class TestGenerateTrainingDataForLayoutDocument:
             '<abstract><p>An abstract the page does not print</p></abstract>'
             '<permissions><copyright-statement>Copyright, not printed'
             '</copyright-statement></permissions>'
+            '<fpage>1</fpage>'
             '</article-meta></front></article>',
             encoding='utf-8'
         )
@@ -765,9 +766,12 @@ class TestGenerateTrainingDataForLayoutDocument:
         assert field_counts[JatsFieldNames.ABSTRACT] == {
             'declared': 1, 'located': 0, 'marked': 0
         }
-        # The header model has no label for it, so it carries no marked count at
-        # all rather than a zero that would read as a loss.
-        assert field_counts[JatsFieldNames.COPYRIGHT] == {'declared': 1, 'located': 0}
+        assert field_counts[JatsFieldNames.COPYRIGHT] == {
+            'declared': 1, 'located': 0, 'marked': 0
+        }
+        # The header model has no label for a page number, so it carries no marked
+        # count at all rather than a zero that would read as a loss.
+        assert 'marked' not in field_counts[JatsFieldNames.PAGE_NO]
 
     def test_should_not_count_header_fields_without_a_jats(
         self,
@@ -1522,6 +1526,19 @@ class TestHeaderJatsLabelFn:
             label_fn(annotated, {}, _make_md(line, token_index))
             for token_index in range(len(line.tokens))
         ] == ['B-<title>', 'O', 'O', 'B-<author>']
+
+    def test_should_label_the_statements_the_front_matter_prints(self):
+        line = LayoutLine.for_text('Copyright Grant')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.COPYRIGHT, instance_id=1)
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.FUNDING, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<copyright>', 'B-<funding>']
 
 
 @log_on_exception
