@@ -480,7 +480,7 @@ def _has_text_content(element: etree.ElementBase) -> bool:
 def _iter_flat_tei_training_text_from_element(
     parent_element: etree.ElementBase,
     current_path: TeiTrainingElementPath = EMPTY_TEI_TRAINING_ELEMENT_PATH,
-    restarts_span_after_nested_element: bool = False
+    flushes_at_element_boundary: bool = False
 ) -> Iterable[Union[TeiTrainingText, ExtractInstruction]]:
     LOGGER.debug('current_path: %s', current_path)
     is_start = True
@@ -497,14 +497,22 @@ def _iter_flat_tei_training_text_from_element(
         if is_line_break_element(child_element):
             yield NewLineExtractInstruction()
         elif not is_comment_or_processing_instruction(child_element):
+            # GROBID writes out what it has accumulated whenever an element opens
+            # or closes, so an element that does not end with <lb/> still ends a
+            # line: `<page>12 </page>` between two body lines is its own line and
+            # not the start of the one that follows
+            if flushes_at_element_boundary:
+                yield NewLineExtractInstruction()
             child_path = current_path.append(child_element)
             yield from _iter_flat_tei_training_text_from_element(
                 child_element,
                 child_path,
-                restarts_span_after_nested_element
+                flushes_at_element_boundary
             )
+            if flushes_at_element_boundary:
+                yield NewLineExtractInstruction()
             if (
-                restarts_span_after_nested_element
+                flushes_at_element_boundary
                 and not is_start
                 and _has_text_content(child_element)
             ):
@@ -526,13 +534,13 @@ def _iter_flat_tei_training_text_from_element(
 def _iter_tei_training_lines_from_element(
     parent_element: etree.ElementBase,
     current_path: TeiTrainingElementPath = EMPTY_TEI_TRAINING_ELEMENT_PATH,
-    restarts_span_after_nested_element: bool = False
+    flushes_at_element_boundary: bool = False
 ) -> Iterable[TeiTrainingLine]:
     line_text_list = []
     for item in _iter_flat_tei_training_text_from_element(
         parent_element,
         current_path,
-        restarts_span_after_nested_element
+        flushes_at_element_boundary
     ):
         if isinstance(item, TeiTrainingText):
             line_text_list.append(item)
@@ -615,7 +623,7 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
         root_training_xml_element_path: Sequence[str],
         training_xml_element_path_by_label: Mapping[str, Sequence[str]],
         line_as_token: bool = False,
-        restarts_span_after_nested_element: bool = False,
+        flushes_at_element_boundary: bool = False,
         additional_element_paths_by_label: Optional[
             Mapping[str, Sequence[Sequence[str]]]
         ] = None,
@@ -642,7 +650,7 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
             for element_path_step in root_training_xml_element_path
         )
         self.line_as_token = line_as_token
-        self.restarts_span_after_nested_element = restarts_span_after_nested_element
+        self.flushes_at_element_boundary = flushes_at_element_boundary
 
     def get_label_for_element_path(
         self,
@@ -682,7 +690,7 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
             tei_training_lines = list(
                 _iter_tei_training_lines_from_element(
                     text_node, EMPTY_TEI_TRAINING_ELEMENT_PATH,
-                    self.restarts_span_after_nested_element
+                    self.flushes_at_element_boundary
                 )
             )
             LOGGER.debug('tei_training_lines: %r', tei_training_lines)
