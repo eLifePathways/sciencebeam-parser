@@ -36,6 +36,11 @@ from sciencebeam_parser.models.data import (
     ModelDataGenerator
 )
 from sciencebeam_parser.models.training_data import TrainingTeiParser
+from sciencebeam_parser.training.run_record import (
+    get_run_record,
+    get_run_record_path_for_delft_output_path,
+    write_run_record
+)
 from sciencebeam_parser.training.extra_feature_columns import (
     is_missing_extra_columns,
     iter_rows_with_extra_columns
@@ -190,6 +195,31 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             ' (segmentation\'s whole_line_text, read by delft models as a text feature).'
             ' Without it the output matches GROBID\'s column layout and can be mixed'
             ' with GROBID\'s own corpus.'
+        )
+    )
+    parser.add_argument(
+        '--source-name',
+        type=str,
+        required=False,
+        help=(
+            'What the TEI and raw files were read from, for the run record, e.g.'
+            ' "grobid". A corpus read from another checkout is only reproducible'
+            ' if the checkout is named.'
+        )
+    )
+    parser.add_argument(
+        '--source-revision',
+        type=str,
+        required=False,
+        help='The revision of that source, e.g. a tag and commit.'
+    )
+    parser.add_argument(
+        '--run-record-path',
+        type=str,
+        required=False,
+        help=(
+            'Where to write what this run read and what it did with it'
+            ' (default: the delft output path with ".run.json" appended).'
         )
     )
     parser.add_argument(
@@ -711,7 +741,10 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     quality_config_path: str = TRAINING_QUALITY_CONFIG_FILE,
     require_config_path: Optional[str] = None,
     max_excluded_ratio: Optional[float] = None,
-    max_unreviewed_ratio: Optional[float] = None
+    max_unreviewed_ratio: Optional[float] = None,
+    source_name: Optional[str] = None,
+    source_revision: Optional[str] = None,
+    run_record_path: Optional[str] = None
 ):
     training_tei_parser = get_training_tei_parser_for_model_name(
         model_name,
@@ -800,6 +833,18 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
                 data_fp.write('\n\n')
             data_fp.writelines(result.data_lines)
             written_document_count += 1
+    write_run_record(
+        run_record_path or get_run_record_path_for_delft_output_path(delft_output_path),
+        get_run_record(
+            model_name=model_name,
+            tei_source_path=tei_source_path,
+            raw_source_path=raw_source_path,
+            assembled_records=assembled_records,
+            source_name=source_name,
+            source_revision=source_revision,
+            include_extra_columns=include_extra_columns
+        )
+    )
     assembly_record_path = quality_output_path or delft_output_path + '.quality.jsonl'
     write_assembly_records(assembly_record_path, assembled_records)
     log_assembly_summary(
@@ -839,7 +884,10 @@ def run(args: argparse.Namespace):
         quality_config_path=args.quality_config_path,
         require_config_path=args.require_config_path,
         max_excluded_ratio=args.max_excluded_ratio,
-        max_unreviewed_ratio=args.max_unreviewed_ratio
+        max_unreviewed_ratio=args.max_unreviewed_ratio,
+        source_name=args.source_name,
+        source_revision=args.source_revision,
+        run_record_path=args.run_record_path
     )
 
 
