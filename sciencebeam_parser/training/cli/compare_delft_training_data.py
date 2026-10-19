@@ -120,16 +120,14 @@ def compare(  # pylint: disable=too-many-locals, too-many-statements
 
     totals: Counter = Counter()
     differing: List[Tuple[int, str, str]] = []
+    # Counted over the sequences that join, so the two sides describe the same
+    # documents: a generated file holding part of a corpus would otherwise read
+    # as missing every label of the rest.
     generated_labels: Counter = Counter()
     published_labels: Counter = Counter()
-    for sequence in published:
-        for row in sequence:
-            published_labels[get_label(row)] += 1
 
     for index, sequence in enumerate(generated):
         rows = [get_row_without_extra_columns(row, layout) for row in sequence]
-        for row in rows:
-            generated_labels[get_label(row)] += 1
         totals['generated_rows'] += len(rows)
         candidates = published_by_key.get(get_join_key(rows, join_row_count))
         if not candidates:
@@ -139,7 +137,11 @@ def compare(  # pylint: disable=too-many-locals, too-many-statements
             totals['sequences_joined_ambiguously'] += 1
             continue
         counterpart = candidates[0]
+        for row in counterpart:
+            published_labels[get_label(row)] += 1
         totals['sequences_joined'] += 1
+        for row in rows:
+            generated_labels[get_label(row)] += 1
         totals['joined_generated_rows'] += len(rows)
         totals['joined_published_rows'] += len(counterpart)
         # Our rows should be the published rows, in order, minus any we chose
@@ -187,6 +189,7 @@ def compare(  # pylint: disable=too-many-locals, too-many-statements
     LOGGER.info(
         'published rows we do not emit: %d', totals['published_rows_not_emitted']
     )
+    LOGGER.info('labels over the sequences that joined:')
     for label in sorted(set(generated_labels) | set(published_labels)):
         generated_count = generated_labels[label]
         published_count = published_labels[label]
