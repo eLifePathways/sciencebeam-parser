@@ -48,10 +48,29 @@ class PairingResult(NamedTuple):
         return len(self.paired_rows)
 
     @property
+    def covered_row_count(self) -> int:
+        """Rows the TEI had lines to offer, matched or not."""
+        return self.matched_row_count + self.unmatched_row_count
+
+    @property
     def matched_ratio(self) -> float:
+        """Of the rows the TEI covers, the share that found their line.
+
+        Not over every raw row: a TEI the annotator stopped part way through
+        leaves the rest of the file uncovered, and GROBID emits nothing for it
+        either. `133108v1` is 356 rows of a 50,065-row raw file and every one of
+        them matched, so the pairing is sound and the document is simply short.
+        """
+        if not self.covered_row_count:
+            return 0.0
+        return self.matched_row_count / self.covered_row_count
+
+    @property
+    def uncovered_ratio(self) -> float:
+        """The share of the raw file the TEI stops short of."""
         if not self.raw_row_count:
             return 0.0
-        return self.matched_row_count / self.raw_row_count
+        return self.uncovered_row_count / self.raw_row_count
 
 
 def get_match_key_for_labelled_line(

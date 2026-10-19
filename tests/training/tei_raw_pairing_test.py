@@ -87,6 +87,16 @@ class TestGetPairedRows:
         assert result.uncovered_row_count == 2
         assert result.unmatched_row_count == 0
 
+    def test_should_not_count_a_tei_that_stops_short_against_the_matched_share(self):
+        # a document whose TEI the annotator stopped part way through is short,
+        # not badly paired, and GROBID keeps the rows it does have
+        result = get_paired_rows(
+            ['token1', 'token2', 'token3', 'token4'],
+            _keys('token1 a')
+        )
+        assert result.matched_ratio == 1.0
+        assert result.uncovered_ratio == 0.75
+
     def test_should_abandon_the_document_after_too_many_consecutive_unmatched_rows(self):
         raw_row_tokens = ['token1'] + ['other'] * 5 + ['token2']
         result = get_paired_rows(
