@@ -107,6 +107,11 @@ class AssembledDocumentRecord:
     model_name: str
     corpus: Optional[str] = None
     sequence_count: int = 0
+    matched_row_ratio: Optional[float] = None
+    matched_row_count: int = 0
+    unmatched_row_count: int = 0
+    uncovered_row_count: int = 0
+    unrecognised_path_counts: Optional[Dict[str, int]] = None
     entity_start_count: Optional[int] = None
     label_start_counts: Optional[Dict[str, int]] = None
     generated: Optional[GeneratedDocumentRecord] = None
@@ -135,6 +140,20 @@ class AssembledDocumentRecord:
             # lapsed is visible rather than only absent.
             'review': self.review,
         }
+        if self.matched_row_ratio is not None:
+            # What the pairing did with the raw file, for a model read with one.
+            # `uncovered` is the tail a TEI stops short of, counted apart from
+            # the rows it had lines for and could not place.
+            json_dict['pairing'] = {
+                'matched_row_ratio': round(self.matched_row_ratio, 4),
+                'matched_row_count': self.matched_row_count,
+                'unmatched_row_count': self.unmatched_row_count,
+                'uncovered_row_count': self.uncovered_row_count,
+            }
+        if self.unrecognised_path_counts:
+            json_dict['unrecognised_element_paths'] = dict(
+                sorted(self.unrecognised_path_counts.items())
+            )
         if self.entity_start_count is not None:
             json_dict['entity_start_count'] = self.entity_start_count
         if self.label_start_counts:
@@ -158,6 +177,12 @@ class CorpusAssemblySummary:
     entity_start_count: Optional[int] = None
     documents_losing_entities: List[str] = field(default_factory=list)
     documents_without_generated_record: List[str] = field(default_factory=list)
+    matched_row_count: int = 0
+    unmatched_row_count: int = 0
+    uncovered_row_count: int = 0
+    documents_with_unmatched_rows: List[str] = field(default_factory=list)
+    unrecognised_path_count: int = 0
+    documents_with_unrecognised_paths: List[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         parts = [
@@ -181,6 +206,25 @@ class CorpusAssemblySummary:
                 f'{len(self.documents_without_generated_record)} documents with no '
                 f'record from generation'
             )
+        covered = self.matched_row_count + self.unmatched_row_count
+        if covered:
+            parts.append(
+                f'{self.matched_row_count}/{covered} rows paired with a TEI line '
+                f'({self.matched_row_count / covered:.4f}), '
+                f'{len(self.documents_with_unmatched_rows)} documents short of all '
+                f'of theirs'
+            )
+        if self.uncovered_row_count:
+            parts.append(
+                f'{self.uncovered_row_count} rows after a TEI stopped short'
+            )
+        # Zero for a TEI we wrote ourselves, so anything else is a finding about
+        # the corpus being read rather than routine.
+        if self.unrecognised_path_count:
+            parts.append(
+                f'{self.unrecognised_path_count} lines labelled by an enclosing '
+                f'element, over {len(self.documents_with_unrecognised_paths)} documents'
+            )
         return '; '.join(parts)
 
 
@@ -201,6 +245,16 @@ def get_assembly_summary_by_corpus(
             summary.entity_element_count = (
                 (summary.entity_element_count or 0) + (record.entity_element_count or 0)
             )
+        summary.matched_row_count += record.matched_row_count
+        summary.unmatched_row_count += record.unmatched_row_count
+        summary.uncovered_row_count += record.uncovered_row_count
+        if record.unmatched_row_count:
+            summary.documents_with_unmatched_rows.append(record.document_id)
+        if record.unrecognised_path_counts:
+            summary.unrecognised_path_count += sum(
+                record.unrecognised_path_counts.values()
+            )
+            summary.documents_with_unrecognised_paths.append(record.document_id)
         if record.lost_at_parse:
             summary.documents_losing_entities.append(record.document_id)
         if record.generated is None:

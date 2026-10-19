@@ -212,7 +212,30 @@ Pass `--include-extra-columns` to also emit the columns this project adds on top
 of GROBID's layout. Today that is the `segmentation` model's `whole_line_text`,
 which `delft` models read as a text feature and `wapiti` templates do not
 reference. Training data generated with the flag cannot be mixed with GROBID's
-`segmentation` corpus, since it is one column wider.
+published `segmentation` corpus, since it is one column wider; a corpus read
+from GROBID's own `raw` and `tei` gets the column off the matched TEI line, so
+it can be.
+
+#### Pairing a raw file with its TEI
+
+Each row of a raw feature file is paired with a line of the training TEI by
+searching forward from the last line matched, on the row's first
+whitespace-delimited field. Data generated here writes both files in one pass,
+so every row matches the line in the same position; a corpus whose TEI has been
+corrected since its raw was written drifts, and the search follows it.
+
+A row that matches no line is not written: it has no label of its own and no
+line text, and an empty column would be a value the model learns from. Rows
+after the TEI runs out are not written either. The assembly reports both per
+document, with the share of rows that matched, and `min_matched_row_ratio` in
+[`training_quality.yml`](../sciencebeam_parser/resources/training_quality.yml)
+refuses a document that falls below it. The share is taken over the rows the
+TEI had lines to offer, so a TEI that stops part way through makes a document
+short rather than badly paired.
+
+An element the label map has no entry for takes the label of the innermost
+element enclosing it that does, and the assembly counts the lines that happened
+to. It is zero for a TEI written here.
 
 #### The assembly quality record
 

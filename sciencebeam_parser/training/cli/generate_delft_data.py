@@ -1,7 +1,11 @@
 import argparse
 import logging
 import os
-from typing import Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+from collections import Counter
+from typing import (
+    Counter as CounterType,
+    Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+)
 
 from lxml import etree
 
@@ -313,6 +317,17 @@ class DelftDocumentResult(NamedTuple):
     data_lines: Sequence[str]
     labeled_layout_tokens_list: Sequence[Sequence[LabeledLayoutToken]]
     pairing_results: Sequence[PairingResult] = ()
+    unrecognised_path_counts: Optional[CounterType[str]] = None
+
+    @property
+    def matched_row_ratio(self) -> Optional[float]:
+        """Over every sequence of the document, or None where nothing was paired."""
+        covered = sum(result.covered_row_count for result in self.pairing_results)
+        if not covered:
+            return None
+        return sum(
+            result.matched_row_count for result in self.pairing_results
+        ) / covered
 
 
 def get_pairing_result_for_sequence(
@@ -348,9 +363,13 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
         # GROBID's own corpus carries xml:id values that are not NCNames, which a
         # validating parse refuses outright
         tei_root = etree.parse(local_tei_file, _TEI_XML_PARSER).getroot()
+    # what the reader could not place is counted rather than raised, and is zero
+    # for a training TEI we wrote ourselves
+    unrecognised_path_counts: CounterType[str] = Counter()
     labeled_layout_tokens_list = (
         training_tei_parser.parse_training_tei_to_labeled_layout_tokens_list(
-            tei_root
+            tei_root,
+            unrecognised_path_counts=unrecognised_path_counts
         )
     )
     LOGGER.debug('labeled_layout_tokens_list: %r', labeled_layout_tokens_list)
@@ -484,7 +503,9 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
         None
     )
     if first_feature_row is None:
-        return DelftDocumentResult([], labeled_layout_tokens_list, pairing_results)
+        return DelftDocumentResult(
+            [], labeled_layout_tokens_list, pairing_results, unrecognised_path_counts
+        )
     feature_indices = get_validated_training_data_feature_indices(
         column_layout,
         feature_column_count=len(first_feature_row),
@@ -500,7 +521,8 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             features=select_feature_columns(selectable_features, feature_indices)
         )),
         labeled_layout_tokens_list,
-        pairing_results
+        pairing_results,
+        unrecognised_path_counts
     )
 
 
@@ -556,6 +578,7 @@ def get_assembled_document_record(
                 canonical_model_name
             ),
             review=review,
+            matched_row_ratio=result.matched_row_ratio,
             jats_status=generated.jats_status if generated else None,
             jats_reference_count=generated.jats_reference_count if generated else None,
             written=generated.written if generated else None,
@@ -566,6 +589,20 @@ def get_assembled_document_record(
     return AssembledDocumentRecord(
         document_id=document_id,
         model_name=canonical_model_name,
+        matched_row_ratio=result.matched_row_ratio,
+        matched_row_count=sum(
+            pairing.matched_row_count for pairing in result.pairing_results
+        ),
+        unmatched_row_count=sum(
+            pairing.unmatched_row_count for pairing in result.pairing_results
+        ),
+        uncovered_row_count=sum(
+            pairing.uncovered_row_count for pairing in result.pairing_results
+        ),
+        unrecognised_path_counts=(
+            dict(result.unrecognised_path_counts)
+            if result.unrecognised_path_counts else None
+        ),
         corpus=generated.corpus if generated else None,
         review=review,
         sequence_count=len(result.labeled_layout_tokens_list),

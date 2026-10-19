@@ -97,6 +97,16 @@ models:
       The record carries lines per region instead, and how many of them a JATS
       field grounded: `<body>` is the aligner's sink, so an ungrounded `<body>`
       line is one the JATS had no opinion about rather than one it called body.
+    # A tripwire rather than a filter.  Our own corpora pair at 1.000 on every
+    # one of their 86 documents, and the worst of GROBID's 925 is 0.811
+    # (`0951-7715_24_7_004`), with nothing below 0.80 and ten below 0.90.  So
+    # this refuses nothing that is read today, and a pairing that broke would
+    # have to break badly to trip it.  It sits low on purpose: refusing a
+    # document GROBID keeps would diverge from the published file the
+    # reconstruction is measured against, and the share of a corpus that is
+    # merely imperfectly annotated is a finding rather than a reason to stop.
+    min_matched_row_ratio: 0.75
+
     # No floor on the sink share yet.  It is high enough on the measured corpora
     # that a floor near its level risks refusing most of a corpus through
     # `max_excluded_ratio`, and one well above it may exclude nothing at all;
