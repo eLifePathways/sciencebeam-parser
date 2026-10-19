@@ -803,6 +803,13 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
         # separate <byline><affiliation> blocks for each JATS <aff> element.
         # Address sub-fields (city, region, postcode, country, bulk addr range) are
         # mapped to <address> instead of <affiliation>.
+        #
+        # Only an affiliation starts a new element per JATS value.  Two values of
+        # any other label printed with nothing between them are one passage: a
+        # licence statement follows its copyright line, and GROBID's corpus holds
+        # the pair in one <note type="copyright"> on 179 of its 454 of them and
+        # never writes two side by side.
+        _HEADER_LABELS_BANDED_PER_VALUE = frozenset({'<affiliation>'})
         _HEADER_ADDRESS_SUB_FIELDS = frozenset({
             JatsSubFieldNames.AUTHOR_AFF_ADDR,
             JatsSubFieldNames.AUTHOR_AFF_CITY,
@@ -834,7 +841,11 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
             if label is None:
                 prev_label_instance = None
                 return 'O'
-            instance_id = annotated.get_token_instance(token)
+            instance_id = (
+                annotated.get_token_instance(token)
+                if label in _HEADER_LABELS_BANDED_PER_VALUE
+                else 0
+            )
             label_instance = (label, instance_id)
             prefix = 'B' if label_instance != prev_label_instance else 'I'
             prev_label_instance = label_instance

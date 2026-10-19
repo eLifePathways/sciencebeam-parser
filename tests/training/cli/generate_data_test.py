@@ -1540,6 +1540,32 @@ class TestHeaderJatsLabelFn:
             for token_index in range(len(line.tokens))
         ] == ['B-<copyright>', 'B-<funding>']
 
+    def test_should_keep_two_values_of_one_statement_in_one_element(self):
+        line = LayoutLine.for_text('Copyright Licence')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.COPYRIGHT, instance_id=1)
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.COPYRIGHT, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<copyright>', 'I-<copyright>']
+
+    def test_should_start_a_new_element_for_each_affiliation(self):
+        line = LayoutLine.for_text('First Second')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.AUTHOR_AFF, instance_id=1)
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.AUTHOR_AFF, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<affiliation>', 'B-<affiliation>']
+
 
 @log_on_exception
 class TestReferenceSegmenterJatsLabelFn:
