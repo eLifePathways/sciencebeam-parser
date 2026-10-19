@@ -435,6 +435,7 @@ def get_assembled_document_record(
             entity_element_count=generated.entity_element_count if generated else None,
             entity_start_count=entity_start_count,
             sequence_count=len(result.labeled_layout_tokens_list),
+            field_counts=generated.field_counts if generated else None,
         )
     return AssembledDocumentRecord(
         document_id=document_id,

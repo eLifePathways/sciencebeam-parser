@@ -5,7 +5,9 @@ taken per document so that a corpus total cannot hide a document that lost its
 references.
 """
 import logging
-from typing import Dict, FrozenSet, Iterable, Iterator, Mapping, Optional, Sequence
+from typing import (
+    AbstractSet, Dict, FrozenSet, Iterable, Iterator, Mapping, Optional, Sequence
+)
 
 from lxml import etree
 
@@ -135,6 +137,54 @@ def count_citation_labels(
     for model_data_list in model_data_list_list:
         for label in get_labels_for_model_data_list(model_data_list):
             _entry(label)['marked'] += 1
+    return counts
+
+
+def count_field_instances(
+    declared_count_by_field: Mapping[str, int],
+    annotated: JatsAnnotatedLayoutDocument,
+    model_data_list_list: Sequence[Sequence[LayoutModelData]],
+    labelled_fields: AbstractSet[str],
+) -> Dict[str, Dict[str, int]]:
+    """Per JATS field, the values declared, located anywhere, and marked in the region.
+
+    A model whose data is cut from a region has three places to lose a value
+    rather than two, and the middle count is what separates them: a value the
+    page never printed was never located, and a value the region was cut away
+    from was located and not marked.
+
+    The three share the instance number the aligner assigns per value it places,
+    so they are monotone -- an element count is not, because the TEI writer opens
+    a new element wherever another label interleaves.
+
+    A field outside `labelled_fields` carries no `marked` count at all rather
+    than a zero, since the model is not being taught it and a zero would read as
+    a loss.
+    """
+    marked_instances_by_field: Dict[str, set] = {}
+    for model_data_list in model_data_list_list:
+        for model_data in model_data_list:
+            label = getattr(model_data, 'label', None)
+            if not label or label == 'O':
+                continue
+            token = model_data.layout_token
+            if token is None:
+                continue
+            field_name = annotated.get_token_field(token)
+            if not field_name:
+                continue
+            marked_instances_by_field.setdefault(field_name, set()).add(
+                annotated.get_token_instance(token)
+            )
+    counts: Dict[str, Dict[str, int]] = {}
+    for field_name, declared in declared_count_by_field.items():
+        entry = {
+            'declared': declared,
+            'located': annotated.get_aligned_instance_count(field_name),
+        }
+        if field_name in labelled_fields:
+            entry['marked'] = len(marked_instances_by_field.get(field_name, ()))
+        counts[field_name] = entry
     return counts
 
 

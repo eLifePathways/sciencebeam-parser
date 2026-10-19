@@ -53,6 +53,10 @@ class GeneratedDocumentRecord:
         return self.json_dict.get('jats', {}).get('status')
 
     @property
+    def field_counts(self) -> Optional[Mapping[str, Mapping[str, int]]]:
+        return self.json_dict.get('field_counts')
+
+    @property
     def has_generated_output(self) -> bool:
         """Whether generation wrote a file for this document at all.
 

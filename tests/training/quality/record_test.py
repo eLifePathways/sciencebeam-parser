@@ -79,6 +79,19 @@ class TestDocumentQualityRecord:
             '<title>': {'jats': 44, 'marked': 2}
         }
 
+    def test_should_record_the_field_counts_a_region_model_carries(self):
+        json_dict = _record_for_models(
+            ModelQualityRecord(
+                model_name='header',
+                written=True,
+                field_counts={'title': {'declared': 1, 'located': 1, 'marked': 0}},
+            ),
+        ).to_json_dict_by_model(['header'])['header']
+        assert json_dict['field_counts'] == {
+            'title': {'declared': 1, 'located': 1, 'marked': 0}
+        }
+        assert 'label_counts' not in json_dict
+
     def test_should_record_a_model_that_wrote_no_file(self):
         json_dict = _record_for_models(
             ModelQualityRecord(
