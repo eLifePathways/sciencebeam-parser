@@ -289,7 +289,13 @@ class JatsFieldExtractor:
         yield from self._iter_front_contrib_values(root)
 
     def _iter_front_metadata_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
-        for el in root.xpath('front/article-meta/title-group/article-title'):
+        # A document written in two languages prints both titles, one under the
+        # other, and declares the second as <trans-title>.  Read only the first
+        # and the other is left unlabelled, directly above a byline that is not.
+        for el in root.xpath(
+            'front/article-meta/title-group/article-title'
+            ' | front/article-meta/title-group/trans-title-group/trans-title'
+        ):
             text = element_text(el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.TITLE)

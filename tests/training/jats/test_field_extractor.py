@@ -402,6 +402,21 @@ class TestFunding:
 
 
 class TestCopyright:
+    def test_extracts_a_translated_title_beside_the_article_title(self):
+        root = etree.fromstring(
+            '<article><front><article-meta><title-group>'
+            '<article-title>Remote teaching of Epidemiology</article-title>'
+            '<trans-title-group xml:lang="pt">'
+            '<trans-title>Ensino remoto de Epidemiologia</trans-title>'
+            '</trans-title-group>'
+            '</title-group></article-meta></front></article>'
+        )
+        assert [
+            field_value.text
+            for field_value in JatsFieldExtractor().iter_field_values(root)
+            if field_value.field_name == JatsFieldNames.TITLE
+        ] == ['Remote teaching of Epidemiology', 'Ensino remoto de Epidemiologia']
+
     def test_extracts_copyright_statement(self):
         fvs = _field_values_for(
             '<article><front><article-meta>'

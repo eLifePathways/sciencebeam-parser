@@ -1553,6 +1553,45 @@ class TestHeaderJatsLabelFn:
             for token_index in range(len(line.tokens))
         ] == ['B-<copyright>', 'I-<copyright>']
 
+    def test_should_keep_the_stop_between_two_values_inside_the_element(self):
+        line = LayoutLine.for_text('Copyright . Licence')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.COPYRIGHT, instance_id=1)
+        annotated.set_token_label(line.tokens[2], JatsFieldNames.COPYRIGHT, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<copyright>', 'I-<copyright>', 'I-<copyright>']
+
+    def test_should_not_claim_a_word_between_two_values(self):
+        line = LayoutLine.for_text('Copyright and Licence')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.COPYRIGHT, instance_id=1)
+        annotated.set_token_label(line.tokens[2], JatsFieldNames.COPYRIGHT, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<copyright>', 'O', 'B-<copyright>']
+
+    def test_should_start_a_new_element_for_each_title(self):
+        line = LayoutLine.for_text('Título Title')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.TITLE, instance_id=1)
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.TITLE, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<title>', 'B-<title>']
+
     def test_should_start_a_new_element_for_each_affiliation(self):
         line = LayoutLine.for_text('First Second')
         header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])

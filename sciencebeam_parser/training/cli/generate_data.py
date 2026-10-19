@@ -766,6 +766,10 @@ class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
         return fn
 
 
+def _is_punctuation(text: str) -> bool:
+    return bool(text) and all(not character.isalnum() for character in text)
+
+
 class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'header'
     SPANS_FILENAME_SUFFIX = '.header.spans.jsonl'
@@ -809,7 +813,7 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
         # licence statement follows its copyright line, and GROBID's corpus holds
         # the pair in one <note type="copyright"> on 179 of its 454 of them and
         # never writes two side by side.
-        _HEADER_LABELS_BANDED_PER_VALUE = frozenset({'<affiliation>'})
+        _HEADER_LABELS_BANDED_PER_VALUE = frozenset({'<affiliation>', '<title>'})
         _HEADER_ADDRESS_SUB_FIELDS = frozenset({
             JatsSubFieldNames.AUTHOR_AFF_ADDR,
             JatsSubFieldNames.AUTHOR_AFF_CITY,
@@ -831,6 +835,13 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
                 return None
             field_name = annotated.get_token_field(token)
             if not field_name:
+                # The page punctuates between two values of one statement -- a
+                # copyright line and the licence under it print as one sentence
+                # flow, and the stop between them is in neither value.  Left
+                # unlabelled it closes the element and the passage is written as
+                # two.
+                if prev_label_instance is not None and _is_punctuation(token.text):
+                    return f'I-{prev_label_instance[0]}'
                 prev_label_instance = None
                 return 'O'
             sub_field_name = annotated.get_token_sub_field(token)
