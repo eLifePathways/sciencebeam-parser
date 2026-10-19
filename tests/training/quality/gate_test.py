@@ -520,3 +520,119 @@ class TestAPriorDecisionWithNoNewOneYet:
         assert not self._verdict_for(
             Requirement.MEASURED, ReviewStanding.REJECTION_LAPSED
         ).is_excluded
+
+
+HEADER_THRESHOLDS = ModelQualityThresholds(
+    model_name='header',
+    cardinality='none',
+    field_floors={'title': 1.0, 'author': 1.0},
+)
+
+
+def _header_verdict(field_counts, **kwargs) -> QualityVerdict:
+    return get_quality_verdict(
+        document_id=DOCUMENT_ID_1,
+        thresholds=HEADER_THRESHOLDS,
+        field_counts=field_counts,
+        sequence_count=kwargs.pop('sequence_count', 1),
+        **kwargs
+    )
+
+
+class TestTheShippedHeaderThresholds:
+    def test_should_floor_the_two_fields_every_document_declares(self):
+        thresholds = load_training_quality_config().get_thresholds_for_model('header')
+        assert thresholds.field_floors == {'title': 1.0, 'author': 1.0}
+        assert not thresholds.has_cardinality_check
+
+    def test_should_not_floor_a_field_the_page_does_not_print(self):
+        thresholds = load_training_quality_config().get_thresholds_for_model('header')
+        assert 'copyright' not in thresholds.field_floors
+        assert 'author_aff' not in thresholds.field_floors
+
+
+class TestGetQualityVerdictOnFieldCounts:
+    def test_should_keep_a_document_marking_everything_it_declares(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 1},
+            'author': {'declared': 1, 'located': 1, 'marked': 1},
+        })
+        assert not verdict.is_excluded
+
+    def test_should_exclude_a_title_located_outside_the_region(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 0},
+            'author': {'declared': 1, 'located': 1, 'marked': 1},
+        })
+        assert verdict.exclusion_reasons == [ExclusionReason.FIELD_NOT_IN_REGION]
+        assert verdict.detail['fields_below_floor']['title'] == {
+            'declared': 1, 'located': 1, 'marked': 0
+        }
+
+    def test_should_exclude_a_title_the_aligner_never_placed(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 0, 'marked': 0},
+            'author': {'declared': 1, 'located': 1, 'marked': 1},
+        })
+        assert verdict.exclusion_reasons == [ExclusionReason.FIELD_NOT_LOCATED]
+
+    def test_should_name_both_stages_where_both_lost_a_value(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 0, 'marked': 0},
+            'author': {'declared': 2, 'located': 1, 'marked': 0},
+        })
+        assert verdict.exclusion_reasons == [
+            ExclusionReason.FIELD_NOT_LOCATED, ExclusionReason.FIELD_NOT_IN_REGION
+        ]
+
+    def test_should_report_a_stage_once_where_two_fields_fail_at_it(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 0},
+            'author': {'declared': 1, 'located': 1, 'marked': 0},
+        })
+        assert verdict.exclusion_reasons == [ExclusionReason.FIELD_NOT_IN_REGION]
+        assert sorted(verdict.detail['fields_below_floor']) == ['author', 'title']
+
+    def test_should_not_fail_a_field_the_document_does_not_declare(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 1},
+            'author': {'declared': 0, 'located': 0, 'marked': 0},
+        })
+        assert not verdict.is_excluded
+
+    def test_should_not_fail_a_field_with_no_floor(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 1},
+            'author': {'declared': 1, 'located': 1, 'marked': 1},
+            'copyright': {'declared': 1, 'located': 0},
+        })
+        assert not verdict.is_excluded
+
+    def test_should_judge_a_field_without_a_marked_count_on_what_was_located(self):
+        thresholds = ModelQualityThresholds(
+            model_name='header', cardinality='none', field_floors={'copyright': 1.0}
+        )
+        verdict = get_quality_verdict(
+            document_id=DOCUMENT_ID_1,
+            thresholds=thresholds,
+            sequence_count=1,
+            field_counts={'copyright': {'declared': 1, 'located': 0}},
+        )
+        assert verdict.exclusion_reasons == [ExclusionReason.FIELD_NOT_LOCATED]
+
+    def test_should_not_fail_a_document_with_no_field_counts_at_all(self):
+        verdict = _header_verdict(None)
+        assert not verdict.is_excluded
+
+    def test_should_report_an_empty_region_once_rather_than_once_per_field(self):
+        verdict = _header_verdict(
+            {
+                'title': {'declared': 1, 'located': 1, 'marked': 0},
+                'author': {'declared': 1, 'located': 1, 'marked': 0},
+            },
+            sequence_count=0,
+        )
+        assert verdict.exclusion_reasons == [
+            ExclusionReason.FIELD_NOT_IN_REGION,
+            ExclusionReason.NO_TRAINING_SEQUENCES,
+        ]

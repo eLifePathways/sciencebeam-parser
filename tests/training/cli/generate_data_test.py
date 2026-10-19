@@ -720,6 +720,79 @@ class TestGenerateTrainingDataForLayoutDocument:
         # The DOI is in the JATS and not on the page: counted, and not marked.
         assert label_counts[IDENTIFIER_LABEL] == {'jats': 1, 'marked': 0}
 
+    def test_should_count_header_fields_declared_located_and_marked(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        jats_path = tmp_path / 'header.jats.xml'
+        jats_path.write_text(
+            '<article><front><article-meta>'
+            '<title-group><article-title>This is the title</article-title></title-group>'
+            '<contrib-group><contrib contrib-type="author">'
+            '<name><surname>Author Surname 1</surname></name>'
+            '</contrib></contrib-group>'
+            '<abstract><p>An abstract the page does not print</p></abstract>'
+            '<permissions><copyright-statement>Copyright, not printed'
+            '</copyright-statement></permissions>'
+            '</article-meta></front></article>',
+            encoding='utf-8'
+        )
+
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        record = generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=False,
+            jats_xml_filename=str(jats_path)
+        )
+
+        field_counts = record.to_json_dict_by_model(['header'])['header']['field_counts']
+        assert field_counts[JatsFieldNames.TITLE] == {
+            'declared': 1, 'located': 1, 'marked': 1
+        }
+        # Declared, never printed, so never located and nothing to mark.
+        assert field_counts[JatsFieldNames.ABSTRACT] == {
+            'declared': 1, 'located': 0, 'marked': 0
+        }
+        # The header model has no label for it, so it carries no marked count at
+        # all rather than a zero that would read as a loss.
+        assert field_counts[JatsFieldNames.COPYRIGHT] == {'declared': 1, 'located': 0}
+
+    def test_should_not_count_header_fields_without_a_jats(
+        self,
+        tmp_path: Path,
+        sample_layout_document: SampleLayoutDocument,
+        fulltext_models_mock: MockFullTextModels
+    ):
+        configure_fulltext_models_mock_with_sample_document(
+            fulltext_models_mock,
+            sample_layout_document
+        )
+        output_path = tmp_path / 'output'
+        output_path.mkdir()
+        record = generate_training_data_for_layout_document(
+            layout_document=sample_layout_document.layout_document,
+            output_path=str(output_path),
+            source_filename=SOURCE_FILENAME_1,
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            fulltext_models=fulltext_models_mock,
+            use_model=True,
+            use_directory_structure=False,
+        )
+
+        assert 'field_counts' not in record.to_json_dict_by_model(['header'])['header']
+
     def test_not_should_generate_figure_data_if_not_present(  # noqa pylint: disable=too-many-locals, too-many-statements
         self,
         tmp_path: Path,
