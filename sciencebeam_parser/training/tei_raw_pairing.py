@@ -22,10 +22,11 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_MAX_LOOKAHEAD = 6
 
 # GROBID abandons the rest of a document after this many consecutive rows it
-# could not place, and discards a document whose run of failures at the end
-# reaches DEFAULT_MAX_TRAILING_UNMATCHED.
+# could not place. It also discards a whole document whose run of failures at
+# the end reaches ten, which is not reproduced here: `min_matched_row_ratio` is
+# what refuses a document, and it judges the whole of one rather than its last
+# few rows.
 DEFAULT_MAX_CONSECUTIVE_UNMATCHED = 20
-DEFAULT_MAX_TRAILING_UNMATCHED = 10
 
 
 class PairedRow(NamedTuple):
@@ -41,7 +42,6 @@ class PairingResult(NamedTuple):
     """Rows inside the stretch the TEI covers that matched no line."""
     uncovered_row_count: int
     """Rows after the TEI ran out, which GROBID emits nothing for either."""
-    is_document_discarded: bool
 
     @property
     def matched_row_count(self) -> int:
@@ -101,8 +101,7 @@ def get_paired_rows(  # pylint: disable=too-many-locals
     raw_row_tokens: Sequence[str],
     labelled_match_keys: Sequence[str],
     max_lookahead: int = DEFAULT_MAX_LOOKAHEAD,
-    max_consecutive_unmatched: int = DEFAULT_MAX_CONSECUTIVE_UNMATCHED,
-    max_trailing_unmatched: int = DEFAULT_MAX_TRAILING_UNMATCHED
+    max_consecutive_unmatched: int = DEFAULT_MAX_CONSECUTIVE_UNMATCHED
 ) -> PairingResult:
     """One row per raw row, in order, matched by a forward-only cursor.
 
@@ -146,6 +145,5 @@ def get_paired_rows(  # pylint: disable=too-many-locals
         raw_row_count=len(raw_row_tokens),
         labelled_line_count=len(labelled_match_keys),
         unmatched_row_count=unmatched_row_count,
-        uncovered_row_count=uncovered_row_count,
-        is_document_discarded=consecutive_unmatched >= max_trailing_unmatched
+        uncovered_row_count=uncovered_row_count
     )

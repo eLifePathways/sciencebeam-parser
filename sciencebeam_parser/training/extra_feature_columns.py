@@ -7,7 +7,7 @@ which is where ours came from in the first place.
 """
 
 import logging
-from typing import Callable, List, Mapping, Optional, Sequence
+from typing import Callable, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from sciencebeam_parser.models.data import LabeledLayoutToken
 from sciencebeam_parser.models.segmentation.data import format_feature_text
@@ -72,11 +72,19 @@ def get_extra_column_values(
 def iter_rows_with_extra_columns(
     column_layout: GrobidColumnLayout,
     feature_rows: Sequence[Sequence[str]],
+    row_tokens: Sequence[str],
     labeled_layout_tokens: Sequence[LabeledLayoutToken]
-):
-    """Yield (feature_row, labeled_layout_token) for the rows that can carry them."""
-    for feature_row, labeled_layout_token in zip(feature_rows, labeled_layout_tokens):
+) -> Iterator[Tuple[List[str], str, LabeledLayoutToken]]:
+    """Yield the rows that can carry the columns, whole.
+
+    The token travels with its own row rather than beside the result: a row this
+    drops would otherwise leave every row after it holding the token of the one
+    before.
+    """
+    for feature_row, row_token, labeled_layout_token in zip(
+        feature_rows, row_tokens, labeled_layout_tokens
+    ):
         extra_values = get_extra_column_values(column_layout, labeled_layout_token)
         if extra_values is None:
             continue
-        yield list(feature_row) + extra_values, labeled_layout_token
+        yield list(feature_row) + extra_values, row_token, labeled_layout_token

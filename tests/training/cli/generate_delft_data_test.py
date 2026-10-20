@@ -397,6 +397,40 @@ class TestMain:
             ]
         )]
 
+    def test_should_not_write_a_document_every_row_of_which_was_dropped(
+        self,
+        tmp_path: Path
+    ):
+        # the pairing keeps a document's shape, so a sequence with nothing left
+        # in it is still there; it has no rows to train on, and writing it would
+        # put an empty block in the training data
+        tei_source_path = tmp_path / 'tei'
+        raw_source_path = tmp_path / 'raw'
+        output_path = tmp_path / 'output.data'
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (tei_source_path / 'sample.segmentation.tei.xml').write_bytes(etree.tostring(
+            E('tei', E('text'))
+        ))
+        raw_feature_rows = _get_raw_feature_rows('segmentation', 1)
+        raw_source_path.mkdir(parents=True, exist_ok=True)
+        (raw_source_path / 'sample.segmentation').write_text(
+            f'{TOKEN_1} {" ".join(raw_feature_rows[0])}'
+        )
+        with pytest.raises(CorpusRefusedError):
+            main([
+                '--model-name=segmentation',
+                f'--tei-source-path={tei_source_path}/*.tei.xml',
+                f'--raw-source-path={raw_source_path}',
+                f'--delft-output-path={output_path}'
+            ])
+        run_record = json.loads(
+            Path(str(output_path) + '.run.json').read_text(encoding='utf-8')
+        )
+        assert run_record['documents']['refused'] == 1
+        assert run_record['refused_documents'][0]['reasons'] == [
+            'no-training-sequences'
+        ]
+
     def test_should_refuse_a_document_whose_rows_mostly_found_no_line(
         self,
         tmp_path: Path

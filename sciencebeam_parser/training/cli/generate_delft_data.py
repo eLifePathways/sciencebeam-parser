@@ -446,8 +446,13 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             [doc_tokens[pair.raw_index] for pair in result.paired_rows]
             for doc_tokens, result in zip(texts, pairing_results)
         ]
-        if selectable_features and selectable_features[0] and is_missing_extra_columns(
-            column_layout, feature_column_count=len(selectable_features[0][0])
+        first_raw_row = next(
+            (row for document_features in selectable_features
+             for row in document_features),
+            None
+        )
+        if first_raw_row is not None and is_missing_extra_columns(
+            column_layout, feature_column_count=len(first_raw_row)
         ):
             LOGGER.info(
                 '%r stops where GROBID\'s own features do; reading %r off the TEI',
@@ -459,15 +464,10 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             for document_features, doc_row_tokens, labeled_layout_tokens in zip(
                 selectable_features, row_tokens, labeled_layout_tokens_list
             ):
-                kept = [
-                    (feature_row, row_token, labeled_layout_token)
-                    for (feature_row, labeled_layout_token), row_token in zip(
-                        iter_rows_with_extra_columns(
-                            column_layout, document_features, labeled_layout_tokens
-                        ),
-                        doc_row_tokens
-                    )
-                ]
+                kept = list(iter_rows_with_extra_columns(
+                    column_layout, document_features, doc_row_tokens,
+                    labeled_layout_tokens
+                ))
                 extended_features.append([item[0] for item in kept])
                 extended_tokens.append([item[1] for item in kept])
                 extended_labeled.append([item[2] for item in kept])
@@ -490,6 +490,9 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
         ))
         _texts, features = load_data_crf_lines(data_line_iterable)
         selectable_features = features.tolist()
+        # nothing was paired, so there is no matched share to report; saying 1.0
+        # here would read as a measurement rather than as not applicable
+        pairing_results = []
         row_tokens = [
             [
                 labeled_layout_token.layout_token.text
@@ -497,15 +500,7 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             ]
             for labeled_layout_tokens in labeled_layout_tokens_list
         ]
-        pairing_results = [
-            get_paired_rows(
-                [labeled_layout_token.layout_token.text
-                 for labeled_layout_token in labeled_layout_tokens],
-                [labeled_layout_token.layout_token.text
-                 for labeled_layout_token in labeled_layout_tokens]
-            )
-            for labeled_layout_tokens in labeled_layout_tokens_list
-        ]
+
     # after the pairing, so that where a span starts is decided by the rows that
     # are written rather than by rows that were dropped
     translated_tag_result = translate_tag_result_tags_IOB_to_grobid(
@@ -581,6 +576,18 @@ def get_tei_filename_suffix_for_model_name(
     return model.get_tei_training_data_generator().get_default_tei_filename_suffix()
 
 
+def _get_non_empty_sequence_count(
+    labeled_layout_tokens_list: Sequence[Sequence[LabeledLayoutToken]]
+) -> int:
+    """Sequences that have something in them.
+
+    The pairing keeps a document's shape, so a sequence every row of which was
+    dropped is still there and empty. Counting it would let a document with
+    nothing to train on past the check for having produced no sequences.
+    """
+    return sum(1 for item in labeled_layout_tokens_list if item)
+
+
 def get_assembled_document_record(
     document_id: str,
     model_name: str,
@@ -614,7 +621,9 @@ def get_assembled_document_record(
             written=generated.written if generated else None,
             entity_element_count=generated.entity_element_count if generated else None,
             entity_start_count=entity_start_count,
-            sequence_count=len(result.labeled_layout_tokens_list),
+            sequence_count=_get_non_empty_sequence_count(
+                result.labeled_layout_tokens_list
+            ),
             field_counts=generated.field_counts if generated else None,
         )
     return AssembledDocumentRecord(
@@ -636,7 +645,9 @@ def get_assembled_document_record(
         ),
         corpus=generated.corpus if generated else None,
         review=review,
-        sequence_count=len(result.labeled_layout_tokens_list),
+        sequence_count=_get_non_empty_sequence_count(
+            result.labeled_layout_tokens_list
+        ),
         entity_start_count=entity_start_count,
         label_start_counts=(
             count_label_starts_per_sequence(result.labeled_layout_tokens_list)

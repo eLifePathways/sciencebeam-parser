@@ -666,8 +666,13 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
         as a count: it is zero for training TEI we wrote ourselves.
         """
         element_path = list(tei_training_element_path.get_path())
-        for end_index in range(len(element_path), -1, -1):
-            for start_index in range(end_index + 1):
+        # Innermost first, dropping the elements outside it before giving up on it
+        # and trying the one that encloses it. The empty path is deliberately not
+        # among the candidates here: it is a key of its own for a label whose path
+        # is the root, and reaching it early would answer with the root's label
+        # instead of the enclosing element's.
+        for end_index in range(len(element_path), 0, -1):
+            for start_index in range(end_index):
                 label = self.label_by_relative_element_path_map.get(
                     tuple(element_path[start_index:end_index])
                 )
@@ -677,9 +682,9 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
                     if unrecognised_path_counts is not None:
                         unrecognised_path_counts['/'.join(element_path)] += 1
                 return label
-        if unrecognised_path_counts is not None:
+        if element_path and unrecognised_path_counts is not None:
             unrecognised_path_counts['/'.join(element_path)] += 1
-        return 'O'
+        return self.label_by_relative_element_path_map.get(tuple(), 'O')
 
     def iter_parse_training_tei_to_flat_labeled_layout_tokens(
         self,

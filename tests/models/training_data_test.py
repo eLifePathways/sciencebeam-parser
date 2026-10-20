@@ -62,6 +62,23 @@ class SampleTrainingTeiParser(AbstractTrainingTeiParser):
         )
 
 
+TRAINING_XML_ELEMENT_PATH_BY_LABEL_WITH_ROOT = {
+    **TRAINING_XML_ELEMENT_PATH_BY_LABEL,
+    # segmentation and header both have one: a label whose path is the root
+    '<other>': ROOT_TRAINING_XML_ELEMENT_PATH,
+}
+
+
+class SampleTrainingTeiParserWithRootLabel(AbstractTrainingTeiParser):
+    def __init__(self) -> None:
+        super().__init__(
+            root_training_xml_element_path=ROOT_TRAINING_XML_ELEMENT_PATH,
+            training_xml_element_path_by_label=(
+                TRAINING_XML_ELEMENT_PATH_BY_LABEL_WITH_ROOT
+            ),
+        )
+
+
 # pylint: disable=not-callable
 
 def _get_training_tei_with_text(
@@ -206,6 +223,29 @@ class TestTrainingTeiParser:
         )
         assert tag_result == [[
             (TOKEN_1, 'B-<head>')
+        ]]
+
+    def test_should_not_take_the_root_label_over_the_enclosing_one(self):
+        # a label whose path is the root is a key of its own, and reaching it
+        # before the enclosing element would answer `<other>` for everything
+        # unrecognised rather than the region the line is printed in
+        tei_root = _get_training_tei_with_text([
+            E('head', E('unknown', TOKEN_1, E('lb'))),
+            '\n'
+        ])
+        parser = SampleTrainingTeiParserWithRootLabel()
+        assert parser.parse_training_tei_to_tag_result(tei_root) == [[
+            (TOKEN_1, 'B-<head>')
+        ]]
+
+    def test_should_fall_back_to_the_root_label_with_no_enclosing_element(self):
+        tei_root = _get_training_tei_with_text([
+            E('unknown', TOKEN_1, E('lb')),
+            '\n'
+        ])
+        parser = SampleTrainingTeiParserWithRootLabel()
+        assert parser.parse_training_tei_to_tag_result(tei_root) == [[
+            (TOKEN_1, '<other>')
         ]]
 
     def test_should_count_an_element_path_it_did_not_recognise(self):

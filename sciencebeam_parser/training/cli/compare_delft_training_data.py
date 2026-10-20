@@ -28,6 +28,12 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_JOIN_ROW_COUNT = 5
 DEFAULT_MAX_REPORTED_ROWS = 50
 
+# How far ahead a row is looked for before it counts as absent. Unbounded, a
+# sequence that diverges early costs a scan to its end for every row after the
+# divergence, which on a 50,000-row document is the difference between a tool
+# that runs and one that does not.
+DEFAULT_MAX_ROW_LOOKAHEAD = 1000
+
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -105,12 +111,59 @@ def get_label(row: str) -> str:
     return row.rsplit(' ', 1)[-1]
 
 
-def compare(  # pylint: disable=too-many-locals, too-many-statements
+def _log_comparison(  # pylint: disable=too-many-arguments
+    generated: List[List[str]],
+    published: List[List[str]],
+    totals: Counter,
+    generated_labels: Counter,
+    published_labels: Counter,
+    differing: List[Tuple[int, str, str]]
+) -> None:
+    LOGGER.info('generated sequences: %d', len(generated))
+    LOGGER.info('published sequences: %d', len(published))
+    LOGGER.info('generated rows: %d', totals['generated_rows'])
+    LOGGER.info('published rows: %d', sum(len(s) for s in published))
+    LOGGER.info(
+        'sequences joined: %d (ambiguous %d, not joined %d)',
+        totals['sequences_joined'], totals['sequences_joined_ambiguously'],
+        totals['sequences_not_joined']
+    )
+    LOGGER.info('sequences identical: %d', totals['sequences_identical'])
+    if totals['joined_generated_rows']:
+        LOGGER.info(
+            'rows identical and in order: %d of %d joined (%.5f)',
+            totals['rows_identical_and_in_order'], totals['joined_generated_rows'],
+            totals['rows_identical_and_in_order'] / totals['joined_generated_rows']
+        )
+    LOGGER.info('rows not in the published corpus: %d', totals['rows_not_in_published'])
+    LOGGER.info(
+        'published rows we do not emit: %d', totals['published_rows_not_emitted']
+    )
+    LOGGER.info('labels over the sequences that joined:')
+    for label in sorted(set(generated_labels) | set(published_labels)):
+        generated_count = generated_labels[label]
+        published_count = published_labels[label]
+        LOGGER.info(
+            '  label %-24s generated %-9d published %-9d %+d',
+            label, generated_count, published_count,
+            generated_count - published_count
+        )
+    for sequence_index, row, expected in differing:
+        LOGGER.warning('sequence %d differs', sequence_index)
+        LOGGER.warning('  ours     : %s', row)
+        LOGGER.warning('  published: %s', expected)
+    remaining = totals['rows_not_in_published'] - len(differing)
+    if remaining > 0:
+        LOGGER.warning('%d further differing rows not printed', remaining)
+
+
+def compare(  # pylint: disable=too-many-locals
     generated: List[List[str]],
     published: List[List[str]],
     layout: GrobidColumnLayout,
     join_row_count: int,
-    max_reported_rows: int
+    max_reported_rows: int,
+    max_row_lookahead: int = DEFAULT_MAX_ROW_LOOKAHEAD
 ) -> int:
     published_by_key: Dict[Tuple, List[List[str]]] = {}
     for sequence in published:
@@ -150,7 +203,9 @@ def compare(  # pylint: disable=too-many-locals, too-many-statements
         in_order = 0
         for row in rows:
             found = None
-            for look in range(cursor, len(counterpart)):
+            for look in range(
+                cursor, min(cursor + max_row_lookahead, len(counterpart))
+            ):
                 if counterpart[look] == row:
                     found = look
                     break
@@ -169,42 +224,14 @@ def compare(  # pylint: disable=too-many-locals, too-many-statements
         if in_order == len(counterpart) == len(rows):
             totals['sequences_identical'] += 1
 
-    LOGGER.info('generated sequences: %d', len(generated))
-    LOGGER.info('published sequences: %d', len(published))
-    LOGGER.info('generated rows: %d', totals['generated_rows'])
-    LOGGER.info('published rows: %d', sum(len(s) for s in published))
-    LOGGER.info(
-        'sequences joined: %d (ambiguous %d, not joined %d)',
-        totals['sequences_joined'], totals['sequences_joined_ambiguously'],
-        totals['sequences_not_joined']
+    _log_comparison(
+        generated=generated,
+        published=published,
+        totals=totals,
+        generated_labels=generated_labels,
+        published_labels=published_labels,
+        differing=differing
     )
-    LOGGER.info('sequences identical: %d', totals['sequences_identical'])
-    if totals['joined_generated_rows']:
-        LOGGER.info(
-            'rows identical and in order: %d of %d joined (%.5f)',
-            totals['rows_identical_and_in_order'], totals['joined_generated_rows'],
-            totals['rows_identical_and_in_order'] / totals['joined_generated_rows']
-        )
-    LOGGER.info('rows not in the published corpus: %d', totals['rows_not_in_published'])
-    LOGGER.info(
-        'published rows we do not emit: %d', totals['published_rows_not_emitted']
-    )
-    LOGGER.info('labels over the sequences that joined:')
-    for label in sorted(set(generated_labels) | set(published_labels)):
-        generated_count = generated_labels[label]
-        published_count = published_labels[label]
-        LOGGER.info(
-            '  label %-24s generated %-9d published %-9d %+d',
-            label, generated_count, published_count,
-            generated_count - published_count
-        )
-    for sequence_index, row, expected in differing:
-        LOGGER.warning('sequence %d differs', sequence_index)
-        LOGGER.warning('  ours     : %s', row)
-        LOGGER.warning('  published: %s', expected)
-    remaining = totals['rows_not_in_published'] - len(differing)
-    if remaining > 0:
-        LOGGER.warning('%d further differing rows not printed', remaining)
     return totals['rows_not_in_published']
 
 

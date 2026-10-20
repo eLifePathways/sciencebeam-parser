@@ -108,22 +108,6 @@ class TestGetPairedRows:
         assert result.unmatched_row_count == 4
         assert result.uncovered_row_count == 2
 
-    def test_should_report_a_document_whose_trailing_rows_all_failed(self):
-        result = get_paired_rows(
-            ['token1'] + ['other'] * 3,
-            _keys('token1 a', 'token2 b'),
-            max_trailing_unmatched=3
-        )
-        assert result.is_document_discarded is True
-
-    def test_should_not_report_a_document_that_recovered_before_the_end(self):
-        result = get_paired_rows(
-            ['token1'] + ['other'] * 3 + ['token2'],
-            _keys('token1 a', 'token2 b'),
-            max_trailing_unmatched=3
-        )
-        assert result.is_document_discarded is False
-
     def test_should_report_counts_for_an_empty_raw_file(self):
         result = get_paired_rows([], _keys('token1 a'))
         assert not result.paired_rows
