@@ -131,6 +131,21 @@ class TestGrobidColumnLayoutFile:
             if layout.extra_columns
         } == {'segmentation'}
 
+    def test_should_declare_whether_each_model_marks_an_other_span_start(self):
+        layout_by_name = load_grobid_column_layout_by_name()
+        marking = {
+            name: layout.marks_other_span_start
+            for name, layout in layout_by_name.items()
+        }
+        # segmentation's published corpus holds no I-<other> at all, and every
+        # other model's holds both forms
+        assert marking['segmentation'] is False
+        assert all(
+            value is True
+            for name, value in marking.items()
+            if name != 'segmentation'
+        ), marking
+
 
 class TestGrobidColumnLayout:
     def test_should_reject_an_unknown_label_slot(self):

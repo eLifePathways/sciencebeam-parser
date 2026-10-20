@@ -51,6 +51,30 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
 }
 
 
+# GROBID's own reader accepts several spellings for the same region, and its
+# corpus uses them -- `div[@type="acknowledgment"]` on 200 lines at 0.9.0. They
+# are read, never written: our generator emits one spelling per region.
+# From TEISegmentationSaxParser.startElement.
+ADDITIONAL_TRAINING_XML_ELEMENT_PATHS_BY_LABEL = {
+    '<acknowledgement>': [
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="acknowledgements"]'],
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="acknowledgment"]'],
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="acknowledgments"]'],
+    ],
+    '<availability>': [
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="data_availability"]'],
+        ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="data-availability"]'],
+    ],
+    '<conflict>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="conflicts"]']],
+    '<contribution>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['div[@type="contributions"]']],
+    '<footnote>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@place="foot"]']],
+    '<headnote>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@place="head"]']],
+    '<marginnote>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@place="margin"]']],
+    '<page>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['pages']],
+    '<toc>': [ROOT_TRAINING_XML_ELEMENT_PATH + ['toc']],
+}
+
+
 def iter_tokens_from_model_data(model_data: LayoutModelData) -> Iterable[LayoutToken]:
     if model_data.layout_token is not None:
         yield model_data.layout_token
@@ -146,6 +170,13 @@ class SegmentationTrainingTeiParser(AbstractTrainingTeiParser):
         super().__init__(
             root_training_xml_element_path=ROOT_TRAINING_XML_ELEMENT_PATH,
             training_xml_element_path_by_label=TRAINING_XML_ELEMENT_PATH_BY_LABEL,
-            use_tei_namespace=False,
-            line_as_token=True
+            line_as_token=True,
+            # GROBID's writer empties its accumulator wherever an element opens or
+            # closes: that ends the line, and the next chunk starts a new span. So a
+            # `<page>` nested in a `<body>` is its own line and the body resumes as a
+            # new span. Its corpus nests where ours writes siblings.
+            flushes_at_element_boundary=True,
+            additional_element_paths_by_label=(
+                ADDITIONAL_TRAINING_XML_ELEMENT_PATHS_BY_LABEL
+            )
         )

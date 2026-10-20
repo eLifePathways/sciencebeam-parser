@@ -45,6 +45,7 @@ class ExclusionReason:
     FIELD_NOT_LOCATED = 'field-not-located'
     FIELD_NOT_IN_REGION = 'field-not-in-region'
     NO_TRAINING_SEQUENCES = 'no-training-sequences'
+    TOO_FEW_MATCHED_ROWS = 'too-few-matched-rows'
     REJECTED_BY_REVIEW = 'rejected-by-review'
     NOT_REVIEWED = 'not-reviewed'
 
@@ -63,6 +64,7 @@ class ModelQualityThresholds:
     model_name: str
     cardinality: Optional[str] = None
     reason: Optional[str] = None
+    min_matched_row_ratio: Optional[float] = None
     min_jats_reference_count: Optional[int] = None
     min_element_ratio: Optional[float] = None
     min_entity_ratio: Optional[float] = None
@@ -188,8 +190,9 @@ def _get_field_reasons(
     return reasons
 
 
-def _get_measurement_reasons(
+def _get_measurement_reasons(  # pylint: disable=too-many-arguments
     thresholds: ModelQualityThresholds,
+    matched_row_ratio: Optional[float],
     jats_status: Optional[str],
     jats_reference_count: Optional[int],
     written: Optional[bool],
@@ -206,6 +209,17 @@ def _get_measurement_reasons(
     """
     reasons: List[str] = []
     detail: Dict[str, Any] = {}
+    # The pairing is checked whatever the model has to count: a raw file and a
+    # TEI that stopped lining up is a different failure from a document that
+    # lost its references, and it can happen to a model with no cardinality.
+    if matched_row_ratio is not None:
+        detail['matched_row_ratio'] = round(matched_row_ratio, 4)
+        if (
+            thresholds.min_matched_row_ratio is not None
+            and matched_row_ratio < thresholds.min_matched_row_ratio
+        ):
+            reasons.append(ExclusionReason.TOO_FEW_MATCHED_ROWS)
+            detail['min_matched_row_ratio'] = thresholds.min_matched_row_ratio
     field_reasons = _get_field_reasons(thresholds, field_counts, detail)
     if not thresholds.has_cardinality_check:
         # `cardinality: none` says which checks a model has, not that it has none.
@@ -298,6 +312,7 @@ def get_quality_verdict(
     entity_element_count: Optional[int] = None,
     entity_start_count: Optional[int] = None,
     sequence_count: int = 0,
+    matched_row_ratio: Optional[float] = None,
     requirement: str = Requirement.MEASURED,
     review: str = ReviewStanding.UNREVIEWED,
     field_counts: Optional[Mapping[str, Mapping[str, int]]] = None,
@@ -305,6 +320,7 @@ def get_quality_verdict(
     """Judge one document, from what was measured and what a reader decided."""
     measured_reasons, detail = _get_measurement_reasons(
         thresholds=thresholds,
+        matched_row_ratio=matched_row_ratio,
         jats_status=jats_status,
         jats_reference_count=jats_reference_count,
         written=written,

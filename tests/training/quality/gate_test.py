@@ -27,6 +27,13 @@ REFERENCE_SEGMENTER_THRESHOLDS = ModelQualityThresholds(
 )
 
 
+PAIRED_THRESHOLDS = ModelQualityThresholds(
+    model_name='segmentation',
+    cardinality='none',
+    min_matched_row_ratio=0.75,
+)
+
+
 def _verdict(**kwargs) -> QualityVerdict:
     return get_quality_verdict(
         document_id=kwargs.pop('document_id', DOCUMENT_ID_1),
@@ -69,6 +76,46 @@ class TestLoadTrainingQualityConfig:
             'citation',
         ]:
             assert config.get_thresholds_for_model(model_name)
+
+
+class TestMatchedRowRatio:
+    def test_should_exclude_a_document_whose_rows_mostly_found_no_line(self):
+        verdict = _verdict(
+            thresholds=PAIRED_THRESHOLDS,
+            sequence_count=1, matched_row_ratio=0.5,
+        )
+        assert verdict.primary_reason == ExclusionReason.TOO_FEW_MATCHED_ROWS
+        assert verdict.detail['matched_row_ratio'] == 0.5
+        assert verdict.detail['min_matched_row_ratio'] == 0.75
+
+    def test_should_keep_a_document_above_the_floor(self):
+        verdict = _verdict(
+            thresholds=PAIRED_THRESHOLDS,
+            sequence_count=1, matched_row_ratio=0.811,
+        )
+        assert not verdict.is_excluded
+        assert verdict.detail['matched_row_ratio'] == 0.811
+
+    def test_should_record_the_ratio_for_a_model_with_no_floor(self):
+        verdict = _verdict(
+            jats_status='ok', jats_reference_count=40, written=True,
+            entity_element_count=40, entity_start_count=40, sequence_count=1,
+            matched_row_ratio=0.5,
+        )
+        assert not verdict.is_excluded
+        assert verdict.detail['matched_row_ratio'] == 0.5
+
+    def test_should_say_nothing_where_no_raw_file_was_paired(self):
+        verdict = _verdict(thresholds=PAIRED_THRESHOLDS, sequence_count=1)
+        assert not verdict.is_excluded
+        assert 'matched_row_ratio' not in verdict.detail
+
+    def test_should_declare_the_floor_for_segmentation_in_the_shipped_config(self):
+        thresholds = load_training_quality_config().get_thresholds_for_model(
+            'segmentation'
+        )
+        # below the worst of GROBID's 925 documents, which pairs at 0.811
+        assert thresholds.min_matched_row_ratio == 0.75
 
 
 class TestGetQualityVerdict:
