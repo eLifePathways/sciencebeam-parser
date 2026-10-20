@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import yaml
@@ -33,6 +33,9 @@ class GrobidColumnLayout:
     generator: str
     label_slot: str
     columns: Sequence[str]
+    # The recorded layout must say so for every model, so the loader demands it;
+    # the common case is the default only for a layout built in code.
+    marks_other_span_start: bool = True
     extra_columns: Sequence[str] = field(default_factory=tuple)
     reference_training_corpus: Sequence[str] = field(default_factory=tuple)
 
@@ -84,6 +87,7 @@ def _get_grobid_column_layout(name: str, layout_config: Mapping) -> GrobidColumn
         name=name,
         generator=layout_config['generator'],
         label_slot=layout_config['label_slot'],
+        marks_other_span_start=layout_config['marks_other_span_start'],
         columns=tuple(layout_config['columns']),
         extra_columns=tuple(layout_config.get('extra_columns') or ()),
         reference_training_corpus=tuple(layout_config.get('reference_training_corpus') or ())
@@ -150,13 +154,14 @@ def get_validated_training_data_feature_indices(
 
 
 def select_feature_columns(
-    features: np.ndarray,
+    features: Union[np.ndarray, Sequence[Sequence[Sequence[str]]]],
     feature_indices: Sequence[int]
 ) -> np.ndarray:
+    feature_list = features.tolist() if isinstance(features, np.ndarray) else features
     return np.asarray([
         [
             [token_features[index] for index in feature_indices]
             for token_features in document_features
         ]
-        for document_features in features.tolist()
+        for document_features in feature_list
     ], dtype=object)

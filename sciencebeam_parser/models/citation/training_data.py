@@ -1,9 +1,10 @@
 import logging
 import re
+from typing import Counter as CounterType, Optional
 
 from lxml import etree
 
-from sciencebeam_parser.document.tei.common import TEI_NS_PREFIX, tei_xpath
+from sciencebeam_parser.document.tei.common import tei_xpath
 from sciencebeam_parser.models.training_data import (
     AbstractTeiTrainingDataGenerator,
     AbstractTrainingTeiParser,
@@ -15,7 +16,8 @@ from sciencebeam_parser.models.citation.extract import (
 from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL
 from sciencebeam_parser.utils.xml import get_text_content
 
-_IDNO_TAG = TEI_NS_PREFIX + 'idno'
+# training TEI element paths carry local names, whichever dialect was written
+_IDNO_TAG = 'idno'
 
 # Matches "388 - 412", "281-282", "1199 -1207" etc.
 _PAGE_RANGE_RE = re.compile(r'^(\S+)\s*[-–]\s*(\S+)$')
@@ -96,15 +98,19 @@ class CitationTrainingTeiParser(AbstractTrainingTeiParser):
             training_xml_element_path_by_label=(
                 TRAINING_XML_ELEMENT_PATH_BY_LABEL
             ),
-            use_tei_namespace=True
         )
 
     def get_label_for_element_path(
         self,
         tei_training_element_path: TeiTrainingElementPath,
-        text: str
+        text: str,
+        unrecognised_path_counts: Optional[CounterType[str]] = None
     ) -> str:
         element_path = tei_training_element_path.get_path()
         if element_path and _is_idno_path_step(element_path[-1]):
             return IDENTIFIER_LABEL
-        return super().get_label_for_element_path(tei_training_element_path, text=text)
+        return super().get_label_for_element_path(
+            tei_training_element_path,
+            text=text,
+            unrecognised_path_counts=unrecognised_path_counts
+        )

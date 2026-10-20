@@ -113,6 +113,8 @@ DEFAULT_LAYOUT_PAGE_META = LayoutPageMeta()
 class LayoutLineMeta(NamedTuple):
     line_id: int = -1
     page_meta: LayoutPageMeta = DEFAULT_LAYOUT_PAGE_META
+    text: Optional[str] = None
+    """The whole line, where it is known: the training TEI parser reads it."""
 
 
 DEFAULT_LAYOUT_LINE_META = LayoutLineMeta()
