@@ -40,10 +40,13 @@ class JatsFieldNames:
     REFERENCE_LIST_TITLE = 'reference_list_title'
     REFERENCE = 'reference'
     PAGE_NO = 'page_no'
+    EMAIL = 'email'
+    ORCID = 'orcid'
 
 
 class JatsSubFieldNames:
     AUTHOR_AFF_ADDR = 'author_aff_addr'
+    AUTHOR_NAME = 'author-name'
     REFERENCE_AUTHOR = 'reference-author'
     REFERENCE_ARTICLE_TITLE = 'reference-article-title'
     REFERENCE_SOURCE = 'reference-source'
@@ -110,6 +113,12 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.REFERENCE_LIST_TITLE:   '<references>',
     JatsFieldNames.REFERENCE:              '<references>',
     JatsFieldNames.PAGE_NO:                '<page>',
+    # An email and an ORCID print inside the author block, so a line carrying one
+    # is front matter: it claims two contact lines on `PPR459453` that read as
+    # body without it, and an affiliation line on `PPR459468` that reads as a
+    # page foot.
+    JatsFieldNames.EMAIL:                  '<header>',
+    JatsFieldNames.ORCID:                  '<header>',
 }
 
 # ── Header model label mapping ────────────────────────────────────────────────
@@ -119,9 +128,22 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.KEYWORDS:         '<keyword>',
     JatsFieldNames.AUTHOR:           '<author>',
     JatsFieldNames.AUTHOR_AFF:       '<affiliation>',
-    JatsFieldNames.AUTHOR_NOTES:     '<note>',
-    JatsFieldNames.ARTICLE_NOTES:    '<note>',
-    JatsFieldNames.MANUSCRIPT_TYPE:  '<note>',
+    # `<note>` is not mapped to, and nothing should be: the TEI writes it as bare
+    # text under `<front>`, exactly as it writes background, and the parser reads
+    # text with no element of its own back as `O`.  A field mapped to it is
+    # located, counted as marked, and taught as background.  GROBID writes a bare
+    # `<note>` on 1 of its 835 documents, so there is nothing to agree with here
+    # either -- a corresponding author's name, email and address take their own
+    # labels there, and the words introducing them are `<other>`.
+    JatsFieldNames.COPYRIGHT:        '<copyright>',
+    JatsFieldNames.FUNDING:          '<funding>',
+    JatsFieldNames.EMAIL:            '<email>',
+    JatsFieldNames.ORCID:            '<pubnum>',
+    # A statement's own heading is not part of it: GROBID opens none of its 115
+    # conflict notes, 11 contribution notes or 878 abstracts with one, which is
+    # why `keywords_title` is extracted for segmentation and left unmapped here.
+    JatsFieldNames.CONFLICT_SECTION_PARAGRAPH:     '<conflict>',
+    JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH: '<contribution>',
 }
 
 # ── Fulltext model label mapping ──────────────────────────────────────────────

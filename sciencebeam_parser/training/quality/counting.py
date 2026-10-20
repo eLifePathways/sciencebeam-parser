@@ -6,7 +6,7 @@ references.
 """
 import logging
 from typing import (
-    AbstractSet, Dict, FrozenSet, Iterable, Iterator, Mapping, Optional, Sequence
+    AbstractSet, Dict, FrozenSet, Iterable, Iterator, Mapping, Optional, Sequence, Set
 )
 
 from lxml import etree
@@ -140,6 +140,30 @@ def count_citation_labels(
     return counts
 
 
+def _get_located_instances_by_field(
+    annotated: JatsAnnotatedLayoutDocument
+) -> Dict[str, Set[int]]:
+    instances_by_field: Dict[str, Set[int]] = {}
+    for field_name, _, instance_id in annotated.token_label_by_id.values():
+        instances_by_field.setdefault(field_name, set()).add(instance_id)
+    return instances_by_field
+
+
+def count_placed_values(instance_ids: AbstractSet[int]) -> int:
+    """How many of a field's declared values these placements account for.
+
+    The aligner numbers an instance per value it matches, and leaves 0 on a
+    token it reached through a sub-field, since the numbers are assigned per
+    parent match. A byline matched name by name is therefore one value placed
+    and not none -- and where the merged value also matched somewhere, the two
+    are the same declared value rather than two of them.
+    """
+    numbered = {instance_id for instance_id in instance_ids if instance_id}
+    if numbered:
+        return len(numbered)
+    return 1 if instance_ids else 0
+
+
 def count_field_instances(
     declared_count_by_field: Mapping[str, int],
     annotated: JatsAnnotatedLayoutDocument,
@@ -157,10 +181,15 @@ def count_field_instances(
     so they are monotone -- an element count is not, because the TEI writer opens
     a new element wherever another label interleaves.
 
+    A value the aligner reached only through a sub-field carries no number of its
+    own, since the numbers are assigned per parent match. It still counts: what
+    `located` answers is whether the field was placed at all.
+
     A field outside `labelled_fields` carries no `marked` count at all rather
     than a zero, since the model is not being taught it and a zero would read as
     a loss.
     """
+    located_instances_by_field = _get_located_instances_by_field(annotated)
     marked_instances_by_field: Dict[str, set] = {}
     for model_data_list in model_data_list_list:
         for model_data in model_data_list:
@@ -180,10 +209,12 @@ def count_field_instances(
     for field_name, declared in declared_count_by_field.items():
         entry = {
             'declared': declared,
-            'located': annotated.get_aligned_instance_count(field_name),
+            'located': count_placed_values(located_instances_by_field.get(field_name, set())),
         }
         if field_name in labelled_fields:
-            entry['marked'] = len(marked_instances_by_field.get(field_name, ()))
+            entry['marked'] = count_placed_values(
+                marked_instances_by_field.get(field_name, set())
+            )
         counts[field_name] = entry
     return counts
 

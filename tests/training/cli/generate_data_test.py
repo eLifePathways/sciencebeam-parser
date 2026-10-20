@@ -22,7 +22,7 @@ from sciencebeam_parser.document.layout_document import (
     join_layout_tokens,
 )
 from sciencebeam_parser.config.config import UnknownProfileError
-from sciencebeam_parser.models.data import LayoutModelData
+from sciencebeam_parser.models.data import LabeledLayoutModelData, LayoutModelData
 from sciencebeam_parser.document.tei.common import get_tei_xpath_text_content_list
 from sciencebeam_parser.models.data import DEFAULT_DOCUMENT_FEATURES_CONTEXT
 from sciencebeam_parser.models.training_data import TeiTrainingDataGenerator
@@ -54,6 +54,8 @@ from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLay
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
 import sciencebeam_parser.training.cli.generate_data as generate_data_module
 from sciencebeam_parser.training.cli.generate_data import (
+    HEADER_LABELS_BANDED_PER_VALUE,
+    bridge_punctuation_between_same_label,
     CitationModelTrainingDataGenerator,
     HeaderModelTrainingDataGenerator,
     ModelResultCache,
@@ -740,6 +742,7 @@ class TestGenerateTrainingDataForLayoutDocument:
             '<abstract><p>An abstract the page does not print</p></abstract>'
             '<permissions><copyright-statement>Copyright, not printed'
             '</copyright-statement></permissions>'
+            '<fpage>1</fpage>'
             '</article-meta></front></article>',
             encoding='utf-8'
         )
@@ -765,9 +768,12 @@ class TestGenerateTrainingDataForLayoutDocument:
         assert field_counts[JatsFieldNames.ABSTRACT] == {
             'declared': 1, 'located': 0, 'marked': 0
         }
-        # The header model has no label for it, so it carries no marked count at
-        # all rather than a zero that would read as a loss.
-        assert field_counts[JatsFieldNames.COPYRIGHT] == {'declared': 1, 'located': 0}
+        assert field_counts[JatsFieldNames.COPYRIGHT] == {
+            'declared': 1, 'located': 0, 'marked': 0
+        }
+        # The header model has no label for a page number, so it carries no marked
+        # count at all rather than a zero that would read as a loss.
+        assert 'marked' not in field_counts[JatsFieldNames.PAGE_NO]
 
     def test_should_not_count_header_fields_without_a_jats(
         self,
@@ -1523,6 +1529,58 @@ class TestHeaderJatsLabelFn:
             for token_index in range(len(line.tokens))
         ] == ['B-<title>', 'O', 'O', 'B-<author>']
 
+    def test_should_label_the_statements_the_front_matter_prints(self):
+        line = LayoutLine.for_text('Copyright Grant')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.COPYRIGHT, instance_id=1)
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.FUNDING, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<copyright>', 'B-<funding>']
+
+    def test_should_keep_two_values_of_one_statement_in_one_element(self):
+        line = LayoutLine.for_text('Copyright Licence')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.COPYRIGHT, instance_id=1)
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.COPYRIGHT, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<copyright>', 'I-<copyright>']
+
+    def test_should_start_a_new_element_for_each_title(self):
+        line = LayoutLine.for_text('Título Title')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.TITLE, instance_id=1)
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.TITLE, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<title>', 'B-<title>']
+
+    def test_should_start_a_new_element_for_each_affiliation(self):
+        line = LayoutLine.for_text('First Second')
+        header_doc = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        annotated = JatsAnnotatedLayoutDocument(layout_document=header_doc)
+        annotated.set_token_label(line.tokens[0], JatsFieldNames.AUTHOR_AFF, instance_id=1)
+        annotated.set_token_label(line.tokens[1], JatsFieldNames.AUTHOR_AFF, instance_id=2)
+        label_fn = HeaderModelTrainingDataGenerator().get_jats_label_fn()
+        assert label_fn is not None
+        assert [
+            label_fn(annotated, {}, _make_md(line, token_index))
+            for token_index in range(len(line.tokens))
+        ] == ['B-<affiliation>', 'B-<affiliation>']
+
 
 @log_on_exception
 class TestReferenceSegmenterJatsLabelFn:
@@ -1861,3 +1919,51 @@ class TestGetGenerationConfig:
     def test_should_fail_on_an_unknown_profile(self):
         with pytest.raises(UnknownProfileError):
             get_generation_config('not-a-profile')
+
+
+@log_on_exception
+class TestBridgePunctuationBetweenSameLabel:
+    def _labels(self, texts, labels):
+        line = LayoutLine.for_text(' '.join(texts))
+        model_data_list = [
+            LabeledLayoutModelData(
+                data_line='token', label=label, layout_token=token
+            )
+            for token, label in zip(line.tokens, labels)
+        ]
+        return [
+            md.label for md in bridge_punctuation_between_same_label(
+                model_data_list, HEADER_LABELS_BANDED_PER_VALUE
+            )
+        ]
+
+    def test_should_take_a_stop_the_same_label_resumes_after(self):
+        assert self._labels(
+            ['Copyright', '.', 'Licence'],
+            ['B-<copyright>', 'O', 'B-<copyright>']
+        ) == ['B-<copyright>', 'I-<copyright>', 'I-<copyright>']
+
+    def test_should_leave_a_stop_nothing_resumes_after(self):
+        # The bracket opening a version note under a title.
+        assert self._labels(
+            ['Title', '[', 'version'],
+            ['B-<title>', 'O', 'O']
+        ) == ['B-<title>', 'O', 'O']
+
+    def test_should_leave_a_stop_another_label_follows(self):
+        assert self._labels(
+            ['Copyright', '.', 'Smith'],
+            ['B-<copyright>', 'O', 'B-<author>']
+        ) == ['B-<copyright>', 'O', 'B-<author>']
+
+    def test_should_not_claim_a_word_between_two_values(self):
+        assert self._labels(
+            ['Copyright', 'and', 'Licence'],
+            ['B-<copyright>', 'O', 'B-<copyright>']
+        ) == ['B-<copyright>', 'O', 'B-<copyright>']
+
+    def test_should_keep_two_titles_apart_whatever_is_printed_between_them(self):
+        assert self._labels(
+            ['Titulo', '.', 'Title'],
+            ['B-<title>', 'O', 'B-<title>']
+        ) == ['B-<title>', 'O', 'B-<title>']

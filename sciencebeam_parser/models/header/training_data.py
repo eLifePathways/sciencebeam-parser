@@ -40,6 +40,8 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL_WITHOUT_ALIAS = {
     '<copyright>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="copyright"]'],
     '<funding>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="funding"]'],
     '<doctype>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="doctype"]'],
+    '<conflict>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="conflict"]'],
+    '<contribution>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="contribution"]'],
     '<group>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="group"]']
 }
 
@@ -56,9 +58,12 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
 
 # Each new <affiliation> (B- prefix) resets to the front level so it gets its own
 # <byline> wrapper rather than being appended to the author byline or a previous
-# affiliation byline.
+# affiliation byline.  A title does the same for <docTitle>: a document printing
+# its title in two languages is 11 of GROBID's 835, and every one of them writes
+# two <docTitle> blocks of one <titlePart> rather than two parts in one block.
 RESET_TRAINING_XML_ELEMENT_PATH_BY_LABEL = {
     '<affiliation>': ROOT_TRAINING_XML_ELEMENT_PATH,
+    '<title>': ROOT_TRAINING_XML_ELEMENT_PATH,
 }
 
 
