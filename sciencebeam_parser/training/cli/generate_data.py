@@ -1425,6 +1425,32 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                     return entry[2]
             return None
 
+        def _get_line_owner_instance_id(
+            line: LayoutLine,
+            annotated: JatsAnnotatedLayoutDocument,
+            open_instance_id: int,
+        ) -> Optional[int]:
+            """The instance holding most of a line, where that is not the open entry.
+
+            A reference whose first words the aligner gave to the reference above it
+            still owns the rest of its line.  An instance appearing as a few tokens
+            inside a reference's tail -- a year, a page range matched out of its own
+            entry -- does not, and the line stays where it is.
+
+            The caller asks this only of a line the open entry begins, so the open
+            entry holds a word here: a line it holds nothing of is one it carries on
+            over rather than one whose opening words were taken from it.
+            """
+            counts: Dict[int, int] = {}
+            for token in line.tokens:
+                entry = annotated.token_label_by_id.get(id(token))
+                if entry and entry[0] == JatsFieldNames.REFERENCE:
+                    counts[entry[2]] = counts.get(entry[2], 0) + 1
+            open_count = counts.pop(open_instance_id, 0)
+            if not counts or sum(counts.values()) <= open_count:
+                return None
+            return max(counts.items(), key=lambda item: item[1])[0]
+
         def fn(  # pylint: disable=too-many-return-statements
             annotated: JatsAnnotatedLayoutDocument,
             _seg_labels: Dict[int, str],
@@ -1471,6 +1497,25 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                 # before opening the new <bibl>), which is how the <label>
                 # subelement lands in the correct <bibl>.
                 return 'B-<label>' if starts_with_label else 'B-<reference>'
+            # The line's first marked token says the entry above it continues, but
+            # the rest of the line belongs to the next reference: the aligner took
+            # the opening words of one reference into the one before it, and the
+            # page is the better witness to where the line's reference begins.
+            if (
+                is_line_start
+                and last_instance_id is not None
+                and line_instance_id == last_instance_id
+            ):
+                owner_instance_id = _get_line_owner_instance_id(
+                    line, annotated, last_instance_id
+                )
+                if (
+                    owner_instance_id is not None
+                    and owner_instance_id not in absorbed_instance_ids
+                ):
+                    last_instance_id = owner_instance_id
+                    entry_has_content = False
+                    return 'B-<reference>'
             if entry and entry[0] == JatsFieldNames.REFERENCE:
                 cur_instance_id = entry[2]
                 is_label = entry[1] == JatsSubFieldNames.REFERENCE_LABEL
