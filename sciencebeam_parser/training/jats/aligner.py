@@ -1984,7 +1984,21 @@ class LayoutDocumentJatsAligner:
                 continue
             matched_count += 1
             a_start, a_end, block_ranges = match_range
-            last_match_end = max(last_match_end, a_end)
+            # A document written in more than one language prints a title and an
+            # abstract once per language, and the JATS declares the variants in
+            # neither the page's order nor a consistent one: one document prints
+            # each language's title, abstract and keywords together, the next
+            # prints both titles and then both abstracts.  The cursor only moves
+            # forward, so whichever variant is read last puts the others out of
+            # reach.  A repeated anchor leaves it where it is; the first one
+            # still moves it, which is what places the front matter.
+            is_repeated_anchor = (
+                fv.sub_field_name is None
+                and fv.field_name in _ANCHOR_FIELDS
+                and fv.field_name in instance_by_field
+            )
+            if not is_repeated_anchor:
+                last_match_end = max(last_match_end, a_end)
             if fv.field_name in _POST_BODY_FIELDS:
                 post_body_text_end[fv.text] = max(
                     post_body_text_end.get(fv.text, 0), a_end
