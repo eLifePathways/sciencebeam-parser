@@ -1310,6 +1310,7 @@ def _search_range(  # pylint: disable=too-many-locals
     reference_floor: int,
     parent_match_by_field: Dict[str, Tuple[int, int, int]],
     post_body_text_end: Optional[Dict[str, int]] = None,
+    anchor_match_end_by_field: Optional[Dict[str, int]] = None,
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
     if is_contained_in_parent_match(fv, parent_match_by_field):
@@ -1381,7 +1382,9 @@ def _search_range(  # pylint: disable=too-many-locals
                 (post_body_text_end or {}).get(fv.text, 0),
             )
         else:
-            start = max(0, last_match_end - 200)
+            own_end = (anchor_match_end_by_field or {}).get(fv.field_name)
+            base = own_end if own_end is not None else last_match_end
+            start = max(0, base - 200)
         return start, None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
@@ -1772,6 +1775,7 @@ class LayoutDocumentJatsAligner:
         ref_id_subfield_end: Dict[str, int] = {}
         # End of the previous match of each distinct post-body value text.
         post_body_text_end: Dict[str, int] = {}
+        anchor_match_end_by_field: Dict[str, int] = {}
         # Where the references were placed, masked out of the post-body search.
         reference_match_ranges: List[Tuple[int, int]] = []
 
@@ -1781,6 +1785,7 @@ class LayoutDocumentJatsAligner:
                 fv, last_match_end, body_floor, body_content_end,
                 front_matter_end, keywords_floor, reference_floor,
                 parent_match_by_field, post_body_text_end,
+                anchor_match_end_by_field,
             )
             window = expected_window.get(value_index)
             if window is not None:
@@ -1997,6 +2002,10 @@ class LayoutDocumentJatsAligner:
                 and fv.field_name in _ANCHOR_FIELDS
                 and fv.field_name in instance_by_field
             )
+            if fv.sub_field_name is None and fv.field_name in _ANCHOR_FIELDS:
+                anchor_match_end_by_field[fv.field_name] = max(
+                    anchor_match_end_by_field.get(fv.field_name, 0), a_end
+                )
             if not is_repeated_anchor:
                 last_match_end = max(last_match_end, a_end)
             if fv.field_name in _POST_BODY_FIELDS:
