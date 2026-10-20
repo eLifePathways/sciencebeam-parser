@@ -89,6 +89,10 @@ ones the biorxiv models were trained on. A model entry says which it was trained
 `feature_flavour` (`sciencebeam`, the default, or `grobid`); `delft_hub` sets `grobid` on its
 header model. So far only the header model reads it.
 
+A model directory can hold its weights in more than one file. A delft model entry may name the
+one to load with `weight_file` (for instance `model.safetensors`); left out, the loader's
+default is used.
+
 Its header model uses the glove-840B word embeddings. They are read from an LMDB index at
 `data/db/glove-840B`, relative to the working directory; when there is none, the vectors are
 downloaded (1.8GB) and indexed on first load, which takes a while. An index built by DeLFT can be

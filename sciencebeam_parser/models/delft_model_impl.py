@@ -17,9 +17,16 @@ REGISTRY_REGISTRY_PATH = 'delft/resources-registry.json'
 
 
 class DelftModelImpl(ModelImpl):
-    def __init__(self, model_url: str, app_context: AppContext):
+    def __init__(
+        self,
+        model_url: str,
+        app_context: AppContext,
+        weight_file: Optional[str] = None
+    ):
         self.model_url = model_url
         self.app_context = app_context
+        # the weights to load, when the model directory holds more than one
+        self.weight_file = weight_file
         self._lazy_model = LazyLoaded[Sequence](self._load_model)
 
     def __repr__(self) -> str:
@@ -36,7 +43,7 @@ class DelftModelImpl(ModelImpl):
             'dummy-model',
             embedding_manager=embedding_manager
         )
-        model.load_from(self.model_url)
+        model.load_from(self.model_url, weight_file=self.weight_file)
         LOGGER.info('loaded delft model: %r', self.model_url)
         return model
 

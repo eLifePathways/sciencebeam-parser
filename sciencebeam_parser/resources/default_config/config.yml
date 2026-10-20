@@ -361,6 +361,10 @@ sequence_model_profiles:
   # not resolve.)
   # A model GROBID trained expects GROBID's features rather than the ones the
   # biorxiv models were trained on, which `feature_flavour: grobid` selects.
+  # `weight_file` names the weights to load where a model directory holds more
+  # than one: the header and affiliation-address directories carry the
+  # retrained weights as `model.safetensors`, beside a `model_weights.pt` left
+  # from the model before, which no longer matches their preprocessor.
   # The header is the glove variant: the character-only one runs titles on into
   # the next line ("Author list:", "Running Title ...") on English papers, which
   # word embeddings largely fix. It needs the glove-840B vectors, found as an LMDB
@@ -368,12 +372,14 @@ sequence_model_profiles:
   delft_hub:
     extends: grobid_crf_0_9_0
     header:
-      path: 'hf://sciencialab/grobid-model-header@a2b0279ec0605ce8a835a45c9cf3c093b24d181d/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-header@dca8c2b5338300511dc254a73aae987c014e6cca/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
       engine: 'delft'
+      weight_file: 'model.safetensors'
       feature_flavour: 'grobid'
     affiliation_address:
-      path: 'hf://sciencialab/grobid-model-affiliation-address@3656dad21c4f292234c7000458a9a4a33462ddad/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
+      path: 'hf://sciencialab/grobid-model-affiliation-address@fcb11e276cfe6be53f84e028d066c295ecb57773/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
       engine: 'delft'
+      weight_file: 'model.safetensors'
     citation:
       path: 'hf://sciencialab/grobid-model-citation@3db81cd58276cb3a446bbb274c610d1233b7ce8c/grobid-citation-BidLSTM_CRF_FEATURES-no_embeddings'
       engine: 'delft'
