@@ -1387,6 +1387,7 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
     def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
         line_first_instance_cache: Dict[int, Optional[int]] = {}
         last_instance_id: Optional[int] = None
+        entry_has_content = False
         # Instances that began part-way along a line and were taken into the entry
         # already open there.  Remembered because the rest of such an instance runs
         # on over the lines below, and each would otherwise open the entry the line
@@ -1407,7 +1408,7 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
             _seg_labels: Dict[int, str],
             md: LayoutModelData,
         ) -> Optional[str]:
-            nonlocal last_instance_id
+            nonlocal last_instance_id, entry_has_content
             token = md.layout_token
             line = md.layout_line
             if line is None or token is None:
@@ -1437,6 +1438,7 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                     and entry[0] == JatsFieldNames.REFERENCE
                     and entry[1] == JatsSubFieldNames.REFERENCE_LABEL
                 )
+                entry_has_content = False
                 # B-<label> also fires the reset mechanism (backs up to <listBibl>
                 # before opening the new <bibl>), which is how the <label>
                 # subelement lands in the correct <bibl>.
@@ -1444,18 +1446,30 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
             if entry and entry[0] == JatsFieldNames.REFERENCE:
                 cur_instance_id = entry[2]
                 is_label = entry[1] == JatsSubFieldNames.REFERENCE_LABEL
+                # The number a list prints in front of a reference is where that
+                # reference starts, whatever the JATS was able to match: one the
+                # JATS leaves out shifts every instance after it, and the entry the
+                # page opens here would otherwise run on inside the one above.
+                if is_label and is_line_start and entry_has_content:
+                    last_instance_id = cur_instance_id
+                    entry_has_content = False
+                    return 'B-<label>'
                 if cur_instance_id != last_instance_id and last_instance_id is not None:
                     # Part-way along a line: the page gives no reason to start an
                     # entry here, so the instance joins the one already open and is
                     # remembered, which keeps its later lines from opening one.
                     absorbed_instance_ids.add(cur_instance_id)
-                    return '<label>' if is_label else '<reference>'
-                last_instance_id = cur_instance_id
+                else:
+                    last_instance_id = cur_instance_id
+                entry_has_content = True
                 return '<label>' if is_label else '<reference>'
             # Unlabeled token: expand to <reference> if the line has any reference
             # tokens.  A line with none (e.g. a "DOI:" prefix before the URL) continues
             # the current bibl rather than breaking out to listBibl level.
-            return '<reference>' if last_instance_id is not None else None
+            if last_instance_id is None:
+                return None
+            entry_has_content = True
+            return '<reference>'
 
         return fn
 
