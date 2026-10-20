@@ -255,7 +255,7 @@ sequence_model_profiles:
   delft_seg_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     segmentation:
-      path: 'gs://sciencebeam-v2-models/delft/segmentation/models/2026-10-16_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore_b50_flex/segmentation'
+      path: 'gs://sciencebeam-v2-models/delft/segmentation/models/2026-10-16_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore_b50_flex_line_text/segmentation'
       engine: 'delft'
   # Every retrained model of an engine at once. The pair above it --
   # wapiti_references_scielo_preprints_ore and delft_references_scielo_preprints_ore -- stays the
