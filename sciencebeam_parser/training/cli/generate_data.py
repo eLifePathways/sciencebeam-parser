@@ -1385,6 +1385,57 @@ _REFERENCE_LIST_HEADING_PATTERN = re.compile(
 _REFERENCE_LIST_HEADING_MAX_TOKENS = 4
 
 
+def get_line_first_ref_instance_id(
+    line: LayoutLine, annotated: JatsAnnotatedLayoutDocument
+) -> Optional[int]:
+    for token in line.tokens:
+        entry = annotated.token_label_by_id.get(id(token))
+        if entry and entry[0] == JatsFieldNames.REFERENCE:
+            return entry[2]
+    return None
+
+
+def get_line_owner_instance_id(
+    line: LayoutLine,
+    annotated: JatsAnnotatedLayoutDocument,
+    open_instance_id: int,
+) -> Optional[int]:
+    """The instance holding most of a line, where that is not the open entry.
+
+    A reference whose first words the aligner gave to the reference above it
+    still owns the rest of its line.  An instance appearing as a few tokens
+    inside a reference's tail -- a year, a page range matched out of its own
+    entry -- does not, and the line stays where it is.
+
+    The caller asks this only of a line the open entry begins, so the open
+    entry holds a word here: a line it holds nothing of is one it carries on
+    over rather than one whose opening words were taken from it.
+    """
+    counts: Dict[int, int] = {}
+    for token in line.tokens:
+        entry = annotated.token_label_by_id.get(id(token))
+        if entry and entry[0] == JatsFieldNames.REFERENCE:
+            counts[entry[2]] = counts.get(entry[2], 0) + 1
+    open_count = counts.pop(open_instance_id, 0)
+    if not counts or sum(counts.values()) <= open_count:
+        return None
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
+def get_printed_label_token_count(line: LayoutLine) -> int:
+    """How many of a line's opening tokens are the number the list prints.
+
+    The bracket belongs to the label and the dot after a bare number does not,
+    which is the convention GROBID's own corpus keeps for each style.
+    """
+    texts = [token.text for token in line.tokens[:3]]
+    if len(texts) == 3 and texts[0] == '[' and texts[1].isdigit() and texts[2] == ']':
+        return 3
+    if len(texts) >= 2 and texts[0].isdigit() and texts[1] in {'.', ')', '-'}:
+        return 1
+    return 0
+
+
 def is_reference_list_heading(line: LayoutLine) -> bool:
     tokens = list(line.tokens)
     if not tokens or len(tokens) > _REFERENCE_LIST_HEADING_MAX_TOKENS:
@@ -1410,53 +1461,37 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
         line_first_instance_cache: Dict[int, Optional[int]] = {}
         last_instance_id: Optional[int] = None
         entry_has_content = False
+        # Tokens still to come of a printed label the aligner did not mark, counted
+        # down so the rest of "[ 27 ]" joins the "[" the entry opened on.
+        pending_label_tokens = 0
         # Instances that began part-way along a line and were taken into the entry
         # already open there.  Remembered because the rest of such an instance runs
         # on over the lines below, and each would otherwise open the entry the line
         # it started on was refused.
         absorbed_instance_ids: Set[int] = set()
 
-        def _get_line_first_ref_instance_id(
-            line: LayoutLine, annotated: JatsAnnotatedLayoutDocument
-        ) -> Optional[int]:
-            for token in line.tokens:
-                entry = annotated.token_label_by_id.get(id(token))
-                if entry and entry[0] == JatsFieldNames.REFERENCE:
-                    return entry[2]
-            return None
+        def _open_entry(line: LayoutLine, starts_with_label: bool) -> str:
+            """The label opening an entry, taking in a printed number if there is one.
 
-        def _get_line_owner_instance_id(
-            line: LayoutLine,
-            annotated: JatsAnnotatedLayoutDocument,
-            open_instance_id: int,
-        ) -> Optional[int]:
-            """The instance holding most of a line, where that is not the open entry.
-
-            A reference whose first words the aligner gave to the reference above it
-            still owns the rest of its line.  An instance appearing as a few tokens
-            inside a reference's tail -- a year, a page range matched out of its own
-            entry -- does not, and the line stays where it is.
-
-            The caller asks this only of a line the open entry begins, so the open
-            entry holds a word here: a line it holds nothing of is one it carries on
-            over rather than one whose opening words were taken from it.
+            The aligner marks the number for all but a couple of entries in the
+            corpus; where it did not, the page still printed one, and an entry that
+            drops it teaches a reference beginning with its own number.
             """
-            counts: Dict[int, int] = {}
-            for token in line.tokens:
-                entry = annotated.token_label_by_id.get(id(token))
-                if entry and entry[0] == JatsFieldNames.REFERENCE:
-                    counts[entry[2]] = counts.get(entry[2], 0) + 1
-            open_count = counts.pop(open_instance_id, 0)
-            if not counts or sum(counts.values()) <= open_count:
-                return None
-            return max(counts.items(), key=lambda item: item[1])[0]
+            nonlocal pending_label_tokens
+            if starts_with_label:
+                return 'B-<label>'
+            printed_label_token_count = get_printed_label_token_count(line)
+            if not printed_label_token_count:
+                return 'B-<reference>'
+            pending_label_tokens = printed_label_token_count - 1
+            return 'B-<label>'
 
         def fn(  # pylint: disable=too-many-return-statements
             annotated: JatsAnnotatedLayoutDocument,
             _seg_labels: Dict[int, str],
             md: LayoutModelData,
         ) -> Optional[str]:
-            nonlocal last_instance_id, entry_has_content
+            nonlocal last_instance_id, entry_has_content, pending_label_tokens
             token = md.layout_token
             line = md.layout_line
             if line is None or token is None:
@@ -1469,12 +1504,16 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                 return None
             line_id = id(line)
             if line_id not in line_first_instance_cache:
-                line_first_instance_cache[line_id] = _get_line_first_ref_instance_id(
+                line_first_instance_cache[line_id] = get_line_first_ref_instance_id(
                     line, annotated
                 )
             line_instance_id = line_first_instance_cache[line_id]
             entry = annotated.token_label_by_id.get(id(token))
             is_line_start = bool(line.tokens) and id(line.tokens[0]) == id(token)
+            if pending_label_tokens and not is_line_start:
+                pending_label_tokens -= 1
+                entry_has_content = True
+                return '<label>'
             # A reference list is read line by line, so an entry begins where its line
             # begins.  Opening it at the first token the aligner happened to mark cuts
             # whatever the page prints before that token onto the entry before it --
@@ -1496,7 +1535,7 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                 # B-<label> also fires the reset mechanism (backs up to <listBibl>
                 # before opening the new <bibl>), which is how the <label>
                 # subelement lands in the correct <bibl>.
-                return 'B-<label>' if starts_with_label else 'B-<reference>'
+                return _open_entry(line, starts_with_label)
             # The line's first marked token says the entry above it continues, but
             # the rest of the line belongs to the next reference: the aligner took
             # the opening words of one reference into the one before it, and the
@@ -1506,7 +1545,7 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                 and last_instance_id is not None
                 and line_instance_id == last_instance_id
             ):
-                owner_instance_id = _get_line_owner_instance_id(
+                owner_instance_id = get_line_owner_instance_id(
                     line, annotated, last_instance_id
                 )
                 if (
@@ -1515,7 +1554,7 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                 ):
                     last_instance_id = owner_instance_id
                     entry_has_content = False
-                    return 'B-<reference>'
+                    return _open_entry(line, False)
             if entry and entry[0] == JatsFieldNames.REFERENCE:
                 cur_instance_id = entry[2]
                 is_label = entry[1] == JatsSubFieldNames.REFERENCE_LABEL

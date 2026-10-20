@@ -1679,10 +1679,10 @@ class TestReferenceSegmenterJatsLabelFn:
         for idx in range(1, len(line2.tokens)):
             assert label_fn(annotated, {}, _make_md(line2, idx)) == '<reference>'
 
-    def test_unlabeled_token_on_new_instance_line_emits_b_reference(self):
+    def test_unlabeled_token_on_new_instance_line_opens_the_entry(self):
         # "9. Moraes R." — "9." is unlabeled but "Moraes R." is annotated as instance 2.
-        # The label fn should emit 'B-<reference>' for "9." so it claims the whole line
-        # for the new bibl, rather than appending "9." to the previous bibl.
+        # The entry opens on "9." rather than appending it to the previous bibl, and
+        # the number the list printed is taken as the label the JATS did not give.
         line1 = LayoutLine.for_text('https://some.url/paper')
         line2 = LayoutLine.for_text('9. Moraes R. Title')
         refs_doc = LayoutDocument(pages=[LayoutPage(blocks=[
@@ -1700,9 +1700,11 @@ class TestReferenceSegmenterJatsLabelFn:
 
         for idx in range(len(line1.tokens)):
             label_fn(annotated, {}, _make_md(line1, idx))  # advance state
-        # "9." is unlabeled but its line's first annotated token is instance 2 → B-prefix
-        assert label_fn(annotated, {}, _make_md(line2, 0)) == 'B-<reference>'
-        # Remaining tokens (annotated as instance 2) → same instance, no transition
+        # "9." is unlabeled but its line's first annotated token is instance 2 → B-prefix,
+        # and "9" is the printed label, so the entry opens as B-<label>
+        assert label_fn(annotated, {}, _make_md(line2, 0)) == 'B-<label>'
+        # The separator and the rest of the line belong to the reference, which is the
+        # convention GROBID's numbered lists keep.
         for idx in range(1, len(line2.tokens)):
             assert label_fn(annotated, {}, _make_md(line2, idx)) == '<reference>'
 
