@@ -68,7 +68,10 @@ class TestAuthor:
             '</contrib-group>'
             '</article-meta></front></article>'
         )
-        authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
+        authors = [
+            v for v in fvs
+            if v.field_name == JatsFieldNames.AUTHOR and v.sub_field_name is None
+        ]
         assert len(authors) == 1
         assert authors[0].text == 'John Smith'
 
@@ -90,9 +93,32 @@ class TestAuthor:
             '</contrib-group>'
             '</article-meta></front></article>'
         )
-        authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
+        authors = [
+            v for v in fvs
+            if v.field_name == JatsFieldNames.AUTHOR and v.sub_field_name is None
+        ]
         assert len(authors) == 1
         assert authors[0].text == 'John Smith 1 Mary Jones 1 *'
+
+    def test_offers_each_author_name_beside_the_merged_byline(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<contrib-group>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Smith</surname><given-names>John</given-names></name>'
+            '<xref ref-type="aff">1</xref>'
+            '</contrib>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Jones</surname><given-names>Mary</given-names></name>'
+            '</contrib>'
+            '</contrib-group>'
+            '</article-meta></front></article>'
+        )
+        # The marker belongs to the run and not to a name printed on its own.
+        assert [
+            v.text for v in fvs
+            if v.sub_field_name == JatsSubFieldNames.AUTHOR_NAME
+        ] == ['John Smith', 'Mary Jones']
 
     def test_author_multiple_contrib_groups_emit_separately(self):
         fvs = _field_values_for(
@@ -109,7 +135,10 @@ class TestAuthor:
             '</contrib-group>'
             '</article-meta></front></article>'
         )
-        authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
+        authors = [
+            v for v in fvs
+            if v.field_name == JatsFieldNames.AUTHOR and v.sub_field_name is None
+        ]
         assert len(authors) == 2
         assert authors[0].text == 'John Smith'
         assert authors[1].text == 'Mary Jones'

@@ -44,6 +44,7 @@ class JatsFieldNames:
 
 class JatsSubFieldNames:
     AUTHOR_AFF_ADDR = 'author_aff_addr'
+    AUTHOR_NAME = 'author-name'
     REFERENCE_AUTHOR = 'reference-author'
     REFERENCE_ARTICLE_TITLE = 'reference-article-title'
     REFERENCE_SOURCE = 'reference-source'
