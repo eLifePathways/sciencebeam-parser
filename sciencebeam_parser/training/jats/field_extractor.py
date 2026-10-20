@@ -254,6 +254,39 @@ def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
     return parts
 
 
+def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
+    """Each author of the group, as the byline prints them.
+
+    JATS stores names in Surname-Given order; PDFs display Given-Surname, so each
+    name part is reversed.  Each carries its own affiliation, footnote and
+    correspondence markers, because GROBID labels the whole byline `<author>`,
+    the markers between the names included.
+    """
+    author_parts: List[str] = []
+    for contrib in contrib_group.xpath(
+        'contrib[not(@contrib-type) or @contrib-type="author"]'
+    ):
+        name_el = contrib.find('name')
+        if name_el is None:
+            continue
+        given = (name_el.findtext('given-names') or '').strip()
+        surname = (name_el.findtext('surname') or '').strip()
+        name_text = (
+            ' '.join(part for part in [given, surname] if part) or element_text(name_el)
+        )
+        if not name_text:
+            continue
+        markers = [
+            x.text.strip()
+            for x in contrib.xpath(
+                'xref[@ref-type="aff" or @ref-type="fn" or @ref-type="corresp"]'
+            )
+            if x.text and x.text.strip()
+        ]
+        author_parts.append(' '.join([name_text] + markers))
+    return author_parts
+
+
 def _iter_aff_elements(root: etree._Element) -> Iterator[etree._Element]:
     yield from root.xpath(
         'front/article-meta/contrib-group/aff'
@@ -289,7 +322,13 @@ class JatsFieldExtractor:
         yield from self._iter_front_contrib_values(root)
 
     def _iter_front_metadata_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
-        for el in root.xpath('front/article-meta/title-group/article-title'):
+        # A document written in two languages prints both titles, one under the
+        # other, and declares the second as <trans-title>.  Read only the first
+        # and the other is left unlabelled, directly above a byline that is not.
+        for el in root.xpath(
+            'front/article-meta/title-group/article-title'
+            ' | front/article-meta/title-group/trans-title-group/trans-title'
+        ):
             text = element_text(el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.TITLE)
@@ -358,6 +397,24 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.ARTICLE_NOTES)
 
+    def _iter_front_contact_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """An author's email and ORCID, which print beside the name they belong to.
+
+        The JATS carries each exactly as the page prints it, an ORCID as the full
+        URL, so neither needs building from parts.
+        """
+        for xpath, field_name in (
+            ('front/article-meta//email', JatsFieldNames.EMAIL),
+            (
+                'front/article-meta//contrib-id[@contrib-id-type="orcid"]',
+                JatsFieldNames.ORCID,
+            ),
+        ):
+            for el in root.xpath(xpath):
+                text = element_text(el)
+                if text:
+                    yield JatsFieldValue(text=text, field_name=field_name)
+
     def _iter_front_contrib_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         # Per GROBID annotation guidelines, all author tokens in the byline (including
         # affiliation markers and separating punctuation) are labelled <author>.
@@ -367,28 +424,23 @@ class JatsFieldExtractor:
         # each name part is reversed.  Affiliation/fn/corresp xref markers are
         # appended to each name so the combined needle matches the PDF author line.
         for contrib_group in root.xpath('front/article-meta/contrib-group'):
-            author_parts = []
-            for contrib in contrib_group.xpath(
-                'contrib[not(@contrib-type) or @contrib-type="author"]'
-            ):
-                name_el = contrib.find('name')
-                if name_el is None:
-                    continue
-                given = (name_el.findtext('given-names') or '').strip()
-                surname = (name_el.findtext('surname') or '').strip()
-                name_text = (
-                    ' '.join(p for p in [given, surname] if p) or element_text(name_el)
+            author_parts = _contrib_group_author_texts(contrib_group)
+            # The merged value matches a byline printed as one run, which is what
+            # it is for.  Where each author is printed against their own
+            # affiliation instead, several hundred characters separate one name
+            # from the next and the run matches nothing like itself, so each
+            # author is offered on their own as well.
+            #
+            # They come first because a sub-field whose parent has matched is
+            # searched inside that match, and the run matches a few of its own
+            # words somewhere even where it does not match the byline -- which
+            # would confine the names to wherever those words happened to land.
+            for author_text in author_parts:
+                yield JatsFieldValue(
+                    text=author_text,
+                    field_name=JatsFieldNames.AUTHOR,
+                    sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
                 )
-                if not name_text:
-                    continue
-                markers = [
-                    x.text.strip()
-                    for x in contrib.xpath(
-                        'xref[@ref-type="aff" or @ref-type="fn" or @ref-type="corresp"]'
-                    )
-                    if x.text and x.text.strip()
-                ]
-                author_parts.append(' '.join([name_text] + markers))
             if author_parts:
                 yield JatsFieldValue(
                     text=' '.join(author_parts),
@@ -412,6 +464,8 @@ class JatsFieldExtractor:
             yield from _iter_sub_field_values(
                 aff_el, JatsFieldNames.AUTHOR_AFF, _AFF_SUB_FIELDS
             )
+
+        yield from self._iter_front_contact_values(root)
 
         for el in root.xpath('front/article-meta/author-notes/*'):
             text = element_text(el)

@@ -13,6 +13,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.training.jats.aligner import (
     AlignmentConfig,
     LayoutDocumentJatsAligner,
+    _search_range,
     narrow_search_range_to_window,
     get_search_stride,
     get_search_window_size,
@@ -29,6 +30,44 @@ def _make_doc(*line_texts: str) -> LayoutDocument:
 
 def _fv(text: str, field: str = JatsFieldNames.BODY_SECTION_TITLE, sub: Optional[str] = None):
     return JatsFieldValue(text=text, field_name=field, sub_field_name=sub)
+
+
+class TestSearchRangeForARepeatedAnchor:
+    """Where a field's next value is looked for, which is the whole of the change.
+
+    An anchor field's values repeat in a document written in several languages,
+    and they interleave with another field's: a title, an abstract, then the next
+    language's title. One cursor cannot serve both, so each anchor field follows
+    where it last matched and the document's own cursor is left to the rest.
+    """
+    def _start(self, last_match_end: int, anchor_match_end_by_field=None) -> int:
+        start, _end = _search_range(
+            _fv('a title', JatsFieldNames.TITLE),
+            last_match_end=last_match_end,
+            body_floor=0,
+            body_content_end=0,
+            front_matter_end=0,
+            keywords_floor=0,
+            reference_floor=0,
+            parent_match_by_field={},
+            anchor_match_end_by_field=anchor_match_end_by_field,
+        )
+        return start
+
+    def test_should_follow_the_document_where_the_field_has_not_matched_yet(self):
+        assert self._start(5000) == 4800
+
+    def test_should_follow_its_own_field_once_it_has(self):
+        assert self._start(
+            5000, {JatsFieldNames.TITLE: 1000}
+        ) == 800
+
+    def test_should_not_follow_another_anchor_field(self):
+        # The abstract between two titles moved the document's cursor; the next
+        # title is printed after the first one and not after that abstract.
+        assert self._start(
+            9000, {JatsFieldNames.TITLE: 1000}
+        ) == 800
 
 
 class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
@@ -128,6 +167,33 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             annotated.get_token_field(t) == JatsFieldNames.BODY_SECTION_TITLE
             for t in intro_tokens
         )
+
+    def test_abstract_is_reached_behind_a_later_title(self):
+        """A document in two languages prints a title and an abstract for each.
+
+        The JATS declares both titles before either abstract, and the second
+        title prints after the first abstract. Advancing one cursor through both
+        titles puts the first abstract behind it.
+        """
+        first_abstract = ' '.join(['alpha'] * 60)
+        second_abstract = ' '.join(['beta'] * 60)
+        doc = _make_doc(
+            'The first title', first_abstract,
+            'The translated title', second_abstract,
+        )
+        fvs = [
+            _fv('The first title', JatsFieldNames.TITLE),
+            _fv('The translated title', JatsFieldNames.TITLE),
+            _fv(first_abstract, JatsFieldNames.ABSTRACT),
+            _fv(second_abstract, JatsFieldNames.ABSTRACT),
+        ]
+        annotated = self._align(doc, fvs)
+        lines = list(doc.iter_all_lines())
+        for index in (1, 3):
+            assert all(
+                annotated.get_token_field(token) == JatsFieldNames.ABSTRACT
+                for token in lines[index].tokens
+            ), f'abstract on line {index} was not reached'
 
     def test_affiliation_found_after_body_when_not_in_front_matter(self):
         # Some journals place full author/affiliation blocks at the END of the paper.

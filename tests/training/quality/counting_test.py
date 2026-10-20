@@ -369,6 +369,43 @@ class TestCountFieldInstances:
             'declared': 4, 'located': 2, 'marked': 1
         }
 
+    def test_should_count_a_value_the_aligner_reached_through_a_sub_field(self):
+        # Instance numbers are assigned per parent match, so a byline matched
+        # name by name carries none; the field is still located and marked.
+        token = LayoutToken('Smith')
+        annotated = JatsAnnotatedLayoutDocument(layout_document=LayoutDocument(pages=[]))
+        annotated.token_label_by_id[id(token)] = (
+            JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME, 0
+        )
+        counts = count_field_instances(
+            {JatsFieldNames.AUTHOR: 1},
+            annotated,
+            [[_token_labeled('<author>', token)]],
+            {JatsFieldNames.AUTHOR},
+        )
+        assert counts[JatsFieldNames.AUTHOR] == {
+            'declared': 1, 'located': 1, 'marked': 1
+        }
+
+    def test_should_count_a_value_matched_both_whole_and_by_part_once(self):
+        # The byline matched name by name, and the merged run matched a few of
+        # its own words elsewhere. One declared value, one placement.
+        by_part, whole = LayoutToken('Smith'), LayoutToken('elsewhere')
+        annotated = JatsAnnotatedLayoutDocument(layout_document=LayoutDocument(pages=[]))
+        annotated.token_label_by_id[id(by_part)] = (
+            JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME, 0
+        )
+        annotated.token_label_by_id[id(whole)] = (JatsFieldNames.AUTHOR, None, 1)
+        counts = count_field_instances(
+            {JatsFieldNames.AUTHOR: 1},
+            annotated,
+            [[_token_labeled('<author>', by_part)]],
+            {JatsFieldNames.AUTHOR},
+        )
+        assert counts[JatsFieldNames.AUTHOR] == {
+            'declared': 1, 'located': 1, 'marked': 1
+        }
+
     def test_should_not_count_an_unlabelled_token_as_marked(self):
         token = LayoutToken('title')
         counts = count_field_instances(

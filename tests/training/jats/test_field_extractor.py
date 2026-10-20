@@ -68,7 +68,10 @@ class TestAuthor:
             '</contrib-group>'
             '</article-meta></front></article>'
         )
-        authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
+        authors = [
+            v for v in fvs
+            if v.field_name == JatsFieldNames.AUTHOR and v.sub_field_name is None
+        ]
         assert len(authors) == 1
         assert authors[0].text == 'John Smith'
 
@@ -90,9 +93,32 @@ class TestAuthor:
             '</contrib-group>'
             '</article-meta></front></article>'
         )
-        authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
+        authors = [
+            v for v in fvs
+            if v.field_name == JatsFieldNames.AUTHOR and v.sub_field_name is None
+        ]
         assert len(authors) == 1
         assert authors[0].text == 'John Smith 1 Mary Jones 1 *'
+
+    def test_offers_each_author_name_beside_the_merged_byline(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<contrib-group>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Smith</surname><given-names>John</given-names></name>'
+            '<xref ref-type="aff">1</xref>'
+            '</contrib>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Jones</surname><given-names>Mary</given-names></name>'
+            '</contrib>'
+            '</contrib-group>'
+            '</article-meta></front></article>'
+        )
+        # Each author carries their own markers, as the byline prints them.
+        assert [
+            v.text for v in fvs
+            if v.sub_field_name == JatsSubFieldNames.AUTHOR_NAME
+        ] == ['John Smith 1', 'Mary Jones']
 
     def test_author_multiple_contrib_groups_emit_separately(self):
         fvs = _field_values_for(
@@ -109,7 +135,10 @@ class TestAuthor:
             '</contrib-group>'
             '</article-meta></front></article>'
         )
-        authors = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR]
+        authors = [
+            v for v in fvs
+            if v.field_name == JatsFieldNames.AUTHOR and v.sub_field_name is None
+        ]
         assert len(authors) == 2
         assert authors[0].text == 'John Smith'
         assert authors[1].text == 'Mary Jones'
@@ -402,6 +431,21 @@ class TestFunding:
 
 
 class TestCopyright:
+    def test_extracts_a_translated_title_beside_the_article_title(self):
+        root = etree.fromstring(
+            '<article><front><article-meta><title-group>'
+            '<article-title>The first title</article-title>'
+            '<trans-title-group xml:lang="pt">'
+            '<trans-title>The translated title</trans-title>'
+            '</trans-title-group>'
+            '</title-group></article-meta></front></article>'
+        )
+        assert [
+            field_value.text
+            for field_value in JatsFieldExtractor().iter_field_values(root)
+            if field_value.field_name == JatsFieldNames.TITLE
+        ] == ['The first title', 'The translated title']
+
     def test_extracts_copyright_statement(self):
         fvs = _field_values_for(
             '<article><front><article-meta>'

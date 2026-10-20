@@ -12,6 +12,7 @@ from typing import (
     Callable,
     Dict,
     FrozenSet,
+    AbstractSet,
     Iterable,
     List,
     Mapping,
@@ -688,6 +689,13 @@ class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenera
         """Return a JATS label function, or None to skip JATS labeling for this model."""
         return None
 
+    def post_process_jats_labels(
+        self,
+        model_data_list: Sequence[LabeledLayoutModelData]
+    ) -> Sequence[LabeledLayoutModelData]:
+        """A pass over one entity's labels, for what a single token cannot decide."""
+        return model_data_list
+
     def iter_model_data_list(
         self,
         layout_document: LayoutDocument,
@@ -710,9 +718,9 @@ class AbstractDocumentModelTrainingDataGenerator(AbstractModelTrainingDataGenera
                 )
             )
             return [
-                _apply_jats_labels_to_model_data_list(
+                self.post_process_jats_labels(_apply_jats_labels_to_model_data_list(
                     mdl, annotated, jats_seg_labels, jats_label_fn
-                )
+                ))
                 for mdl in unlabeled_lists
             ]
         return iter_model_data_list_for_model_and_layout_documents(
@@ -766,6 +774,69 @@ class SegmentationModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGe
         return fn
 
 
+def _get_base_label(label: Optional[str]) -> Optional[str]:
+    if not label or label == 'O':
+        return None
+    return label[2:] if label[:2] in ('B-', 'I-') else label
+
+
+def bridge_punctuation_between_same_label(
+    model_data_list: Sequence[LabeledLayoutModelData],
+    labels_banded_per_value: AbstractSet[str],
+) -> Sequence[LabeledLayoutModelData]:
+    """Keep a passage one element where the page punctuates inside it.
+
+    A JATS carries a copyright line and the licence under it as two values, and
+    the page prints them as one sentence flow; the stop between them is in
+    neither value, and left unlabelled it closes the element. A word between two
+    values is not that, and neither is a stop after the last of them -- the
+    bracket opening a version note under a title is where that would go wrong --
+    so only punctuation the same label resumes after is taken.
+
+    A label banded per value is left alone: two titles are two elements, whatever
+    is printed between them.
+    """
+    result = list(model_data_list)
+    previous_label: Optional[str] = None
+    pending: List[int] = []
+    for index, model_data in enumerate(result):
+        base_label = _get_base_label(model_data.label)
+        if base_label is not None:
+            if (
+                pending
+                and base_label == previous_label
+                and base_label not in labels_banded_per_value
+            ):
+                for pending_index in pending:
+                    result[pending_index] = LabeledLayoutModelData.from_model_data(
+                        result[pending_index], label=f'I-{base_label}'
+                    )
+                result[index] = LabeledLayoutModelData.from_model_data(
+                    model_data, label=f'I-{base_label}'
+                )
+            previous_label = base_label
+            pending = []
+            continue
+        token = model_data.layout_token
+        if previous_label is not None and token is not None and _is_punctuation(token.text):
+            pending.append(index)
+            continue
+        previous_label = None
+        pending = []
+    return result
+
+
+# Each of these starts a new element per JATS value: an affiliation gets its own
+# byline and a title its own docTitle, which is what GROBID's corpus does with
+# both. Two values of any other label printed with nothing between them are one
+# passage.
+HEADER_LABELS_BANDED_PER_VALUE = frozenset({'<affiliation>', '<title>'})
+
+
+def _is_punctuation(text: str) -> bool:
+    return bool(text) and all(not character.isalnum() for character in text)
+
+
 class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'header'
     SPANS_FILENAME_SUFFIX = '.header.spans.jsonl'
@@ -779,6 +850,14 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.header_model
+
+    def post_process_jats_labels(
+        self,
+        model_data_list: Sequence[LabeledLayoutModelData]
+    ) -> Sequence[LabeledLayoutModelData]:
+        return bridge_punctuation_between_same_label(
+            model_data_list, HEADER_LABELS_BANDED_PER_VALUE
+        )
 
     def get_quality_field_counts(
         self,
@@ -803,6 +882,13 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
         # separate <byline><affiliation> blocks for each JATS <aff> element.
         # Address sub-fields (city, region, postcode, country, bulk addr range) are
         # mapped to <address> instead of <affiliation>.
+        #
+        # Only an affiliation starts a new element per JATS value.  Two values of
+        # any other label printed with nothing between them are one passage: a
+        # licence statement follows its copyright line, and GROBID's corpus holds
+        # the pair in one <note type="copyright"> on 179 of its 454 of them and
+        # never writes two side by side.
+        _HEADER_LABELS_BANDED_PER_VALUE = HEADER_LABELS_BANDED_PER_VALUE
         _HEADER_ADDRESS_SUB_FIELDS = frozenset({
             JatsSubFieldNames.AUTHOR_AFF_ADDR,
             JatsSubFieldNames.AUTHOR_AFF_CITY,
@@ -834,7 +920,11 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
             if label is None:
                 prev_label_instance = None
                 return 'O'
-            instance_id = annotated.get_token_instance(token)
+            instance_id = (
+                annotated.get_token_instance(token)
+                if label in _HEADER_LABELS_BANDED_PER_VALUE
+                else 0
+            )
             label_instance = (label, instance_id)
             prefix = 'B' if label_instance != prev_label_instance else 'I'
             prev_label_instance = label_instance

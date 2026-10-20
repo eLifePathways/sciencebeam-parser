@@ -453,6 +453,36 @@ def _is_deposit_marker(text: str) -> bool:
     return any(pattern.search(text) for pattern in _DEPOSIT_MARKER_PATTERNS)
 
 
+def _get_seg_lines_by_page_number(
+    seg_lines: List[_SegLine]
+) -> Dict[int, List[_SegLine]]:
+    pages: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None:
+            pages.setdefault(page_number, []).append(seg_line)
+    return pages
+
+
+def _opens_a_deposit_page(page_lines: List[_SegLine]) -> bool:
+    """Whether the page opens with the notice a server deposits an article behind.
+
+    Text alone, so it holds before anything has been aligned.
+    """
+    first = next((sl for sl in page_lines if sl.text.strip()), None)
+    if first is None:
+        return False
+    if _is_deposit_notice(first.text):
+        return True
+    if _DEPOSIT_LABEL_PATTERN.match(first.text) and any(
+        _is_deposit_marker(sl.text) for sl in page_lines
+    ):
+        return True
+    # A submission sheet opens with the watermark printed across it, set a
+    # letter to a line, so what names it is not the line the page starts with.
+    return any(_is_submission_cover_marker(sl.text) for sl in page_lines)
+
+
 def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
     """Take the whole of a page the publisher wraps the article in.
 
@@ -472,29 +502,14 @@ def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
     page: one preprint carries two, and others print the conditions at the end
     instead.
     """
-    pages: Dict[int, List[_SegLine]] = {}
-    for seg_line in seg_lines:
-        page_number = _get_page_number(seg_line)
-        if page_number is not None:
-            pages.setdefault(page_number, []).append(seg_line)
+    pages = _get_seg_lines_by_page_number(seg_lines)
     cover_pages: Set[int] = set()
     for page_number in sorted(pages):
         page_lines = pages[page_number]
-        first = next((sl for sl in page_lines if sl.text.strip()), None)
-        if first is None:
+        if not any(sl.text.strip() for sl in page_lines):
             continue
         if any(sl.seg_label in _ARTICLE_CONTENT_LABELS for sl in page_lines):
             continue
-        opens_a_deposit_page = _is_deposit_notice(first.text) or (
-            _DEPOSIT_LABEL_PATTERN.match(first.text)
-            and any(_is_deposit_marker(sl.text) for sl in page_lines)
-        )
-        # A submission sheet opens with the watermark printed across it, set a
-        # letter to a line, so what names it is not the line the page starts
-        # with.
-        opens_a_deposit_page = opens_a_deposit_page or any(
-            _is_submission_cover_marker(sl.text) for sl in page_lines
-        )
         # The form can run past the page it starts on, leaving the dates and the
         # generator's footer by themselves overleaf.  That is the rest of the
         # cover rather than the article starting.
@@ -502,7 +517,7 @@ def _tag_cover_pages(seg_lines: List[_SegLine]) -> None:
             sl.seg_label in _FURNITURE_LABELS or _is_deposit_marker(sl.text)
             for sl in page_lines if sl.text.strip()
         )
-        if not opens_a_deposit_page and not continues_one:
+        if not _opens_a_deposit_page(page_lines) and not continues_one:
             continue
         cover_pages.add(page_number)
         for seg_line in page_lines:
@@ -1768,6 +1783,29 @@ def _merge_gap_lines(
 # ── Public API ────────────────────────────────────────────────────────────────
 
 FURNITURE_LABELS: FrozenSet[str] = frozenset({SEG_HEADNOTE, SEG_FOOTNOTE, SEG_PAGE})
+
+
+def get_cover_page_line_ids(layout_document: LayoutDocument) -> Set[int]:
+    """The lines of a page the publisher wraps the article in, by `id(LayoutLine)`.
+
+    The notice the server opens such a page with is text, so this holds before
+    anything has been aligned -- which is what the aligner needs, because the
+    cover restates the article's title and authors and a value is matched once.
+    Matched on the cover, the article's own front matter has nothing left to
+    match it, and the header region is cut away from the cover.
+
+    `derive_labels` runs the same test again over the labels the aligner then
+    produces, where it can also see a page carrying article content and a cover
+    running onto a second page. Neither is available here, and neither is needed
+    to say that a page opens with a deposit notice.
+    """
+    seg_lines = _build_seg_lines(layout_document)
+    return {
+        id(seg_line.layout_line)
+        for page_lines in _get_seg_lines_by_page_number(seg_lines).values()
+        if _opens_a_deposit_page(page_lines)
+        for seg_line in page_lines
+    }
 
 
 def get_page_furniture_line_ids(
