@@ -114,11 +114,11 @@ class TestAuthor:
             '</contrib-group>'
             '</article-meta></front></article>'
         )
-        # The marker belongs to the run and not to a name printed on its own.
+        # Each author carries their own markers, as the byline prints them.
         assert [
             v.text for v in fvs
             if v.sub_field_name == JatsSubFieldNames.AUTHOR_NAME
-        ] == ['John Smith', 'Mary Jones']
+        ] == ['John Smith 1', 'Mary Jones']
 
     def test_author_multiple_contrib_groups_emit_separately(self):
         fvs = _field_values_for(

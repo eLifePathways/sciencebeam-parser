@@ -254,17 +254,15 @@ def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
     return parts
 
 
-def _contrib_group_author_texts(
-    contrib_group: etree._Element
-) -> Tuple[List[str], List[str]]:
-    """Each author of the group as printed in a run, and as printed on its own.
+def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
+    """Each author of the group, as the byline prints them.
 
     JATS stores names in Surname-Given order; PDFs display Given-Surname, so each
-    name part is reversed.  The run carries each name's affiliation, footnote and
-    correspondence markers, because the byline prints them between the names.
+    name part is reversed.  Each carries its own affiliation, footnote and
+    correspondence markers, because GROBID labels the whole byline `<author>`,
+    the markers between the names included.
     """
     author_parts: List[str] = []
-    author_name_texts: List[str] = []
     for contrib in contrib_group.xpath(
         'contrib[not(@contrib-type) or @contrib-type="author"]'
     ):
@@ -286,8 +284,7 @@ def _contrib_group_author_texts(
             if x.text and x.text.strip()
         ]
         author_parts.append(' '.join([name_text] + markers))
-        author_name_texts.append(name_text)
-    return author_parts, author_name_texts
+    return author_parts
 
 
 def _iter_aff_elements(root: etree._Element) -> Iterator[etree._Element]:
@@ -427,21 +424,20 @@ class JatsFieldExtractor:
         # each name part is reversed.  Affiliation/fn/corresp xref markers are
         # appended to each name so the combined needle matches the PDF author line.
         for contrib_group in root.xpath('front/article-meta/contrib-group'):
-            author_parts, author_name_texts = _contrib_group_author_texts(contrib_group)
+            author_parts = _contrib_group_author_texts(contrib_group)
             # The merged value matches a byline printed as one run, which is what
             # it is for.  Where each author is printed against their own
             # affiliation instead, several hundred characters separate one name
-            # from the next and the run matches nothing like itself, so each name
-            # is offered on its own as well.  Markers are left off: they print
-            # beside a name in a run and not where the names are set apart.
+            # from the next and the run matches nothing like itself, so each
+            # author is offered on their own as well.
             #
-            # The names come first because a sub-field whose parent has matched is
+            # They come first because a sub-field whose parent has matched is
             # searched inside that match, and the run matches a few of its own
             # words somewhere even where it does not match the byline -- which
             # would confine the names to wherever those words happened to land.
-            for name_text in author_name_texts:
+            for author_text in author_parts:
                 yield JatsFieldValue(
-                    text=name_text,
+                    text=author_text,
                     field_name=JatsFieldNames.AUTHOR,
                     sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
                 )
