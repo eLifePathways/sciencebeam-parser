@@ -40,6 +40,8 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL_WITHOUT_ALIAS = {
     '<copyright>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="copyright"]'],
     '<funding>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="funding"]'],
     '<doctype>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="doctype"]'],
+    '<conflict>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="conflict"]'],
+    '<contribution>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="contribution"]'],
     '<group>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="group"]']
 }
 

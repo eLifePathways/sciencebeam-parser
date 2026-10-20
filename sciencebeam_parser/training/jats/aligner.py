@@ -81,6 +81,8 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.MANUSCRIPT_TYPE,
     JatsFieldNames.KEYWORDS,
     JatsFieldNames.KEYWORDS_TITLE,
+    JatsFieldNames.EMAIL,
+    JatsFieldNames.ORCID,
 })
 
 # Fields that appear after the front matter region. They search from the body floor

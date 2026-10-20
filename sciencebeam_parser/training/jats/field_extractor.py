@@ -400,6 +400,24 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.ARTICLE_NOTES)
 
+    def _iter_front_contact_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """An author's email and ORCID, which print beside the name they belong to.
+
+        The JATS carries each exactly as the page prints it, an ORCID as the full
+        URL, so neither needs building from parts.
+        """
+        for xpath, field_name in (
+            ('front/article-meta//email', JatsFieldNames.EMAIL),
+            (
+                'front/article-meta//contrib-id[@contrib-id-type="orcid"]',
+                JatsFieldNames.ORCID,
+            ),
+        ):
+            for el in root.xpath(xpath):
+                text = element_text(el)
+                if text:
+                    yield JatsFieldValue(text=text, field_name=field_name)
+
     def _iter_front_contrib_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         # Per GROBID annotation guidelines, all author tokens in the byline (including
         # affiliation markers and separating punctuation) are labelled <author>.
@@ -450,6 +468,8 @@ class JatsFieldExtractor:
             yield from _iter_sub_field_values(
                 aff_el, JatsFieldNames.AUTHOR_AFF, _AFF_SUB_FIELDS
             )
+
+        yield from self._iter_front_contact_values(root)
 
         for el in root.xpath('front/article-meta/author-notes/*'):
             text = element_text(el)
