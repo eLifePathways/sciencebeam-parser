@@ -5,6 +5,7 @@ from itertools import groupby
 import logging
 import os
 import multiprocessing
+import re
 import time
 
 from dataclasses import dataclass, field
@@ -1370,6 +1371,27 @@ def _split_references_by_jats_instance(
     ]
 
 
+# What a reference list calls itself, over the languages these corpora print in,
+# with an optional section number, qualifier and colon.  Whole words rather than a
+# stem: `Reference Source` ends a reference on these pages and begins nothing.
+_REFERENCE_LIST_HEADING_PATTERN = re.compile(
+    r'^(?:\d+\.?)?'
+    r'(?:references?|referencias?|referências?|bibliografia|bibliografía|bibliography)'
+    r'(?:bibliogr[áa]ficas)?:?$',
+    re.IGNORECASE
+)
+# A heading is a line of its own; the bound keeps a reference that opens with the
+# word from being read as one.
+_REFERENCE_LIST_HEADING_MAX_TOKENS = 4
+
+
+def is_reference_list_heading(line: LayoutLine) -> bool:
+    tokens = list(line.tokens)
+    if not tokens or len(tokens) > _REFERENCE_LIST_HEADING_MAX_TOKENS:
+        return False
+    return bool(_REFERENCE_LIST_HEADING_PATTERN.match(''.join(t.text for t in tokens)))
+
+
 class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerator):
     model_name = 'reference-segmenter'
     SPANS_FILENAME_SUFFIX = '.reference-segmenter.spans.jsonl'
@@ -1403,7 +1425,7 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
                     return entry[2]
             return None
 
-        def fn(
+        def fn(  # pylint: disable=too-many-return-statements
             annotated: JatsAnnotatedLayoutDocument,
             _seg_labels: Dict[int, str],
             md: LayoutModelData,
@@ -1412,6 +1434,12 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
             token = md.layout_token
             line = md.layout_line
             if line is None or token is None:
+                return None
+            # The list's own heading belongs to no reference. The first one falls
+            # outside every entry because none is open yet; a second list's arrives
+            # while one is, and would otherwise end the reference above it.
+            if is_reference_list_heading(line):
+                entry_has_content = False
                 return None
             line_id = id(line)
             if line_id not in line_first_instance_cache:
