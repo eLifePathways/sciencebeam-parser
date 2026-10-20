@@ -128,9 +128,13 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.KEYWORDS:         '<keyword>',
     JatsFieldNames.AUTHOR:           '<author>',
     JatsFieldNames.AUTHOR_AFF:       '<affiliation>',
-    JatsFieldNames.AUTHOR_NOTES:     '<note>',
-    JatsFieldNames.ARTICLE_NOTES:    '<note>',
-    JatsFieldNames.MANUSCRIPT_TYPE:  '<note>',
+    # `<note>` is not mapped to, and nothing should be: the TEI writes it as bare
+    # text under `<front>`, exactly as it writes background, and the parser reads
+    # text with no element of its own back as `O`.  A field mapped to it is
+    # located, counted as marked, and taught as background.  GROBID writes a bare
+    # `<note>` on 1 of its 835 documents, so there is nothing to agree with here
+    # either -- a corresponding author's name, email and address take their own
+    # labels there, and the words introducing them are `<other>`.
     JatsFieldNames.COPYRIGHT:        '<copyright>',
     JatsFieldNames.FUNDING:          '<funding>',
     JatsFieldNames.EMAIL:            '<email>',
