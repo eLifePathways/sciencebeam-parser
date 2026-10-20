@@ -25,17 +25,14 @@ cpu = [
 delft = [
     "sciencebeam-trainer-delft[delft]>=1.0.3",
     # delft is declared here, rather than left to arrive through
-    # sciencebeam-trainer-delft, so that [tool.uv.sources] below binds it to the
-    # branch carrying the Hugging Face Hub support: a uv source is not honoured
-    # for a transitive requirement, and is not carried in the metadata of the
-    # dependency that declares it, so relying on the source in
-    # sciencebeam-trainer-delft's own pyproject resolves delft from PyPI
-    # instead -- which has neither `delft.utilities.hub_models` nor
-    # `delft.utilities.weights`, and so fails on import.
+    # sciencebeam-trainer-delft, for its floor: the Hugging Face Hub support
+    # (`delft.utilities.hub_models`, `delft.utilities.weights`) arrived in 1.2.0,
+    # and a published sciencebeam-trainer-delft still allows an older delft,
+    # which fails on import.
     # Both floors here are what a consumer installing this project from PyPI
-    # resolves against; in this repo the sources win over them, and the commit
-    # each resolves to is in uv.lock.
-    "delft>=1.1.0",
+    # resolves against; in this repo the source below wins over the first one,
+    # and the commit it resolves to is in uv.lock.
+    "delft>=1.2.0",
 ]
 cv = [
     "layoutparser==0.3.2",
@@ -59,6 +56,9 @@ benchmark = [
 ]
 dev = [
     "flake8>=4.0.1",
+    # what starlette's TestClient is built on when installed, which the API tests
+    # annotate its responses with; it falls back to httpx, deprecated, otherwise
+    "httpx2>=2.14.0",
     "mypy>=1.19.0",
     "pylint>=3.3.9",
     "pytest>=8.4.2",
@@ -72,12 +72,10 @@ ocr = [
 
 
 [tool.uv.sources]
-# TEMPORARY, both of them, and they travel together: the Hub support in
-# sciencebeam-trainer-delft's branch is written against delft's dev branch.
-# uv.lock holds the commit of each, so a build stays reproducible; to follow a
-# branch, `uv lock --upgrade-package <name>`.
+# TEMPORARY, until sciencebeam-trainer-delft releases its Hub support.
+# uv.lock holds the commit, so a build stays reproducible; to follow the
+# branch, `uv lock --upgrade-package sciencebeam-trainer-delft`.
 sciencebeam-trainer-delft = { git = "https://github.com/eLifePathways/sciencebeam-trainer-delft", branch = "feature/hub-models" }
-delft = { git = "https://github.com/kermitt2/delft", branch = "dev" }
 torch = [{ index = "torch-cpu" }]
 torchvision = [{ index = "torch-cpu" }]
 

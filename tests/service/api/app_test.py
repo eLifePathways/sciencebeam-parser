@@ -9,7 +9,7 @@ from typing import Optional
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
-import httpx
+import httpx2
 import pytest
 
 from sciencebeam_parser.app.parser import (
@@ -149,7 +149,7 @@ def _test_client(
     )
 
 
-def _get_ok_json(response: httpx.Response) -> dict:
+def _get_ok_json(response: httpx2.Response) -> dict:
     assert response.status_code == 200
     return response.json()
 
@@ -678,7 +678,7 @@ def _ok_response_mock(
 
 def post_document(
     test_client: TestClient, path: str, **kwargs
-) -> httpx.Response:
+) -> httpx2.Response:
     return test_client.post(path, files={
         'input': (PDF_FILENAME_1, BytesIO(PDF_CONTENT_1), 'application/pdf')
     }, **kwargs)
