@@ -1,7 +1,11 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import logging
-from typing import Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple, TypeVar, Union
+import re
+from typing import (
+    Counter as CounterType,
+    Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple, TypeVar, Union
+)
 
 from lxml import etree
 from lxml.builder import ElementMaker
@@ -13,7 +17,7 @@ from sciencebeam_parser.utils.xml_writer import (
 )
 from sciencebeam_parser.utils.labels import OTHER_LABELS, get_split_prefix_label
 from sciencebeam_parser.utils.tokenizer import get_tokenized_tokens
-from sciencebeam_parser.document.tei.common import TEI_E, TEI_NS_PREFIX, tei_xpath
+from sciencebeam_parser.document.tei.common import TEI_E, tei_xpath
 from sciencebeam_parser.document.layout_document import (
     LayoutLine,
     LayoutLineMeta,
@@ -392,28 +396,45 @@ class AbstractTeiTrainingDataGenerator(TeiTrainingDataGenerator):
 
 TEI_LB = 'lb'
 
+_TEI_LINE_WHITESPACE_RE = re.compile(r'[ \t\r\n]+')
 
-LINE_BREAK_TAGS = {
-    TEI_LB,
-    TEI_NS_PREFIX + TEI_LB
-}
+
+def normalise_tei_line_text(text: str) -> str:
+    """One line of a training TEI as a single line of text.
+
+    Collapses the whitespace the XML carries for its own layout, and leaves
+    anything else -- a non-breaking space is content.
+    """
+    return _TEI_LINE_WHITESPACE_RE.sub(' ', text).strip()
+
+
+def get_local_tag_name(tag) -> str:
+    """The tag without its namespace, or '' for a comment or processing instruction.
+
+    Training TEI is read the way GROBID reads it, which is namespace-unaware: its
+    own segmentation corpus ships both dialects.
+    """
+    if not isinstance(tag, str):
+        return ''
+    return tag.rsplit('}', maxsplit=1)[-1]
 
 
 _NON_PATH_ATTRIBUTES = frozenset({'from', 'to'})
 
 
 def _get_tag_expression_for_element(element: etree.ElementBase) -> str:
+    tag = get_local_tag_name(element.tag)
     attrib = {
-        key: value
+        get_local_tag_name(key): value
         for key, value in element.attrib.items()
         if key not in _NON_PATH_ATTRIBUTES
     }
     if not attrib:
-        return element.tag
+        return tag
     if len(attrib) > 1:
         raise ValueError('only supporting up to one attribute')
     key, value = list(attrib.items())[0]
-    return '{tag}[@{key}="{value}"]'.format(tag=element.tag, key=key, value=value)
+    return '{tag}[@{key}="{value}"]'.format(tag=tag, key=key, value=value)
 
 
 class TeiTrainingElementPath(NamedTuple):
@@ -445,12 +466,21 @@ class TeiTrainingLine(NamedTuple):
 
 
 def is_line_break_element(element: etree.ElementBase) -> bool:
-    return element.tag in LINE_BREAK_TAGS
+    return get_local_tag_name(element.tag) == TEI_LB
+
+
+def is_comment_or_processing_instruction(element: etree.ElementBase) -> bool:
+    return not isinstance(element.tag, str)
+
+
+def _has_text_content(element: etree.ElementBase) -> bool:
+    return any(not text.isspace() for text in element.itertext() if text)
 
 
 def _iter_flat_tei_training_text_from_element(
     parent_element: etree.ElementBase,
-    current_path: TeiTrainingElementPath = EMPTY_TEI_TRAINING_ELEMENT_PATH
+    current_path: TeiTrainingElementPath = EMPTY_TEI_TRAINING_ELEMENT_PATH,
+    flushes_at_element_boundary: bool = False
 ) -> Iterable[Union[TeiTrainingText, ExtractInstruction]]:
     LOGGER.debug('current_path: %s', current_path)
     is_start = True
@@ -466,12 +496,30 @@ def _iter_flat_tei_training_text_from_element(
     for child_element in parent_element:
         if is_line_break_element(child_element):
             yield NewLineExtractInstruction()
-        else:
+        elif not is_comment_or_processing_instruction(child_element):
+            # GROBID writes out what it has accumulated whenever an element opens
+            # or closes, so an element that does not end with <lb/> still ends a
+            # line: `<page>12 </page>` between two body lines is its own line and
+            # not the start of the one that follows
+            if flushes_at_element_boundary:
+                yield NewLineExtractInstruction()
             child_path = current_path.append(child_element)
             yield from _iter_flat_tei_training_text_from_element(
                 child_element,
-                child_path
+                child_path,
+                flushes_at_element_boundary
             )
+            if flushes_at_element_boundary:
+                yield NewLineExtractInstruction()
+            if (
+                flushes_at_element_boundary
+                and not is_start
+                and _has_text_content(child_element)
+            ):
+                # what follows a nested element that carried text of its own is a
+                # new span rather than the same one resumed, which is how GROBID
+                # reads its `<page>` inside a `<body>`
+                is_start = True
 
         if child_element.tail:
             yield TeiTrainingText(
@@ -485,12 +533,14 @@ def _iter_flat_tei_training_text_from_element(
 
 def _iter_tei_training_lines_from_element(
     parent_element: etree.ElementBase,
-    current_path: TeiTrainingElementPath = EMPTY_TEI_TRAINING_ELEMENT_PATH
+    current_path: TeiTrainingElementPath = EMPTY_TEI_TRAINING_ELEMENT_PATH,
+    flushes_at_element_boundary: bool = False
 ) -> Iterable[TeiTrainingLine]:
     line_text_list = []
     for item in _iter_flat_tei_training_text_from_element(
         parent_element,
-        current_path
+        current_path,
+        flushes_at_element_boundary
     ):
         if isinstance(item, TeiTrainingText):
             line_text_list.append(item)
@@ -547,19 +597,24 @@ class TrainingTeiParser(ABC):
     @abstractmethod
     def parse_training_tei_to_labeled_layout_tokens_list(
         self,
-        tei_root: etree.ElementBase
+        tei_root: etree.ElementBase,
+        unrecognised_path_counts: Optional[CounterType[str]] = None
     ) -> Sequence[Sequence[LabeledLayoutToken]]:
         pass
 
 
-def get_element_path_with_prefix(
-    element_path: Sequence[str],
-    prefix: str
-) -> Sequence[str]:
-    return [
-        prefix + item
-        for item in element_path
-    ]
+_ELEMENT_PATH_STEP_RE = re.compile(r'^([^\[]+)(\[.*\])?$')
+
+
+def get_namespace_agnostic_xpath_step(element_path_step: str) -> str:
+    """One step of a training element path, matched whatever namespace it is in.
+
+    `figure[@type="table"]` becomes `*[local-name()="figure"][@type="table"]`.
+    """
+    match = _ELEMENT_PATH_STEP_RE.match(element_path_step)
+    assert match is not None
+    tag, predicate = match.groups()
+    return '*[local-name()="%s"]%s' % (tag, predicate or '')
 
 
 class AbstractTrainingTeiParser(TrainingTeiParser):
@@ -567,69 +622,100 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
         self,
         root_training_xml_element_path: Sequence[str],
         training_xml_element_path_by_label: Mapping[str, Sequence[str]],
-        use_tei_namespace: bool,
         line_as_token: bool = False,
+        flushes_at_element_boundary: bool = False,
+        additional_element_paths_by_label: Optional[
+            Mapping[str, Sequence[Sequence[str]]]
+        ] = None,
     ) -> None:
-        tag_namespace_prefix = TEI_NS_PREFIX if use_tei_namespace else ''
-        if use_tei_namespace:
-            root_training_xml_element_path = get_element_path_with_prefix(
-                root_training_xml_element_path,
-                'tei:'
-            )
         self.label_by_relative_element_path_map = {
-            tuple(
-                get_element_path_with_prefix(
-                    element_path[len(root_training_xml_element_path):],
-                    tag_namespace_prefix
-                )
-            ): label
+            tuple(element_path[len(root_training_xml_element_path):]): label
             for label, element_path in training_xml_element_path_by_label.items()
         }
+        # spellings a corpus may use for a region we write only one way: read, never
+        # written, so they stay out of the map the generator picks an element from
+        for label, element_paths in (additional_element_paths_by_label or {}).items():
+            for element_path in element_paths:
+                self.label_by_relative_element_path_map[
+                    tuple(element_path[len(root_training_xml_element_path):])
+                ] = label
         for element_path in list(self.label_by_relative_element_path_map.keys()):
             if len(element_path) < 2:
                 continue
             parent_element_path = element_path[:-1]
             if parent_element_path not in self.label_by_relative_element_path_map:
                 self.label_by_relative_element_path_map[parent_element_path] = 'O'
-        self.root_training_xml_xpath = './' + '/'.join(root_training_xml_element_path)
+        self.root_training_xml_xpath = './' + '/'.join(
+            get_namespace_agnostic_xpath_step(element_path_step)
+            for element_path_step in root_training_xml_element_path
+        )
         self.line_as_token = line_as_token
+        self.flushes_at_element_boundary = flushes_at_element_boundary
 
     def get_label_for_element_path(
         self,
         tei_training_element_path: TeiTrainingElementPath,
-        text: str
+        text: str,  # pylint: disable=unused-argument
+        unrecognised_path_counts: Optional[CounterType[str]] = None
     ) -> str:
-        element_path = tei_training_element_path.get_path()
-        label = self.label_by_relative_element_path_map.get(tuple(element_path))
-        if not label:
-            raise RuntimeError(
-                'label not found for %r (available: %r; for text: %r)' % (
-                    element_path,
-                    self.label_by_relative_element_path_map.keys(),
-                    text
+        """The label of the innermost element on the path we recognise.
+
+        GROBID's own reader tracks a current tag rather than an element path, so an
+        element it has no rule for leaves the enclosing label in place. Reading its
+        corpus requires the same, and what our stricter lookup was protecting is kept
+        as a count: it is zero for training TEI we wrote ourselves.
+        """
+        element_path = list(tei_training_element_path.get_path())
+        # Innermost first, dropping the elements outside it before giving up on it
+        # and trying the one that encloses it. The empty path is deliberately not
+        # among the candidates here: it is a key of its own for a label whose path
+        # is the root, and reaching it early would answer with the root's label
+        # instead of the enclosing element's.
+        for end_index in range(len(element_path), 0, -1):
+            for start_index in range(end_index):
+                label = self.label_by_relative_element_path_map.get(
+                    tuple(element_path[start_index:end_index])
                 )
-            )
-        return label
+                if not label:
+                    continue
+                if end_index - start_index < len(element_path):
+                    if unrecognised_path_counts is not None:
+                        unrecognised_path_counts['/'.join(element_path)] += 1
+                return label
+        if element_path and unrecognised_path_counts is not None:
+            unrecognised_path_counts['/'.join(element_path)] += 1
+        return self.label_by_relative_element_path_map.get(tuple(), 'O')
 
     def iter_parse_training_tei_to_flat_labeled_layout_tokens(
         self,
-        tei_root: etree.ElementBase
+        tei_root: etree.ElementBase,
+        unrecognised_path_counts: Optional[CounterType[str]] = None
     ) -> Iterable[Union[LabeledLayoutToken, NewDocumentMarker]]:
         for text_node in tei_xpath(tei_root, self.root_training_xml_xpath):
             tei_training_lines = list(
                 _iter_tei_training_lines_from_element(
-                    text_node, EMPTY_TEI_TRAINING_ELEMENT_PATH
+                    text_node, EMPTY_TEI_TRAINING_ELEMENT_PATH,
+                    self.flushes_at_element_boundary
                 )
             )
             LOGGER.debug('tei_training_lines: %r', tei_training_lines)
             for line_index, line in enumerate(tei_training_lines):
-                line_meta = LayoutLineMeta(line_id=1 + line_index)
+                line_meta = LayoutLineMeta(
+                    line_id=1 + line_index,
+                    text=normalise_tei_line_text(
+                        ''.join(text.text for text in line.text_list)
+                    )
+                )
                 for text in line.text_list:
                     if text.text.isspace():
                         continue
                     token_count = 0
                     if text.path.element_list:
-                        label = self.get_label_for_element_path(text.path, text=text.text)
+                        label = self.get_label_for_element_path(
+                            text.path,
+                            text=text.text,
+                            unrecognised_path_counts=unrecognised_path_counts
+                        )
                         prefix = 'B-' if text.is_start else 'I-'
                     else:
                         label = 'O'
@@ -679,10 +765,12 @@ class AbstractTrainingTeiParser(TrainingTeiParser):
 
     def parse_training_tei_to_labeled_layout_tokens_list(
         self,
-        tei_root: etree.ElementBase
+        tei_root: etree.ElementBase,
+        unrecognised_path_counts: Optional[CounterType[str]] = None
     ) -> Sequence[Sequence[LabeledLayoutToken]]:
         return list(iter_group_doc_items_with_new_doc_marker(
             self.iter_parse_training_tei_to_flat_labeled_layout_tokens(
-                tei_root
+                tei_root,
+                unrecognised_path_counts=unrecognised_path_counts
             )
         ))

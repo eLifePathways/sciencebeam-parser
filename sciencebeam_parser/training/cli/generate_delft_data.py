@@ -1,7 +1,11 @@
 import argparse
 import logging
 import os
-from typing import Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+from collections import Counter
+from typing import (
+    Counter as CounterType,
+    Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+)
 
 from lxml import etree
 
@@ -32,6 +36,20 @@ from sciencebeam_parser.models.data import (
     ModelDataGenerator
 )
 from sciencebeam_parser.models.training_data import TrainingTeiParser
+from sciencebeam_parser.training.run_record import (
+    get_run_record,
+    get_run_record_path_for_delft_output_path,
+    write_run_record
+)
+from sciencebeam_parser.training.extra_feature_columns import (
+    is_missing_extra_columns,
+    iter_rows_with_extra_columns
+)
+from sciencebeam_parser.training.tei_raw_pairing import (
+    PairingResult,
+    get_match_key_for_labelled_line,
+    get_paired_rows
+)
 from sciencebeam_parser.training.grobid_column_layout import (
     GrobidColumnLayout,
     get_grobid_column_layout_for_model_name,
@@ -73,6 +91,9 @@ from sciencebeam_parser.app.parser import ScienceBeamParser
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+_TEI_XML_PARSER = etree.XMLParser(recover=True)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -177,6 +198,31 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         )
     )
     parser.add_argument(
+        '--source-name',
+        type=str,
+        required=False,
+        help=(
+            'What the TEI and raw files were read from, for the run record, e.g.'
+            ' "grobid". A corpus read from another checkout is only reproducible'
+            ' if the checkout is named.'
+        )
+    )
+    parser.add_argument(
+        '--source-revision',
+        type=str,
+        required=False,
+        help='The revision of that source, e.g. a tag and commit.'
+    )
+    parser.add_argument(
+        '--run-record-path',
+        type=str,
+        required=False,
+        help=(
+            'Where to write what this run read and what it did with it'
+            ' (default: the delft output path with ".run.json" appended).'
+        )
+    )
+    parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging'
@@ -189,17 +235,24 @@ _GROBID_OTHER_LABELS = frozenset({'<other>', 'I-<other>'})
 
 def translate_tags_IOB_to_grobid(
     tag: str,
-    prev_grobid_tag: Optional[str] = None
+    prev_grobid_tag: Optional[str] = None,
+    marks_other_span_start: bool = True
 ) -> str:
     """
     Convert labels from IOB2 to the ones used by GROBID (expected by the wapiti model).
 
     When prev_grobid_tag is supplied the function also replicates GROBID's convention of
     emitting I-<other> for the first "other" token immediately after an annotated span.
+    Whether a corpus marks that start at all is a decision GROBID takes per model, and
+    `marks_other_span_start` in the recorded column layout says which way.
     """
     if tag == 'O':
         # GROBID uses I-<other> for the first "other" token after any annotated span
-        if prev_grobid_tag is not None and prev_grobid_tag not in _GROBID_OTHER_LABELS:
+        if (
+            marks_other_span_start
+            and prev_grobid_tag is not None
+            and prev_grobid_tag not in _GROBID_OTHER_LABELS
+        ):
             return 'I-<other>'
         return '<other>'
     if tag.startswith('B-'):
@@ -212,38 +265,29 @@ def translate_tags_IOB_to_grobid(
 
 
 def _translate_doc_tags_IOB_to_grobid(
-    doc_tag_result: Sequence[Tuple[str, str]]
+    doc_tag_result: Sequence[Tuple[str, str]],
+    marks_other_span_start: bool = True
 ) -> List[Tuple[str, str]]:
     translated: List[Tuple[str, str]] = []
     prev_grobid_tag: Optional[str] = None
     for token_text, tag in doc_tag_result:
-        grobid_tag = translate_tags_IOB_to_grobid(tag, prev_grobid_tag)
+        grobid_tag = translate_tags_IOB_to_grobid(
+            tag, prev_grobid_tag, marks_other_span_start=marks_other_span_start
+        )
         translated.append((token_text, grobid_tag))
         prev_grobid_tag = grobid_tag
     return translated
 
 
 def translate_tag_result_tags_IOB_to_grobid(
-    tag_result: Sequence[Sequence[Tuple[str, str]]]
+    tag_result: Sequence[Sequence[Tuple[str, str]]],
+    marks_other_span_start: bool = True
 ) -> List[List[Tuple[str, str]]]:
     return [
-        _translate_doc_tags_IOB_to_grobid(doc_tag_result)
+        _translate_doc_tags_IOB_to_grobid(
+            doc_tag_result, marks_other_span_start=marks_other_span_start
+        )
         for doc_tag_result in tag_result
-    ]
-
-
-def get_tag_result_for_labeled_layout_tokens_list(
-    labeled_layout_tokens_list: Sequence[Sequence[LabeledLayoutToken]]
-) -> List[List[Tuple[str, str]]]:
-    return [
-        [
-            (
-                labeled_layout_token.layout_token.text,
-                labeled_layout_token.label
-            )
-            for labeled_layout_token in labeled_layout_tokens
-        ]
-        for labeled_layout_tokens in labeled_layout_tokens_list
     ]
 
 
@@ -302,6 +346,36 @@ def get_data_generator_for_model_name(
 class DelftDocumentResult(NamedTuple):
     data_lines: Sequence[str]
     labeled_layout_tokens_list: Sequence[Sequence[LabeledLayoutToken]]
+    pairing_results: Sequence[PairingResult] = ()
+    unrecognised_path_counts: Optional[CounterType[str]] = None
+
+    @property
+    def matched_row_ratio(self) -> Optional[float]:
+        """Over every sequence of the document, or None where nothing was paired."""
+        covered = sum(result.covered_row_count for result in self.pairing_results)
+        if not covered:
+            return None
+        return sum(
+            result.matched_row_count for result in self.pairing_results
+        ) / covered
+
+
+def get_pairing_result_for_sequence(
+    raw_row_tokens: Sequence[str],
+    labeled_layout_tokens: Sequence[LabeledLayoutToken],
+    line_as_token: bool
+) -> PairingResult:
+    return get_paired_rows(
+        raw_row_tokens,
+        [
+            get_match_key_for_labelled_line(
+                token_text=labeled_layout_token.layout_token.text,
+                line_text=labeled_layout_token.layout_token.line_meta.text,
+                line_as_token=line_as_token
+            )
+            for labeled_layout_token in labeled_layout_tokens
+        ]
+    )
 
 
 def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
@@ -316,19 +390,19 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
         tei_file,
         auto_decompress=True
     ) as local_tei_file:
-        tei_root = etree.parse(local_tei_file).getroot()
+        # GROBID's own corpus carries xml:id values that are not NCNames, which a
+        # validating parse refuses outright
+        tei_root = etree.parse(local_tei_file, _TEI_XML_PARSER).getroot()
+    # what the reader could not place is counted rather than raised, and is zero
+    # for a training TEI we wrote ourselves
+    unrecognised_path_counts: CounterType[str] = Counter()
     labeled_layout_tokens_list = (
         training_tei_parser.parse_training_tei_to_labeled_layout_tokens_list(
-            tei_root
+            tei_root,
+            unrecognised_path_counts=unrecognised_path_counts
         )
     )
     LOGGER.debug('labeled_layout_tokens_list: %r', labeled_layout_tokens_list)
-    translated_tag_result = translate_tag_result_tags_IOB_to_grobid(
-        get_tag_result_for_labeled_layout_tokens_list(
-            labeled_layout_tokens_list
-        )
-    )
-    LOGGER.debug('translated_tag_result: %r', translated_tag_result)
     if raw_file:
         with auto_download_input_file(
             raw_file,
@@ -338,9 +412,68 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
                 texts, features = load_data_crf_lines(
                     raw_fp
                 )
-        assert len(texts) == len(translated_tag_result)
-        for doc_tokens, doc_tag_result in zip(texts, translated_tag_result):
-            assert len(doc_tokens) == len(doc_tag_result)
+        if len(texts) != len(labeled_layout_tokens_list):
+            raise ValueError(
+                '%r has %d sequence(s) and %r has %d' % (
+                    raw_file, len(texts), tei_file, len(labeled_layout_tokens_list)
+                )
+            )
+        pairing_results = [
+            get_pairing_result_for_sequence(
+                doc_tokens,
+                labeled_layout_tokens,
+                line_as_token=getattr(training_tei_parser, 'line_as_token', False)
+            )
+            for doc_tokens, labeled_layout_tokens
+            in zip(texts, labeled_layout_tokens_list)
+        ]
+        # a row the TEI has no line for has no label and no line text, so it is
+        # not emitted rather than given the line before it, which is what GROBID
+        # does with it
+        labeled_layout_tokens_list = [
+            [labeled_layout_tokens[pair.labelled_index] for pair in result.paired_rows]
+            for labeled_layout_tokens, result
+            in zip(labeled_layout_tokens_list, pairing_results)
+        ]
+        selectable_features: Sequence[Sequence[Sequence[str]]] = [
+            [document_features[pair.raw_index] for pair in result.paired_rows]
+            for document_features, result in zip(features.tolist(), pairing_results)
+        ]
+        # the token column belongs to the row, not to the line it was matched
+        # against: GROBID's raw file leads with the line's first whitespace field
+        # where our tokenizer would have stopped at `LIMIX` in `LIMIX: genetic`
+        row_tokens = [
+            [doc_tokens[pair.raw_index] for pair in result.paired_rows]
+            for doc_tokens, result in zip(texts, pairing_results)
+        ]
+        first_raw_row = next(
+            (row for document_features in selectable_features
+             for row in document_features),
+            None
+        )
+        if first_raw_row is not None and is_missing_extra_columns(
+            column_layout, feature_column_count=len(first_raw_row)
+        ):
+            LOGGER.info(
+                '%r stops where GROBID\'s own features do; reading %r off the TEI',
+                raw_file, list(column_layout.extra_columns)
+            )
+            extended_features: List[List[List[str]]] = []
+            extended_tokens: List[List[str]] = []
+            extended_labeled: List[List[LabeledLayoutToken]] = []
+            for document_features, doc_row_tokens, labeled_layout_tokens in zip(
+                selectable_features, row_tokens, labeled_layout_tokens_list
+            ):
+                kept = list(iter_rows_with_extra_columns(
+                    column_layout, document_features, doc_row_tokens,
+                    labeled_layout_tokens
+                ))
+                extended_features.append([item[0] for item in kept])
+                extended_tokens.append([item[1] for item in kept])
+                extended_labeled.append([item[2] for item in kept])
+            selectable_features = extended_features
+            row_tokens = extended_tokens
+            labeled_layout_tokens_list = extended_labeled
     else:
         layout_documents = [
             LayoutDocument.for_blocks([
@@ -356,12 +489,51 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             layout_documents
         ))
         _texts, features = load_data_crf_lines(data_line_iterable)
-    LOGGER.debug('features: %r', features)
-    if not len(features):  # pylint: disable=len-as-condition
-        return DelftDocumentResult([], labeled_layout_tokens_list)
+        selectable_features = features.tolist()
+        # nothing was paired, so there is no matched share to report; saying 1.0
+        # here would read as a measurement rather than as not applicable
+        pairing_results = []
+        row_tokens = [
+            [
+                labeled_layout_token.layout_token.text
+                for labeled_layout_token in labeled_layout_tokens
+            ]
+            for labeled_layout_tokens in labeled_layout_tokens_list
+        ]
+
+    # after the pairing, so that where a span starts is decided by the rows that
+    # are written rather than by rows that were dropped
+    translated_tag_result = translate_tag_result_tags_IOB_to_grobid(
+        [
+            [
+                (row_token, labeled_layout_token.label)
+                for row_token, labeled_layout_token
+                in zip(doc_row_tokens, labeled_layout_tokens)
+            ]
+            for doc_row_tokens, labeled_layout_tokens
+            in zip(row_tokens, labeled_layout_tokens_list)
+        ],
+        marks_other_span_start=column_layout.marks_other_span_start
+    )
+    LOGGER.debug('translated_tag_result: %r', translated_tag_result)
+    LOGGER.debug('features: %r', selectable_features)
+    # a document every row of which was dropped has no features to read a column
+    # count from, and nothing to write
+    first_feature_row = next(
+        (
+            feature_row
+            for document_features in selectable_features
+            for feature_row in document_features
+        ),
+        None
+    )
+    if first_feature_row is None:
+        return DelftDocumentResult(
+            [], labeled_layout_tokens_list, pairing_results, unrecognised_path_counts
+        )
     feature_indices = get_validated_training_data_feature_indices(
         column_layout,
-        feature_column_count=len(features[0][0]),
+        feature_column_count=len(first_feature_row),
         data_generator_name=type(data_generator).__name__,
         data_generator_column_names=data_generator.feature_names,
         include_extra_columns=include_extra_columns
@@ -371,9 +543,11 @@ def get_delft_training_data_for_document(  # pylint: disable=too-many-locals
             tag_result=translated_tag_result,
             output_format=TagOutputFormats.DATA,
             texts=None,
-            features=select_feature_columns(features, feature_indices)
+            features=select_feature_columns(selectable_features, feature_indices)
         )),
-        labeled_layout_tokens_list
+        labeled_layout_tokens_list,
+        pairing_results,
+        unrecognised_path_counts
     )
 
 
@@ -400,6 +574,18 @@ def get_tei_filename_suffix_for_model_name(
 ) -> Optional[str]:
     model = sciencebeam_parser.fulltext_models.get_sequence_model_by_name(model_name)
     return model.get_tei_training_data_generator().get_default_tei_filename_suffix()
+
+
+def _get_non_empty_sequence_count(
+    labeled_layout_tokens_list: Sequence[Sequence[LabeledLayoutToken]]
+) -> int:
+    """Sequences that have something in them.
+
+    The pairing keeps a document's shape, so a sequence every row of which was
+    dropped is still there and empty. Counting it would let a document with
+    nothing to train on past the check for having produced no sequences.
+    """
+    return sum(1 for item in labeled_layout_tokens_list if item)
 
 
 def get_assembled_document_record(
@@ -429,19 +615,39 @@ def get_assembled_document_record(
                 canonical_model_name
             ),
             review=review,
+            matched_row_ratio=result.matched_row_ratio,
             jats_status=generated.jats_status if generated else None,
             jats_reference_count=generated.jats_reference_count if generated else None,
             written=generated.written if generated else None,
             entity_element_count=generated.entity_element_count if generated else None,
             entity_start_count=entity_start_count,
-            sequence_count=len(result.labeled_layout_tokens_list),
+            sequence_count=_get_non_empty_sequence_count(
+                result.labeled_layout_tokens_list
+            ),
+            field_counts=generated.field_counts if generated else None,
         )
     return AssembledDocumentRecord(
         document_id=document_id,
         model_name=canonical_model_name,
+        matched_row_ratio=result.matched_row_ratio,
+        matched_row_count=sum(
+            pairing.matched_row_count for pairing in result.pairing_results
+        ),
+        unmatched_row_count=sum(
+            pairing.unmatched_row_count for pairing in result.pairing_results
+        ),
+        uncovered_row_count=sum(
+            pairing.uncovered_row_count for pairing in result.pairing_results
+        ),
+        unrecognised_path_counts=(
+            dict(result.unrecognised_path_counts)
+            if result.unrecognised_path_counts else None
+        ),
         corpus=generated.corpus if generated else None,
         review=review,
-        sequence_count=len(result.labeled_layout_tokens_list),
+        sequence_count=_get_non_empty_sequence_count(
+            result.labeled_layout_tokens_list
+        ),
         entity_start_count=entity_start_count,
         label_start_counts=(
             count_label_starts_per_sequence(result.labeled_layout_tokens_list)
@@ -547,7 +753,10 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     quality_config_path: str = TRAINING_QUALITY_CONFIG_FILE,
     require_config_path: Optional[str] = None,
     max_excluded_ratio: Optional[float] = None,
-    max_unreviewed_ratio: Optional[float] = None
+    max_unreviewed_ratio: Optional[float] = None,
+    source_name: Optional[str] = None,
+    source_revision: Optional[str] = None,
+    run_record_path: Optional[str] = None
 ):
     training_tei_parser = get_training_tei_parser_for_model_name(
         model_name,
@@ -636,6 +845,18 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
                 data_fp.write('\n\n')
             data_fp.writelines(result.data_lines)
             written_document_count += 1
+    write_run_record(
+        run_record_path or get_run_record_path_for_delft_output_path(delft_output_path),
+        get_run_record(
+            model_name=model_name,
+            tei_source_path=tei_source_path,
+            raw_source_path=raw_source_path,
+            assembled_records=assembled_records,
+            source_name=source_name,
+            source_revision=source_revision,
+            include_extra_columns=include_extra_columns
+        )
+    )
     assembly_record_path = quality_output_path or delft_output_path + '.quality.jsonl'
     write_assembly_records(assembly_record_path, assembled_records)
     log_assembly_summary(
@@ -675,7 +896,10 @@ def run(args: argparse.Namespace):
         quality_config_path=args.quality_config_path,
         require_config_path=args.require_config_path,
         max_excluded_ratio=args.max_excluded_ratio,
-        max_unreviewed_ratio=args.max_unreviewed_ratio
+        max_unreviewed_ratio=args.max_unreviewed_ratio,
+        source_name=args.source_name,
+        source_revision=args.source_revision,
+        run_record_path=args.run_record_path
     )
 
 

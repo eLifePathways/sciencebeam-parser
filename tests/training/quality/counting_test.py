@@ -17,6 +17,7 @@ from sciencebeam_parser.training.quality.counting import (
     count_citation_labels,
     count_entity_elements,
     count_entity_starts,
+    count_field_instances,
     count_label_starts_per_sequence,
     count_segmentation_lines,
     get_labels_for_model_data_list,
@@ -271,3 +272,109 @@ class TestGetCanonicalModelName:
     def test_should_recognise_a_label_counted_model_either_way(self):
         assert is_model_counted_by_label('citation')
         assert not is_model_counted_by_label('reference_segmenter')
+
+
+def _token_labeled(label, layout_token: LayoutToken) -> LabeledLayoutModelData:
+    return LabeledLayoutModelData(
+        data_line='token', label=label, layout_token=layout_token
+    )
+
+
+def _annotated_tokens(
+    *field_instance_tokens
+) -> JatsAnnotatedLayoutDocument:
+    """A document where each given token aligned to a field value instance."""
+    annotated = JatsAnnotatedLayoutDocument(layout_document=LayoutDocument(pages=[]))
+    for field_name, instance_id, token in field_instance_tokens:
+        annotated.token_label_by_id[id(token)] = (field_name, None, instance_id)
+    return annotated
+
+
+class TestCountFieldInstances:
+    def test_should_count_a_value_declared_located_and_marked(self):
+        token = LayoutToken('title')
+        counts = count_field_instances(
+            {JatsFieldNames.TITLE: 1},
+            _annotated_tokens((JatsFieldNames.TITLE, 1, token)),
+            [[_token_labeled('<title>', token)]],
+            {JatsFieldNames.TITLE},
+        )
+        assert counts[JatsFieldNames.TITLE] == {
+            'declared': 1, 'located': 1, 'marked': 1
+        }
+
+    def test_should_count_a_value_located_outside_the_region_as_unmarked(self):
+        located = LayoutToken('title')
+        counts = count_field_instances(
+            {JatsFieldNames.TITLE: 1},
+            _annotated_tokens((JatsFieldNames.TITLE, 1, located)),
+            [[_token_labeled('O', LayoutToken('other'))]],
+            {JatsFieldNames.TITLE},
+        )
+        assert counts[JatsFieldNames.TITLE] == {
+            'declared': 1, 'located': 1, 'marked': 0
+        }
+
+    def test_should_count_a_value_the_page_never_printed_as_unlocated(self):
+        counts = count_field_instances(
+            {JatsFieldNames.COPYRIGHT: 1},
+            _annotated_tokens(),
+            [],
+            {JatsFieldNames.COPYRIGHT},
+        )
+        assert counts[JatsFieldNames.COPYRIGHT] == {
+            'declared': 1, 'located': 0, 'marked': 0
+        }
+
+    def test_should_omit_the_marked_count_for_a_field_the_model_has_no_label_for(self):
+        token = LayoutToken('copyright')
+        counts = count_field_instances(
+            {JatsFieldNames.COPYRIGHT: 1},
+            _annotated_tokens((JatsFieldNames.COPYRIGHT, 1, token)),
+            [[_token_labeled('O', token)]],
+            {JatsFieldNames.TITLE},
+        )
+        assert counts[JatsFieldNames.COPYRIGHT] == {'declared': 1, 'located': 1}
+
+    def test_should_count_instances_rather_than_elements(self):
+        first, second = LayoutToken('alpha'), LayoutToken('beta')
+        counts = count_field_instances(
+            {JatsFieldNames.ABSTRACT: 1},
+            _annotated_tokens(
+                (JatsFieldNames.ABSTRACT, 1, first),
+                (JatsFieldNames.ABSTRACT, 1, second),
+            ),
+            [[
+                _token_labeled('<abstract>', first),
+                _token_labeled('<abstract>', second),
+            ]],
+            {JatsFieldNames.ABSTRACT},
+        )
+        assert counts[JatsFieldNames.ABSTRACT] == {
+            'declared': 1, 'located': 1, 'marked': 1
+        }
+
+    def test_should_count_a_partly_marked_repeated_field(self):
+        marked, unmarked = LayoutToken('alpha'), LayoutToken('beta')
+        counts = count_field_instances(
+            {JatsFieldNames.AUTHOR_AFF: 4},
+            _annotated_tokens(
+                (JatsFieldNames.AUTHOR_AFF, 1, marked),
+                (JatsFieldNames.AUTHOR_AFF, 2, unmarked),
+            ),
+            [[_token_labeled('<affiliation>', marked)]],
+            {JatsFieldNames.AUTHOR_AFF},
+        )
+        assert counts[JatsFieldNames.AUTHOR_AFF] == {
+            'declared': 4, 'located': 2, 'marked': 1
+        }
+
+    def test_should_not_count_an_unlabelled_token_as_marked(self):
+        token = LayoutToken('title')
+        counts = count_field_instances(
+            {JatsFieldNames.TITLE: 1},
+            _annotated_tokens((JatsFieldNames.TITLE, 1, token)),
+            [[_token_labeled(None, token)]],
+            {JatsFieldNames.TITLE},
+        )
+        assert counts[JatsFieldNames.TITLE]['marked'] == 0

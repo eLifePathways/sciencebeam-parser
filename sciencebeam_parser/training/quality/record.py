@@ -101,11 +101,15 @@ class ModelQualityRecord:
     `labelled_content_hash` is what a review pins a verdict to, and is present
     for a model that writes a span record, which is the same set of models whose
     data can be read on the page in the first place.
+
+    `field_counts` is per JATS field rather than per label, because several
+    fields can share a label and the floor is on a field the JATS declares.
     """
     model_name: str
     written: bool
     entity_element_count: Optional[int] = None
     label_counts: Optional[Dict[str, Dict[str, int]]] = None
+    field_counts: Optional[Dict[str, Dict[str, int]]] = None
     labelled_content_hash: Optional[str] = None
 
     def to_json_dict(self) -> Dict[str, Any]:
@@ -116,6 +120,8 @@ class ModelQualityRecord:
             json_dict['labelled_content_hash'] = self.labelled_content_hash
         if self.label_counts:
             json_dict['label_counts'] = self.label_counts
+        if self.field_counts:
+            json_dict['field_counts'] = self.field_counts
         return json_dict
 
 

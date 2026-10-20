@@ -19,6 +19,13 @@
 #                             sibling elements sharing a label used to come back as
 #                             one entity, and the floor is what keeps that from
 #                             returning unnoticed
+#   field_floors              per JATS field, the share of declared values the
+#                             model's own data has to end up marking.  A model cut
+#                             from a region needs this where cardinality says
+#                             nothing: the record counts a field's values as
+#                             declared, located anywhere, and marked in the
+#                             region, and a document failing names whichever of
+#                             the two stages lost them
 #
 # Over-counting is recorded and not failed.  The reference segmenter writes a
 # block per contiguous run of a reference's lines, so a reference split across a
@@ -29,7 +36,8 @@
 #
 # A model with no cardinality to check carries `cardinality: none` and a reason,
 # rather than being left out: a missing entry is a decision not taken, and the
-# gate says so instead of passing silently.
+# gate says so instead of passing silently.  It says which checks the model has,
+# not that it has none — `field_floors` applies either way.
 
 corpus:
   # Beyond this share of a corpus excluded, assembly refuses rather than
@@ -97,6 +105,16 @@ models:
       The record carries lines per region instead, and how many of them a JATS
       field grounded: `<body>` is the aligner's sink, so an ungrounded `<body>`
       line is one the JATS had no opinion about rather than one it called body.
+    # A tripwire rather than a filter.  Our own corpora pair at 1.000 on every
+    # one of their 86 documents, and the worst of GROBID's 925 is 0.811
+    # (`0951-7715_24_7_004`), with nothing below 0.80 and ten below 0.90.  So
+    # this refuses nothing that is read today, and a pairing that broke would
+    # have to break badly to trip it.  It sits low on purpose: refusing a
+    # document GROBID keeps would diverge from the published file the
+    # reconstruction is measured against, and the share of a corpus that is
+    # merely imperfectly annotated is a finding rather than a reason to stop.
+    min_matched_row_ratio: 0.75
+
     # No floor on the sink share yet.  It is high enough on the measured corpora
     # that a floor near its level risks refusing most of a corpus through
     # `max_excluded_ratio`, and one well above it may exclude nothing at all;
@@ -105,7 +123,21 @@ models:
     label_floors: {}
   header:
     cardinality: none
-    reason: labels mark fields of one header, so presence is what matters
+    reason: >
+      labels mark fields of one header, which occur once or a handful of times
+      rather than repeatedly, so there is no entity count to compare.  What the
+      record carries instead is each JATS field's values declared, located and
+      marked, since this model's data is cut from the segmentation `<header>`
+      region and a value can be located and still fall outside it.
+    # Only the two fields every document of both corpora declares and every
+    # publisher prints.  `copyright` is located on 0 of 50 scielo_preprints-jats
+    # documents because the PDF does not print the licence, and `author_aff` is
+    # partial on a document whose affiliations the region holds in part, so both
+    # are recorded rather than gated.  `author` is one value per contrib-group,
+    # so the floor is on the byline being marked at all.
+    field_floors:
+      title: 1.0
+      author: 1.0
   affiliation-address:
     cardinality: none
     reason: >

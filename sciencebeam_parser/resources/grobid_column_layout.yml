@@ -16,6 +16,22 @@
 #             `0`: token, columns, 0, label
 #   absent    printVector has the block commented out: token, columns, label
 #
+# marks_other_span_start records whether the corpus writes `I-<other>` for the
+# first unlabelled token after an annotated span, the way it marks the start of
+# any other span. GROBID decides this per model, in each model's own SAX writer,
+# and the published corpora at 0.9.0 say which way:
+#
+#   segmentation          <other> 7,764    I-<other> 0
+#   header                <other> 20,721   I-<other> 4,535
+#   citation              <other> 13,227   I-<other> 42,120
+#   affiliation_address   <other> 259      I-<other> 7,744
+#   name_header           <other> 141      I-<other> 4,858
+#   reference_segmenter   <other> 117      I-<other> 103
+#   fulltext              <other> 0        I-<other> 0
+#
+# so segmentation is the one model that never marks it, because its writer tests
+# `begin && !surfaceTag.equals("<other>")` before prefixing.
+#
 # columns are the feature columns excluding the slot, starting with the token
 # itself, and match the data generator's feature_names position by position.
 # extra_columns are columns we add that GROBID has no counterpart for; they are
@@ -37,6 +53,7 @@ models:
   segmentation:
     generator: SegmentationDataGenerator
     label_slot: absent
+    marks_other_span_start: false
     reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-segmentation.train.gz
     columns:
@@ -79,6 +96,7 @@ models:
   header:
     generator: HeaderDataGenerator
     label_slot: unfilled
+    marks_other_span_start: true
     reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-header.train.gz
     columns:
@@ -123,6 +141,7 @@ models:
   fulltext: &fulltext
     generator: FullTextDataGenerator
     label_slot: absent
+    marks_other_span_start: true
     reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-fulltext.train.gz
     columns:
@@ -161,6 +180,7 @@ models:
   reference_segmenter:
     generator: ReferenceSegmenterDataGenerator
     label_slot: unfilled
+    marks_other_span_start: true
     reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-reference-segmenter.train.gz
     columns:
@@ -195,6 +215,7 @@ models:
   citation:
     generator: CitationDataGenerator
     label_slot: filled
+    marks_other_span_start: true
     reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-citation.train.gz
     columns:
@@ -231,6 +252,7 @@ models:
   affiliation_address:
     generator: AffiliationAddressDataGenerator
     label_slot: filled
+    marks_other_span_start: true
     reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-affiliation-address.train.gz
     columns:
@@ -259,6 +281,7 @@ models:
   name_header: &name
     generator: NameDataGenerator
     label_slot: filled
+    marks_other_span_start: true
     reference_training_corpus:
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-name-header.train.gz
       - https://github.com/eLifePathways/sciencebeam-datasets/releases/download/grobid-0.9.0/delft-grobid-0.9.0-name-citation.train.gz

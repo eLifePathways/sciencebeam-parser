@@ -33,6 +33,7 @@ from sciencebeam_parser.training.cli.generate_delft_data import (
     translate_tag_result_tags_IOB_to_grobid,
     translate_tags_IOB_to_grobid
 )
+from sciencebeam_parser.training.quality.gate import CorpusRefusedError
 from sciencebeam_parser.training.grobid_column_layout import (
     get_grobid_column_layout_for_model_name
 )
@@ -257,6 +258,28 @@ class TestTranslateTagsIOBToGrobid:
     def test_outside_at_document_start_stays_other(self):
         assert translate_tags_IOB_to_grobid('O', prev_grobid_tag=None) == '<other>'
 
+    def test_outside_after_annotated_stays_other_where_the_model_does_not_mark_it(self):
+        # segmentation's corpus holds 7,764 <other> and no I-<other> at 0.9.0,
+        # because its writer tests `begin && !surfaceTag.equals("<other>")`
+        assert translate_tags_IOB_to_grobid(
+            'O', prev_grobid_tag='I-<title>', marks_other_span_start=False
+        ) == '<other>'
+
+    def test_translate_doc_without_marking_the_other_span_start(self):
+        tag_result = [[
+            ('token1', 'B-<title>'),
+            ('token2', 'O'),
+            ('token3', 'O'),
+        ]]
+        translated = translate_tag_result_tags_IOB_to_grobid(
+            tag_result, marks_other_span_start=False
+        )
+        assert translated == [[
+            ('token1', 'I-<title>'),
+            ('token2', '<other>'),
+            ('token3', '<other>'),
+        ]]
+
     def test_translate_doc_applies_i_other_convention(self):
         # Full document translation: O after B-<title> → I-<other>; subsequent O → <other>
         tag_result = [[
@@ -308,6 +331,177 @@ class TestMain:
             expected_labels=['B-<header>', 'B-<body>'],
             include_extra_columns=True
         )
+
+    def test_should_drop_a_row_whose_line_the_tei_does_not_have(
+        self,
+        tmp_path: Path
+    ):
+        """A raw file and a TEI that no longer line up, row for row.
+
+        The raw file prints a line the TEI has no counterpart for, which is what
+        a corpus whose TEI was corrected after its raw was written looks like.
+        Every row that is emitted has to carry its own features beside its own
+        label: dropping a row is acceptable, shifting one onto the next line's
+        label is not.
+        """
+        tei_tokens = ['tok%d' % index for index in range(6)]
+        tei_source_path = tmp_path / 'tei'
+        raw_source_path = tmp_path / 'raw'
+        output_path = tmp_path / 'output.data'
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+
+        def _lines(tokens):
+            items = []
+            for token in tokens:
+                items += [token, E('lb'), '\n']
+            return items
+
+        (tei_source_path / 'sample.segmentation.tei.xml').write_bytes(etree.tostring(
+            E('tei', E('text', *[
+                E('front', *_lines(tei_tokens[:3])),
+                '\n',
+                E('body', *_lines(tei_tokens[3:])),
+                '\n'
+            ]))
+        ))
+        # the raw file has a line the TEI does not, between two it does
+        drifted_index = 2
+        raw_tokens = (
+            tei_tokens[:drifted_index] + ['drifted'] + tei_tokens[drifted_index:]
+        )
+        raw_feature_rows = _get_raw_feature_rows('segmentation', len(raw_tokens))
+        raw_source_path.mkdir(parents=True, exist_ok=True)
+        (raw_source_path / 'sample.segmentation').write_text('\n'.join([
+            f'{token} {" ".join(token_features)}'
+            for token, token_features in zip(raw_tokens, raw_feature_rows)
+        ]))
+        main([
+            '--model-name=segmentation',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--raw-source-path={raw_source_path}',
+            f'--delft-output-path={output_path}'
+        ])
+        texts, labels, features = load_data_and_labels_crf_file(str(output_path))
+        assert list(texts[0]) == tei_tokens
+        assert list(labels[0]) == [
+            'B-<header>', 'I-<header>', 'I-<header>',
+            'B-<body>', 'I-<body>', 'I-<body>'
+        ]
+        # each label sits beside the features of its own row, not of the drifted
+        # row that came between them in the raw file
+        assert features.tolist() == [_get_expected_training_feature_rows(
+            'segmentation',
+            [
+                row for index, row in enumerate(raw_feature_rows)
+                if index != drifted_index
+            ]
+        )]
+
+    def test_should_not_write_a_document_every_row_of_which_was_dropped(
+        self,
+        tmp_path: Path
+    ):
+        # the pairing keeps a document's shape, so a sequence with nothing left
+        # in it is still there; it has no rows to train on, and writing it would
+        # put an empty block in the training data
+        tei_source_path = tmp_path / 'tei'
+        raw_source_path = tmp_path / 'raw'
+        output_path = tmp_path / 'output.data'
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (tei_source_path / 'sample.segmentation.tei.xml').write_bytes(etree.tostring(
+            E('tei', E('text'))
+        ))
+        raw_feature_rows = _get_raw_feature_rows('segmentation', 1)
+        raw_source_path.mkdir(parents=True, exist_ok=True)
+        (raw_source_path / 'sample.segmentation').write_text(
+            f'{TOKEN_1} {" ".join(raw_feature_rows[0])}'
+        )
+        with pytest.raises(CorpusRefusedError):
+            main([
+                '--model-name=segmentation',
+                f'--tei-source-path={tei_source_path}/*.tei.xml',
+                f'--raw-source-path={raw_source_path}',
+                f'--delft-output-path={output_path}'
+            ])
+        run_record = json.loads(
+            Path(str(output_path) + '.run.json').read_text(encoding='utf-8')
+        )
+        assert run_record['documents']['refused'] == 1
+        assert run_record['refused_documents'][0]['reasons'] == [
+            'no-training-sequences'
+        ]
+
+    def test_should_refuse_a_document_whose_rows_mostly_found_no_line(
+        self,
+        tmp_path: Path
+    ):
+        tei_source_path = tmp_path / 'tei'
+        raw_source_path = tmp_path / 'raw'
+        output_path = tmp_path / 'output.data'
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (tei_source_path / 'sample.segmentation.tei.xml').write_bytes(etree.tostring(
+            E('tei', E('text', *[
+                E('body', TOKEN_1, E('lb'), '\n', TOKEN_2, E('lb')),
+                '\n'
+            ]))
+        ))
+        # two of the five rows the TEI covers find their line, which is below
+        # the floor `training_quality.yml` declares
+        raw_tokens = [TOKEN_1, 'drifted1', 'drifted2', 'drifted3', TOKEN_2]
+        raw_feature_rows = _get_raw_feature_rows('segmentation', len(raw_tokens))
+        raw_source_path.mkdir(parents=True, exist_ok=True)
+        (raw_source_path / 'sample.segmentation').write_text('\n'.join([
+            f'{token} {" ".join(token_features)}'
+            for token, token_features in zip(raw_tokens, raw_feature_rows)
+        ]))
+        with pytest.raises(CorpusRefusedError):
+            main([
+                '--model-name=segmentation',
+                f'--tei-source-path={tei_source_path}/*.tei.xml',
+                f'--raw-source-path={raw_source_path}',
+                f'--delft-output-path={output_path}'
+            ])
+        # the run record is written before the refusal, and names what it refused
+        run_record = json.loads(
+            Path(str(output_path) + '.run.json').read_text(encoding='utf-8')
+        )
+        assert run_record['documents']['refused'] == 1
+        refused = run_record['refused_documents'][0]
+        assert refused['document_id'] == 'sample'
+        assert refused['reasons'] == ['too-few-matched-rows']
+        assert refused['matched_row_ratio'] == 0.4
+
+    def test_should_record_what_the_pairing_did_with_a_drifted_raw_file(
+        self,
+        tmp_path: Path
+    ):
+        tei_source_path = tmp_path / 'tei'
+        raw_source_path = tmp_path / 'raw'
+        output_path = tmp_path / 'output.data'
+        tei_source_path.mkdir(parents=True, exist_ok=True)
+        (tei_source_path / 'sample.segmentation.tei.xml').write_bytes(etree.tostring(
+            E('tei', E('text', E('body', TOKEN_1, E('lb')), '\n'))
+        ))
+        raw_tokens = [TOKEN_1, 'drifted1']
+        raw_feature_rows = _get_raw_feature_rows('segmentation', len(raw_tokens))
+        raw_source_path.mkdir(parents=True, exist_ok=True)
+        (raw_source_path / 'sample.segmentation').write_text('\n'.join([
+            f'{token} {" ".join(token_features)}'
+            for token, token_features in zip(raw_tokens, raw_feature_rows)
+        ]))
+        main([
+            '--model-name=segmentation',
+            f'--tei-source-path={tei_source_path}/*.tei.xml',
+            f'--raw-source-path={raw_source_path}',
+            f'--delft-output-path={output_path}'
+        ])
+        run_record = json.loads(
+            Path(str(output_path) + '.run.json').read_text(encoding='utf-8')
+        )
+        assert run_record['rows']['matched'] == 1
+        # the row after the TEI ran out is uncovered rather than unplaceable
+        assert run_record['rows']['uncovered'] == 1
+        assert run_record['rows']['unmatched'] == 0
 
     def test_should_reject_a_raw_file_of_another_width(
         self,

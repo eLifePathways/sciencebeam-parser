@@ -27,6 +27,13 @@ REFERENCE_SEGMENTER_THRESHOLDS = ModelQualityThresholds(
 )
 
 
+PAIRED_THRESHOLDS = ModelQualityThresholds(
+    model_name='segmentation',
+    cardinality='none',
+    min_matched_row_ratio=0.75,
+)
+
+
 def _verdict(**kwargs) -> QualityVerdict:
     return get_quality_verdict(
         document_id=kwargs.pop('document_id', DOCUMENT_ID_1),
@@ -69,6 +76,46 @@ class TestLoadTrainingQualityConfig:
             'citation',
         ]:
             assert config.get_thresholds_for_model(model_name)
+
+
+class TestMatchedRowRatio:
+    def test_should_exclude_a_document_whose_rows_mostly_found_no_line(self):
+        verdict = _verdict(
+            thresholds=PAIRED_THRESHOLDS,
+            sequence_count=1, matched_row_ratio=0.5,
+        )
+        assert verdict.primary_reason == ExclusionReason.TOO_FEW_MATCHED_ROWS
+        assert verdict.detail['matched_row_ratio'] == 0.5
+        assert verdict.detail['min_matched_row_ratio'] == 0.75
+
+    def test_should_keep_a_document_above_the_floor(self):
+        verdict = _verdict(
+            thresholds=PAIRED_THRESHOLDS,
+            sequence_count=1, matched_row_ratio=0.811,
+        )
+        assert not verdict.is_excluded
+        assert verdict.detail['matched_row_ratio'] == 0.811
+
+    def test_should_record_the_ratio_for_a_model_with_no_floor(self):
+        verdict = _verdict(
+            jats_status='ok', jats_reference_count=40, written=True,
+            entity_element_count=40, entity_start_count=40, sequence_count=1,
+            matched_row_ratio=0.5,
+        )
+        assert not verdict.is_excluded
+        assert verdict.detail['matched_row_ratio'] == 0.5
+
+    def test_should_say_nothing_where_no_raw_file_was_paired(self):
+        verdict = _verdict(thresholds=PAIRED_THRESHOLDS, sequence_count=1)
+        assert not verdict.is_excluded
+        assert 'matched_row_ratio' not in verdict.detail
+
+    def test_should_declare_the_floor_for_segmentation_in_the_shipped_config(self):
+        thresholds = load_training_quality_config().get_thresholds_for_model(
+            'segmentation'
+        )
+        # below the worst of GROBID's 925 documents, which pairs at 0.811
+        assert thresholds.min_matched_row_ratio == 0.75
 
 
 class TestGetQualityVerdict:
@@ -473,3 +520,119 @@ class TestAPriorDecisionWithNoNewOneYet:
         assert not self._verdict_for(
             Requirement.MEASURED, ReviewStanding.REJECTION_LAPSED
         ).is_excluded
+
+
+HEADER_THRESHOLDS = ModelQualityThresholds(
+    model_name='header',
+    cardinality='none',
+    field_floors={'title': 1.0, 'author': 1.0},
+)
+
+
+def _header_verdict(field_counts, **kwargs) -> QualityVerdict:
+    return get_quality_verdict(
+        document_id=DOCUMENT_ID_1,
+        thresholds=HEADER_THRESHOLDS,
+        field_counts=field_counts,
+        sequence_count=kwargs.pop('sequence_count', 1),
+        **kwargs
+    )
+
+
+class TestTheShippedHeaderThresholds:
+    def test_should_floor_the_two_fields_every_document_declares(self):
+        thresholds = load_training_quality_config().get_thresholds_for_model('header')
+        assert thresholds.field_floors == {'title': 1.0, 'author': 1.0}
+        assert not thresholds.has_cardinality_check
+
+    def test_should_not_floor_a_field_the_page_does_not_print(self):
+        thresholds = load_training_quality_config().get_thresholds_for_model('header')
+        assert 'copyright' not in thresholds.field_floors
+        assert 'author_aff' not in thresholds.field_floors
+
+
+class TestGetQualityVerdictOnFieldCounts:
+    def test_should_keep_a_document_marking_everything_it_declares(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 1},
+            'author': {'declared': 1, 'located': 1, 'marked': 1},
+        })
+        assert not verdict.is_excluded
+
+    def test_should_exclude_a_title_located_outside_the_region(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 0},
+            'author': {'declared': 1, 'located': 1, 'marked': 1},
+        })
+        assert verdict.exclusion_reasons == [ExclusionReason.FIELD_NOT_IN_REGION]
+        assert verdict.detail['fields_below_floor']['title'] == {
+            'declared': 1, 'located': 1, 'marked': 0
+        }
+
+    def test_should_exclude_a_title_the_aligner_never_placed(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 0, 'marked': 0},
+            'author': {'declared': 1, 'located': 1, 'marked': 1},
+        })
+        assert verdict.exclusion_reasons == [ExclusionReason.FIELD_NOT_LOCATED]
+
+    def test_should_name_both_stages_where_both_lost_a_value(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 0, 'marked': 0},
+            'author': {'declared': 2, 'located': 1, 'marked': 0},
+        })
+        assert verdict.exclusion_reasons == [
+            ExclusionReason.FIELD_NOT_LOCATED, ExclusionReason.FIELD_NOT_IN_REGION
+        ]
+
+    def test_should_report_a_stage_once_where_two_fields_fail_at_it(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 0},
+            'author': {'declared': 1, 'located': 1, 'marked': 0},
+        })
+        assert verdict.exclusion_reasons == [ExclusionReason.FIELD_NOT_IN_REGION]
+        assert sorted(verdict.detail['fields_below_floor']) == ['author', 'title']
+
+    def test_should_not_fail_a_field_the_document_does_not_declare(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 1},
+            'author': {'declared': 0, 'located': 0, 'marked': 0},
+        })
+        assert not verdict.is_excluded
+
+    def test_should_not_fail_a_field_with_no_floor(self):
+        verdict = _header_verdict({
+            'title': {'declared': 1, 'located': 1, 'marked': 1},
+            'author': {'declared': 1, 'located': 1, 'marked': 1},
+            'copyright': {'declared': 1, 'located': 0},
+        })
+        assert not verdict.is_excluded
+
+    def test_should_judge_a_field_without_a_marked_count_on_what_was_located(self):
+        thresholds = ModelQualityThresholds(
+            model_name='header', cardinality='none', field_floors={'copyright': 1.0}
+        )
+        verdict = get_quality_verdict(
+            document_id=DOCUMENT_ID_1,
+            thresholds=thresholds,
+            sequence_count=1,
+            field_counts={'copyright': {'declared': 1, 'located': 0}},
+        )
+        assert verdict.exclusion_reasons == [ExclusionReason.FIELD_NOT_LOCATED]
+
+    def test_should_not_fail_a_document_with_no_field_counts_at_all(self):
+        verdict = _header_verdict(None)
+        assert not verdict.is_excluded
+
+    def test_should_report_an_empty_region_once_rather_than_once_per_field(self):
+        verdict = _header_verdict(
+            {
+                'title': {'declared': 1, 'located': 1, 'marked': 0},
+                'author': {'declared': 1, 'located': 1, 'marked': 0},
+            },
+            sequence_count=0,
+        )
+        assert verdict.exclusion_reasons == [
+            ExclusionReason.FIELD_NOT_IN_REGION,
+            ExclusionReason.NO_TRAINING_SEQUENCES,
+        ]

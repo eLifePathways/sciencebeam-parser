@@ -14,6 +14,7 @@ from typing import (
     FrozenSet,
     Iterable,
     List,
+    Mapping,
     NamedTuple,
     Optional,
     Sequence,
@@ -78,6 +79,7 @@ from sciencebeam_parser.training.jats.field_extractor import (
 from sciencebeam_parser.training.quality.counting import (
     ENTITY_ELEMENT_NAME_BY_MODEL,
     count_citation_labels,
+    count_field_instances,
     count_entity_elements,
     count_segmentation_lines
 )
@@ -304,6 +306,7 @@ class TrainingDataDocumentContext(NamedTuple):
     jats_annotated_document: Optional[JatsAnnotatedLayoutDocument] = None
     jats_segmentation_labels: Optional[Dict[int, str]] = None
     jats_reference_sub_field_names: Sequence[FrozenSet[str]] = ()
+    jats_declared_field_counts: Optional[Mapping[str, int]] = None
 
     @property
     def source_name(self) -> str:
@@ -541,6 +544,14 @@ class AbstractModelTrainingDataGenerator(ABC):
         """Per-label counts for a model whose entity cardinality cannot change."""
         return None
 
+    def get_quality_field_counts(  # pylint: disable=unused-argument
+        self,
+        model_data_list_list: Sequence[Sequence[LayoutModelData]],
+        document_context: TrainingDataDocumentContext
+    ) -> Optional[Dict[str, Dict[str, int]]]:
+        """Per JATS field, what was declared, located and marked in this model's data."""
+        return None
+
     def generate_data_for_layout_document(
         self,
         layout_document: LayoutDocument,
@@ -645,6 +656,9 @@ class AbstractModelTrainingDataGenerator(ABC):
             written=True,
             entity_element_count=count_entity_elements(self.model_name, training_tei_root),
             label_counts=self.get_quality_label_counts(
+                model_data_list_list, document_context
+            ),
+            field_counts=self.get_quality_field_counts(
                 model_data_list_list, document_context
             ),
             labelled_content_hash=labelled_content_hash,
@@ -765,6 +779,24 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
 
     def get_main_model(self, document_context: TrainingDataDocumentContext) -> Model:
         return document_context.fulltext_models.header_model
+
+    def get_quality_field_counts(
+        self,
+        model_data_list_list: Sequence[Sequence[LayoutModelData]],
+        document_context: TrainingDataDocumentContext
+    ) -> Optional[Dict[str, Dict[str, int]]]:
+        # The data is cut from the segmentation `<header>` region, so a value can
+        # be located and still fall outside what the model is shown.
+        annotated = document_context.jats_annotated_document
+        declared_field_counts = document_context.jats_declared_field_counts
+        if annotated is None or declared_field_counts is None:
+            return None
+        return count_field_instances(
+            declared_count_by_field=declared_field_counts,
+            annotated=annotated,
+            model_data_list_list=model_data_list_list,
+            labelled_fields=HEADER_LABEL_BY_FIELD.keys(),
+        )
 
     def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
         # Stateful closure: emit B-/I- IOB prefix so the TEI generator can create
@@ -1474,6 +1506,7 @@ class JatsAnnotationResult(NamedTuple):
     status: str
     annotated_document: Optional[JatsAnnotatedLayoutDocument] = None
     reference_sub_field_names: Sequence[FrozenSet[str]] = ()
+    declared_field_counts: Optional[Mapping[str, int]] = None
 
     @property
     def reference_count(self) -> Optional[int]:
@@ -1497,10 +1530,18 @@ def _build_jats_annotations(
         return JatsAnnotationResult(status=JatsStatus.UNREADABLE)
     field_values = list(JatsFieldExtractor().iter_field_values(root))
     LOGGER.debug('JATS field values count: %d', len(field_values))
+    declared_field_counts: Dict[str, int] = {}
+    for field_value in field_values:
+        if field_value.sub_field_name is not None:
+            continue
+        declared_field_counts[field_value.field_name] = (
+            declared_field_counts.get(field_value.field_name, 0) + 1
+        )
     return JatsAnnotationResult(
         status=JatsStatus.OK,
         annotated_document=LayoutDocumentJatsAligner().align(layout_document, field_values),
         reference_sub_field_names=list(iter_reference_sub_field_names(root)),
+        declared_field_counts=declared_field_counts,
     )
 
 
@@ -1563,6 +1604,7 @@ def generate_training_data_for_layout_document(
         jats_annotated_document=jats_result.annotated_document,
         jats_segmentation_labels=jats_seg_labels,
         jats_reference_sub_field_names=jats_result.reference_sub_field_names,
+        jats_declared_field_counts=jats_result.declared_field_counts,
     )
     return _get_document_quality_record(
         document_context=document_context,
