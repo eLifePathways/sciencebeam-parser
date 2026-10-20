@@ -19,6 +19,7 @@ from typing import (
     NamedTuple,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Union
 )
@@ -1386,6 +1387,11 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
     def get_jats_label_fn(self) -> Optional[JatsLabelFn]:
         line_first_instance_cache: Dict[int, Optional[int]] = {}
         last_instance_id: Optional[int] = None
+        # Instances that began part-way along a line and were taken into the entry
+        # already open there.  Remembered because the rest of such an instance runs
+        # on over the lines below, and each would otherwise open the entry the line
+        # it started on was refused.
+        absorbed_instance_ids: Set[int] = set()
 
         def _get_line_first_ref_instance_id(
             line: LayoutLine, annotated: JatsAnnotatedLayoutDocument
@@ -1406,37 +1412,50 @@ class ReferenceSegmenterModelTrainingDataGenerator(AbstractDocumentModelTraining
             line = md.layout_line
             if line is None or token is None:
                 return None
-            entry = annotated.token_label_by_id.get(id(token))
-            if entry and entry[0] == JatsFieldNames.REFERENCE:
-                cur_instance_id = entry[2]
-                is_label = entry[1] == JatsSubFieldNames.REFERENCE_LABEL
-                if cur_instance_id != last_instance_id and last_instance_id is not None:
-                    # Instance transition: emit B-prefixed label so the TEI generator
-                    # creates a new <bibl>.  B-<label> also fires the reset mechanism
-                    # (backs up to <listBibl> before opening the new <bibl>), which is
-                    # how the <label> subelement lands in the correct <bibl>.
-                    last_instance_id = cur_instance_id
-                    return 'B-<label>' if is_label else 'B-<reference>'
-                last_instance_id = cur_instance_id
-                return '<label>' if is_label else '<reference>'
-            # Unlabeled token: expand to <reference> if the line has any reference tokens.
-            # If the line's first annotated reference belongs to a new instance, claim
-            # the whole line for that instance by emitting B-<reference>.
             line_id = id(line)
             if line_id not in line_first_instance_cache:
                 line_first_instance_cache[line_id] = _get_line_first_ref_instance_id(
                     line, annotated
                 )
             line_instance_id = line_first_instance_cache[line_id]
-            if line_instance_id is None:
-                # Gap-fill: a line with no annotated reference tokens (e.g. "DOI:"
-                # prefix before the URL) continues the current bibl rather than
-                # breaking out to listBibl level.
-                return '<reference>' if last_instance_id is not None else None
-            if line_instance_id != last_instance_id and last_instance_id is not None:
+            entry = annotated.token_label_by_id.get(id(token))
+            is_line_start = bool(line.tokens) and id(line.tokens[0]) == id(token)
+            # A reference list is read line by line, so an entry begins where its line
+            # begins.  Opening it at the first token the aligner happened to mark cuts
+            # whatever the page prints before that token onto the entry before it --
+            # a surname onto the previous reference, or a year into one of its own.
+            if (
+                is_line_start
+                and line_instance_id is not None
+                and line_instance_id != last_instance_id
+                and line_instance_id not in absorbed_instance_ids
+                and last_instance_id is not None
+            ):
                 last_instance_id = line_instance_id
-                return 'B-<reference>'
-            return '<reference>'
+                starts_with_label = bool(
+                    entry
+                    and entry[0] == JatsFieldNames.REFERENCE
+                    and entry[1] == JatsSubFieldNames.REFERENCE_LABEL
+                )
+                # B-<label> also fires the reset mechanism (backs up to <listBibl>
+                # before opening the new <bibl>), which is how the <label>
+                # subelement lands in the correct <bibl>.
+                return 'B-<label>' if starts_with_label else 'B-<reference>'
+            if entry and entry[0] == JatsFieldNames.REFERENCE:
+                cur_instance_id = entry[2]
+                is_label = entry[1] == JatsSubFieldNames.REFERENCE_LABEL
+                if cur_instance_id != last_instance_id and last_instance_id is not None:
+                    # Part-way along a line: the page gives no reason to start an
+                    # entry here, so the instance joins the one already open and is
+                    # remembered, which keeps its later lines from opening one.
+                    absorbed_instance_ids.add(cur_instance_id)
+                    return '<label>' if is_label else '<reference>'
+                last_instance_id = cur_instance_id
+                return '<label>' if is_label else '<reference>'
+            # Unlabeled token: expand to <reference> if the line has any reference
+            # tokens.  A line with none (e.g. a "DOI:" prefix before the URL) continues
+            # the current bibl rather than breaking out to listBibl level.
+            return '<reference>' if last_instance_id is not None else None
 
         return fn
 
