@@ -97,10 +97,11 @@ def resolve_source(
     dataset = cfg.get("dataset", {})
     if not isinstance(corpus_cfg, dict):
         corpus_cfg = {"file": str(corpus_cfg)}
+    repo_id, revision = _resolve_repo_and_revision(corpus, corpus_cfg, dataset)
     source = CorpusSource(
         corpus=corpus,
-        repo_id=corpus_cfg.get("repo_id") or dataset.get("repo_id"),
-        revision=corpus_cfg.get("revision") or dataset.get("revision"),
+        repo_id=repo_id,
+        revision=revision,
         id_column=corpus_cfg.get("id_column", DEFAULT_ID_COLUMN),
         file=corpus_cfg.get("file"),
         path=corpus_cfg.get("path"),
@@ -114,13 +115,34 @@ def resolve_source(
     return source
 
 
-def _check_source(source: CorpusSource) -> None:
-    corpus = source.corpus
-    if not source.repo_id or not source.revision:
+def _resolve_repo_and_revision(
+    corpus: str, corpus_cfg: Mapping[str, Any], dataset: Mapping[str, Any]
+) -> Tuple[str, str]:
+    own_repo_id = corpus_cfg.get("repo_id")
+    own_revision = corpus_cfg.get("revision")
+    if own_repo_id and own_revision:
+        return own_repo_id, own_revision
+    if own_repo_id or own_revision:
+        named, missing = (
+            ("repo_id", "revision") if own_repo_id else ("revision", "repo_id")
+        )
+        raise CorpusConfigError(
+            f"corpus {corpus!r} names its own {named} but no {missing}, so it would "
+            f"take the other from the dataset level. A revision names a commit in "
+            f"one repo: declare both or neither"
+        )
+    repo_id = dataset.get("repo_id")
+    revision = dataset.get("revision")
+    if not repo_id or not revision:
         raise CorpusConfigError(
             f"corpus {corpus!r} has no repo_id or revision, and the dataset-level "
             f"values do not supply one"
         )
+    return repo_id, revision
+
+
+def _check_source(source: CorpusSource) -> None:
+    corpus = source.corpus
     if bool(source.file) == bool(source.path):
         raise CorpusConfigError(
             f"corpus {corpus!r} must name either one `file` or a `path` prefix, "
