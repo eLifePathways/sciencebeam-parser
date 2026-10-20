@@ -121,6 +121,16 @@ class TestResolveSource:
         )
         assert (source.repo_id, source.revision) == ("shared/repo", "main")
 
+    def test_rejects_a_corpus_that_names_a_repo_without_a_revision(self):
+        entry = {**SINGLE_ENTRY, "repo_id": "private/ore"}
+        with pytest.raises(CorpusConfigError, match="declare both or neither"):
+            resolve_source(_config({"ore": entry}, {}), "validation", "ore", entry)
+
+    def test_rejects_a_corpus_that_names_a_revision_without_a_repo(self):
+        entry = {**SINGLE_ENTRY, "revision": "corpus-v001"}
+        with pytest.raises(CorpusConfigError, match="declare both or neither"):
+            resolve_source(_config({"ore": entry}, {}), "validation", "ore", entry)
+
     def test_a_bare_string_entry_still_names_a_file(self):
         source = resolve_source({"dataset": {"repo_id": "a/b", "revision": "main"}},
                                 "validation", "ore", "ore/train.parquet")
