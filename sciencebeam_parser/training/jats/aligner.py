@@ -62,6 +62,17 @@ _AVAILABILITY_FIELDS: FrozenSet[str] = frozenset({
 })
 _FRONT_MATTER_BUFFER = 2000
 
+# The declarations a publisher files in the back matter and may print in the
+# front, which is where these two corpora's preprint servers print them: after
+# the affiliations and before the abstract, in the block of metadata the first
+# pages end with.
+_FRONT_PRINTED_STATEMENT_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.CONFLICT_SECTION_TITLE,
+    JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+    JatsFieldNames.CONTRIBUTION_SECTION_TITLE,
+    JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+})
+
 # When the "Keywords" section header is matched, individual keyword values are searched
 # from that position forward rather than from position 0.  Without this, short common
 # keywords ("confidence", "Bayesian") false-match in the title or abstract.
@@ -83,6 +94,11 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.KEYWORDS_TITLE,
     JatsFieldNames.EMAIL,
     JatsFieldNames.ORCID,
+    # A declaration the publisher files as a note is printed with the front
+    # matter, which on these corpora is before the abstract rather than after
+    # the body: searched from the body floor, the page had already printed it.
+    JatsFieldNames.CONFLICT_NOTE,
+    JatsFieldNames.CONTRIBUTION_NOTE,
 })
 
 # Fields that appear after the front matter region. They search from the body floor
@@ -1881,6 +1897,10 @@ class LayoutDocumentJatsAligner:
         anchor_match_end_by_field: Dict[str, int] = {}
         # Where the references were placed, masked out of the post-body search.
         reference_match_ranges: List[Tuple[int, int]] = []
+        # Where the byline was placed, masked out of the front-matter search for a
+        # declaration: one that names the authors and nothing else matches the
+        # byline as readily as it matches itself.
+        byline_match_ranges: List[Tuple[int, int]] = []
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -2042,6 +2062,25 @@ class LayoutDocumentJatsAligner:
                     token_index, fv, self.config,
                     search_start=retry_floor, search_end=None,
                 )
+            # A declaration the page prints among the front matter rather than
+            # after the body is behind every floor there is -- the body, the
+            # references and the peer review all come later -- so a search going
+            # forward from any of them has already passed it.  Only where
+            # nothing was found at all: a declaration that is printed after the
+            # body has been found there, and this never sees it.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                and fv.field_name in _FRONT_PRINTED_STATEMENT_FIELDS
+                and front_matter_end > 0
+                and window is None
+            ):
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, self.config,
+                    search_start=0,
+                    search_end=front_matter_end + _FRONT_MATTER_BUFFER,
+                    masked_ranges=byline_match_ranges + token_index.cover_ranges,
+                )
             # Parent REFERENCE fallback: retry with a relaxed threshold when the
             # full-text parent match just misses 0.8.  JATS may concatenate initials
             # ("CA") or order publisher/place differently from the PDF reference list,
@@ -2136,6 +2175,8 @@ class LayoutDocumentJatsAligner:
                 reference_floor = max(reference_floor, a_end)
             if _is_reference_parent(fv):
                 reference_match_ranges.append((a_start, a_end))
+            if fv.field_name == JatsFieldNames.AUTHOR:
+                byline_match_ranges.append((a_start, a_end))
             if fv.sub_field_name is None:
                 prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
                 prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)

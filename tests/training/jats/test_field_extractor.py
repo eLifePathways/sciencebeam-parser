@@ -788,3 +788,101 @@ class TestContribution:
         assert JatsFieldNames.CONTRIBUTION_SECTION_TITLE not in {
             v.field_name for v in fvs
         }
+
+    def test_it_should_read_a_back_matter_footnote_as_a_section(self):
+        fvs = _field_values_for(
+            '<article><back><fn-group>'
+            '<fn fn-type="con"><p><bold>Contributions:</bold></p>'
+            '<p>Both authors drew the maps.</p></fn>'
+            '</fn-group></back></article>'
+        )
+        assert [
+            (v.field_name, v.text) for v in fvs
+        ] == [
+            (JatsFieldNames.CONTRIBUTION_SECTION_TITLE, 'Contributions:'),
+            (JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH, 'Both authors drew the maps.'),
+        ]
+
+    def test_it_should_state_the_roles_as_one_statement_per_contrib_group(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><contrib-group>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Vance</surname><given-names>Petra</given-names></name>'
+            '<role content-type="http://credit.niso.org/">Methodology</role>'
+            '<role content-type="http://credit.niso.org/">Validation</role>'
+            '</contrib>'
+            '<contrib contrib-type="author">'
+            '<name><surname>Oduya</surname><given-names>K.L.</given-names></name>'
+            '<role content-type="http://credit.niso.org/">Supervision</role>'
+            '</contrib>'
+            '</contrib-group></article-meta></front></article>'
+        )
+        assert [
+            v.text for v in fvs if v.field_name == JatsFieldNames.CONTRIBUTION_NOTE
+        ] == ['Vance P: Methodology, Validation; Oduya KL: Supervision']
+
+
+class TestConflict:
+    def test_it_should_read_an_author_note_as_a_conflict_note(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="conflict"><p>No competing interests were declared.</p></fn>'
+            '</author-notes></article-meta></front></article>'
+        )
+        assert [
+            (v.field_name, v.text) for v in fvs
+        ] == [
+            (JatsFieldNames.CONFLICT_NOTE, 'No competing interests were declared.'),
+        ]
+
+    def test_it_should_leave_out_the_words_introducing_the_statement(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="conflict"><p><bold>Competing interests: </bold>'
+            'The authors own no shares in the ferry company.</p></fn>'
+            '</author-notes></article-meta></front></article>'
+        )
+        assert [
+            (v.field_name, v.text) for v in fvs
+        ] == [
+            (
+                JatsFieldNames.CONFLICT_NOTE,
+                'The authors own no shares in the ferry company.',
+            ),
+        ]
+
+    def test_it_should_leave_a_correspondence_note_as_an_author_note(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<corresp>Write to <email>petra@example.org</email></corresp>'
+            '</author-notes></article-meta></front></article>'
+        )
+        assert JatsFieldNames.AUTHOR_NOTES in {v.field_name for v in fvs}
+        assert JatsFieldNames.CONFLICT_NOTE not in {v.field_name for v in fvs}
+
+    def test_it_should_keep_a_section_as_a_section(self):
+        fvs = _field_values_for(
+            '<article><back>'
+            '<sec sec-type="COI-statement"><title>Competing interests</title>'
+            '<p>The authors declare none.</p></sec>'
+            '</back></article>'
+        )
+        assert [
+            (v.field_name, v.text) for v in fvs
+        ] == [
+            (JatsFieldNames.CONFLICT_SECTION_TITLE, 'Competing interests'),
+            (JatsFieldNames.CONFLICT_SECTION_PARAGRAPH, 'The authors declare none.'),
+        ]
+
+
+class TestManuscriptType:
+    def test_it_should_read_the_heading_subject_group(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><article-categories>'
+            '<subj-group subj-group-type="heading"><subject>Method Article</subject></subj-group>'
+            '<subj-group><subject>Articles</subject></subj-group>'
+            '</article-categories></article-meta></front></article>'
+        )
+        assert [
+            v.text for v in fvs if v.field_name == JatsFieldNames.MANUSCRIPT_TYPE
+        ] == ['Method Article']

@@ -846,6 +846,57 @@ def _release_body_inside_front(seg_lines: List[_SegLine]) -> None:
                 seg_lines[index].seg_label = SEG_FRONT
 
 
+def _iter_statement_blocks(seg_lines: List[_SegLine]) -> Iterator[List[int]]:
+    """Consecutive declarations, read as one block.
+
+    An article prints them together, one after another, so what the page sets
+    above them it sets above all of them: the lines between two declarations are
+    the heading of the second, which nothing has claimed.
+    """
+    block: List[int] = []
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label in _STATEMENT_LABELS:
+            block.append(index)
+            continue
+        if seg_line.seg_label is None or seg_line.seg_label in _FURNITURE_LABELS:
+            continue
+        if block:
+            yield block
+            block = []
+    if block:
+        yield block
+
+
+def _release_statements_inside_front(seg_lines: List[_SegLine]) -> None:
+    """A declaration the front matter prints is part of the front matter.
+
+    GROBID's corpora carry it both ways -- a `<div type="conflict">` region on
+    366 of its segmentation documents and a conflict note inside the header on
+    113 of its header ones -- and the JATS says nothing about which, so where
+    the page sets it is what decides: a declaration the page sets before the
+    article begins, with the front matter above it, is the front matter's.
+
+    Where the body begins rather than what follows the declaration, because what
+    follows it is not always matched: a preprint that sets its declarations
+    between the affiliations and the abstract would be cut in two, and the pages
+    of front matter after them left with no run to be merged into.
+    """
+    body_start = next(
+        (
+            index for index, seg_line in enumerate(seg_lines)
+            if seg_line.seg_label == SEG_BODY
+        ),
+        len(seg_lines),
+    )
+    for block in _iter_statement_blocks(seg_lines):
+        if (
+            block[-1] < body_start
+            and _enclosing_label(seg_lines, block[0], -1) == SEG_FRONT
+        ):
+            for index in block:
+                seg_lines[index].seg_label = SEG_FRONT
+
+
 # A wrapped line follows the one above it by a line of type and the leading
 # under it; three times its height covers that and a paragraph break.
 _PARAGRAPH_PITCH_RATIO = 3.0
@@ -1922,6 +1973,10 @@ class SegmentationLabelDeriver:
         # per-fragment precision it cannot give.
         _bridge_footnote_block(seg_lines)
         _claim_footnotes_sharing_a_band(seg_lines)
+        # Before the merge: a declaration left as a region of its own cuts the
+        # front run in two, and the merge then has no run to carry across the
+        # page break to the front matter printed after it.
+        _release_statements_inside_front(seg_lines)
         _merge_gap_lines(
             seg_lines,
             enabled_labels={
