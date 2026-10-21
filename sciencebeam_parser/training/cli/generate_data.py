@@ -66,6 +66,7 @@ from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.app.parser import ScienceBeamParser
 from sciencebeam_parser.utils.media_types import MediaTypes
+from sciencebeam_parser.training.jats.aligner import extend_partial_reference_matches
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_vocab import (
     AFF_LABEL_BY_SUB_FIELD,
@@ -1823,6 +1824,23 @@ def generate_training_data_for_layout_document(
             jats_seg_labels = SegmentationLabelDeriver().derive_labels(
                 layout_document, jats_result.annotated_document
             )
+            # The region says which lines the reference list is printed on, and it
+            # is derived from the alignment rather than given to it, so a reference
+            # the first pass broke on can only be looked for once it exists.  The
+            # labels are derived again afterwards over what the second pass placed.
+            extended = extend_partial_reference_matches(
+                jats_result.annotated_document,
+                layout_document,
+                region_line_ids={
+                    line_id for line_id, label in jats_seg_labels.items()
+                    if label == '<references>'
+                },
+            )
+            if extended:
+                LOGGER.debug('extended partial references: %r', extended)
+                jats_seg_labels = SegmentationLabelDeriver().derive_labels(
+                    layout_document, jats_result.annotated_document
+                )
             LOGGER.debug(
                 'JATS coverage ratio: %.2f',
                 jats_result.annotated_document.coverage_ratio()

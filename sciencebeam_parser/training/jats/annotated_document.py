@@ -12,6 +12,12 @@ TokenLabelById = Dict[int, Tuple[str, Optional[str], int]]
 class JatsAnnotatedLayoutDocument:
     layout_document: LayoutDocument
     token_label_by_id: TokenLabelById = field(default_factory=dict)
+    # instance id -> (the reference's declared text, how much of it was matched).
+    # What a second pass needs to tell a reference it placed whole from one it
+    # placed half of.
+    reference_match_by_instance: Dict[int, Tuple[str, int]] = field(
+        default_factory=dict
+    )
 
     def get_token_field(self, token: LayoutToken) -> Optional[str]:
         entry = self.token_label_by_id.get(id(token))
