@@ -62,6 +62,23 @@ _AVAILABILITY_FIELDS: FrozenSet[str] = frozenset({
 })
 _FRONT_MATTER_BUFFER = 2000
 
+# What the front matter prints after the abstract rather than before it, and
+# further on than its bound reaches: the citation a renderer composes is set on
+# the second or the third page, where the front-matter window is the abstract
+# and a buffer.  Searched from the abstract instead, and to the end of the
+# document, because which page carries it varies by publisher and by paper.
+_AFTER_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.SELF_CITATION,
+})
+
+# What the front matter prints more than once, and is labelled wherever it
+# prints: a preprint server sets the article's identifier in its version history
+# and again in the citation the renderer composes.  GROBID's header corpus
+# labels a repeated identifier the same way, on 38 of its 835 documents.
+_REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.DOI,
+})
+
 # The declarations a publisher files in the back matter and may print in the
 # front, which is where these two corpora's preprint servers print them: after
 # the affiliations and before the abstract, in the block of metadata the first
@@ -94,6 +111,7 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.KEYWORDS_TITLE,
     JatsFieldNames.EMAIL,
     JatsFieldNames.ORCID,
+    JatsFieldNames.DOI,
     # A declaration the publisher files as a note is printed with the front
     # matter, which on these corpora is before the abstract rather than after
     # the body: searched from the body floor, the page had already printed it.
@@ -1416,6 +1434,8 @@ def _search_range(  # pylint: disable=too-many-locals
             base = own_end if own_end is not None else last_match_end
             start = max(0, base - 200)
         return start, None
+    if fv.field_name in _AFTER_FRONT_MATTER_FIELDS:
+        return max(0, front_matter_end), None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
         # Keywords are anchored to just after the keywords header/abstract so
@@ -1428,6 +1448,55 @@ def _search_range(  # pylint: disable=too-many-locals
         0 if fv.field_name in _FRONT_MATTER_FIELDS
         else max(0, last_match_end - 200)
     ), None
+
+
+def _label_repeated_matches(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    field_value: JatsFieldValue,
+    config: AlignmentConfig,
+    search_start: int,
+    search_end: Optional[int],
+    masked_ranges: Optional[List[Tuple[int, int]]],
+    instance_id: int,
+) -> int:
+    """Label every further place the value is printed, and say how many.
+
+    Each one is its own instance, because the page sets them apart and the
+    training format writes an element per run.  The search starts where the last
+    match ended, so it cannot settle on the same place twice, and it stops at
+    the first miss rather than scanning the rest of the range for one.
+
+    Only where every character of it is there.  A repeat is another printing of
+    the same string, and a match missing a character of the needle is the
+    neighbouring string rather than this one -- a preprint server lists the
+    identifier of every version it has published, and they differ in their last
+    character.  The page sets the identifier in pieces the match reads across,
+    so this is not the same as matching it verbatim.
+    """
+    needle_length = len(normalize_for_alignment(field_value.text))
+    found = 0
+    start = search_start
+    while search_end is None or start < search_end:
+        match_range = _fuzzy_match_field_value(
+            token_index, field_value, config,
+            search_start=start, search_end=search_end,
+            masked_ranges=masked_ranges,
+        )
+        if match_range is None:
+            break
+        _, repeat_end, block_ranges = match_range
+        if repeat_end <= start:
+            break
+        start = repeat_end
+        if sum(end - begin for begin, end in block_ranges) < needle_length:
+            continue
+        found += 1
+        _label_tokens_for_blocks(
+            annotated, token_index, block_ranges,
+            field_value.field_name, None, instance_id + found,
+        )
+    return found
 
 
 def _pre_anchor_indices(
@@ -1901,6 +1970,10 @@ class LayoutDocumentJatsAligner:
         # declaration: one that names the authors and nothing else matches the
         # byline as readily as it matches itself.
         byline_match_ranges: List[Tuple[int, int]] = []
+        # Where the title was placed, masked out of the search for the citation
+        # the renderer composes: the title is most of that line, and on a paper
+        # with two authors the title alone satisfies it.
+        title_match_ranges: List[Tuple[int, int]] = []
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -1949,6 +2022,13 @@ class LayoutDocumentJatsAligner:
                 else:
                     search_start = window[0]
                     search_end = window[1] if window[1] > window[0] + 1 else None
+            if (
+                fv.sub_field_name == JatsSubFieldNames.SELF_CITATION_SOURCE
+                and fv.field_name not in parent_match_by_field
+            ):
+                # Where it appeared is what every page's running foot carries,
+                # so it is taken from inside the citation or not at all.
+                continue
             masked: Optional[List[Tuple[int, int]]]
             if fv.sub_field_name is not None:
                 masked = sub_field_masked_ranges.get(fv.field_name)
@@ -1961,6 +2041,8 @@ class LayoutDocumentJatsAligner:
                 masked = reference_match_ranges
             else:
                 masked = None
+            if fv.field_name == JatsFieldNames.SELF_CITATION:
+                masked = (masked or []) + title_match_ranges
             # The cover restates the article's title, its authors and its
             # identifier, and a value is matched once: matched there, the
             # article's own front matter is left with nothing to match it, and
@@ -2124,6 +2206,11 @@ class LayoutDocumentJatsAligner:
                         match_range, fv.text, fv.fallback_text, token_index,
                     )
             if match_range is None:
+                LOGGER.debug(
+                    'unmatched: field=%s sub=%s range=%s..%s window=%s text=%r',
+                    fv.field_name, fv.sub_field_name, search_start, search_end,
+                    window, fv.text[:60],
+                )
                 if fv.sub_field_name is None:
                     missed_by_field[fv.field_name] = (
                         missed_by_field.get(fv.field_name, 0) + 1
@@ -2131,6 +2218,12 @@ class LayoutDocumentJatsAligner:
                 continue
             matched_count += 1
             a_start, a_end, block_ranges = match_range
+            if fv.field_name == JatsFieldNames.SELF_CITATION:
+                LOGGER.debug(
+                    'citation matched sub=%s at %s..%s: %r',
+                    fv.sub_field_name, a_start, a_end,
+                    token_index.haystack[max(0, a_start - 25):a_end + 25],
+                )
             # A document written in more than one language prints a title and an
             # abstract once per language, and the JATS declares the variants in
             # neither the page's order nor a consistent one: one document prints
@@ -2177,6 +2270,8 @@ class LayoutDocumentJatsAligner:
                 reference_match_ranges.append((a_start, a_end))
             if fv.field_name == JatsFieldNames.AUTHOR:
                 byline_match_ranges.append((a_start, a_end))
+            if fv.field_name == JatsFieldNames.TITLE:
+                title_match_ranges.append((a_start, a_end))
             if fv.sub_field_name is None:
                 prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
                 prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)
@@ -2211,6 +2306,21 @@ class LayoutDocumentJatsAligner:
                 annotated, token_index, block_ranges,
                 fv.field_name, fv.sub_field_name, instance_id,
             )
+            if fv.field_name in _REPEATED_FRONT_MATTER_FIELDS and fv.sub_field_name is None:
+                # To the end of the document rather than to the end of the front
+                # matter, which is the abstract and a buffer here and stops
+                # short of the second page a preprint server's metadata runs
+                # onto.  Every printed occurrence of the article's own
+                # identifier is inside its header region -- 2 or 4 lines on each
+                # of `ore`'s documents and no line of any other region -- and
+                # the furniture is masked, which is where a journal that prints
+                # it under every page would put it.
+                instance_by_field[fv.field_name] = instance_id + _label_repeated_matches(
+                    annotated, token_index, fv, self.config,
+                    search_start=a_end, search_end=None,
+                    masked_ranges=(masked or []) + token_index.furniture_ranges,
+                    instance_id=instance_id,
+                )
 
         # Merge per-name REFERENCE_AUTHOR spans into a single <author> element.
         # Separator tokens (commas, semicolons, initials with periods) between

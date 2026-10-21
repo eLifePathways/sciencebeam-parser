@@ -245,6 +245,44 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             for token in byline_tokens
         )
 
+    def test_identifier_is_labelled_wherever_the_front_matter_prints_it(self):
+        """A preprint server prints the article's identifier more than once."""
+        doi = 'https://doi.org/10.1234/preprints.567'
+        abstract_text = ' '.join(['word'] * 60)
+        doc = _make_doc(
+            'Author Name', doi, abstract_text, 'How to cite: ' + doi, 'Introduction',
+        )
+        fvs = [
+            _fv('Author Name', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+            _fv(doi, JatsFieldNames.DOI),
+        ]
+        annotated = self._align(doc, fvs)
+        lines = list(doc.iter_all_lines())
+        for index in (1, 3):
+            assert any(
+                annotated.get_token_field(token) == JatsFieldNames.DOI
+                for token in lines[index].tokens
+            ), f'the identifier on line {index} was not labelled'
+
+    def test_a_neighbouring_identifier_is_left_alone(self):
+        """The versions a preprint server has published differ in one character."""
+        doi = 'https://doi.org/10.1234/preprints.567.3'
+        other_version = 'https://doi.org/10.1234/preprints.567.1'
+        abstract_text = ' '.join(['word'] * 60)
+        doc = _make_doc('Author Name', doi, abstract_text, other_version, 'Introduction')
+        fvs = [
+            _fv('Author Name', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+            _fv(doi, JatsFieldNames.DOI),
+        ]
+        annotated = self._align(doc, fvs)
+        lines = list(doc.iter_all_lines())
+        assert not any(
+            annotated.get_token_field(token) == JatsFieldNames.DOI
+            for token in lines[3].tokens
+        )
+
     def test_affiliation_found_after_body_when_not_in_front_matter(self):
         # Some journals place full author/affiliation blocks at the END of the paper.
         # The front-matter region constraint is soft: if the aff text is not found in

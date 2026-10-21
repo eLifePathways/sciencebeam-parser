@@ -291,6 +291,27 @@ def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
     return author_parts
 
 
+# How many authors the citation a renderer composes names before "et al.", and
+# how many it names in full rather than reaching for one.
+_SELF_CITATION_NAMES = 3
+_SELF_CITATION_NAMES_IN_FULL = 4
+
+
+def _cited_names(names: Sequence[str]) -> Sequence[str]:
+    if len(names) <= _SELF_CITATION_NAMES_IN_FULL:
+        return names
+    return names[:_SELF_CITATION_NAMES]
+
+
+def element_text_of_xpath(root: etree._Element, xpath: str) -> str:
+    """The text of the first element the xpath finds, or nothing."""
+    for el in root.xpath(xpath):
+        text = element_text(el)
+        if text:
+            return text
+    return ''
+
+
 # The statements whose value is written without the words introducing it, which
 # is what the header model's labels are read from.
 _LEAD_IN_FIELDS: FrozenSet[str] = frozenset({
@@ -456,6 +477,80 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.ARTICLE_NOTES)
 
+    def _iter_self_citation_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """How the article asks to be cited, as the renderer composes it.
+
+        No element carries it: the page sets the authors, the title and where it
+        appeared, and the renderer builds the line from the metadata.  The
+        identifier at the end of it is left out, because GROBID writes that as
+        the `<idno>` beside the reference rather than as part of it.
+
+        Every author up to four, and three where there are more: that is what
+        the renderer prints, four names joined with "and" on the papers that
+        have four and three with "et al." on the ones with five and with
+        eleven.  Listing the rest would add names the page does not print, and
+        the match pays for those where it does not pay for the words it skips.
+
+        In two values, because the renderer sets a phrase between them that no
+        element carries -- which version this is and how its reviewers voted --
+        and one value covering both halves pays for that phrase: on the document
+        whose reviewers disagreed at length it is 75 characters and the match
+        falls under the threshold.  Where it appeared is the second of them, as
+        a sub-field, so that it is looked for inside the citation: the journal,
+        the year and the volume are what the running foot of every page carries
+        as well.
+        """
+        names = [
+            name
+            for contrib in root.xpath(
+                'front/article-meta/contrib-group'
+                '/contrib[not(@contrib-type) or @contrib-type="author"]'
+            )
+            for name_el in [contrib.find('name')]
+            if name_el is not None
+            for name in [' '.join(part for part in (
+                (name_el.findtext('surname') or '').strip(),
+                _name_initials(name_el),
+            ) if part)]
+            if name
+        ]
+        title = element_text_of_xpath(root, 'front/article-meta/title-group/article-title')
+        journal = element_text_of_xpath(
+            root, 'front/journal-meta/journal-title-group/journal-title'
+            ' | front/journal-meta/journal-title'
+        )
+        year = element_text_of_xpath(
+            root, 'front/article-meta/pub-date[@pub-type="epub"]/year'
+        )
+        volume = element_text_of_xpath(root, 'front/article-meta/volume')
+        elocation = element_text_of_xpath(root, 'front/article-meta/elocation-id')
+        if not (names and title and journal and year and volume and elocation):
+            return
+        yield JatsFieldValue(
+            text=f'{", ".join(_cited_names(names))} {title}',
+            field_name=JatsFieldNames.SELF_CITATION,
+        )
+        yield JatsFieldValue(
+            text=f'{journal} {year}, {volume}:{elocation}',
+            field_name=JatsFieldNames.SELF_CITATION,
+            sub_field_name=JatsSubFieldNames.SELF_CITATION_SOURCE,
+        )
+
+    def _iter_front_identifier_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """The article's own DOI, as the page prints it.
+
+        A preprint server prints it as the resolver URL rather than as the bare
+        identifier the JATS carries, and prints it more than once: in the version
+        history and in the citation the renderer composes from the metadata.
+        """
+        for el in root.xpath('front/article-meta/article-id[@pub-id-type="doi"]'):
+            text = element_text(el)
+            if text:
+                yield JatsFieldValue(
+                    text=f'https://doi.org/{text}',
+                    field_name=JatsFieldNames.DOI,
+                )
+
     def _iter_front_contact_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         """An author's email and ORCID, which print beside the name they belong to.
 
@@ -554,9 +649,17 @@ class JatsFieldExtractor:
                 aff_el, JatsFieldNames.AUTHOR_AFF, _AFF_SUB_FIELDS
             )
 
+        # The notes first, and the contacts after them: a corresponding-author
+        # note is the email with a label in front of it, and whichever is
+        # matched last is the label the tokens keep.  The note has none of its
+        # own, so matched last it takes the email's away.
+        yield from self._iter_author_note_values(root)
+
         yield from self._iter_front_contact_values(root)
 
-        yield from self._iter_author_note_values(root)
+        yield from self._iter_self_citation_values(root)
+
+        yield from self._iter_front_identifier_values(root)
 
         yield from self._iter_front_notes_values(root)
 

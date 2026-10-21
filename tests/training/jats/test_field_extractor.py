@@ -902,6 +902,87 @@ class TestConflict:
         ]
 
 
+class TestCorrespondingAuthorNote:
+    def test_it_should_offer_the_email_after_the_note_holding_it(self):
+        """Whichever is matched last is the label the tokens keep."""
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<corresp>Write to <email>petra@example.org</email></corresp>'
+            '</author-notes></article-meta></front></article>'
+        )
+        fields = [v.field_name for v in fvs]
+        assert fields.index(JatsFieldNames.AUTHOR_NOTES) < fields.index(JatsFieldNames.EMAIL)
+
+
+class TestIdentifier:
+    def test_it_should_read_the_doi_as_the_page_prints_it(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<article-id pub-id-type="doi">10.1234/preprints.567</article-id>'
+            '<article-id pub-id-type="archive">PPR1</article-id>'
+            '</article-meta></front></article>'
+        )
+        assert [
+            v.text for v in fvs if v.field_name == JatsFieldNames.DOI
+        ] == ['https://doi.org/10.1234/preprints.567']
+
+
+class TestSelfCitation:
+    JATS = (
+        '<article>'
+        '<front>'
+        '<journal-meta><journal-title-group>'
+        '<journal-title>Ferry Studies</journal-title>'
+        '</journal-title-group></journal-meta>'
+        '<article-meta>'
+        '<title-group><article-title>Counting the western ferries</article-title></title-group>'
+        '<contrib-group>'
+        '<contrib contrib-type="author">'
+        '<name><surname>Vance</surname><given-names>Petra</given-names></name></contrib>'
+        '<contrib contrib-type="author">'
+        '<name><surname>Oduya</surname><given-names>K.L.</given-names></name></contrib>'
+        '<contrib contrib-type="author">'
+        '<name><surname>Petit</surname><given-names>Lars</given-names></name></contrib>'
+        '<contrib contrib-type="author">'
+        '<name><surname>Reyes</surname><given-names>Mia</given-names></name></contrib>'
+        '</contrib-group>'
+        '<volume>4</volume><elocation-id>266</elocation-id>'
+        '<pub-date pub-type="epub"><day>3</day><month>5</month><year>2024</year></pub-date>'
+        '{extra}'
+        '</article-meta></front></article>'
+    )
+
+    def test_it_should_name_four_authors_and_where_it_appeared(self):
+        fvs = _field_values_for(self.JATS.format(extra=''))
+        assert [
+            (v.sub_field_name, v.text) for v in fvs
+            if v.field_name == JatsFieldNames.SELF_CITATION
+        ] == [
+            (None, 'Vance P, Oduya KL, Petit L, Reyes M Counting the western ferries'),
+            (JatsSubFieldNames.SELF_CITATION_SOURCE, 'Ferry Studies 2024, 4:266'),
+        ]
+
+    def test_it_should_name_three_of_five_authors(self):
+        fvs = _field_values_for(self.JATS.replace(
+            '</contrib-group>',
+            '<contrib contrib-type="author">'
+            '<name><surname>Finch</surname><given-names>Ola</given-names></name>'
+            '</contrib></contrib-group>',
+        ).format(extra=''))
+        assert [
+            v.text for v in fvs
+            if v.field_name == JatsFieldNames.SELF_CITATION and v.sub_field_name is None
+        ] == ['Vance P, Oduya KL, Petit L Counting the western ferries']
+
+    def test_it_should_say_nothing_where_the_metadata_is_incomplete(self):
+        fvs = _field_values_for(
+            self.JATS.format(extra='').replace(
+                '<volume>4</volume>', ''
+            )
+        )
+        assert JatsFieldNames.SELF_CITATION not in {v.field_name for v in fvs}
+
+
 class TestManuscriptType:
     def test_it_should_read_the_heading_subject_group(self):
         fvs = _field_values_for(

@@ -47,11 +47,14 @@ class JatsFieldNames:
     PAGE_NO = 'page_no'
     EMAIL = 'email'
     ORCID = 'orcid'
+    DOI = 'doi'
+    SELF_CITATION = 'self_citation'
 
 
 class JatsSubFieldNames:
     AUTHOR_AFF_ADDR = 'author_aff_addr'
     AUTHOR_NAME = 'author-name'
+    SELF_CITATION_SOURCE = 'self_citation-source'
     REFERENCE_AUTHOR = 'reference-author'
     REFERENCE_ARTICLE_TITLE = 'reference-article-title'
     REFERENCE_SOURCE = 'reference-source'
@@ -129,6 +132,10 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     # page foot.
     JatsFieldNames.EMAIL:                  '<header>',
     JatsFieldNames.ORCID:                  '<header>',
+    # The article's own identifier prints with the front matter, in the version
+    # history and in the citation the renderer composes.
+    JatsFieldNames.DOI:                    '<header>',
+    JatsFieldNames.SELF_CITATION:          '<header>',
 }
 
 # ── Header model label mapping ────────────────────────────────────────────────
@@ -149,6 +156,12 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.FUNDING:          '<funding>',
     JatsFieldNames.EMAIL:            '<email>',
     JatsFieldNames.ORCID:            '<pubnum>',
+    # GROBID writes the article's identifier as `<idno>`, which is what
+    # `<pubnum>` writes, on 387 of its 835 header documents, 326 of them a DOI.
+    JatsFieldNames.DOI:              '<pubnum>',
+    # How the article asks to be cited, which GROBID writes as `<reference>` on
+    # 451 of its 835 header documents, the words introducing it left background.
+    JatsFieldNames.SELF_CITATION:    '<reference>',
     # A statement's own heading is not part of it: GROBID opens none of its 115
     # conflict notes, 11 contribution notes or 878 abstracts with one, which is
     # why `keywords_title` is extracted for segmentation and left unmapped here.
