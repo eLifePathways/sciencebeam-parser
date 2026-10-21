@@ -55,6 +55,53 @@ Models will be loaded "eagerly" at startup, by setting the configuration option 
 
 Which models are used is decided by the `profile`, and a request may name another one — see [Profiles](doc/profiles.md).
 
+#### Sequence models from the Hugging Face Hub
+
+The `delft` engine takes a model directly from the Hugging Face Hub, as well as from an archive
+url. A Hub path is `hf://{owner}/{repository}[@{revision}]/{model}`, where `{model}` is a folder
+at the root of the repository:
+
+```yaml
+models:
+  header:
+    path: 'hf://lfoppiano/grobid-model-header/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+```
+
+The model directory is downloaded to `{download_dir}/models/{model}`, so it is the existing
+`download_dir` that says where it lands. The revision is optional and, left out, follows the
+default branch of the repository: pin one (`@v1.1.0`, or a commit sha) for a deployment, because
+an unpinned model can change underneath it.
+
+`{model}` is a single path segment, so a repository that groups its models into sub-folders
+cannot be addressed this way; such a model is served over https instead, as an archive or as a
+folder of files.
+
+The shipped `delft_hub` profile serves the models published to the Hub today (`header`,
+`affiliation_address`, `name_header`, `name_citation`, `reference_segmenter` and `citation`),
+taking the rest from `grobid_crf_0_9_0`:
+
+```bash
+export SCIENCEBEAM_PARSER__PROFILE=delft_hub
+```
+
+A model trained by GROBID expects the features GROBID computes, which differ in places from the
+ones the biorxiv models were trained on. A model entry says which it was trained with, through
+`feature_flavour` (`sciencebeam`, the default, or `grobid`); `delft_hub` sets `grobid` on its
+header model. So far only the header model reads it.
+
+A model directory can hold its weights in more than one file. A delft model entry may name the
+one to load with `weight_file` (for instance `model.safetensors`); left out, the loader's
+default is used.
+
+Its header model uses the glove-840B word embeddings. They are read from an LMDB index at
+`data/db/glove-840B`, relative to the working directory; when there is none, the vectors are
+downloaded (1.8GB) and indexed on first load, which takes a while. An index built by DeLFT can be
+reused by linking it there:
+
+```bash
+mkdir -p data/db && ln -s /path/to/delft/data/db/glove-840B data/db/glove-840B
+```
+
 ### Run tests (linting, pytest, etc.)
 
 ```bash

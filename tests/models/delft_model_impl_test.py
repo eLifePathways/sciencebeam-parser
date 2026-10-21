@@ -1,4 +1,5 @@
 import logging
+from unittest.mock import MagicMock
 
 import pytest
 from sciencebeam_trainer_delft.sequence_labelling.reader import load_data_crf_lines
@@ -14,6 +15,7 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.external.wapiti.wrapper import LazyWapitiBinaryWrapper
 from sciencebeam_parser.models.data import DEFAULT_DOCUMENT_FEATURES_CONTEXT
+from sciencebeam_parser.models import delft_model_impl as delft_model_impl_module
 from sciencebeam_parser.models.delft_model_impl import DelftModelImpl
 from sciencebeam_parser.models.header.data import HeaderDataGenerator
 from sciencebeam_parser.models.model import iter_data_lines_for_model_data_iterables
@@ -56,6 +58,24 @@ def _get_layout_document() -> LayoutDocument:
             for line_token_texts in HEADER_LINE_TOKEN_TEXTS
         ])
     ])
+
+
+class TestDelftModelImplWeightFile:
+    @pytest.mark.parametrize('weight_file', ['model.safetensors', None])
+    def test_should_load_the_weight_file_it_was_given(
+        self, monkeypatch: pytest.MonkeyPatch, weight_file
+    ):
+        sequence_class_mock = MagicMock(name='Sequence')
+        monkeypatch.setattr(delft_model_impl_module, 'Sequence', sequence_class_mock)
+        model_impl = DelftModelImpl(
+            'hf://owner/repository/model',
+            MagicMock(name='app_context'),
+            weight_file=weight_file
+        )
+        model_impl.preload()
+        sequence_class_mock.return_value.load_from.assert_called_once_with(
+            'hf://owner/repository/model', weight_file=weight_file
+        )
 
 
 @pytest.mark.slow

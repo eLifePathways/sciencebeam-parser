@@ -35,6 +35,21 @@ class TestGetModelImplForConfig:
         }, app_context=MagicMock(name='app_context'))
         assert isinstance(model_impl, ModelImpl)
 
+    def test_should_pass_the_configured_weight_file_to_the_delft_engine(self):
+        model_impl = get_model_impl_for_config({
+            'engine': EngineNames.DELFT,
+            'path': 'hf://owner/repository/model',
+            'weight_file': 'model.safetensors',
+        }, app_context=MagicMock(name='app_context'))
+        assert getattr(model_impl, 'weight_file') == 'model.safetensors'
+
+    def test_should_leave_the_delft_weight_file_to_the_loader_by_default(self):
+        model_impl = get_model_impl_for_config({
+            'engine': EngineNames.DELFT,
+            'path': 'hf://owner/repository/model',
+        }, app_context=MagicMock(name='app_context'))
+        assert getattr(model_impl, 'weight_file') is None
+
     def test_should_reject_an_invalid_engine_name(self):
         with pytest.raises(RuntimeError):
             get_model_impl_for_config(

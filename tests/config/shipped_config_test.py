@@ -9,6 +9,7 @@ import yaml
 from sciencebeam_parser.app.profiles import ProfileRegistry
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.models.header.extract import ABSTRACTS_MODES
+from sciencebeam_parser.models.model_impl_factory import EngineNames, get_engine_name_for_config
 from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.processors.fulltext.models import SEQUENCE_MODEL_CLASS_BY_NAME
 
@@ -61,6 +62,14 @@ COMPOSED_MODEL_PARAMS = sorted({
     (model_name, profile_name)
     for _, model_name, profile_name in COMBINED_MODEL_PARAMS
 })
+
+# The profile serving models from the Hugging Face Hub, and the base it extends.
+HUB_PROFILE = 'delft_hub'
+
+HUB_PROFILE_BASE = 'grobid_crf_0_9_0'
+
+# What the delft engine recognises as a Hub reference
+HUB_PATH_PREFIX = 'hf://'
 
 
 def get_shipped_config() -> dict:
@@ -216,3 +225,58 @@ class TestShippedProfilesShareTheirModels:
             registry.get_bundle('wapiti_refseg_scielo_preprints_ore').models_digest
             != registry.get_bundle('wapiti_citation_scielo_preprints_ore').models_digest
         )
+
+
+class TestShippedDelftHubProfile:
+    """
+    Guards `delft_hub`, which overrides only the models published to the Hub and
+    takes the rest from the profile it extends.
+
+    A profile is deep merged over its base (`_deep_merge` in
+    `sciencebeam_parser.config.config`), so an override carrying only a `path`
+    keeps every other key of the entry underneath it -- `engine` included. Point
+    a hub path at an entry whose base is a wapiti one and the config stays valid
+    while the wapiti loader is handed a delft model directory, which only fails
+    at load time, in a deployment.
+    """
+
+    def test_should_serve_the_models_of_its_base_that_it_does_not_override(self):
+        hub_models = get_resolved_models(HUB_PROFILE)
+        base_models = get_resolved_models(HUB_PROFILE_BASE)
+        assert set(hub_models) == set(base_models)
+        unchanged = {
+            model_name: entry
+            for model_name, entry in hub_models.items()
+            if not entry['path'].startswith(HUB_PATH_PREFIX)
+        }
+        assert unchanged == {
+            model_name: entry
+            for model_name, entry in base_models.items()
+            if model_name in unchanged
+        }
+
+    def test_should_give_grobid_features_to_its_grobid_header_model(self):
+        assert get_resolved_models(HUB_PROFILE)['header'].get('feature_flavour') == 'grobid'
+
+    def test_should_override_at_least_one_model_with_a_hub_path(self):
+        assert [
+            model_name
+            for model_name, entry in get_resolved_models(HUB_PROFILE).items()
+            if entry['path'].startswith(HUB_PATH_PREFIX)
+        ]
+
+    def test_should_serve_every_hub_path_with_the_delft_engine(self):
+        """No shipped profile pairs a Hub path with a loader that cannot read one.
+
+        Swept over every profile rather than `delft_hub` alone: the deep merge
+        makes this silent wherever it happens, and a profile added later on a
+        wapiti base would be just as wrong.
+        """
+        wrongly_served = {
+            (profile_name, model_name): get_engine_name_for_config(entry)
+            for profile_name in get_shipped_config()['sequence_model_profiles']
+            for model_name, entry in get_resolved_models(profile_name).items()
+            if entry.get('path', '').startswith(HUB_PATH_PREFIX)
+            and get_engine_name_for_config(entry) != EngineNames.DELFT
+        }
+        assert not wrongly_served

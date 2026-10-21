@@ -24,6 +24,8 @@ from sciencebeam_parser.models.data import (
     LineIndentationStatusFeature,
     get_block_status_with_blockend_for_single_token,
     get_block_status_with_blockstart_for_single_token,
+    get_grobid_header_block_status,
+    get_grobid_header_line_status,
     get_line_status_with_lineend_for_single_token,
     get_line_status_with_linestart_for_single_token,
     get_token_font_size_feature,
@@ -363,6 +365,40 @@ class TestGetBlockStatusWithBlockStartForSingleToken(_TestBaseGetBlockStatus):
 
     def test_should_return_blockend_for_single_token(self):
         assert self.get_block_status(0, 1, 'LINESTART') == 'BLOCKSTART'
+
+
+class TestGetGrobidHeaderStatus:
+    """(line_index, line_count, token_index, token_count) -> (line, block) status,
+    as GROBID's HeaderParser gives them."""
+
+    def _get_status(self, *args):
+        return get_grobid_header_line_status(*args), get_grobid_header_block_status(*args)
+
+    def test_should_start_block_on_its_first_token(self):
+        assert self._get_status(0, 3, 0, 5) == ('LINESTART', 'BLOCKSTART')
+
+    def test_should_start_block_on_a_first_line_of_a_single_token(self):
+        assert self._get_status(0, 3, 0, 1) == ('LINESTART', 'BLOCKSTART')
+
+    def test_should_start_block_made_of_a_single_token(self):
+        assert self._get_status(0, 1, 0, 1) == ('LINESTART', 'BLOCKSTART')
+
+    def test_should_end_block_on_its_last_token(self):
+        assert self._get_status(2, 3, 4, 5) == ('LINEEND', 'BLOCKEND')
+
+    def test_should_end_block_on_a_last_line_of_a_single_token(self):
+        assert self._get_status(2, 3, 0, 1) == ('LINEEND', 'BLOCKEND')
+
+    def test_should_keep_linestart_for_a_single_token_line_within_block(self):
+        assert self._get_status(1, 3, 0, 1) == ('LINESTART', 'BLOCKIN')
+
+    def test_should_give_line_statuses_within_block(self):
+        assert self._get_status(1, 3, 0, 5) == ('LINESTART', 'BLOCKIN')
+        assert self._get_status(1, 3, 2, 5) == ('LINEIN', 'BLOCKIN')
+        assert self._get_status(1, 3, 4, 5) == ('LINEEND', 'BLOCKIN')
+
+    def test_should_end_first_line_within_block(self):
+        assert self._get_status(0, 3, 4, 5) == ('LINEEND', 'BLOCKIN')
 
 
 class TestGetTokenFontSizeFeature:

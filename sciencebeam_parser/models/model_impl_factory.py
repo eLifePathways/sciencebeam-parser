@@ -1,5 +1,5 @@
 import functools
-from typing import cast
+from typing import Optional, cast
 
 from sciencebeam_parser.app.context import AppContext
 from sciencebeam_parser.config.config import get_llm_response_cache_dir
@@ -12,11 +12,15 @@ class EngineNames:
     LLM = 'llm'
 
 
-def get_delft_model_impl_for_path(path: str, app_context: AppContext) -> ModelImpl:
+def get_delft_model_impl_for_path(
+    path: str,
+    app_context: AppContext,
+    weight_file: Optional[str] = None
+) -> ModelImpl:
     from sciencebeam_parser.models.delft_model_impl import (  # noqa pylint: disable=import-outside-toplevel
         DelftModelImpl
     )
-    return DelftModelImpl(path, app_context=app_context)
+    return DelftModelImpl(path, app_context=app_context, weight_file=weight_file)
 
 
 def get_wapiti_model_impl_for_path(path: str, app_context: AppContext) -> ModelImpl:
@@ -56,7 +60,9 @@ def get_model_impl_for_config(config: dict, app_context: AppContext):
     if engine_name == EngineNames.WAPITI:
         return get_wapiti_model_impl_for_path(path, app_context=app_context)
     if engine_name == EngineNames.DELFT:
-        return get_delft_model_impl_for_path(path, app_context=app_context)
+        return get_delft_model_impl_for_path(
+            path, app_context=app_context, weight_file=config.get('weight_file')
+        )
     raise RuntimeError('invalid engine name: %r' % engine_name)
 
 

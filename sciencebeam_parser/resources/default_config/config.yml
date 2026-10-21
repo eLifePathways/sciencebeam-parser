@@ -346,6 +346,52 @@ sequence_model_profiles:
       - llm_segmentation
       - llm_reference_segmenter
       - llm_citation
+  # Models taken from the Hugging Face Hub, rather than from a release archive.
+  # The delft engine resolves an `hf://owner/repository[@revision]/model` path
+  # itself, downloading the model directory under `download_dir`/models; the
+  # revision is optional and, left out, follows the branch, so a model can
+  # change under a running deployment. Each is therefore pinned to a commit of
+  # its own repository, the repositories carrying no tags: taking a newer model
+  # means changing its sha here.
+  # Only the models published to the Hub are overridden here, the rest coming
+  # from the GROBID 0.9.0 wapiti models. Every override names `engine: delft`:
+  # a profile is deep merged over the one it extends, so overriding only `path`
+  # on a wapiti entry would keep `engine: wapiti` and hand a delft directory to
+  # the wapiti loader. (`grobid_crf` is a profile alias, which `extends` does
+  # not resolve.)
+  # A model GROBID trained expects GROBID's features rather than the ones the
+  # biorxiv models were trained on, which `feature_flavour: grobid` selects.
+  # `weight_file` names the weights to load where a model directory holds more
+  # than one: the header and affiliation-address directories carry the
+  # retrained weights as `model.safetensors`, beside a `model_weights.pt` left
+  # from the model before, which no longer matches their preprocessor.
+  # The header is the glove variant: the character-only one runs titles on into
+  # the next line ("Author list:", "Running Title ...") on English papers, which
+  # word embeddings largely fix. It needs the glove-840B vectors, found as an LMDB
+  # under data/db/glove-840B, else downloaded (1.8GB) and indexed on first load.
+  delft_hub:
+    extends: grobid_crf_0_9_0
+    header:
+      path: 'hf://sciencialab/grobid-model-header@dca8c2b5338300511dc254a73aae987c014e6cca/grobid-header-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
+      weight_file: 'model.safetensors'
+      feature_flavour: 'grobid'
+    affiliation_address:
+      path: 'hf://sciencialab/grobid-model-affiliation-address@fcb11e276cfe6be53f84e028d066c295ecb57773/grobid-affiliation-address-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
+      weight_file: 'model.safetensors'
+    citation:
+      path: 'hf://sciencialab/grobid-model-citation@3db81cd58276cb3a446bbb274c610d1233b7ce8c/grobid-citation-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
+    reference_segmenter:
+      path: 'hf://sciencialab/grobid-model-reference-segmenter@c9d959488a08324fa53d40013e9b02f85af4886d/grobid-reference-segmenter-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
+    name_header:
+      path: 'hf://sciencialab/grobid-model-name-header@33d2b42a21cddc7439a2e058329e2dc48ecb1021/grobid-name-header-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
+    name_citation:
+      path: 'hf://sciencialab/grobid-model-name-citation@1b7a20928f9572c5a7b3180a82fbc4370df6189b/grobid-name-citation-BidLSTM_CRF_FEATURES-no_embeddings'
+      engine: 'delft'
 
 profiles:
   biorxiv_elife:
@@ -514,6 +560,14 @@ profiles:
     label: 'LLM references'
     description: 'GROBID 0.9.0 with both reference models served by an LLM. Needs an API key.'
     sequence_models: llm_references
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+  delft_hub:
+    label: 'GROBID DeLFT models from the Hugging Face Hub'
+    description: 'GROBID 0.9.0 with the header, name, affiliation, reference-segmenter and citation models replaced by GROBID-trained DeLFT models from the Hugging Face Hub.'
+    sequence_models: delft_hub
     processors:
       fulltext:
         noise_filter:
