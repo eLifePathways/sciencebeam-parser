@@ -927,6 +927,27 @@ class TestIdentifier:
         ] == ['https://doi.org/10.1234/preprints.567']
 
 
+class TestPublicationDate:
+    def test_it_should_read_the_date_as_the_version_history_prints_it(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<pub-date pub-type="epub"><day>6</day><month>9</month><year>2023</year></pub-date>'
+            '<pub-date pub-type="collection"><year>2022</year></pub-date>'
+            '</article-meta></front></article>'
+        )
+        dates = [v for v in fvs if v.field_name == JatsFieldNames.PUBLICATION_DATE]
+        assert [v.text for v in dates] == ['06 Sep 2023']
+        assert dates[0].exact_only is True
+
+    def test_it_should_say_nothing_for_a_date_without_a_day(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<pub-date pub-type="epub"><month>9</month><year>2023</year></pub-date>'
+            '</article-meta></front></article>'
+        )
+        assert JatsFieldNames.PUBLICATION_DATE not in {v.field_name for v in fvs}
+
+
 class TestSelfCitation:
     JATS = (
         '<article>'

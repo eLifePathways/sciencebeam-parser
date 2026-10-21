@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from itertools import chain
 from typing import (
     Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
@@ -536,6 +537,36 @@ class JatsFieldExtractor:
             sub_field_name=JatsSubFieldNames.SELF_CITATION_SOURCE,
         )
 
+    def _iter_publication_date_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """When this version was published, as the version history prints it.
+
+        The JATS carries the day, the month and the year apart, and the page
+        sets them as "06 Sep 2023": a zero-padded day, the month in three
+        letters, which is the form both of these publishers print.
+
+        Verbatim or not at all.  A date is eleven characters and a version
+        history prints one per version, so approximately matched it reaches the
+        neighbouring one -- "23 Jun 2022" and "12 Jul 2022" share nine of their
+        characters in the same places.
+        """
+        for el in root.xpath('front/article-meta/pub-date[@pub-type="epub"]'):
+            day, month, year = (
+                (el.findtext('day') or '').strip(),
+                (el.findtext('month') or '').strip(),
+                (el.findtext('year') or '').strip(),
+            )
+            if not (day and month and year):
+                continue
+            try:
+                printed = date(int(year), int(month), int(day)).strftime('%d %b %Y')
+            except ValueError:
+                continue
+            yield JatsFieldValue(
+                text=printed,
+                field_name=JatsFieldNames.PUBLICATION_DATE,
+                exact_only=True,
+            )
+
     def _iter_front_identifier_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         """The article's own DOI, as the page prints it.
 
@@ -660,6 +691,8 @@ class JatsFieldExtractor:
         yield from self._iter_self_citation_values(root)
 
         yield from self._iter_front_identifier_values(root)
+
+        yield from self._iter_publication_date_values(root)
 
         yield from self._iter_front_notes_values(root)
 

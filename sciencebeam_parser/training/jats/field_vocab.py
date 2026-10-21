@@ -48,6 +48,7 @@ class JatsFieldNames:
     EMAIL = 'email'
     ORCID = 'orcid'
     DOI = 'doi'
+    PUBLICATION_DATE = 'publication_date'
     SELF_CITATION = 'self_citation'
 
 
@@ -135,6 +136,7 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     # The article's own identifier prints with the front matter, in the version
     # history and in the citation the renderer composes.
     JatsFieldNames.DOI:                    '<header>',
+    JatsFieldNames.PUBLICATION_DATE:       '<header>',
     JatsFieldNames.SELF_CITATION:          '<header>',
 }
 
@@ -159,6 +161,10 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     # GROBID writes the article's identifier as `<idno>`, which is what
     # `<pubnum>` writes, on 387 of its 835 header documents, 326 of them a DOI.
     JatsFieldNames.DOI:              '<pubnum>',
+    # The date the version was published, as the version history prints it.
+    # GROBID writes a printed date as `<date>` on 403 of its 835 header
+    # documents, in whatever form the page sets it.
+    JatsFieldNames.PUBLICATION_DATE: '<date>',
     # How the article asks to be cited, which GROBID writes as `<reference>` on
     # 451 of its 835 header documents, the words introducing it left background.
     JatsFieldNames.SELF_CITATION:    '<reference>',

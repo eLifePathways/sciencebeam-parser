@@ -77,6 +77,7 @@ _AFTER_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
 # labels a repeated identifier the same way, on 38 of its 835 documents.
 _REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.DOI,
+    JatsFieldNames.PUBLICATION_DATE,
 })
 
 # The declarations a publisher files in the back matter and may print in the
@@ -112,6 +113,7 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.EMAIL,
     JatsFieldNames.ORCID,
     JatsFieldNames.DOI,
+    JatsFieldNames.PUBLICATION_DATE,
     # A declaration the publisher files as a note is printed with the front
     # matter, which on these corpora is before the abstract rather than after
     # the body: searched from the body floor, the page had already printed it.
@@ -2122,8 +2124,13 @@ class LayoutDocumentJatsAligner:
                 and fv.sub_field_name is None
                 and window is None
             ):
+                # With the same mask the search it replaces was given.  The
+                # cover is the one place that search deliberately refused, and
+                # a value printed only there belongs to the publisher's deposit
+                # page rather than to the article's own front matter.
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config, search_start=0, search_end=None,
+                    masked_ranges=masked,
                 )
             # Body-content incremental constraint is also soft: body_content_end
             # can jump forward when a nested sub-section (e.g. a mathematical
