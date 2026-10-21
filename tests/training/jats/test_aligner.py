@@ -196,6 +196,55 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
                 for token in lines[index].tokens
             ), f'abstract on line {index} was not reached'
 
+    def test_declaration_is_reached_where_the_front_matter_prints_it(self):
+        """A preprint server prints the declarations before the abstract.
+
+        The JATS files them in the back matter, so they are searched from the
+        body floor, which the page has already passed by the time it sets them.
+        """
+        abstract_text = ' '.join(['word'] * 300)
+        body_text = ' '.join(['sentence'] * 300)
+        statement = 'The authors own no shares in the ferry company'
+        doc = _make_doc(
+            'Author Name', statement, abstract_text, 'Introduction', body_text,
+        )
+        fvs = [
+            _fv('Author Name', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+            _fv('Introduction', JatsFieldNames.BODY_SECTION_TITLE),
+            _fv(body_text, JatsFieldNames.BODY_SECTION_PARAGRAPH),
+            _fv(statement, JatsFieldNames.CONFLICT_SECTION_PARAGRAPH),
+        ]
+        annotated = self._align(doc, fvs)
+        statement_tokens = list(doc.iter_all_lines())[1].tokens
+        assert all(
+            annotated.get_token_field(token)
+            == JatsFieldNames.CONFLICT_SECTION_PARAGRAPH
+            for token in statement_tokens
+        )
+
+    def test_declaration_naming_only_the_authors_leaves_the_byline_alone(self):
+        """One task per paragraph makes a declaration a list of names.
+
+        Printed after the body or not printed at all, such a paragraph matches
+        the byline as well as it matches itself, and the byline is the authors
+        rather than a statement about them.
+        """
+        abstract_text = ' '.join(['word'] * 60)
+        byline = 'Petra Vance, Kaya Oduya, Lars Petit'
+        doc = _make_doc(byline, abstract_text, 'Introduction Body')
+        fvs = [
+            _fv(byline, JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+            _fv(byline, JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH),
+        ]
+        annotated = self._align(doc, fvs)
+        byline_tokens = list(doc.iter_all_lines())[0].tokens
+        assert all(
+            annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+            for token in byline_tokens
+        )
+
     def test_affiliation_found_after_body_when_not_in_front_matter(self):
         # Some journals place full author/affiliation blocks at the END of the paper.
         # The front-matter region constraint is soft: if the aff text is not found in

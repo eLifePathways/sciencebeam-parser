@@ -10,6 +10,8 @@ from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLay
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
     SEG_ANNEX,
+    SEG_CONFLICT,
+    SEG_CONTRIBUTION,
     SEG_COVER,
     SEG_BODY,
     SEG_FOOTNOTE,
@@ -201,6 +203,81 @@ class TestCorrespondingAuthorNote:
         doc, lines = self._title_page('1 A note about the method used here.')
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         assert derive_labels(doc, annotated)[id(lines[0])] == SEG_FOOTNOTE
+
+
+class TestDeclarationsInTheFrontMatter:
+    """Where a declaration prints decides whether it is a region of its own.
+
+    A preprint server sets the conflict and contribution statements in the block
+    of metadata the first pages end with, before the abstract; a journal prints
+    them after the body.  The JATS files both as a footnote, so only the page
+    says which.
+    """
+    @staticmethod
+    def _labels(field_by_line_index, *texts):
+        lines = [
+            make_line(*text.split(' '), y=100.0 + 20 * index, page_number=1)
+            for index, text in enumerate(texts)
+        ]
+        doc = make_doc_with_page(*[LayoutBlock(lines=[line]) for line in lines])
+        annotated = annotate(doc, field_by_line_index)
+        derived = derive_labels(doc, annotated)
+        return [derived[id(line)] for line in lines]
+
+    def test_a_declaration_between_front_matter_is_front_matter(self):
+        labels = self._labels(
+            {
+                0: JatsFieldNames.AUTHOR,
+                1: JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+                2: JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+                3: JatsFieldNames.ABSTRACT,
+            },
+            'Petra Vance and Kaya Oduya',
+            'Both authors drew the maps.',
+            'The authors own no shares in the ferry company.',
+            'The ferries of the western isles are counted here.',
+        )
+        assert labels == [SEG_FRONT, SEG_FRONT, SEG_FRONT, SEG_FRONT]
+
+    def test_a_declaration_is_front_matter_though_nothing_after_it_is_matched(self):
+        """A preprint sets them between the affiliations and the abstract.
+
+        The abstract after them is not always matched, so reading forwards for
+        the front matter finds nothing and the run is cut at the declaration.
+        """
+        labels = self._labels(
+            {
+                0: JatsFieldNames.AUTHOR,
+                1: JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+                2: JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+                4: JatsFieldNames.BODY_SECTION_PARAGRAPH,
+            },
+            'Petra Vance and Kaya Oduya',
+            'Both authors drew the maps.',
+            'The authors own no shares in the ferry company.',
+            'The ferries of the western isles are counted here.',
+            'The count ran from spring to autumn.',
+        )
+        assert labels[:3] == [SEG_FRONT, SEG_FRONT, SEG_FRONT]
+
+    def test_a_declaration_after_the_body_is_a_region_of_its_own(self):
+        labels = self._labels(
+            {
+                0: JatsFieldNames.ABSTRACT,
+                1: JatsFieldNames.BODY_SECTION_PARAGRAPH,
+                2: JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+                3: JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+                4: JatsFieldNames.REFERENCE,
+            },
+            'The ferries of the western isles are counted here.',
+            'The count ran from spring to autumn.',
+            'Both authors drew the maps.',
+            'The authors own no shares in the ferry company.',
+            'Vance P and Oduya K. Counting ferries. 2021.',
+        )
+        assert labels == [
+            SEG_FRONT, SEG_BODY, SEG_CONTRIBUTION, SEG_CONFLICT, SEG_REFERENCES,
+        ]
 
 
 class TestTrailingHeading:

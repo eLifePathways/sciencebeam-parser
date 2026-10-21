@@ -33,6 +33,11 @@ class JatsFieldNames:
     CONFLICT_SECTION_PARAGRAPH = 'conflict_section_paragraph'
     CONTRIBUTION_SECTION_TITLE = 'contribution_section_title'
     CONTRIBUTION_SECTION_PARAGRAPH = 'contribution_section_paragraph'
+    # The same two declarations, filed as a footnote rather than a section, which
+    # is how a publisher says it prints them with the front matter rather than
+    # after the body.
+    CONFLICT_NOTE = 'conflict_note'
+    CONTRIBUTION_NOTE = 'contribution_note'
     ACK_SECTION_TITLE = 'acknowledgment_section_title'
     ACK_SECTION_PARAGRAPH = 'acknowledgment_section_paragraph'
     APPENDIX_GROUP_TITLE = 'appendix_group_title'
@@ -104,6 +109,11 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.CONFLICT_SECTION_PARAGRAPH:     '<conflict>',
     JatsFieldNames.CONTRIBUTION_SECTION_TITLE:     '<contribution>',
     JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH: '<contribution>',
+    # A declaration printed with the front matter is part of it, as GROBID's own
+    # corpora have it both ways: 113 of its header documents hold a conflict note
+    # and 366 of its segmentation documents a `<div type="conflict">` region.
+    JatsFieldNames.CONFLICT_NOTE:                  '<header>',
+    JatsFieldNames.CONTRIBUTION_NOTE:              '<header>',
     JatsFieldNames.ACK_SECTION_TITLE:      '<acknowledgement>',
     JatsFieldNames.ACK_SECTION_PARAGRAPH:  '<acknowledgement>',
     JatsFieldNames.APPENDIX_GROUP_TITLE:   '<annex>',
@@ -144,6 +154,12 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     # why `keywords_title` is extracted for segmentation and left unmapped here.
     JatsFieldNames.CONFLICT_SECTION_PARAGRAPH:     '<conflict>',
     JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH: '<contribution>',
+    JatsFieldNames.CONFLICT_NOTE:                  '<conflict>',
+    JatsFieldNames.CONTRIBUTION_NOTE:              '<contribution>',
+    # What the article calls itself, which prints above the title.  GROBID writes
+    # it as `<note type="doctype">` on 267 of its 835 header documents, "RESEARCH
+    # ARTICLE" 88 times.
+    JatsFieldNames.MANUSCRIPT_TYPE:  '<doctype>',
 }
 
 # ── Fulltext model label mapping ──────────────────────────────────────────────

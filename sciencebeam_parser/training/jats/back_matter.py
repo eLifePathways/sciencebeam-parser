@@ -182,7 +182,8 @@ def _get_fn_heading(el: etree._Element) -> Optional[str]:
     return None if re.match(r'^\d', text) else text
 
 
-def _get_fn_kind(el: etree._Element) -> Optional[str]:
+def get_fn_kind(el: etree._Element) -> Optional[str]:
+    """Which statement a footnote makes, by its heading first and its type second."""
     heading = _get_fn_heading(el)
     by_heading = match_fn_keywords(heading) if heading else None
     return by_heading or _FN_KIND_BY_TYPE.get(el.get('fn-type') or '')
@@ -230,7 +231,7 @@ def _get_sections(
             sections.add(el)
     if fn_kind is not None:
         for el in root.xpath('back//fn'):
-            if _get_fn_kind(el) == fn_kind:
+            if get_fn_kind(el) == fn_kind:
                 sections.add(el)
     return sections
 
@@ -341,6 +342,26 @@ def _is_within(el: etree._Element, elements: Set[etree._Element]) -> bool:
     return any(ancestor in elements for ancestor in el.iterancestors()) or el in elements
 
 
+def statement_text(el: etree._Element) -> str:
+    """A footnote's declaration without the words introducing it.
+
+    A publisher writes the heading inside the note, in bold, and the page prints
+    it as a lead-in.  GROBID labels the lead-in `<other>` and only what follows
+    it as the declaration, on 110 of its 835 header documents.
+
+    Only a bold opening that names the statement.  A contribution statement sets
+    each author's name in bold as well, and that is the statement rather than an
+    introduction to it: taken out, two authors who did the same work are left
+    with the same words and neither can be told from the other.
+    """
+    text = element_text(el)
+    bold = el.find('.//bold')
+    heading = element_text(bold) if bold is not None else ''
+    if heading and text.startswith(heading) and match_fn_keywords(heading):
+        return text[len(heading):].strip()
+    return text
+
+
 class LabelledSections(NamedTuple):
     """The sections of the body or back matter the model has its own label for."""
     supplementary: Set[etree._Element]
@@ -360,7 +381,7 @@ class LabelledSections(NamedTuple):
         funding = _get_funding_sections(root)
         acknowledgement = {
             el for el in root.xpath('back//fn')
-            if _get_fn_kind(el) == 'acknowledgement'
+            if get_fn_kind(el) == 'acknowledgement'
         }
         return LabelledSections(
             supplementary=set(
@@ -415,6 +436,17 @@ TITLE_FIELD_BY_KIND = {
     # number it opens with is not a heading.
     'footnote': JatsFieldNames.BACK_FOOTNOTE,
 }
+
+# Where a declaration filed among the author notes goes instead.  The front
+# matter is where the JATS puts it and where the page prints it, so it is the
+# header's to label rather than a region of its own.  Only these two kinds: the
+# header model has a label for a conflict and a contribution and for none of the
+# others.
+NOTE_PARAGRAPH_FIELD_BY_KIND = {
+    'contribution': JatsFieldNames.CONTRIBUTION_NOTE,
+    'conflict': JatsFieldNames.CONFLICT_NOTE,
+}
+
 
 PARAGRAPH_FIELD_BY_KIND = {
     'supplementary': JatsFieldNames.APPENDIX,

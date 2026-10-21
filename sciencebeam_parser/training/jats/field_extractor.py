@@ -1,3 +1,4 @@
+import re
 from itertools import chain
 from typing import (
     Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
@@ -8,11 +9,14 @@ from lxml import etree
 
 from sciencebeam_parser.training.jats.back_matter import (
     LabelledSections,
+    NOTE_PARAGRAPH_FIELD_BY_KIND,
     PARAGRAPH_FIELD_BY_KIND,
     TITLE_FIELD_BY_KIND,
     element_text,
+    get_fn_kind,
     is_bold_heading,
     match_fn_keywords,
+    statement_text,
 )
 from sciencebeam_parser.training.jats.field_vocab import (
     JatsFieldNames,
@@ -287,6 +291,49 @@ def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
     return author_parts
 
 
+# The statements whose value is written without the words introducing it, which
+# is what the header model's labels are read from.
+_LEAD_IN_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+    JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+})
+
+
+def _name_initials(name_el: etree._Element) -> str:
+    given = (name_el.findtext('given-names') or '').strip()
+    return ''.join(part[0] for part in re.split(r'[^\w]+', given) if part)
+
+
+def _contrib_group_role_text(contrib_group: etree._Element) -> str:
+    """Who did what, as the front matter prints it.
+
+    The JATS files each author's roles under their own `<contrib>`; the page
+    prints them as one statement, surname and initials before each list.
+
+    Only a CRediT role.  A publisher also writes what an author does for a
+    living in a `<role>`, which prints inside the affiliation rather than as a
+    statement of who did what.
+    """
+    statements: List[str] = []
+    for contrib in contrib_group.xpath(
+        'contrib[not(@contrib-type) or @contrib-type="author"]'
+    ):
+        name_el = contrib.find('name')
+        roles = [
+            element_text(role_el)
+            for role_el in contrib.xpath('role[contains(@content-type, "credit")]')
+            if element_text(role_el)
+        ]
+        if name_el is None or not roles:
+            continue
+        surname = (name_el.findtext('surname') or '').strip()
+        name_text = ' '.join(
+            part for part in (surname, _name_initials(name_el)) if part
+        )
+        statements.append(f'{name_text}: ' + ', '.join(roles))
+    return '; '.join(statements)
+
+
 def _iter_aff_elements(root: etree._Element) -> Iterator[etree._Element]:
     yield from root.xpath(
         'front/article-meta/contrib-group/aff'
@@ -364,13 +411,25 @@ class JatsFieldExtractor:
                     field_name=JatsFieldNames.KEYWORDS,
                 )
 
+        # What the article calls itself, printed above the title.  A publisher
+        # says it either on the subject or on the group holding it.
+        #
+        # Verbatim or not at all: one publisher's whole answer is "Article", and
+        # matched approximately that reaches any word of the page that looks
+        # like it -- "particular" on one preprint.
         for el in root.xpath(
             'front/article-meta/article-categories'
             '/subj-group/subject[@subj-group-type="display-channel"]'
+            ' | front/article-meta/article-categories'
+            '/subj-group[@subj-group-type="heading"]/subject'
         ):
             text = element_text(el)
             if text:
-                yield JatsFieldValue(text=text, field_name=JatsFieldNames.MANUSCRIPT_TYPE)
+                yield JatsFieldValue(
+                    text=text,
+                    field_name=JatsFieldNames.MANUSCRIPT_TYPE,
+                    exact_only=True,
+                )
 
         yield from self._iter_front_publication_values(root)
 
@@ -415,6 +474,30 @@ class JatsFieldExtractor:
                 if text:
                     yield JatsFieldValue(text=text, field_name=field_name)
 
+    def _iter_author_note_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """The notes printed under the byline, and the declarations among them.
+
+        A publisher files the conflict and contribution statements here as well
+        as in the back matter, and prints them with the front matter either way,
+        which is the header's to label rather than a region of its own.  The
+        rest -- who to write to, who contributed equally -- has no label, and is
+        emitted so that the segmentation model reads the lines as front matter.
+        """
+        for el in root.xpath('front/article-meta/author-notes/*'):
+            text = element_text(el)
+            if not text:
+                continue
+            note_field = (
+                NOTE_PARAGRAPH_FIELD_BY_KIND.get(get_fn_kind(el) or '')
+                if el.tag == 'fn' else None
+            )
+            if note_field is None:
+                yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_NOTES)
+                continue
+            statement = statement_text(el)
+            if statement:
+                yield JatsFieldValue(text=statement, field_name=note_field)
+
     def _iter_front_contrib_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         # Per GROBID annotation guidelines, all author tokens in the byline (including
         # affiliation markers and separating punctuation) are labelled <author>.
@@ -446,6 +529,12 @@ class JatsFieldExtractor:
                     text=' '.join(author_parts),
                     field_name=JatsFieldNames.AUTHOR,
                 )
+            role_text = _contrib_group_role_text(contrib_group)
+            if role_text:
+                yield JatsFieldValue(
+                    text=role_text,
+                    field_name=JatsFieldNames.CONTRIBUTION_NOTE,
+                )
 
         for aff_el in _iter_aff_elements(root):
             text = element_text(aff_el)
@@ -467,10 +556,7 @@ class JatsFieldExtractor:
 
         yield from self._iter_front_contact_values(root)
 
-        for el in root.xpath('front/article-meta/author-notes/*'):
-            text = element_text(el)
-            if text:
-                yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_NOTES)
+        yield from self._iter_author_note_values(root)
 
         yield from self._iter_front_notes_values(root)
 
@@ -618,10 +704,23 @@ class JatsFieldExtractor:
                     text=text, field_name=labelled.title_field(el, ''))))
 
         for el in root.xpath('back//sec//p | back//fn//p'):
-            text = element_text(el)
-            if text and labelled.claims(el) and not is_bold_heading(el):
+            if not labelled.claims(el) or is_bold_heading(el):
+                continue
+            field_name = labelled.paragraph_field(el, '')
+            # A footnote states its kind in bold at the head of the paragraph as
+            # often as in a paragraph of its own, and either way the page prints
+            # it as a lead-in rather than as part of the statement -- for the two
+            # statements the header model has a label for.  For the rest the
+            # whole paragraph is the value, because what the value does there is
+            # place a region: without its lead-in, one ethics statement is left
+            # as its approval number and matches the methods sentence quoting it.
+            text = (
+                statement_text(el) if field_name in _LEAD_IN_FIELDS
+                else element_text(el)
+            )
+            if text:
                 entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=labelled.paragraph_field(el, ''))))
+                    text=text, field_name=field_name)))
 
         for el in root.xpath('back//sec[not(ancestor::ack)]/title'):
             text = element_text(el)
