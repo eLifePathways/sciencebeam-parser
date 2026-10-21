@@ -291,6 +291,14 @@ def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
     return author_parts
 
 
+# The statements whose value is written without the words introducing it, which
+# is what the header model's labels are read from.
+_LEAD_IN_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+    JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+})
+
+
 def _name_initials(name_el: etree._Element) -> str:
     given = (name_el.findtext('given-names') or '').strip()
     return ''.join(part[0] for part in re.split(r'[^\w]+', given) if part)
@@ -696,10 +704,23 @@ class JatsFieldExtractor:
                     text=text, field_name=labelled.title_field(el, ''))))
 
         for el in root.xpath('back//sec//p | back//fn//p'):
-            text = element_text(el)
-            if text and labelled.claims(el) and not is_bold_heading(el):
+            if not labelled.claims(el) or is_bold_heading(el):
+                continue
+            field_name = labelled.paragraph_field(el, '')
+            # A footnote states its kind in bold at the head of the paragraph as
+            # often as in a paragraph of its own, and either way the page prints
+            # it as a lead-in rather than as part of the statement -- for the two
+            # statements the header model has a label for.  For the rest the
+            # whole paragraph is the value, because what the value does there is
+            # place a region: without its lead-in, one ethics statement is left
+            # as its approval number and matches the methods sentence quoting it.
+            text = (
+                statement_text(el) if field_name in _LEAD_IN_FIELDS
+                else element_text(el)
+            )
+            if text:
                 entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=labelled.paragraph_field(el, ''))))
+                    text=text, field_name=field_name)))
 
         for el in root.xpath('back//sec[not(ancestor::ack)]/title'):
             text = element_text(el)

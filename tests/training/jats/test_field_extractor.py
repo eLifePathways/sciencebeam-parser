@@ -803,6 +803,33 @@ class TestContribution:
             (JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH, 'Both authors drew the maps.'),
         ]
 
+    def test_it_should_leave_out_a_lead_in_the_paragraph_opens_with(self):
+        fvs = _field_values_for(
+            '<article><back><fn-group>'
+            '<fn fn-type="con"><p><bold>Contributions: </bold>'
+            'Both authors drew the maps.</p></fn>'
+            '</fn-group></back></article>'
+        )
+        assert [
+            (v.field_name, v.text) for v in fvs
+        ] == [
+            (JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH, 'Both authors drew the maps.'),
+        ]
+
+    def test_it_should_keep_a_bold_name_that_is_the_statement(self):
+        """A contribution statement sets each author's name in bold."""
+        fvs = _field_values_for(
+            '<article><back><fn-group>'
+            '<fn fn-type="con"><p><bold>Contributions</bold></p>'
+            '<p><bold>Author 1</bold> drew the maps.</p>'
+            '<p><bold>Author 2</bold> counted the ferries.</p></fn>'
+            '</fn-group></back></article>'
+        )
+        assert [
+            v.text for v in fvs
+            if v.field_name == JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH
+        ] == ['Author 1 drew the maps.', 'Author 2 counted the ferries.']
+
     def test_it_should_state_the_roles_as_one_statement_per_contrib_group(self):
         fvs = _field_values_for(
             '<article><front><article-meta><contrib-group>'

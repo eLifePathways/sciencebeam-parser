@@ -348,11 +348,16 @@ def statement_text(el: etree._Element) -> str:
     A publisher writes the heading inside the note, in bold, and the page prints
     it as a lead-in.  GROBID labels the lead-in `<other>` and only what follows
     it as the declaration, on 110 of its 835 header documents.
+
+    Only a bold opening that names the statement.  A contribution statement sets
+    each author's name in bold as well, and that is the statement rather than an
+    introduction to it: taken out, two authors who did the same work are left
+    with the same words and neither can be told from the other.
     """
     text = element_text(el)
     bold = el.find('.//bold')
     heading = element_text(bold) if bold is not None else ''
-    if heading and text.startswith(heading):
+    if heading and text.startswith(heading) and match_fn_keywords(heading):
         return text[len(heading):].strip()
     return text
 
