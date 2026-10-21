@@ -350,7 +350,17 @@ class _TokenIndex:
         return self._token_index_at[pos] != self._token_index_at[next_pos]
 
 
-def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
+def _build_token_index(  # pylint: disable=too-many-locals
+    layout_document: LayoutDocument,
+    keep_line_ids: Optional[Set[int]] = None,
+) -> _TokenIndex:
+    """The haystack every value is searched in.
+
+    `keep_line_ids` narrows it to one region's lines, which is how a value
+    printed around an interruption can be looked for without the interruption
+    in the way.  The lines left out stay in `all_tokens`, so a match still maps
+    back to the document's own tokens.
+    """
     all_tokens: List[LayoutToken] = []
     skip_tokens: Set[int] = set()
     no_space_after: Set[int] = set()
@@ -374,9 +384,13 @@ def _build_token_index(layout_document: LayoutDocument) -> _TokenIndex:
             cover_token_indices.update(
                 range(len(all_tokens), len(all_tokens) + len(line_tokens))
             )
+        outside_region = keep_line_ids is not None and id(line) not in keep_line_ids
         for i, token in enumerate(line_tokens):
             tok_global_idx = len(all_tokens)
             all_tokens.append(token)
+            if outside_region:
+                skip_tokens.add(tok_global_idx)
+                continue
             if i == len(line_tokens) - 1:
                 norm = normalize_for_alignment(token.text)
                 if norm == '-':
@@ -1732,6 +1746,95 @@ def _sort_reference_sub_fields_by_length(
     return result
 
 
+# A reference printed around an interruption cannot be matched whole against the
+# document in reading order: the body text between its halves breaks the run and
+# the better half wins, which leaves the rest of the reference claimed by nobody.
+# The region the first pass derives holds the reference's own lines and not what
+# interrupted them, so a second look there finds what the first could not.
+PARTIAL_REFERENCE_MIN_COVERAGE = 0.9
+
+
+def _label_unclaimed_tokens(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    match_start: int,
+    match_end: int,
+    instance_id: int,
+    region_token_ids: Set[int],
+) -> int:
+    """Give the instance the tokens of its match that no value claimed.
+
+    Only unclaimed ones: a reference that took a word from its neighbour would
+    move a boundary rather than complete one, which is the defect this is for.
+
+    And only ones in the region.  A range maps back through `tokens_in_range`,
+    which also hands back a skipped token following a matched one so an
+    end-of-line hyphen keeps its word's label; the lines outside the region are
+    skipped the same way, and the first word of the interrupting text would ride
+    in on that.
+    """
+    labelled = 0
+    for token in token_index.tokens_in_range(match_start, match_end):
+        if id(token) not in region_token_ids:
+            continue
+        if id(token) in annotated.token_label_by_id:
+            continue
+        annotated.set_token_label(
+            token, JatsFieldNames.REFERENCE, None, instance_id
+        )
+        labelled += 1
+    return labelled
+
+
+def extend_partial_reference_matches(  # pylint: disable=too-many-locals
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+    region_line_ids: Set[int],
+    config: Optional[AlignmentConfig] = None,
+    min_coverage: float = PARTIAL_REFERENCE_MIN_COVERAGE,
+) -> List[int]:
+    """Place the rest of each reference the first pass matched only part of.
+
+    Returns the instances it added tokens to.
+    """
+    if not region_line_ids:
+        return []
+    config = config or AlignmentConfig()
+    partial = [
+        (instance_id, text)
+        for instance_id, (text, matched_length) in sorted(
+            annotated.reference_match_by_instance.items()
+        )
+        if matched_length < min_coverage * len(normalize_for_alignment(text))
+    ]
+    if not partial:
+        return []
+    token_index = _build_token_index(layout_document, keep_line_ids=region_line_ids)
+    if not token_index.haystack:
+        return []
+    region_token_ids = {
+        id(token)
+        for line in layout_document.iter_all_lines()
+        if id(line) in region_line_ids
+        for token in line.tokens
+    }
+    extended: List[int] = []
+    for instance_id, text in partial:
+        field_value = JatsFieldValue(text=text, field_name=JatsFieldNames.REFERENCE)
+        match = _fuzzy_match_field_value(
+            token_index, field_value, config, search_start=0, skip_furniture=True
+        )
+        if match is None:
+            continue
+        match_start, match_end, _blocks = match
+        if _label_unclaimed_tokens(
+            annotated, token_index, match_start, match_end, instance_id,
+            region_token_ids,
+        ):
+            extended.append(instance_id)
+    return extended
+
+
 class LayoutDocumentJatsAligner:
     """Aligns JATS field values to LayoutDocument tokens via fuzzy text matching."""
 
@@ -2059,6 +2162,10 @@ class LayoutDocumentJatsAligner:
                         ref_id_subfield_end.get(fv.field_name, 0), a_end
                     )
             instance_id = instance_by_field.get(fv.field_name, 0)
+            if fv.sub_field_name is None and fv.field_name == JatsFieldNames.REFERENCE:
+                annotated.reference_match_by_instance[instance_id] = (
+                    fv.text, a_end - a_start
+                )
             _label_tokens_for_blocks(
                 annotated, token_index, block_ranges,
                 fv.field_name, fv.sub_field_name, instance_id,

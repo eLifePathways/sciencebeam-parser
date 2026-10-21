@@ -1,5 +1,5 @@
 # pylint: disable=too-many-lines
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Set, Tuple
 
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
@@ -13,6 +13,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.training.jats.aligner import (
     AlignmentConfig,
     LayoutDocumentJatsAligner,
+    extend_partial_reference_matches,
     _search_range,
     narrow_search_range_to_window,
     get_search_stride,
@@ -1877,4 +1878,90 @@ class TestReferenceInterruptedByPageFurniture:
         labelled = self._title_tokens(doc, annotated)
         assert not {'Page', 'updated', '2026'} & set(labelled), (
             'the foot the title is printed around is not part of it'
+        )
+
+
+INTERRUPTING_BODY_TEXT = ' '.join(
+    'experiences that protect rather than diminish user well being and privacy '
+    'this is all the more important in light of the great number of questions '
+    'raised by the possibility of the metaverse regarding the authenticity of '
+    'digital identities personal data shared during use can be subject to misuse '
+    'in the form of data theft and be re used for generating synthetic avatars'.split()
+)
+
+
+class TestExtendPartialReferenceMatches:
+    """A reference printed around an interruption, looked for again in its region.
+
+    The document reads the two halves with body text between them, so the first
+    pass matches the better half and leaves the rest to no reference.  The region
+    holds the reference's lines and not what interrupted them.
+    """
+
+    # The half below the interruption is the longer one, so it is the half the
+    # first pass keeps -- which is the shape the defect takes on the page.
+    FIRST_HALF = 'Gonzales AL Hancock JT effects of'
+    SECOND_HALF = (
+        'exposure to Facebook on self-esteem a journal of some length '
+        'Cyberpsychol Behav Soc Netw volume 14 issue 1 pages 79 to 83 2011'
+    )
+    REFERENCE_TEXT = FIRST_HALF + ' ' + SECOND_HALF
+
+    def _aligned(self):
+        document = _make_doc(
+            self.FIRST_HALF,
+            # As long as the body text the page really prints between the halves:
+            # a short gap the matcher can bridge does not reproduce the defect.
+            INTERRUPTING_BODY_TEXT,
+            self.SECOND_HALF,
+        )
+        annotated = LayoutDocumentJatsAligner().align(
+            document,
+            [_fv(self.REFERENCE_TEXT, JatsFieldNames.REFERENCE)],
+        )
+        return document, annotated
+
+    def _reference_lines(self, document: LayoutDocument) -> Set[int]:
+        lines = list(document.iter_all_lines())
+        return {id(lines[0]), id(lines[2])}
+
+    def test_should_leave_the_first_half_to_no_reference(self):
+        document, annotated = self._aligned()
+        first_line = list(document.iter_all_lines())[0]
+        assert not any(
+            annotated.get_token_field(token) == JatsFieldNames.REFERENCE
+            for token in first_line.tokens
+        )
+
+    def test_should_place_the_first_half_when_looked_for_in_the_region(self):
+        document, annotated = self._aligned()
+        extended = extend_partial_reference_matches(
+            annotated, document, self._reference_lines(document)
+        )
+        assert extended
+        first_line = list(document.iter_all_lines())[0]
+        assert all(
+            annotated.get_token_field(token) == JatsFieldNames.REFERENCE
+            for token in first_line.tokens
+        )
+
+    def test_should_leave_the_interrupting_text_alone(self):
+        document, annotated = self._aligned()
+        extend_partial_reference_matches(
+            annotated, document, self._reference_lines(document)
+        )
+        interrupting_line = list(document.iter_all_lines())[1]
+        assert not any(
+            annotated.get_token_field(token) == JatsFieldNames.REFERENCE
+            for token in interrupting_line.tokens
+        )
+
+    def test_should_do_nothing_where_the_reference_matched_whole(self):
+        document = _make_doc(self.REFERENCE_TEXT)
+        annotated = LayoutDocumentJatsAligner().align(
+            document, [_fv(self.REFERENCE_TEXT, JatsFieldNames.REFERENCE)]
+        )
+        lines = list(document.iter_all_lines())
+        assert not extend_partial_reference_matches(
+            annotated, document, {id(lines[0])}
         )
