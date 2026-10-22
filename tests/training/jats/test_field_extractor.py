@@ -276,6 +276,33 @@ class TestReference:
         assert len(refs) >= 1
         assert 'A Study' in refs[0].text
 
+    def test_drops_the_markers_separator_from_a_name_the_conversion_swept_it_into(self):
+        """`16.-Sala Situacional` is numbered, and the dash is the numbering's."""
+        fvs = _field_values_for(
+            '<article><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<source>-Sala Situacional COVID-19 Peru</source>'
+            '<article-title>\u2013 A Study</article-title>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = {v.sub_field_name: v.text for v in fvs if v.sub_field_name}
+        assert sub[JatsSubFieldNames.REFERENCE_SOURCE] == 'Sala Situacional COVID-19 Peru'
+        assert sub[JatsSubFieldNames.REFERENCE_ARTICLE_TITLE] == 'A Study'
+
+    def test_keeps_the_punctuation_a_title_opens_with(self):
+        fvs = _field_values_for(
+            '<article><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<article-title>[Quick evidence reviews]</article-title>'
+            '<source>"Coopetition" in Business Networks</source>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = {v.sub_field_name: v.text for v in fvs if v.sub_field_name}
+        assert sub[JatsSubFieldNames.REFERENCE_ARTICLE_TITLE] == '[Quick evidence reviews]'
+        assert sub[JatsSubFieldNames.REFERENCE_SOURCE] == '"Coopetition" in Business Networks'
+
     def test_extracts_reference_author_subfield(self):
         fvs = _field_values_for(
             '<article><back><ref-list>'

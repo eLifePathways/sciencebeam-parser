@@ -109,6 +109,26 @@ def _reference_parent_text(ref_el: etree._Element) -> str:
     return ' '.join(' '.join(parts).split())
 
 
+# What a reference's numbering is separated from the reference by, where the
+# publisher's conversion swept it into the first value instead: `16.-Sala
+# Situacional` declares the source as `-Sala Situacional`.  A title or a
+# publication's name does not open with one, and the page prints it beside the
+# marker, which is background.
+_LEADING_SEPARATORS = '-\u2013\u2014.,;:'
+
+_NAME_SUB_FIELDS: FrozenSet[str] = frozenset({
+    JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,
+    JatsSubFieldNames.REFERENCE_SOURCE,
+    JatsSubFieldNames.REFERENCE_PUBLISHER_NAME,
+    JatsSubFieldNames.REFERENCE_PUBLISHER_LOC,
+})
+
+
+def _without_leading_separator(text: str) -> str:
+    without = text.lstrip(_LEADING_SEPARATORS).lstrip()
+    return without if without[:1].isalnum() else text
+
+
 def _iter_sub_field_values(
     parent_el: etree._Element,
     field_name: str,
@@ -118,6 +138,8 @@ def _iter_sub_field_values(
     for sub_field_name, xpath in sub_xpath_by_sub_field:
         for child in parent_el.xpath(xpath):
             text = element_text(child)
+            if sub_field_name in _NAME_SUB_FIELDS:
+                text = _without_leading_separator(text)
             if text:
                 yield JatsFieldValue(
                     text=text,
