@@ -472,6 +472,33 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             != annotated.get_token_instance(aff2_tokens[0])
         )
 
+    def test_an_abstract_is_read_across_what_the_page_prints_inside_it(self):
+        """The footnotes of the page it runs onto are matched values of their own."""
+        first_half = ' '.join(['alpha'] * 40)
+        second_half = ' '.join(['omega'] * 40)
+        interruption = 'Instituto de Pesquisa Economica Aplicada, Brasilia, Brasil'
+        doc = _make_doc(
+            'Petra Vance',
+            first_half,
+            interruption,
+            second_half,
+            'Introduction Body',
+        )
+        abstract_text = first_half + ' ' + second_half
+        annotated = self._align(doc, [
+            _fv('Petra Vance', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+            _fv(interruption, JatsFieldNames.AUTHOR_AFF),
+        ])
+        lines = list(doc.iter_all_lines())
+        labelled = [
+            {annotated.get_token_field(token) for token in line.tokens}
+            for line in lines
+        ]
+        assert labelled[1] == {JatsFieldNames.ABSTRACT}
+        assert labelled[2] == {JatsFieldNames.AUTHOR_AFF}
+        assert labelled[3] == {JatsFieldNames.ABSTRACT}
+
     def test_abstract_does_not_label_sidebar_content(self):
         # PDFs sometimes have a sidebar (e.g. Open Peer Review box) between the
         # first and second page of an abstract.  The JATS abstract needle contains
