@@ -9,7 +9,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
-    get_lines_handed_over_out_of_order,
+    get_lines_in_printed_order,
     SEG_ANNEX,
     SEG_CONFLICT,
     SEG_CONTRIBUTION,
@@ -852,8 +852,8 @@ class TestFrontMatterBoundary:
         assert labels[id(grant)] != SEG_FRONT
 
 
-class TestLinesHandedOverOutOfOrder:
-    """Which of a page's lines the page sets after the ones handed over later.
+class TestLinesInPrintedOrder:
+    """The order the page sets a page's lines in, where it is not the order given.
 
     pdfalto reads a page column by column, so a block running the full width
     under two columns can arrive before the column above it.  Said without a
@@ -869,35 +869,44 @@ class TestLinesHandedOverOutOfOrder:
                        meta=make_page_meta(1, height=1000.0)),
         ])
 
-    def _out_of_order(self, *lines: LayoutLine) -> int:
-        doc = self._page(*lines)
-        return len(get_lines_handed_over_out_of_order(doc, set()))
+    def _texts(self, doc: LayoutDocument, furniture=frozenset()):
+        return [line.text for line in get_lines_in_printed_order(doc, set(furniture))]
 
     def test_a_block_the_page_sets_under_the_column_above_it(self):
         # The foot of the page, handed over before the column it sits below.
-        assert self._out_of_order(
+        doc = self._page(
             make_line('Grant information and who it came from', y=800.0),
             make_line('Copyright and the licence it is under', y=820.0),
             make_line('The last words of a statement above it', y=100.0),
             make_line('and the heading of what follows them', y=130.0),
-        ) == 2
+        )
+        assert self._texts(doc)[:2] == [
+            'The last words of a statement above it',
+            'and the heading of what follows them',
+        ]
 
     def test_a_page_handed_over_the_way_it_is_set(self):
-        assert self._out_of_order(
+        doc = self._page(
             make_line('The first line the page sets', y=100.0),
             make_line('the second line under it', y=130.0),
             make_line('and the third under that', y=160.0),
-        ) == 0
+        )
+        assert self._texts(doc) == [
+            'The first line the page sets',
+            'the second line under it',
+            'and the third under that',
+        ]
 
     def test_two_columns_the_second_of_which_reaches_higher(self):
         # The right column starts above the foot of the left one, so nothing
         # says the page sets either after the other.
-        assert self._out_of_order(
+        doc = self._page(
             make_line('The left column runs down', y=100.0, x=50.0),
             make_line('to the foot of the page', y=800.0, x=50.0),
             make_line('and the right column', y=100.0, x=350.0),
             make_line('beside it does the same', y=800.0, x=350.0),
-        ) == 0
+        )
+        assert self._texts(doc)[0] == 'The left column runs down'
 
     def test_the_page_number_under_everything_is_not_asked_about(self):
         # The page number is handed over last and set below the block that is
@@ -909,5 +918,37 @@ class TestLinesHandedOverOutOfOrder:
             make_line('Page 2 of 29', y=950.0),
         )
         number = doc.pages[0].blocks[0].lines[2]
-        assert not get_lines_handed_over_out_of_order(doc, set())
-        assert len(get_lines_handed_over_out_of_order(doc, {id(number)})) == 1
+        assert self._texts(doc)[0] == 'Grant information and who it came from'
+        assert self._texts(doc, {id(number)})[0] == 'The last words of a statement above it'
+
+
+class TestTheNoteNamingTheCorrespondingAuthor:
+    """The note at the foot of the title page says what it is.
+
+    A line is voted on by what is labelled on it, so three tokens can be
+    carried by one: a paragraph of the body that uses the same word as the
+    note took the line into the body with it.
+    """
+
+    @staticmethod
+    def _doc():
+        lines = [
+            make_line('A title the page carries', y=100.0),
+            make_line('The argument of the article begins here', y=200.0),
+            make_line('*Autor correspondente', y=940.0),
+            make_line('Enderecos de e-mail: someone@example.org', y=960.0),
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=[line]) for line in lines],
+                       meta=make_page_meta(1, height=1000.0)),
+            LayoutPage(blocks=[LayoutBlock(lines=[
+                make_line('The argument of the article continues', y=200.0, page_number=2)
+            ])], meta=make_page_meta(2, height=1000.0)),
+        ])
+        return doc, lines
+
+    def test_it_is_front_matter_where_a_body_paragraph_took_a_word_of_it(self):
+        doc, lines = self._doc()
+        annotated = annotate(doc, {2: JatsFieldNames.BODY_SECTION_PARAGRAPH})
+        labels = derive_labels(doc, annotated)
+        assert labels[id(lines[2])] == SEG_FRONT

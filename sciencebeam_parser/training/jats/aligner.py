@@ -20,7 +20,7 @@ from sciencebeam_parser.training.jats.field_vocab import (
 )
 from sciencebeam_parser.training.jats.segmentation import (
     get_cover_page_line_ids,
-    get_lines_handed_over_out_of_order,
+    get_lines_in_printed_order,
     get_page_furniture_line_ids,
     get_side_column_line_ids
 )
@@ -332,6 +332,7 @@ class _TokenIndex:
         tokens: List[LayoutToken],
         skip_tokens: Optional[Set[int]] = None,
         no_space_after: Optional[Set[int]] = None,
+        order: Optional[Sequence[int]] = None,
     ) -> None:
         self.tokens = tokens
         if skip_tokens is None:
@@ -341,7 +342,8 @@ class _TokenIndex:
         parts: List[str] = []
         token_index_at: List[int] = []
 
-        for tok_idx, token in enumerate(tokens):
+        for tok_idx in (range(len(tokens)) if order is None else order):
+            token = tokens[tok_idx]
             if tok_idx in skip_tokens:
                 continue
             norm = normalize_for_alignment(token.text)
@@ -365,9 +367,6 @@ class _TokenIndex:
         # Where a publisher's cover page lies, which no value of the article's
         # own is searched in.
         self.cover_ranges: List[Tuple[int, int]] = []
-        # Where the page sets a block below the lines it was handed over
-        # before, which is a block the page prints after both of them.
-        self.out_of_order_ranges: List[Tuple[int, int]] = []
 
     def get_token_char_ranges(self, token_indices: Set[int]) -> List[Tuple[int, int]]:
         """The haystack covered by those tokens, merged into contiguous runs."""
@@ -506,7 +505,12 @@ def _build_token_index(  # pylint: disable=too-many-locals
                     if i > 0:
                         no_space_after.add(tok_global_idx - 1)
     token_index = _TokenIndex(
-        all_tokens, skip_tokens=skip_tokens, no_space_after=no_space_after
+        all_tokens, skip_tokens=skip_tokens, no_space_after=no_space_after,
+        order=[
+            token
+            for line in get_lines_in_printed_order(layout_document, furniture_line_ids)
+            for token in range(*token_range_by_line_id[id(line)])
+        ],
     )
     token_index.furniture_ranges = token_index.get_token_char_ranges(
         furniture_token_indices
@@ -517,14 +521,6 @@ def _build_token_index(  # pylint: disable=too-many-locals
     token_index.side_column_ranges = token_index.get_token_char_ranges(
         side_column_token_indices
     )
-    out_of_order_line_ids = get_lines_handed_over_out_of_order(
-        layout_document, furniture_line_ids
-    )
-    token_index.out_of_order_ranges = token_index.get_token_char_ranges({
-        token
-        for line_id in out_of_order_line_ids
-        for token in range(*token_range_by_line_id[line_id])
-    })
     return token_index
 
 
@@ -1453,14 +1449,23 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
                 furniture_ranges=furniture_ranges,
                 span_tolerance=span_tolerance,
             )
-            if result is not None and result[1] >= end > start and end < seg_end:
+            # Where a value may be looked for, which is not where its last word
+            # may fall: a range's own end says the front matter reaches this
+            # far, and a statement printed inside it says the rest of its last
+            # line.  A segment's end is a mask rather than a bound, so nothing
+            # reaches past that.
+            reach = (
+                min(len(haystack), hay_end + need_len)
+                if end >= hay_end else seg_end
+            )
+            if result is not None and result[1] >= end > start and reach > end:
                 # The match runs to the end of the window it was searched in,
                 # so what it was still reading may be the next word in the
                 # page.  Asked again over a window that reaches further, a
                 # grant statement keeps the half of its last line that the
                 # window had cut off.
                 wider = _fuzzy_search_in_window(
-                    haystack, needle, start, min(seg_end, end + window_size),
+                    haystack, needle, start, min(reach, end + window_size),
                     config.threshold, token_index,
                     furniture_ranges=furniture_ranges,
                     span_tolerance=span_tolerance,
@@ -1471,6 +1476,17 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
                 if _is_exact_sw_match(result, need_len):
                     return result
                 if gap_match is None:
+                    gap_match = result
+                elif (
+                    _overlaps([(gap_match[0], gap_match[1])], result[0], result[1])
+                    and _matched_length(result) > _matched_length(gap_match)
+                ):
+                    # The same place, read again in a window that reaches
+                    # further.  The windows overlap, so a value the first of
+                    # them cut short is whole in the next, and the fuller
+                    # reading of the same span is the better answer -- where
+                    # the two do not overlap they are two printings and the
+                    # first is still the one being asked about.
                     gap_match = result
             if end >= seg_end:
                 break
@@ -1774,13 +1790,11 @@ def _relabel_anchors_over_what_nothing_explains(
     how both halves of a value printed around an interruption come to be asked
     about at once.
 
-    Two more things come out of the window, for the same reason the furniture
+    One more thing comes out of the window, for the same reason the furniture
     does: the column the page sets beside the article, which this pass already
-    refuses to label, and a block handed over before the lines the page sets
-    above it, which the page prints after both halves rather than between them.
-    On `ore` they are the peer review panel and the metadata block at the foot
-    of the second page, and an abstract that runs onto that page is printed
-    around both.
+    refuses to label.  `ore` sets its peer review panel down the side of the
+    first page, and an abstract that runs off that page and onto the next is
+    printed around it.
 
     Only what nothing has claimed is labelled from the answer, so a value that
     reaches further cannot take what another one is holding.
@@ -1790,7 +1804,6 @@ def _relabel_anchors_over_what_nothing_explains(
         clean_ranges = sorted(
             set(token_index.furniture_ranges)
             | set(token_index.side_column_ranges)
-            | set(token_index.out_of_order_ranges)
             | {
                 (start, end) for start, end in matched_ranges
                 if (start, end) != anchor.own_range

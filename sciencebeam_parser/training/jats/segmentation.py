@@ -258,6 +258,13 @@ def _tag_by_coordinates(
         seg_lines, y_ratio_by_line, config
     )
     for seg_line in seg_lines:
+        if id(seg_line) in corresponding_author_lines:
+            # The note at the foot of the title page says what it is.  One
+            # token of it that a paragraph of the body happens to use as well
+            # carries the line otherwise, because a line is voted on by what is
+            # labelled on it and three tokens can be carried by one.
+            seg_line.seg_label = SEG_FRONT
+            continue
         if seg_line.seg_label is not None:
             continue
         y_ratio = y_ratio_by_line[id(seg_line)]
@@ -1962,10 +1969,10 @@ def _lines_a_page_sets_after_the_rest(page_lines: List[LayoutLine]) -> List[Layo
     return []
 
 
-def get_lines_handed_over_out_of_order(
+def get_lines_in_printed_order(
     layout_document: LayoutDocument, furniture_line_ids: Set[int]
-) -> Set[int]:
-    """The lines a page hands over before the lines it sets above them.
+) -> List[LayoutLine]:
+    """The document's lines in the order the page sets them.
 
     pdfalto reads a page column by column, and a block running the full width
     under two columns belongs to neither: `ore` hands over the metadata block at
@@ -1975,20 +1982,27 @@ def get_lines_handed_over_out_of_order(
 
     Said without a column model, which is what makes it safe to say: where a
     page's content falls into two groups, the ones handed over first set wholly
-    below the ones handed over after them, the page prints the second group
-    first, and the first group is what this returns.
+    below the ones after them, the page prints the second group first.
 
     Of the page's content, because the running head and the page number are
     printed around it rather than in it, and either would deny every page the
-    question.
+    question -- `ore` sets its page number below the block that is out of
+    place.  They keep the place they were handed over in; nothing reads them.
     """
-    out_of_order: Set[int] = set()
+    lines: List[LayoutLine] = []
     for page in layout_document.pages:
-        out_of_order.update(id(line) for line in _lines_a_page_sets_after_the_rest([
-            line for block in page.blocks for line in block.lines
+        page_lines = [line for block in page.blocks for line in block.lines]
+        positions = [
+            index for index, line in enumerate(page_lines)
             if id(line) not in furniture_line_ids
-        ]))
-    return out_of_order
+        ]
+        content = [page_lines[index] for index in positions]
+        early = _lines_a_page_sets_after_the_rest(content)
+        reordered = content[len(early):] + early
+        for index, line in zip(positions, reordered):
+            page_lines[index] = line
+        lines.extend(page_lines)
+    return lines
 
 
 def get_side_column_line_ids(layout_document: LayoutDocument) -> Set[int]:

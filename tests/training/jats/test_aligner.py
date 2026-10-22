@@ -14,6 +14,8 @@ from sciencebeam_parser.training.jats.aligner import (
     AlignmentConfig,
     LayoutDocumentJatsAligner,
     extend_partial_reference_matches,
+    _build_token_index,
+    _fuzzy_match_field_value,
     _search_range,
     narrow_search_range_to_window,
     get_search_stride,
@@ -2230,10 +2232,9 @@ class TestAnAbstractContinuedAboveTheBlockHandedOverFirst:
     """A block the page sets below both halves of a value is not between them.
 
     `ore` hands over the metadata block at the foot of its second page before
-    the column above it, so a thousand characters stand between the two halves
-    of an abstract that the page sets nothing between.  The pass that asks an
-    anchor again over what nothing explains takes the block out of the window,
-    as it already takes the page's furniture.
+    the column above it, so a thousand characters stood between the two halves
+    of an abstract that the page sets nothing between.  The haystack reads the
+    page in its own order, so they are next to each other.
     """
 
     HEAD = (
@@ -2415,3 +2416,87 @@ class TestHowFarTheFrontMatterReaches:
     def test_the_keywords_are_looked_for_after_the_abstract(self):
         start, _end = self._range(JatsFieldNames.KEYWORDS, 5000, 3000)
         assert start == 3000
+
+
+FILLER = ' '.join(
+    f'a line of the page that nothing of the article declares number {index}'
+    for index in range(40)
+)
+
+
+class TestAValueReadToTheEndOfWhatItSays:
+    """Where a value may be looked for is not where its last word may fall.
+
+    A range's own end says the front matter reaches this far, and a statement
+    printed inside it says the rest of its last line.  The two are different
+    questions, and bounding the second by the first cost a grant statement the
+    end of the sentence it finishes on.
+    """
+
+    STATEMENT = (
+        'This work was paid for by the marshland authority under the grant that'
+        ' funds the heron counts, and the authority had no part in the counting'
+        ' or in what was written about it afterwards.'
+    )
+
+    def _match(self, search_end_offset):
+        doc = _make_doc('Grant information', self.STATEMENT)
+        token_index = _build_token_index(doc)
+        search_end = (
+            None if search_end_offset is None
+            else len(token_index.haystack) + search_end_offset
+        )
+        return _fuzzy_match_field_value(
+            token_index, _fv(self.STATEMENT, JatsFieldNames.FUNDING),
+            AlignmentConfig(), search_start=0, search_end=search_end,
+        )
+
+    def test_the_whole_of_it_where_the_range_ends_inside_it(self):
+        whole = self._match(None)
+        cut = self._match(-20)
+        assert whole is not None and cut is not None
+        assert cut[1] == whole[1]
+
+
+def _filler_of_length(target: int) -> str:
+    """Words enough to fill that many characters of the haystack."""
+    words = []
+    length = 0
+    while length < target:
+        word = f'filler{len(words)}'
+        words.append(word)
+        length += len(word) + 1
+    return ' '.join(words)
+
+
+class TestAValueLyingAcrossAWindowBoundary:
+    """A value the first window cuts short keeps its last words.
+
+    The windows overlap so that a value lying across a boundary is found whole.
+    Two things see to it: a match that reads to the edge of its window is asked
+    again over a wider one, and where that answers no better the next window's
+    reading of the same span is kept, which is the fuller of the two.
+    """
+
+    STATEMENT = (
+        'The counts were taken by the authority every summer at the same three'
+        ' gauges, and the figures for the whole catchment are published each'
+        ' spring in a report of its own.'
+    )
+
+    def _aligned(self):
+        needle = normalize_for_alignment(self.STATEMENT)
+        window = get_search_window_size(len(needle), AlignmentConfig().max_window)
+        doc = _make_doc(_filler_of_length(window - 40), self.STATEMENT)
+        return doc, LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons', JatsFieldNames.TITLE),
+            _fv(self.STATEMENT, JatsFieldNames.FUNDING),
+        ])
+
+    def test_the_last_words_of_it_are_labelled(self):
+        doc, annotated = self._aligned()
+        labelled = {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.FUNDING
+        }
+        assert {'spring', 'report'} <= labelled
