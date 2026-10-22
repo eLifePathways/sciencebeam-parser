@@ -283,6 +283,46 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             for token in lines[3].tokens
         )
 
+    def test_a_value_keeps_the_short_piece_it_opens_with(self):
+        """The page sets a space after each dot, and the match dropped the first.
+
+        Smith-Waterman stops when extending would not raise the score, and a
+        one-character opening separated by a gap scores net zero.
+        """
+        doc = _make_doc('J.J. Leahy and Nidal Khalaf', 'Introduction Body')
+        fvs = [_fv('J.J. Leahy', JatsFieldNames.AUTHOR)]
+        annotated = self._align(doc, fvs)
+        labelled = [
+            token.text for token in list(doc.iter_all_lines())[0].tokens
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        ]
+        assert labelled[:2] == ['J', '.']
+
+    def test_a_name_the_front_matter_prints_again_is_labelled_again(self):
+        """A correspondence block names the authors a second time."""
+        abstract_text = ' '.join(['word'] * 60)
+        doc = _make_doc(
+            'Petra Vance 1 , Kaya Oduya 2',
+            'Correspondence: Petra Vance (petra@example.org)',
+            abstract_text,
+            'Introduction Body',
+        )
+        fvs = [
+            _fv('Petra Vance 1', JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME),
+            _fv('Kaya Oduya 2', JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME),
+            _fv('Petra Vance 1 Kaya Oduya 2', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+        ]
+        fvs[0].fallback_text = 'Petra Vance'
+        fvs[1].fallback_text = 'Kaya Oduya'
+        annotated = self._align(doc, fvs)
+        second_line = list(doc.iter_all_lines())[1]
+        labelled = [
+            token.text for token in second_line.tokens
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        ]
+        assert labelled == ['Petra', 'Vance']
+
     def test_affiliation_found_after_body_when_not_in_front_matter(self):
         # Some journals place full author/affiliation blocks at the END of the paper.
         # The front-matter region constraint is soft: if the aff text is not found in

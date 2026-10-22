@@ -564,6 +564,58 @@ def _extend_match_for_needle_tail(
     return ext_start + match_count, abs_block_ranges + [(ext_start, ext_start + match_count)]
 
 
+def _extend_match_for_needle_head(
+    window: str,
+    needle: str,
+    window_start: int,
+    abs_a_start: int,
+    matched_blocks: List[Tuple[int, int, int]],
+    abs_block_ranges: List[Tuple[int, int]],
+    token_index: Optional['_TokenStarts'] = None,
+) -> Tuple[int, List[Tuple[int, int]]]:
+    """Greedily extend the SW match to cover any unmatched needle prefix.
+
+    The same early stop as the tail, at the other end: a short first piece
+    separated from the rest by a gap scores net zero, so the traceback drops it.
+    `U.` before `S. Department of Interior`, the `z.` of an address, the first
+    initial of `J.J. Leahy` where the page sets a space after each dot.
+    `_extend_match_for_needle_tail` repairs the end of a value; this repairs its
+    start.
+
+    Each character of the prefix is looked for at a token's own start, within
+    the gap the fill allows, so that the extension takes the piece the page
+    prints rather than the tail of the word before it.
+    """
+    first_matched = min(bi for _, bi, size in matched_blocks if size)
+    needle_head = needle[:first_matched]
+    if not needle_head:
+        return abs_a_start, abs_block_ranges
+
+    position = abs_a_start - window_start
+    earliest = position
+    for char in reversed(needle_head):
+        limit = max(0, position - _MAX_HAYSTACK_GAP_TO_FILL - 1)
+        found = False
+        while position > limit:
+            position -= 1
+            if window[position] != char:
+                continue
+            if token_index is not None and not token_index.is_token_start(
+                window_start + position
+            ):
+                continue
+            earliest = position
+            found = True
+            break
+        if not found:
+            break
+    if earliest == abs_a_start - window_start:
+        return abs_a_start, abs_block_ranges
+
+    ext_start = window_start + earliest
+    return ext_start, [(ext_start, abs_a_start)] + abs_block_ranges
+
+
 def _clean_window(
     haystack: str,
     window_start: int,
@@ -665,9 +717,15 @@ def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
         return None
     cleaned_end = matched_blocks[-1][0] + matched_blocks[-1][2]
     cleaned_ranges = [(ai, ai + size) for ai, _bi, size in matched_blocks]
+    cleaned_view = (
+        _CleanedTokenView(token_index, cleaned, segments) if token_index else None
+    )
     cleaned_end, cleaned_ranges = _extend_match_for_needle_tail(
-        cleaned, needle, 0, cleaned_end, matched_blocks, cleaned_ranges,
-        _CleanedTokenView(token_index, cleaned, segments) if token_index else None,
+        cleaned, needle, 0, cleaned_end, matched_blocks, cleaned_ranges, cleaned_view,
+    )
+    _, cleaned_ranges = _extend_match_for_needle_head(
+        cleaned, needle, 0, matched_blocks[0][0], matched_blocks, cleaned_ranges,
+        cleaned_view,
     )
     abs_block_ranges: List[Tuple[int, int]] = []
     for start, end in cleaned_ranges:
@@ -724,6 +782,10 @@ def _fuzzy_search_in_window(  # pylint: disable=too-many-locals
     ]
     a_end, abs_block_ranges = _extend_match_for_needle_tail(
         window, needle, window_start, a_end, matched_blocks, abs_block_ranges, token_index
+    )
+    a_start, abs_block_ranges = _extend_match_for_needle_head(
+        window, needle, window_start, a_start, matched_blocks, abs_block_ranges,
+        token_index
     )
     return a_start, a_end, abs_block_ranges
 
@@ -1348,9 +1410,94 @@ def narrow_search_range_to_window(
     return narrowed_start, narrowed_end
 
 
-# The per-field window rules have outgrown one function; splitting them is worth
-# doing next time this needs a branch.
-def _search_range(  # pylint: disable=too-many-locals
+def _sub_field_search_range(
+    fv: JatsFieldValue,
+    parent_match_by_field: Dict[str, Tuple[int, int, int]],
+) -> Tuple[int, Optional[int]]:
+    """Where a sub-field is looked for: inside the match its parent made."""
+    p_start, p_end, pre_parent_ref_floor = parent_match_by_field[fv.field_name]
+    if fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL and _is_pure_number(fv.text):
+        pre = _SUB_FIELD_PARENT_PRE_BUFFER
+    elif (
+        fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
+        and bool(_LABEL_DIGIT_PREFIX_RE.match(fv.text))
+    ):
+        pre = _SUB_FIELD_LABEL_DIGIT_PRE_BUFFER
+    elif fv.sub_field_name in {
+        JatsSubFieldNames.REFERENCE_AUTHOR,
+        JatsSubFieldNames.REFERENCE_SOURCE,
+    }:
+        # Source can precede the parent's SW match start when the PDF orders
+        # source before article-title but the JATS parent text has them reversed.
+        # SW then latches onto the article-title anchor and sets p_start after
+        # the source, so we need the same backward buffer as for authors.
+        pre = _SUB_FIELD_REFERENCE_AUTHOR_PRE_BUFFER
+    else:
+        pre = 0
+    # For authors and source: never extend before the end of the previous
+    # reference (prevents sub-field matches from bleeding into earlier bibls).
+    if fv.sub_field_name in {
+        JatsSubFieldNames.REFERENCE_AUTHOR,
+        JatsSubFieldNames.REFERENCE_SOURCE,
+    }:
+        sub_start = max(p_start - pre, pre_parent_ref_floor)
+    else:
+        sub_start = p_start - pre
+    return max(0, sub_start), p_end + _SUB_FIELD_PARENT_BUFFER
+
+
+def _anchor_search_start(
+    fv: JatsFieldValue,
+    last_match_end: int,
+    body_content_end: int,
+    reference_floor: int,
+    post_body_text_end: Optional[Dict[str, int]],
+    anchor_match_end_by_field: Optional[Dict[str, int]],
+) -> int:
+    """Where an anchor or a post-body value is looked for from.
+
+    Anchor fields (abstract, title) and post-body fields (sub-articles) both
+    search from last_match_end so they follow reading order and cannot fall
+    back to the front-matter window.
+
+    A post-body field searches from a floor rather than that cursor.
+    Sub-article values repeat within a document and do not follow the page, so a
+    cursor loses every value earlier than the last match.  The floor keeps what
+    the cursor was for -- body and figures lie before it -- while letting the
+    region be searched in any order, and no post-body match advances it, so it
+    cannot creep.
+    """
+    spent = (post_body_text_end or {}).get(_WIDE_SEARCH_BUDGET_KEY, 0)
+    if (
+        fv.field_name in _POST_BODY_FIELDS
+        and (fv.exact_only or spent < _POST_BODY_MAX_WIDE_SEARCHES)
+    ):
+        # The reference list, where there is one, is the floor rather than the
+        # last body match.  An author response quotes the paper, so a body
+        # paragraph can match inside the peer review and carry the floor past
+        # most of the region with it; the reference list cannot, because it
+        # prints between the body and the peer review.
+        #
+        # A repeated value still advances past its own previous match, because
+        # ORE prints one copy of each checklist question per reviewer and the
+        # copies have to land on different ones: searching every copy from the
+        # floor collapses them all onto the first.
+        start = max(
+            0,
+            (reference_floor if reference_floor > 0 else body_content_end) - 200,
+            (post_body_text_end or {}).get(fv.text, 0),
+        )
+    else:
+        own_end = (anchor_match_end_by_field or {}).get(fv.field_name)
+        base = own_end if own_end is not None else last_match_end
+        start = max(0, base - 200)
+    return start
+
+
+# The per-field window rules are split by the kind of statement each makes, and
+# the two longest of them have functions of their own; this says which applies.
+# pylint: disable-next=too-many-return-statements
+def _search_range(
     fv: JatsFieldValue,
     last_match_end: int,
     body_floor: int,
@@ -1364,34 +1511,7 @@ def _search_range(  # pylint: disable=too-many-locals
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
     if is_contained_in_parent_match(fv, parent_match_by_field):
-        p_start, p_end, pre_parent_ref_floor = parent_match_by_field[fv.field_name]
-        if fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL and _is_pure_number(fv.text):
-            pre = _SUB_FIELD_PARENT_PRE_BUFFER
-        elif (
-            fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
-            and bool(_LABEL_DIGIT_PREFIX_RE.match(fv.text))
-        ):
-            pre = _SUB_FIELD_LABEL_DIGIT_PRE_BUFFER
-        elif fv.sub_field_name in {
-            JatsSubFieldNames.REFERENCE_AUTHOR,
-            JatsSubFieldNames.REFERENCE_SOURCE,
-        }:
-            # Source can precede the parent's SW match start when the PDF orders
-            # source before article-title but the JATS parent text has them reversed.
-            # SW then latches onto the article-title anchor and sets p_start after
-            # the source, so we need the same backward buffer as for authors.
-            pre = _SUB_FIELD_REFERENCE_AUTHOR_PRE_BUFFER
-        else:
-            pre = 0
-        # For authors and source: never extend before the end of the previous
-        # reference (prevents sub-field matches from bleeding into earlier bibls).
-        sub_start = max(p_start - pre, pre_parent_ref_floor) \
-            if fv.sub_field_name in {
-                JatsSubFieldNames.REFERENCE_AUTHOR,
-                JatsSubFieldNames.REFERENCE_SOURCE,
-            } \
-            else p_start - pre
-        return max(0, sub_start), p_end + _SUB_FIELD_PARENT_BUFFER
+        return _sub_field_search_range(fv, parent_match_by_field)
     if fv.field_name in _BODY_CONTENT_FIELDS:
         return max(0, max(body_floor, body_content_end) - 200), None
     if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
@@ -1401,41 +1521,10 @@ def _search_range(  # pylint: disable=too-many-locals
         # skip over all reference positions.
         return (max(0, reference_floor - 200) if reference_floor > 0 else max(0, body_floor)), None
     if fv.field_name in _ANCHOR_FIELDS or fv.field_name in _POST_BODY_FIELDS:
-        # Anchor fields (abstract, title) and post-body fields (sub-articles) both
-        # search from last_match_end so they follow reading order and cannot fall
-        # back to the front-matter window.
-        #
-        # A post-body field searches from a floor rather than that cursor.
-        # Sub-article values repeat within a document and do not follow the page,
-        # so a cursor loses every value earlier than the last match.  The floor
-        # keeps what the cursor was for -- body and figures lie before it -- while
-        # letting the region be searched in any order, and no post-body match
-        # advances it, so it cannot creep.
-        spent = (post_body_text_end or {}).get(_WIDE_SEARCH_BUDGET_KEY, 0)
-        if (
-            fv.field_name in _POST_BODY_FIELDS
-            and (fv.exact_only or spent < _POST_BODY_MAX_WIDE_SEARCHES)
-        ):
-            # The reference list, where there is one, is the floor rather than the
-            # last body match.  An author response quotes the paper, so a body
-            # paragraph can match inside the peer review and carry the floor past
-            # most of the region with it; the reference list cannot, because it
-            # prints between the body and the peer review.
-            #
-            # A repeated value still advances past its own previous match, because
-            # ORE prints one copy of each checklist question per reviewer and the
-            # copies have to land on different ones: searching every copy from the
-            # floor collapses them all onto the first.
-            start = max(
-                0,
-                (reference_floor if reference_floor > 0 else body_content_end) - 200,
-                (post_body_text_end or {}).get(fv.text, 0),
-            )
-        else:
-            own_end = (anchor_match_end_by_field or {}).get(fv.field_name)
-            base = own_end if own_end is not None else last_match_end
-            start = max(0, base - 200)
-        return start, None
+        return _anchor_search_start(
+            fv, last_match_end, body_content_end, reference_floor,
+            post_body_text_end, anchor_match_end_by_field,
+        ), None
     if fv.field_name in _AFTER_FRONT_MATTER_FIELDS:
         return max(0, front_matter_end), None
     if front_matter_end > 0:
@@ -1496,9 +1585,47 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
         found += 1
         _label_tokens_for_blocks(
             annotated, token_index, block_ranges,
-            field_value.field_name, None, instance_id + found,
+            field_value.field_name, field_value.sub_field_name, instance_id + found,
         )
     return found
+
+
+def _label_further_author_names(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    config: AlignmentConfig,
+    author_values: Sequence[JatsFieldValue],
+    search_end: Optional[int],
+    masked_ranges: List[Tuple[int, int]],
+    instance_id: int,
+) -> None:
+    """Label each author's name where the front matter prints it again.
+
+    A correspondence block names the authors a second time, and GROBID labels
+    that name as a byline of its own: 100 of its 835 header documents carry a
+    `<docAuthor>` holding a name another one already holds, and the words
+    introducing it -- "Contact", "Correspondence to" -- stay background.
+
+    By the bare name rather than the byline's text, because the markers the
+    byline carries are not printed again.  After everything else, and over what
+    nothing else claimed: the copyright line names the first author, the
+    citation names three of them and the contribution statement names them all,
+    and each of those is a label of its own.
+    """
+    for field_value in author_values:
+        instance_id += _label_repeated_matches(
+            annotated, token_index,
+            JatsFieldValue(
+                text=field_value.fallback_text or field_value.text,
+                field_name=field_value.field_name,
+                sub_field_name=field_value.sub_field_name,
+            ),
+            config,
+            search_start=0,
+            search_end=search_end,
+            masked_ranges=masked_ranges,
+            instance_id=instance_id,
+        )
 
 
 def _pre_anchor_indices(
@@ -1976,6 +2103,11 @@ class LayoutDocumentJatsAligner:
         # the renderer composes: the title is most of that line, and on a paper
         # with two authors the title alone satisfies it.
         title_match_ranges: List[Tuple[int, int]] = []
+        # Every range a value was placed over, and the names the byline holds: a
+        # name the front matter prints again is labelled last of all, over what
+        # nothing else has claimed.
+        matched_ranges: List[Tuple[int, int]] = []
+        author_name_values: List[JatsFieldValue] = []
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -2279,6 +2411,9 @@ class LayoutDocumentJatsAligner:
                 byline_match_ranges.append((a_start, a_end))
             if fv.field_name == JatsFieldNames.TITLE:
                 title_match_ranges.append((a_start, a_end))
+            matched_ranges.append((a_start, a_end))
+            if fv.sub_field_name == JatsSubFieldNames.AUTHOR_NAME:
+                author_name_values.append(fv)
             if fv.sub_field_name is None:
                 prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
                 prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)
@@ -2328,6 +2463,17 @@ class LayoutDocumentJatsAligner:
                     masked_ranges=(masked or []) + token_index.furniture_ranges,
                     instance_id=instance_id,
                 )
+
+        _label_further_author_names(
+            annotated, token_index, self.config, author_name_values,
+            search_end=(
+                front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
+            ),
+            masked_ranges=(
+                matched_ranges + token_index.cover_ranges + token_index.furniture_ranges
+            ),
+            instance_id=instance_by_field.get(JatsFieldNames.AUTHOR, 0),
+        )
 
         # Merge per-name REFERENCE_AUTHOR spans into a single <author> element.
         # Separator tokens (commas, semicolons, initials with periods) between

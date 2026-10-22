@@ -259,15 +259,19 @@ def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
     return parts
 
 
-def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
-    """Each author of the group, as the byline prints them.
+def _contrib_group_author_texts(
+    contrib_group: etree._Element
+) -> List[Tuple[str, str]]:
+    """Each author of the group, as the byline prints them and as the rest of
+    the page does.
 
     JATS stores names in Surname-Given order; PDFs display Given-Surname, so each
     name part is reversed.  Each carries its own affiliation, footnote and
-    correspondence markers, because GROBID labels the whole byline `<author>`,
-    the markers between the names included.
+    correspondence markers in the byline, because GROBID labels the whole byline
+    `<author>`, the markers between the names included.  A correspondence block
+    prints the name without them, so the bare name is carried beside it.
     """
-    author_parts: List[str] = []
+    author_parts: List[Tuple[str, str]] = []
     for contrib in contrib_group.xpath(
         'contrib[not(@contrib-type) or @contrib-type="author"]'
     ):
@@ -288,7 +292,7 @@ def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
             )
             if x.text and x.text.strip()
         ]
-        author_parts.append(' '.join([name_text] + markers))
+        author_parts.append((' '.join([name_text] + markers), name_text))
     return author_parts
 
 
@@ -634,6 +638,7 @@ class JatsFieldExtractor:
         # appended to each name so the combined needle matches the PDF author line.
         for contrib_group in root.xpath('front/article-meta/contrib-group'):
             author_parts = _contrib_group_author_texts(contrib_group)
+            byline_texts = [byline_text for byline_text, _ in author_parts]
             # The merged value matches a byline printed as one run, which is what
             # it is for.  Where each author is printed against their own
             # affiliation instead, several hundred characters separate one name
@@ -644,15 +649,16 @@ class JatsFieldExtractor:
             # searched inside that match, and the run matches a few of its own
             # words somewhere even where it does not match the byline -- which
             # would confine the names to wherever those words happened to land.
-            for author_text in author_parts:
+            for byline_text, name_text in author_parts:
                 yield JatsFieldValue(
-                    text=author_text,
+                    text=byline_text,
                     field_name=JatsFieldNames.AUTHOR,
                     sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
+                    fallback_text=name_text,
                 )
-            if author_parts:
+            if byline_texts:
                 yield JatsFieldValue(
-                    text=' '.join(author_parts),
+                    text=' '.join(byline_texts),
                     field_name=JatsFieldNames.AUTHOR,
                 )
             role_text = _contrib_group_role_text(contrib_group)
