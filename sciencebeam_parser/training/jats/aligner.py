@@ -1122,6 +1122,11 @@ def _try_numeric_prefix_label_match(
     return result
 
 
+def _matched_length(result: _MatchResult) -> int:
+    """How much of the page a match accounts for, by its own blocks."""
+    return sum(end - start for start, end in result[2])
+
+
 def _is_exact_sw_match(result: _MatchResult, needle_len: int) -> bool:
     """True when SW found the needle as one contiguous block (no gaps)."""
     _, _, blocks = result
@@ -1405,6 +1410,20 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
                 furniture_ranges=furniture_ranges,
                 span_tolerance=span_tolerance,
             )
+            if result is not None and result[1] >= end > start and end < seg_end:
+                # The match runs to the end of the window it was searched in,
+                # so what it was still reading may be the next word in the
+                # page.  Asked again over a window that reaches further, a
+                # grant statement keeps the half of its last line that the
+                # window had cut off.
+                wider = _fuzzy_search_in_window(
+                    haystack, needle, start, min(seg_end, end + window_size),
+                    config.threshold, token_index,
+                    furniture_ranges=furniture_ranges,
+                    span_tolerance=span_tolerance,
+                )
+                if wider is not None and _matched_length(wider) > _matched_length(result):
+                    result = wider
             if result is not None:
                 if _is_exact_sw_match(result, need_len):
                     return result
