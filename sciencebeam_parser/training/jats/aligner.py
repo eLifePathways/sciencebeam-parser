@@ -1,6 +1,7 @@
 # pylint: disable=too-many-lines
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import (
     Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Protocol, Sequence, Set,
@@ -2119,8 +2120,8 @@ class LayoutDocumentJatsAligner:
         # nothing else has claimed.
         matched_ranges: List[Tuple[int, int]] = []
         author_name_values: List[JatsFieldValue] = []
-        # Where each per-author value was last placed, by what it says.
-        per_author_match_end: Dict[str, int] = {}
+        # Where each per-author field has been placed already.
+        per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -2130,12 +2131,6 @@ class LayoutDocumentJatsAligner:
                 parent_match_by_field, post_body_text_end,
                 anchor_match_end_by_field,
             )
-            if fv.sub_field_name is None and fv.field_name in _PER_AUTHOR_FIELDS:
-                printed_before = per_author_match_end.get(
-                    normalize_for_alignment(fv.text)
-                )
-                if printed_before is not None:
-                    search_start = max(search_start, printed_before)
             window = expected_window.get(value_index)
             if window is not None:
                 # Where the anchors either side say this value belongs.  A floor
@@ -2196,6 +2191,14 @@ class LayoutDocumentJatsAligner:
                 masked = None
             if fv.field_name == JatsFieldNames.SELF_CITATION:
                 masked = (masked or []) + title_match_ranges
+            if fv.sub_field_name is None and fv.field_name in _PER_AUTHOR_FIELDS:
+                # Where this field already matched, because the page prints one
+                # of these per author and the JATS declares one per author: the
+                # second value saying what the first said is the second
+                # printing, and an affiliation printed inside another author's
+                # -- one department of the institute the first names in full --
+                # belongs to the line under its own author's name.
+                masked = (masked or []) + per_author_match_ranges[fv.field_name]
             # The cover restates the article's title, its authors and its
             # identifier, and a value is matched once: matched there, the
             # article's own front matter is left with nothing to match it, and
@@ -2434,7 +2437,7 @@ class LayoutDocumentJatsAligner:
                 title_match_ranges.append((a_start, a_end))
             matched_ranges.append((a_start, a_end))
             if fv.sub_field_name is None and fv.field_name in _PER_AUTHOR_FIELDS:
-                per_author_match_end[normalize_for_alignment(fv.text)] = a_end
+                per_author_match_ranges[fv.field_name].append((a_start, a_end))
             if fv.sub_field_name == JatsSubFieldNames.AUTHOR_NAME:
                 author_name_values.append(fv)
             if fv.sub_field_name is None:
