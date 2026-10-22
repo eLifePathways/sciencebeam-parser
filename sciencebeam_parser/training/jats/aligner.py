@@ -1847,6 +1847,36 @@ def _give_a_block_the_marker_it_opens_with(
         )
 
 
+def _label_further_titles(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    config: AlignmentConfig,
+    title_values: Sequence[JatsFieldValue],
+    search_end: Optional[int],
+    masked_ranges: List[Tuple[int, int]],
+    instance_id: int,
+) -> None:
+    """Label the title where the front matter prints it again.
+
+    A preprint server sets the title on the page its deposit opens with and
+    again above the abstract, and a reader asked for both.  As with the article's
+    identifier and the names its correspondence block repeats, the second
+    printing is the same value and carries the same label.
+
+    After everything else and over what nothing else claimed, within the front
+    matter and with the page's furniture masked: a journal that prints the title
+    in every running head prints it there as furniture, not as the title again.
+    """
+    for field_value in title_values:
+        instance_id += _label_repeated_matches(
+            annotated, token_index, field_value, config,
+            search_start=0,
+            search_end=search_end,
+            masked_ranges=masked_ranges,
+            instance_id=instance_id,
+        )
+
+
 def _label_further_author_names(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -2403,6 +2433,7 @@ class LayoutDocumentJatsAligner:
         # name the page prints inside one is still a name nothing has claimed.
         note_match_ranges: List[Tuple[int, int]] = []
         author_name_values: List[JatsFieldValue] = []
+        title_values: List[JatsFieldValue] = []
         # Where each per-author field has been placed already.
         per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
         # What each anchor value answered, so that it can be asked again once
@@ -2728,6 +2759,8 @@ class LayoutDocumentJatsAligner:
                 per_author_match_ranges[fv.field_name].append((a_start, a_end))
             if fv.sub_field_name == JatsSubFieldNames.AUTHOR_NAME:
                 author_name_values.append(fv)
+            if fv.sub_field_name is None and fv.field_name == JatsFieldNames.TITLE:
+                title_values.append(fv)
             if fv.sub_field_name is None:
                 prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
                 prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)
@@ -2789,6 +2822,17 @@ class LayoutDocumentJatsAligner:
                     masked_ranges=(masked or []) + token_index.furniture_ranges,
                     instance_id=instance_id,
                 )
+
+        _label_further_titles(
+            annotated, token_index, self.config, title_values,
+            search_end=(
+                front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
+            ),
+            masked_ranges=(
+                matched_ranges + token_index.cover_ranges + token_index.furniture_ranges
+            ),
+            instance_id=instance_by_field.get(JatsFieldNames.TITLE, 0),
+        )
 
         _label_further_author_names(
             annotated, token_index, self.config, author_name_values,
