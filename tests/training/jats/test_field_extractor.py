@@ -941,6 +941,19 @@ class TestCorrespondingAuthorNote:
         assert fields.index(JatsFieldNames.AUTHOR_NOTES) < fields.index(JatsFieldNames.EMAIL)
 
 
+class TestOrcid:
+    def test_offers_the_bare_identifier_where_the_page_prints_no_resolver(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><contrib-group><contrib>'
+            '<contrib-id contrib-id-type="orcid">https://orcid.org/0000-0002-1672-9686'
+            '</contrib-id></contrib></contrib-group></article-meta></front></article>'
+        )
+        orcid = [v for v in fvs if v.field_name == JatsFieldNames.ORCID]
+        assert len(orcid) == 1
+        assert orcid[0].text == 'https://orcid.org/0000-0002-1672-9686'
+        assert orcid[0].fallback_text == '0000-0002-1672-9686'
+
+
 class TestIdentifier:
     def test_it_should_read_the_doi_as_the_page_prints_it(self):
         fvs = _field_values_for(

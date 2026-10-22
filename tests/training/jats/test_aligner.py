@@ -323,6 +323,57 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         ]
         assert labelled == ['Petra', 'Vance']
 
+    def test_an_affiliation_two_authors_share_is_labelled_under_each(self):
+        """The JATS declares it once per author and the page prints it once per author."""
+        abstract_text = ' '.join(['word'] * 60)
+        aff_text = 'Institute of Marine Research, Bergen, Norway'
+        doc = _make_doc(
+            'Petra Vance',
+            aff_text,
+            'Kaya Oduya',
+            aff_text,
+            abstract_text,
+            'Introduction Body',
+        )
+        fvs = [
+            _fv('Petra Vance Kaya Oduya', JatsFieldNames.AUTHOR),
+            _fv(aff_text, JatsFieldNames.AUTHOR_AFF),
+            _fv(aff_text, JatsFieldNames.AUTHOR_AFF),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+        ]
+        annotated = self._align(doc, fvs)
+        lines = list(doc.iter_all_lines())
+        labelled_lines = [
+            index for index, line in enumerate(lines)
+            if all(
+                annotated.get_token_field(token) == JatsFieldNames.AUTHOR_AFF
+                for token in line.tokens
+            )
+        ]
+        assert labelled_lines == [1, 3]
+
+    def test_an_orcid_the_page_prints_bare_is_labelled(self):
+        abstract_text = ' '.join(['word'] * 60)
+        doc = _make_doc(
+            'Petra Vance',
+            'ORCID: 0000-0002-1672-9686',
+            abstract_text,
+            'Introduction Body',
+        )
+        orcid = _fv('https://orcid.org/0000-0002-1672-9686', JatsFieldNames.ORCID)
+        orcid.fallback_text = '0000-0002-1672-9686'
+        annotated = self._align(doc, [
+            _fv('Petra Vance', JatsFieldNames.AUTHOR),
+            orcid,
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+        ])
+        second_line = list(doc.iter_all_lines())[1]
+        labelled = ''.join(
+            token.text for token in second_line.tokens
+            if annotated.get_token_field(token) == JatsFieldNames.ORCID
+        )
+        assert labelled == '0000-0002-1672-9686'
+
     def test_affiliation_found_after_body_when_not_in_front_matter(self):
         # Some journals place full author/affiliation blocks at the END of the paper.
         # The front-matter region constraint is soft: if the aff text is not found in

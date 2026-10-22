@@ -80,6 +80,17 @@ _REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.PUBLICATION_DATE,
 })
 
+# The author block's fields, which the JATS declares once per author and the
+# page prints once per author: three authors of one institute each carry the
+# same affiliation, and the page sets it under each of their names.  A second
+# value saying what the first one said is a second printing, so it is looked for
+# after the first rather than where the first already is.
+_PER_AUTHOR_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AUTHOR_AFF,
+    JatsFieldNames.EMAIL,
+    JatsFieldNames.ORCID,
+})
+
 # The declarations a publisher files in the back matter and may print in the
 # front, which is where these two corpora's preprint servers print them: after
 # the affiliations and before the abstract, in the block of metadata the first
@@ -2108,6 +2119,8 @@ class LayoutDocumentJatsAligner:
         # nothing else has claimed.
         matched_ranges: List[Tuple[int, int]] = []
         author_name_values: List[JatsFieldValue] = []
+        # Where each per-author value was last placed, by what it says.
+        per_author_match_end: Dict[str, int] = {}
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -2117,6 +2130,12 @@ class LayoutDocumentJatsAligner:
                 parent_match_by_field, post_body_text_end,
                 anchor_match_end_by_field,
             )
+            if fv.sub_field_name is None and fv.field_name in _PER_AUTHOR_FIELDS:
+                printed_before = per_author_match_end.get(
+                    normalize_for_alignment(fv.text)
+                )
+                if printed_before is not None:
+                    search_start = max(search_start, printed_before)
             window = expected_window.get(value_index)
             if window is not None:
                 # Where the anchors either side say this value belongs.  A floor
@@ -2324,9 +2343,11 @@ class LayoutDocumentJatsAligner:
                     masked_ranges=masked,
                     skip_furniture=skip_furniture,
                 )
-            # Sub-field fallback: retry with fallback_text (e.g. surname only)
-            # when the primary JATS name text does not match the PDF text.
-            if match_range is None and fv.sub_field_name is not None and fv.fallback_text:
+            # Fallback: retry with fallback_text when the primary JATS text
+            # does not match the PDF text.  A name the page abbreviates is
+            # looked for by its surname; an ORCID the page prints bare is
+            # looked for without the resolver in front of it.
+            if match_range is None and fv.fallback_text:
                 fallback_fv = JatsFieldValue(
                     text=fv.fallback_text,
                     field_name=fv.field_name,
@@ -2338,7 +2359,7 @@ class LayoutDocumentJatsAligner:
                     masked_ranges=masked,
                     skip_furniture=skip_furniture,
                 )
-                if match_range is not None:
+                if match_range is not None and fv.sub_field_name is not None:
                     # Extend surname-only match with given-names initial from
                     # the original needle (e.g. "Y.-H." after "HSIEH").
                     match_range = _extend_match_with_given_names_tail(
@@ -2412,6 +2433,8 @@ class LayoutDocumentJatsAligner:
             if fv.field_name == JatsFieldNames.TITLE:
                 title_match_ranges.append((a_start, a_end))
             matched_ranges.append((a_start, a_end))
+            if fv.sub_field_name is None and fv.field_name in _PER_AUTHOR_FIELDS:
+                per_author_match_end[normalize_for_alignment(fv.text)] = a_end
             if fv.sub_field_name == JatsSubFieldNames.AUTHOR_NAME:
                 author_name_values.append(fv)
             if fv.sub_field_name is None:

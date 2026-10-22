@@ -611,8 +611,9 @@ class JatsFieldExtractor:
     def _iter_front_contact_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         """An author's email and ORCID, which print beside the name they belong to.
 
-        The JATS carries each exactly as the page prints it, an ORCID as the full
-        URL, so neither needs building from parts.
+        The JATS carries an ORCID as the resolver URL whether the page prints it
+        that way or as the bare identifier, so the bare one goes with it as a
+        fallback.
         """
         for xpath, field_name in (
             ('front/article-meta//email', JatsFieldNames.EMAIL),
@@ -623,8 +624,16 @@ class JatsFieldExtractor:
         ):
             for el in root.xpath(xpath):
                 text = element_text(el)
-                if text:
-                    yield JatsFieldValue(text=text, field_name=field_name)
+                if not text:
+                    continue
+                fallback = (
+                    text.rsplit('/', 1)[-1]
+                    if field_name == JatsFieldNames.ORCID and '/' in text
+                    else None
+                )
+                yield JatsFieldValue(
+                    text=text, field_name=field_name, fallback_text=fallback or None
+                )
 
     def _iter_author_note_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         """The notes printed under the byline, and the declarations among them.
