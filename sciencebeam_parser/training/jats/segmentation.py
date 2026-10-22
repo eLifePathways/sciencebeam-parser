@@ -1926,6 +1926,71 @@ def _iter_side_column_lines(
             return
 
 
+def _get_line_band(line: LayoutLine) -> Optional[Tuple[float, float]]:
+    """How far down the page a line starts and ends."""
+    boxes = [
+        token.coordinates for token in (line.tokens or [])
+        if token.coordinates is not None and token.coordinates
+    ]
+    if not boxes:
+        return None
+    return (
+        min(box.y for box in boxes),
+        max(box.y + box.height for box in boxes),
+    )
+
+
+def _lines_a_page_sets_after_the_rest(page_lines: List[LayoutLine]) -> List[LayoutLine]:
+    """The lines handed over first that the page sets below the ones after them."""
+    found = [_get_line_band(line) for line in page_lines]
+    if len(page_lines) < 2 or any(band is None for band in found):
+        return []
+    bands = [band for band in found if band is not None]
+    tops: List[float] = []
+    highest = bands[0][0]
+    for band in bands:
+        highest = min(highest, band[0])
+        tops.append(highest)
+    feet: List[float] = [0.0] * len(bands)
+    lowest = bands[-1][1]
+    for index in range(len(bands) - 1, -1, -1):
+        lowest = max(lowest, bands[index][1])
+        feet[index] = lowest
+    for split in range(1, len(page_lines)):
+        if feet[split] <= tops[split - 1]:
+            return page_lines[:split]
+    return []
+
+
+def get_lines_handed_over_out_of_order(
+    layout_document: LayoutDocument, furniture_line_ids: Set[int]
+) -> Set[int]:
+    """The lines a page hands over before the lines it sets above them.
+
+    pdfalto reads a page column by column, and a block running the full width
+    under two columns belongs to neither: `ore` hands over the metadata block at
+    the foot of its second page before the column above it, so a thousand
+    characters stand between the two halves of an abstract that the page sets
+    nothing between.
+
+    Said without a column model, which is what makes it safe to say: where a
+    page's content falls into two groups, the ones handed over first set wholly
+    below the ones handed over after them, the page prints the second group
+    first, and the first group is what this returns.
+
+    Of the page's content, because the running head and the page number are
+    printed around it rather than in it, and either would deny every page the
+    question.
+    """
+    out_of_order: Set[int] = set()
+    for page in layout_document.pages:
+        out_of_order.update(id(line) for line in _lines_a_page_sets_after_the_rest([
+            line for block in page.blocks for line in block.lines
+            if id(line) not in furniture_line_ids
+        ]))
+    return out_of_order
+
+
 def get_side_column_line_ids(layout_document: LayoutDocument) -> Set[int]:
     """The lines of a column the page sets beside the one the article runs down.
 

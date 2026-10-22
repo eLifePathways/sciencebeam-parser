@@ -20,6 +20,7 @@ from sciencebeam_parser.training.jats.field_vocab import (
 )
 from sciencebeam_parser.training.jats.segmentation import (
     get_cover_page_line_ids,
+    get_lines_handed_over_out_of_order,
     get_page_furniture_line_ids,
     get_side_column_line_ids
 )
@@ -349,6 +350,9 @@ class _TokenIndex:
         # Where a publisher's cover page lies, which no value of the article's
         # own is searched in.
         self.cover_ranges: List[Tuple[int, int]] = []
+        # Where the page sets a block below the lines it was handed over
+        # before, which is a block the page prints after both of them.
+        self.out_of_order_ranges: List[Tuple[int, int]] = []
 
     def get_token_char_ranges(self, token_indices: Set[int]) -> List[Tuple[int, int]]:
         """The haystack covered by those tokens, merged into contiguous runs."""
@@ -450,8 +454,12 @@ def _build_token_index(  # pylint: disable=too-many-locals
     furniture_token_indices: Set[int] = set()
     cover_token_indices: Set[int] = set()
     side_column_token_indices: Set[int] = set()
+    token_range_by_line_id: Dict[int, Tuple[int, int]] = {}
     for line in layout_document.iter_all_lines():
         line_tokens: List[LayoutToken] = line.tokens or []
+        token_range_by_line_id[id(line)] = (
+            len(all_tokens), len(all_tokens) + len(line_tokens)
+        )
         if id(line) in furniture_line_ids:
             furniture_token_indices.update(
                 range(len(all_tokens), len(all_tokens) + len(line_tokens))
@@ -494,6 +502,14 @@ def _build_token_index(  # pylint: disable=too-many-locals
     token_index.side_column_ranges = token_index.get_token_char_ranges(
         side_column_token_indices
     )
+    out_of_order_line_ids = get_lines_handed_over_out_of_order(
+        layout_document, furniture_line_ids
+    )
+    token_index.out_of_order_ranges = token_index.get_token_char_ranges({
+        token
+        for line_id in out_of_order_line_ids
+        for token in range(*token_range_by_line_id[line_id])
+    })
     return token_index
 
 
@@ -1742,6 +1758,14 @@ def _relabel_anchors_over_what_nothing_explains(
     how both halves of a value printed around an interruption come to be asked
     about at once.
 
+    Two more things come out of the window, for the same reason the furniture
+    does: the column the page sets beside the article, which this pass already
+    refuses to label, and a block handed over before the lines the page sets
+    above it, which the page prints after both halves rather than between them.
+    On `ore` they are the peer review panel and the metadata block at the foot
+    of the second page, and an abstract that runs onto that page is printed
+    around both.
+
     Only what nothing has claimed is labelled from the answer, so a value that
     reaches further cannot take what another one is holding.
     """
@@ -1749,6 +1773,8 @@ def _relabel_anchors_over_what_nothing_explains(
         own_start, own_end = anchor.own_range
         clean_ranges = sorted(
             set(token_index.furniture_ranges)
+            | set(token_index.side_column_ranges)
+            | set(token_index.out_of_order_ranges)
             | {
                 (start, end) for start, end in matched_ranges
                 if (start, end) != anchor.own_range

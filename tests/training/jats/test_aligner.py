@@ -2224,3 +2224,156 @@ class TestTheCitationThePageBreaksInTwo:
 
     def test_the_words_introducing_it_stay_outside_it(self):
         assert not {'How', 'cite', 'article'} & self._citation_tokens()
+
+
+class TestAnAbstractContinuedAboveTheBlockHandedOverFirst:
+    """A block the page sets below both halves of a value is not between them.
+
+    `ore` hands over the metadata block at the foot of its second page before
+    the column above it, so a thousand characters stand between the two halves
+    of an abstract that the page sets nothing between.  The pass that asks an
+    anchor again over what nothing explains takes the block out of the window,
+    as it already takes the page's furniture.
+    """
+
+    HEAD = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them, and the counts were compared'
+        ' with the water levels recorded at the three gauges upstream.'
+    )
+    TAIL = (
+        'The birds returned to the same reed beds each year whatever the water'
+        ' had done the winter before.'
+    )
+    ABSTRACT = HEAD + ' ' + TAIL
+    BLOCK = [
+        'Corresponding author: a name and the address it is written to',
+        'Author roles: who wrote which part of it and who read the rest',
+        'Competing interests: none of the authors declared one of these',
+        'Grant information: the body that paid for it and what it paid',
+    ]
+
+    def _align(self):
+        doc = _paged_doc([
+            [('A survey of the herons of the northern marshes', 100.0)]
+            + [(self.HEAD, 200.0)],
+            [(line, 800.0 + 20 * index) for index, line in enumerate(self.BLOCK)]
+            + [(self.TAIL, 100.0)],
+        ])
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _abstract_tokens(self) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.ABSTRACT
+        }
+
+    def test_the_half_the_page_sets_above_the_block(self):
+        assert {'birds', 'returned', 'reed', 'beds'} <= self._abstract_tokens()
+
+    def test_the_block_itself_is_not_the_abstract(self):
+        assert not {'Grant', 'roles', 'Competing'} & self._abstract_tokens()
+
+
+def _column_line(
+    text: str, page_number: int, y: float, x: float, width: float
+) -> LayoutLine:
+    """A line set in a column of its own, every token across its whole width."""
+    return LayoutLine(tokens=[
+        LayoutToken(text=word, coordinates=LayoutPageCoordinates(
+            x=x, y=y, width=width, height=12, page_number=page_number
+        ))
+        for word in text.split()
+    ])
+
+
+class TestAnAbstractReadPastThePanelBesideIt:
+    """The column a page sets beside the article is not inside a value.
+
+    `ore` sets its peer review panel down the side of the first page, and an
+    abstract that runs out of that page and onto the next is printed around it.
+    The pass that asks an anchor again already refuses to label the panel; the
+    window it asks over leaves the panel out too, so the two halves of the
+    abstract are what the question is about.
+    """
+
+    HEAD_LINES = [
+        'The marshes north of the estuary were surveyed',
+        'over four summers to count the herons nesting',
+        'along them, and the counts were compared with',
+        'the water levels recorded at the three gauges',
+        'upstream, which the authority publishes each',
+        'spring for the catchment as a whole.',
+    ]
+    HEAD = ' '.join(HEAD_LINES)
+    TAIL = (
+        'The birds returned to the same reed beds each year whatever the water'
+        ' had done the winter before.'
+    )
+    ABSTRACT = HEAD + ' ' + TAIL
+    PANEL = [
+        'Open peer review',
+        'Approval status: awaiting the reports',
+        'version 2 revised, and the date it was',
+        'version 1, and the date that one was',
+        'Reviewers and where each of them works',
+        'The first of them, and the institute',
+        'they are at, and the town it is in',
+        'The second of them, and the institute',
+        'they are at, and the town it is in',
+        'The third of them, and the institute',
+        'they are at, and the town it is in',
+        'Any reports and responses or comments',
+        'on the article can be found at the end',
+    ]
+
+    def _align(self):
+        page_one = (
+            [_column_line(
+                'A survey of the herons of the northern marshes', 1, 100.0, 50.0, 260.0
+            )]
+            + [
+                _column_line(text, 1, 200.0 + 20 * index, 50.0, 260.0)
+                for index, text in enumerate(self.HEAD_LINES)
+            ]
+            + [
+                _column_line(text, 1, 200.0 + 20 * index, 350.0, 150.0)
+                for index, text in enumerate(self.PANEL)
+            ]
+        )
+        page_two = [_column_line(self.TAIL, 2, 100.0, 50.0, 260.0)]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=lines)],
+                meta=LayoutPageMeta(
+                    page_number=page_number,
+                    coordinates=LayoutPageCoordinates(
+                        x=0, y=0, width=600, height=1000, page_number=page_number
+                    ),
+                ),
+            )
+            for page_number, lines in enumerate([page_one, page_two], 1)
+        ])
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _abstract_tokens(self) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.ABSTRACT
+        }
+
+    def test_the_half_printed_past_the_panel(self):
+        assert {'birds', 'returned', 'reed', 'beds'} <= self._abstract_tokens()
+
+    def test_the_panel_itself_is_not_the_abstract(self):
+        assert not {'Approval', 'Reviewers', 'version'} & self._abstract_tokens()

@@ -9,6 +9,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
+    get_lines_handed_over_out_of_order,
     SEG_ANNEX,
     SEG_CONFLICT,
     SEG_CONTRIBUTION,
@@ -849,3 +850,64 @@ class TestFrontMatterBoundary:
         doc, annotated, grant = self._make_doc(front_after_references=True)
         labels = derive_labels(doc, annotated, front_max_start_line_index=80)
         assert labels[id(grant)] != SEG_FRONT
+
+
+class TestLinesHandedOverOutOfOrder:
+    """Which of a page's lines the page sets after the ones handed over later.
+
+    pdfalto reads a page column by column, so a block running the full width
+    under two columns can arrive before the column above it.  Said without a
+    column model: where a page's content falls into two groups, the ones handed
+    over first set wholly below the ones after them, the page prints the second
+    group first.
+    """
+
+    @staticmethod
+    def _page(*lines: LayoutLine) -> LayoutDocument:
+        return LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=list(lines))],
+                       meta=make_page_meta(1, height=1000.0)),
+        ])
+
+    def _out_of_order(self, *lines: LayoutLine) -> int:
+        doc = self._page(*lines)
+        return len(get_lines_handed_over_out_of_order(doc, set()))
+
+    def test_a_block_the_page_sets_under_the_column_above_it(self):
+        # The foot of the page, handed over before the column it sits below.
+        assert self._out_of_order(
+            make_line('Grant information and who it came from', y=800.0),
+            make_line('Copyright and the licence it is under', y=820.0),
+            make_line('The last words of a statement above it', y=100.0),
+            make_line('and the heading of what follows them', y=130.0),
+        ) == 2
+
+    def test_a_page_handed_over_the_way_it_is_set(self):
+        assert self._out_of_order(
+            make_line('The first line the page sets', y=100.0),
+            make_line('the second line under it', y=130.0),
+            make_line('and the third under that', y=160.0),
+        ) == 0
+
+    def test_two_columns_the_second_of_which_reaches_higher(self):
+        # The right column starts above the foot of the left one, so nothing
+        # says the page sets either after the other.
+        assert self._out_of_order(
+            make_line('The left column runs down', y=100.0, x=50.0),
+            make_line('to the foot of the page', y=800.0, x=50.0),
+            make_line('and the right column', y=100.0, x=350.0),
+            make_line('beside it does the same', y=800.0, x=350.0),
+        ) == 0
+
+    def test_the_page_number_under_everything_is_not_asked_about(self):
+        # The page number is handed over last and set below the block that is
+        # out of place, so counted as content it would deny the page the
+        # question.
+        doc = self._page(
+            make_line('Grant information and who it came from', y=800.0),
+            make_line('The last words of a statement above it', y=100.0),
+            make_line('Page 2 of 29', y=950.0),
+        )
+        number = doc.pages[0].blocks[0].lines[2]
+        assert not get_lines_handed_over_out_of_order(doc, set())
+        assert len(get_lines_handed_over_out_of_order(doc, {id(number)})) == 1
