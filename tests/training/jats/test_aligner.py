@@ -2170,3 +2170,57 @@ class TestExtendPartialReferenceMatches:
         assert not extend_partial_reference_matches(
             annotated, document, {id(lines[0])}
         )
+
+
+class TestTheCitationThePageBreaksInTwo:
+    """Words a line sets inside one value belong to that value.
+
+    The renderer composes the citation the article asks to be cited by out of
+    the deposit's own fields, and prints inside it an abbreviated author list
+    and a review state that no field declares, so the value is looked for in
+    two halves.  GROBID writes one `<reference>`: across its 837 header
+    documents no line carries a single value on both sides of background.
+    """
+
+    NAMES = 'Rivera L, Okonkwo A, Berg S'
+    TITLE = 'A field guide to the herons of the northern marshes'
+    SOURCE = 'Marshland Reports 2031, 7:412'
+    LINE = (
+        'How to cite this article: ' + NAMES + ' et al. ' + TITLE
+        + ' [version 2; peer review: 1 approved] ' + SOURCE
+    )
+
+    def _align(self):
+        doc = _make_doc(
+            'A title the page sets above the names it was deposited with',
+            self.LINE,
+        )
+        field_values = [
+            _fv(self.NAMES + ' ' + self.TITLE, JatsFieldNames.SELF_CITATION),
+            JatsFieldValue(
+                text=self.SOURCE,
+                field_name=JatsFieldNames.SELF_CITATION,
+                sub_field_name=JatsSubFieldNames.SELF_CITATION_SOURCE,
+            ),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _citation_tokens(self) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.SELF_CITATION
+        }
+
+    def test_the_words_the_page_prints_inside_it(self):
+        # The abbreviation standing for the names it leaves out, and the state
+        # of the review, neither of which any field of the deposit declares.
+        assert {
+            'et', 'al', 'version', 'peer', 'review', 'approved'
+        } <= self._citation_tokens()
+
+    def test_where_it_appeared_which_is_the_second_half(self):
+        assert {'Marshland', 'Reports', '2031'} <= self._citation_tokens()
+
+    def test_the_words_introducing_it_stay_outside_it(self):
+        assert not {'How', 'cite', 'article'} & self._citation_tokens()

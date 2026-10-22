@@ -13,7 +13,11 @@ from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
-from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
+from sciencebeam_parser.training.jats.field_vocab import (
+    SEGMENTATION_LABEL_BY_FIELD,
+    JatsFieldNames,
+    JatsSubFieldNames,
+)
 from sciencebeam_parser.training.jats.segmentation import (
     get_cover_page_line_ids,
     get_page_furniture_line_ids,
@@ -262,6 +266,14 @@ _REFERENCE_IDENTIFIER_SUB_FIELDS = frozenset({
 # Fallback: when a field value produces NO anchor blocks at all (the entire text
 # is shorter than _MIN_ANCHOR_BLOCK_SIZE), every block is labelled so short
 # fields are never silently dropped.
+# A sub-field that is a search device rather than a label of its own: where the
+# citation appeared is looked for inside the citation, because every running
+# foot of the page carries the same words, and once found it is part of the
+# citation like the names and the title are.
+_SEARCH_ONLY_SUB_FIELDS = frozenset({
+    JatsSubFieldNames.SELF_CITATION_SOURCE,
+})
+
 _MIN_ANCHOR_BLOCK_SIZE = 5
 _MAX_HAYSTACK_GAP_TO_FILL = 3
 # Maximum number of non-author tokens permitted between two author spans before
@@ -1817,6 +1829,47 @@ def _fill_abstract_lines(
         begun.add(instance_id)
 
 
+def _join_what_a_line_prints_inside_one_value(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+) -> None:
+    """Words a line sets inside one value belong to that value.
+
+    A page composes the citation it asks to be cited by out of the deposit's
+    own fields, and prints inside it an `et al.` and a peer-review state the
+    deposit never declared, so the value matched the line in three pieces.
+    GROBID writes one: across its 837 header documents the only label a line
+    carries on both sides of background is a list -- two emails joined by `or`,
+    two ISSNs by a slash, two phone numbers -- and never a single value printed
+    around something else.
+
+    So where a line carries the same value on both sides of words nothing has
+    claimed, those words are the value's.  A list keeps its pieces apart
+    because each of its values is an instance of its own, and the page's
+    furniture and the column it sets beside the article keep theirs because
+    they are lines of their own.
+
+    The front matter only.  A reference is a line of fields rather than one
+    value printed whole, and the words between two pieces of its title are the
+    year it appeared and the publisher that issued it.
+    """
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        labelled = [index for index, entry in enumerate(entries) if entry is not None]
+        for left, right in zip(labelled, labelled[1:]):
+            entry = entries[left]
+            if right == left + 1 or entry is None or entry != entries[right]:
+                continue
+            field_name, sub_field_name, instance_id = entry
+            if SEGMENTATION_LABEL_BY_FIELD.get(field_name) != '<header>':
+                continue
+            for index in range(left + 1, right):
+                annotated.set_token_label(
+                    tokens[index], field_name, sub_field_name, instance_id
+                )
+
+
 def _give_a_block_the_marker_it_opens_with(
     annotated: JatsAnnotatedLayoutDocument,
     layout_document: LayoutDocument,
@@ -2800,7 +2853,12 @@ class LayoutDocumentJatsAligner:
                 )
             _label_tokens_for_blocks(
                 annotated, token_index, block_ranges,
-                fv.field_name, fv.sub_field_name, instance_id,
+                fv.field_name,
+                (
+                    None if fv.sub_field_name in _SEARCH_ONLY_SUB_FIELDS
+                    else fv.sub_field_name
+                ),
+                instance_id,
                 skip_side_columns=fv.field_name in _ANCHOR_FIELDS,
                 protect_fields=(
                     _BYLINE_FIELDS
@@ -2877,6 +2935,9 @@ class LayoutDocumentJatsAligner:
         # An abstract is a block, so it has the whole of each line it runs down.
         _fill_abstract_lines(annotated, layout_document)
         _give_a_block_the_marker_it_opens_with(annotated, layout_document)
+        # After every pass that claims, because what it fills is what the page
+        # prints inside a value and nothing else explains.
+        _join_what_a_line_prints_inside_one_value(annotated, layout_document)
 
         total = len(field_values)
         if missed_by_field:
