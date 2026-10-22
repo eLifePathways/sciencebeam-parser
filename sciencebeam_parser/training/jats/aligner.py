@@ -53,14 +53,6 @@ _ANCHOR_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.ABSTRACT,
 })
 
-# The abstract match establishes the end of the front-matter region.  All non-anchor,
-# non-body fields (authors, affiliations, keywords) are then confined to
-# [0, abstract_end + _FRONT_MATTER_BUFFER] so they cannot false-match citations that
-# appear later in the document.  Authors physically precede the abstract in most PDFs
-# but follow it in JATS ordering, so without this constraint they would be searched
-# from last_match_end (≈abstract end) and miss their true page-1 position.
-_FRONT_MATTER_END_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.ABSTRACT})
-
 # A data-availability section is one run of consecutive values, so each of them
 # can be searched from where the previous one landed.  The section's own values
 # are what place it; the fallback floor below is the end of the abstract, which
@@ -149,6 +141,29 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.CONFLICT_NOTE,
     JatsFieldNames.CONTRIBUTION_NOTE,
 })
+
+# How far the front matter reaches, which is as far as the last value of it that
+# has been found.  The abstract is what first says so: the fields above are then
+# confined to [0, front_matter_end + _FRONT_MATTER_BUFFER] so they cannot
+# false-match a citation printed later in the document, and authors, which
+# precede the abstract on the page but follow it in the JATS, are looked for at
+# the front rather than from where the abstract left the cursor.
+#
+# And every value of it found inside that window says the front matter reaches
+# at least that far, which is what keeps the bound from being a fixed distance:
+# `ore` prints a thousand characters of front matter on the page after the
+# abstract, and a buffer measured from the abstract alone covers them only while
+# nothing moves.  Each value can carry the bound one buffer further and only
+# from inside it, so the evidence is what extends it.
+_FRONT_MATTER_END_FIELDS: FrozenSet[str] = _FRONT_MATTER_FIELDS | {
+    JatsFieldNames.ABSTRACT,
+}
+# Where the abstract ended, which is a different fact and the one a floor wants:
+# the citation the renderer composes is printed after the abstract, and the
+# keywords after the heading above them.  Measured against the reach instead,
+# each would be looked for after every other value of the front matter, which on
+# `ore` is past where the page prints it.
+_ABSTRACT_END_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.ABSTRACT})
 
 # Fields that appear after the front matter region. They search from the body floor
 # (end of last anchor match) rather than from the global last_match_end.
@@ -1604,6 +1619,7 @@ def _search_range(
     parent_match_by_field: Dict[str, Tuple[int, int, int]],
     post_body_text_end: Optional[Dict[str, int]] = None,
     anchor_match_end_by_field: Optional[Dict[str, int]] = None,
+    abstract_end: int = 0,
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
     if is_contained_in_parent_match(fv, parent_match_by_field):
@@ -1622,14 +1638,14 @@ def _search_range(
             post_body_text_end, anchor_match_end_by_field,
         ), None
     if fv.field_name in _AFTER_FRONT_MATTER_FIELDS:
-        return max(0, front_matter_end), None
+        return max(0, abstract_end), None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
         # Keywords are anchored to just after the keywords header/abstract so
         # short common words ("confidence", "Bayesian") don't false-match in the
         # abstract.  Other front-matter fields start from position 0.
         is_keywords = fv.field_name in _KEYWORDS_FIELDS
-        start = max(keywords_floor, front_matter_end) if is_keywords else 0
+        start = max(keywords_floor, abstract_end) if is_keywords else 0
         return start, front_matter_end + _FRONT_MATTER_BUFFER
     return (
         0 if fv.field_name in _FRONT_MATTER_FIELDS
@@ -2478,6 +2494,7 @@ class LayoutDocumentJatsAligner:
         body_content_end = 0
         availability_floor = 0
         front_matter_end = 0
+        abstract_end = 0
         keywords_floor = 0
         reference_floor = 0
         parent_match_by_field: Dict[str, Tuple[int, int, int]] = {}
@@ -2525,7 +2542,7 @@ class LayoutDocumentJatsAligner:
                 fv, last_match_end, body_floor, body_content_end,
                 front_matter_end, keywords_floor, reference_floor,
                 parent_match_by_field, post_body_text_end,
-                anchor_match_end_by_field,
+                anchor_match_end_by_field, abstract_end,
             )
             window = expected_window.get(value_index)
             if window is not None:
@@ -2814,6 +2831,8 @@ class LayoutDocumentJatsAligner:
                 body_floor = max(body_floor, a_end)
             if fv.field_name in _FRONT_MATTER_END_FIELDS:
                 front_matter_end = max(front_matter_end, a_end)
+            if fv.field_name in _ABSTRACT_END_FIELDS:
+                abstract_end = max(abstract_end, a_end)
             if (
                 fv.field_name in _KEYWORDS_SECTION_ANCHOR_FIELDS
                 or fv.field_name in _KEYWORDS_FIELDS

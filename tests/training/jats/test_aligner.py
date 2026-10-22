@@ -2377,3 +2377,41 @@ class TestAnAbstractReadPastThePanelBesideIt:
 
     def test_the_panel_itself_is_not_the_abstract(self):
         assert not {'Approval', 'Reviewers', 'version'} & self._abstract_tokens()
+
+
+class TestHowFarTheFrontMatterReaches:
+    """Where the front matter reaches and where the abstract ended are two facts.
+
+    `ore` prints a thousand characters of front matter on the page after the
+    abstract, so a window measured from the abstract and a fixed distance holds
+    only while nothing moves.  The citation the renderer composes is printed
+    after the abstract, and the keywords after the heading above them, and
+    neither wants a floor that has followed every other value of the front
+    matter past where the page prints it.
+    """
+
+    def _range(self, field: str, front_matter_end: int, abstract_end: int):
+        return _search_range(
+            _fv('a value the front matter carries', field),
+            last_match_end=0,
+            body_floor=0,
+            body_content_end=0,
+            front_matter_end=front_matter_end,
+            keywords_floor=0,
+            reference_floor=0,
+            parent_match_by_field={},
+            abstract_end=abstract_end,
+        )
+
+    def test_a_value_of_it_is_looked_for_as_far_as_it_has_been_found_to_reach(self):
+        _start, far = self._range(JatsFieldNames.COPYRIGHT, 5000, 3000)
+        _start, near = self._range(JatsFieldNames.COPYRIGHT, 3000, 3000)
+        assert far is not None and near is not None and far > near
+
+    def test_the_citation_is_looked_for_after_the_abstract(self):
+        start, _end = self._range(JatsFieldNames.SELF_CITATION, 5000, 3000)
+        assert start == 3000
+
+    def test_the_keywords_are_looked_for_after_the_abstract(self):
+        start, _end = self._range(JatsFieldNames.KEYWORDS, 5000, 3000)
+        assert start == 3000
