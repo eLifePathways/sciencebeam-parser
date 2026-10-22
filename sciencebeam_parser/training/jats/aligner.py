@@ -16,7 +16,8 @@ from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
     get_cover_page_line_ids,
-    get_page_furniture_line_ids
+    get_page_furniture_line_ids,
+    get_side_column_line_ids
 )
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 
@@ -328,6 +329,8 @@ class _TokenIndex:
         # Where the page's own furniture lies in the haystack, as character
         # ranges.  Set by _build_token_index; empty means nothing is skipped.
         self.furniture_ranges: List[Tuple[int, int]] = []
+        # Where the page sets a column beside the one the article runs down.
+        self.side_column_ranges: List[Tuple[int, int]] = []
         # Where a publisher's cover page lies, which no value of the article's
         # own is searched in.
         self.cover_ranges: List[Tuple[int, int]] = []
@@ -428,8 +431,10 @@ def _build_token_index(  # pylint: disable=too-many-locals
     # _fuzzy_search_in_window.
     furniture_line_ids = get_page_furniture_line_ids(layout_document)
     cover_line_ids = get_cover_page_line_ids(layout_document)
+    side_column_line_ids = get_side_column_line_ids(layout_document)
     furniture_token_indices: Set[int] = set()
     cover_token_indices: Set[int] = set()
+    side_column_token_indices: Set[int] = set()
     for line in layout_document.iter_all_lines():
         line_tokens: List[LayoutToken] = line.tokens or []
         if id(line) in furniture_line_ids:
@@ -438,6 +443,10 @@ def _build_token_index(  # pylint: disable=too-many-locals
             )
         if id(line) in cover_line_ids:
             cover_token_indices.update(
+                range(len(all_tokens), len(all_tokens) + len(line_tokens))
+            )
+        if id(line) in side_column_line_ids:
+            side_column_token_indices.update(
                 range(len(all_tokens), len(all_tokens) + len(line_tokens))
             )
         outside_region = keep_line_ids is not None and id(line) not in keep_line_ids
@@ -466,6 +475,9 @@ def _build_token_index(  # pylint: disable=too-many-locals
     )
     token_index.cover_ranges = token_index.get_token_char_ranges(
         cover_token_indices
+    )
+    token_index.side_column_ranges = token_index.get_token_char_ranges(
+        side_column_token_indices
     )
     return token_index
 
@@ -1727,6 +1739,9 @@ def _relabel_anchors_over_what_nothing_explains(
         if result is None:
             continue
         for block_start, block_end in _iter_retry_blocks(result[2]):
+            if _overlaps(token_index.side_column_ranges, block_start, block_end):
+                # The panel beside the article is not what the value reaches.
+                continue
             for token in token_index.tokens_in_range(block_start, block_end):
                 if annotated.get_token_field(token):
                     continue
@@ -1923,6 +1938,16 @@ def _has_mid_token_within_gap_blocks(
     return False
 
 
+def _overlaps(
+    ranges: Sequence[Tuple[int, int]], block_start: int, block_end: int
+) -> bool:
+    """Whether a matched block reaches into any of these ranges at all."""
+    return any(
+        start < block_end and block_start < end
+        for start, end in ranges
+    )
+
+
 def _lies_in_furniture(
     token_index: _TokenIndex, block_start: int, block_end: int
 ) -> bool:
@@ -1969,13 +1994,14 @@ def _gap_between_blocks(
     return gap
 
 
-def _label_tokens_for_blocks(
+def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
     block_ranges: List[Tuple[int, int]],
     field_name: str,
     sub_field_name: Optional[str],
     instance_id: int,
+    skip_side_columns: bool = False,
 ) -> None:
     """Label tokens using anchor+chain strategy (see module constants for rationale).
 
@@ -1999,6 +2025,13 @@ def _label_tokens_for_blocks(
     prev_included_end: Optional[int] = None
     for i, (block_start, block_end) in enumerate(block_ranges):
         if _lies_in_furniture(token_index, block_start, block_end):
+            continue
+        if skip_side_columns and _overlaps(
+            token_index.side_column_ranges, block_start, block_end
+        ):
+            # A value that runs down the article's column is not the panel the
+            # page sets beside it, so a few characters that read like its words
+            # there are a coincidence, the way the running foot's are.
             continue
         is_anchor = (block_end - block_start) >= _MIN_ANCHOR_BLOCK_SIZE
         within_gap = (
@@ -2673,6 +2706,7 @@ class LayoutDocumentJatsAligner:
             _label_tokens_for_blocks(
                 annotated, token_index, block_ranges,
                 fv.field_name, fv.sub_field_name, instance_id,
+                skip_side_columns=fv.field_name in _ANCHOR_FIELDS,
             )
             if fv.field_name in _REPEATED_FRONT_MATTER_FIELDS and fv.sub_field_name is None:
                 # To the end of the document rather than to the end of the front

@@ -1859,6 +1859,96 @@ def get_cover_page_line_ids(layout_document: LayoutDocument) -> Set[int]:
     }
 
 
+# What tells a column the page sets beside the article from the article's own.
+# The gutter measured between ORE's panel and the column beside it is 11 points,
+# and the rule reads the same over the twenty documents anywhere from 8 to 10.
+_SIDE_COLUMN_MIN_GUTTER = 10.0
+# A panel is narrower than what it is set beside.  Two columns of body text are
+# the same width, which is what this keeps the rule away from.
+_SIDE_COLUMN_MAX_WIDTH_SHARE = 0.7
+_SIDE_COLUMN_MIN_LINES = 3
+_SIDE_COLUMN_MIN_Y_OVERLAP = 50.0
+
+
+def _get_line_box(seg_line: _SegLine) -> Optional[Tuple[float, float, float]]:
+    """Where a line starts, where it ends and how far down the page it sits."""
+    boxes = [
+        token.coordinates for token in (seg_line.layout_line.tokens or [])
+        if token.coordinates is not None and token.coordinates
+    ]
+    if not boxes:
+        return None
+    return (
+        min(box.x for box in boxes),
+        max(box.x + box.width for box in boxes),
+        min(box.y for box in boxes),
+    )
+
+
+def _iter_side_column_lines(
+    page_lines: List[Tuple[_SegLine, Tuple[float, float, float]]]
+) -> Iterator[_SegLine]:
+    """The lines of the narrower of two columns the page sets side by side.
+
+    Read from the lines themselves rather than from where they start: a page is
+    full width at the top and splits lower down, so the question is asked of
+    each band in turn -- below this line, does every line fall on one side of a
+    gutter or the other?
+    """
+    for band_start in sorted({box[2] for _, box in page_lines}):
+        below = [(line, box) for line, box in page_lines if box[2] >= band_start]
+        if len(below) < 2 * _SIDE_COLUMN_MIN_LINES:
+            continue
+        for boundary in sorted({box[1] for _, box in below}):
+            left = [(line, box) for line, box in below if box[1] <= boundary]
+            right = [(line, box) for line, box in below if box[0] > boundary]
+            if len(left) + len(right) != len(below):
+                continue
+            if min(len(left), len(right)) < _SIDE_COLUMN_MIN_LINES:
+                continue
+            gutter = min(box[0] for _, box in right) - max(box[1] for _, box in left)
+            if gutter < _SIDE_COLUMN_MIN_GUTTER:
+                continue
+            left_width = max(b[1] for _, b in left) - min(b[0] for _, b in left)
+            right_width = max(b[1] for _, b in right) - min(b[0] for _, b in right)
+            if (
+                min(left_width, right_width) / max(left_width, right_width)
+                > _SIDE_COLUMN_MAX_WIDTH_SHARE
+            ):
+                continue
+            left_y = [box[2] for _, box in left]
+            right_y = [box[2] for _, box in right]
+            overlap = min(max(left_y), max(right_y)) - max(min(left_y), min(right_y))
+            if overlap < _SIDE_COLUMN_MIN_Y_OVERLAP:
+                continue
+            for line, _box in (right if right_width < left_width else left):
+                yield line
+            return
+
+
+def get_side_column_line_ids(layout_document: LayoutDocument) -> Set[int]:
+    """The lines of a column the page sets beside the one the article runs down.
+
+    `ore` sets its peer review panel down the side of the first page.  The panel
+    is nobody's value, so nothing else says where it is, and a title or an
+    abstract that runs down the column beside it can take a line of it by
+    coincidence -- `Open Peer` reads enough like the words of an abstract for a
+    few characters to match there.
+    """
+    seg_lines = _build_seg_lines(layout_document)
+    side_column_line_ids: Set[int] = set()
+    for page_lines in _get_seg_lines_by_page_number(seg_lines).values():
+        with_boxes = [
+            (seg_line, box) for seg_line, box in (
+                (seg_line, _get_line_box(seg_line)) for seg_line in page_lines
+            ) if box is not None
+        ]
+        side_column_line_ids.update(
+            id(seg_line.layout_line) for seg_line in _iter_side_column_lines(with_boxes)
+        )
+    return side_column_line_ids
+
+
 def get_page_furniture_line_ids(
     layout_document: LayoutDocument,
     config: Optional[SegmentationConfig] = None,
