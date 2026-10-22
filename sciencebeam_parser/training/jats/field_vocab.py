@@ -53,6 +53,9 @@ class JatsFieldNames:
 
 
 class JatsSubFieldNames:
+    # The heading an abstract is printed under, which is part of the block the
+    # segmentation region holds and not part of the abstract itself.
+    ABSTRACT_TITLE = 'abstract-title'
     AUTHOR_AFF_ADDR = 'author_aff_addr'
     AUTHOR_NAME = 'author-name'
     SELF_CITATION_SOURCE = 'self_citation-source'

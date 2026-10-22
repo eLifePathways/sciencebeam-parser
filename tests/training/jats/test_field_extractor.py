@@ -56,6 +56,38 @@ class TestAbstract:
         assert len(abstracts) == 1
         assert 'abstract' in abstracts[0].text.lower()
 
+    def test_offers_the_heading_above_an_abstract_as_a_sub_field(self):
+        """GROBID carries 880 abstracts and not one of them opens with its heading."""
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<abstract><title>Resumo</title><p>Primeiro paragrafo.</p></abstract>'
+            '</article-meta></front></article>'
+        )
+        abstracts = [
+            v for v in fvs
+            if v.field_name == JatsFieldNames.ABSTRACT and v.sub_field_name is None
+        ]
+        headings = [
+            v for v in fvs
+            if v.sub_field_name == JatsSubFieldNames.ABSTRACT_TITLE
+        ]
+        assert [v.text for v in abstracts] == ['Resumo Primeiro paragrafo.']
+        assert [v.text for v in headings] == ['Resumo']
+
+    def test_leaves_the_headings_a_structured_abstract_prints_in_its_run_alone(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<abstract><title>Abstract</title>'
+            '<sec><title>Methods</title><p>What was done.</p></sec>'
+            '</abstract>'
+            '</article-meta></front></article>'
+        )
+        headings = [
+            v.text for v in fvs
+            if v.sub_field_name == JatsSubFieldNames.ABSTRACT_TITLE
+        ]
+        assert headings == ['Abstract']
+
 
 class TestAuthor:
     def test_extracts_author_name(self):

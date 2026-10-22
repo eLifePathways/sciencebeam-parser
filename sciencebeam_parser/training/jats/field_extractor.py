@@ -432,12 +432,30 @@ class JatsFieldExtractor:
         # <trans-abstract>.  Both are printed, so both are the header the page
         # shows; read only the first and the other is left unlabelled, and which
         # region it ends up in is decided by whatever happens to border it.
+        #
+        # The heading above an abstract is not part of it, which is how GROBID
+        # has it: of the 880 abstracts its header corpus carries, none opens
+        # with one.  The value keeps it, because it is what the page prints
+        # above the text and what tells one abstract's opening from another's,
+        # and it is offered again as a sub-field, which is looked for inside the
+        # abstract's own match and carries no header label.  A structured
+        # abstract's inner headings -- Background, Methods -- are printed in its
+        # run and stay inside it.
         for el in root.xpath(
             'front/article-meta/abstract | front/article-meta/trans-abstract'
         ):
             text = element_text(el)
-            if text:
-                yield JatsFieldValue(text=text, field_name=JatsFieldNames.ABSTRACT)
+            if not text:
+                continue
+            yield JatsFieldValue(text=text, field_name=JatsFieldNames.ABSTRACT)
+            for title_el in el.xpath('./title'):
+                heading = element_text(title_el)
+                if heading:
+                    yield JatsFieldValue(
+                        text=heading,
+                        field_name=JatsFieldNames.ABSTRACT,
+                        sub_field_name=JatsSubFieldNames.ABSTRACT_TITLE,
+                    )
 
         # Per GROBID annotation guidelines, the "Keywords" heading is not annotated
         # in the header model.  It is still emitted as KEYWORDS_TITLE so that the
