@@ -81,6 +81,14 @@ _REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.PUBLICATION_DATE,
 })
 
+# The notes that are matched so the region reads their lines as front matter
+# and carry no label of their own.  GROBID labels the name printed inside a
+# correspondence note as a byline, so a name is looked for inside one.
+_UNLABELLED_NOTE_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AUTHOR_NOTES,
+    JatsFieldNames.ARTICLE_NOTES,
+})
+
 # The author block's fields, which the JATS declares once per author and the
 # page prints once per author: three authors of one institute each carry the
 # same affiliation, and the page sets it under each of their names.  A second
@@ -2119,6 +2127,10 @@ class LayoutDocumentJatsAligner:
         # name the front matter prints again is labelled last of all, over what
         # nothing else has claimed.
         matched_ranges: List[Tuple[int, int]] = []
+        # Where a note was placed.  A note carries no label of its own -- it is
+        # matched so that the region reads its lines as front matter -- so the
+        # name the page prints inside one is still a name nothing has claimed.
+        note_match_ranges: List[Tuple[int, int]] = []
         author_name_values: List[JatsFieldValue] = []
         # Where each per-author field has been placed already.
         per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
@@ -2436,6 +2448,8 @@ class LayoutDocumentJatsAligner:
             if fv.field_name == JatsFieldNames.TITLE:
                 title_match_ranges.append((a_start, a_end))
             matched_ranges.append((a_start, a_end))
+            if fv.sub_field_name is None and fv.field_name in _UNLABELLED_NOTE_FIELDS:
+                note_match_ranges.append((a_start, a_end))
             if fv.sub_field_name is None and fv.field_name in _PER_AUTHOR_FIELDS:
                 per_author_match_ranges[fv.field_name].append((a_start, a_end))
             if fv.sub_field_name == JatsSubFieldNames.AUTHOR_NAME:
@@ -2496,7 +2510,11 @@ class LayoutDocumentJatsAligner:
                 front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
             ),
             masked_ranges=(
-                matched_ranges + token_index.cover_ranges + token_index.furniture_ranges
+                [
+                    match_range for match_range in matched_ranges
+                    if match_range not in note_match_ranges
+                ]
+                + token_index.cover_ranges + token_index.furniture_ranges
             ),
             instance_id=instance_by_field.get(JatsFieldNames.AUTHOR, 0),
         )
