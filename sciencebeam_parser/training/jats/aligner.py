@@ -40,6 +40,9 @@ class _TokenStarts(Protocol):
 # Body content is searched from the end of the last anchor match, so that front-matter
 # fields which false-match citations late in the document do not push the search start
 # past the actual body position.
+# What an affiliation does not take from: the byline it is printed under.
+_BYLINE_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.AUTHOR})
+
 _ANCHOR_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.TITLE,
     JatsFieldNames.ABSTRACT,
@@ -1795,6 +1798,36 @@ def _fill_abstract_lines(
         begun.add(instance_id)
 
 
+def _give_a_block_the_marker_it_opens_with(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+) -> None:
+    """A marker a line opens with belongs to what that line says.
+
+    The same digit prints twice where a byline is followed by its affiliations:
+    once beside the name it belongs to, and once at the head of the affiliation
+    block.  The byline has the first, which is where GROBID keeps it, and the
+    block has the second -- so a marker standing at the start of a line the
+    affiliation runs along is the affiliation's, whichever value matched it.
+    """
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        if len(tokens) < 2:
+            continue
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        first, rest = entries[0], entries[1:]
+        if first is None or first[0] != JatsFieldNames.AUTHOR:
+            continue
+        following = next(
+            (entry for entry in rest if entry is not None), None
+        )
+        if following is None or following[0] != JatsFieldNames.AUTHOR_AFF:
+            continue
+        annotated.set_token_label(
+            tokens[0], following[0], following[1], following[2]
+        )
+
+
 def _label_further_author_names(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -2002,6 +2035,7 @@ def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
     sub_field_name: Optional[str],
     instance_id: int,
     skip_side_columns: bool = False,
+    protect_fields: FrozenSet[str] = frozenset(),
 ) -> None:
     """Label tokens using anchor+chain strategy (see module constants for rationale).
 
@@ -2020,6 +2054,8 @@ def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
         # No anchor blocks at all: label everything so short field values are preserved.
         for block_start, block_end in block_ranges:
             for token in token_index.tokens_in_range(block_start, block_end):
+                if annotated.get_token_field(token) in protect_fields:
+                    continue
                 annotated.set_token_label(token, field_name, sub_field_name, instance_id)
         return
     prev_included_end: Optional[int] = None
@@ -2063,6 +2099,13 @@ def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
         )
         assert fill_start is not None
         for token in token_index.tokens_in_range(fill_start, block_end):
+            if annotated.get_token_field(token) in protect_fields:
+                # The marker closing a byline is the author's: GROBID keeps it
+                # inside the author on 434 of its 1,344 bylines and outside one
+                # on 15.  An affiliation opens with the same digit, and the two
+                # printings sit next to each other, so the one the byline has
+                # already taken is not the one at the head of the block.
+                continue
             annotated.set_token_label(token, field_name, sub_field_name, instance_id)
         prev_included_end = block_end
 
@@ -2707,6 +2750,10 @@ class LayoutDocumentJatsAligner:
                 annotated, token_index, block_ranges,
                 fv.field_name, fv.sub_field_name, instance_id,
                 skip_side_columns=fv.field_name in _ANCHOR_FIELDS,
+                protect_fields=(
+                    _BYLINE_FIELDS
+                    if fv.field_name == JatsFieldNames.AUTHOR_AFF else frozenset()
+                ),
             )
             if fv.field_name in _REPEATED_FRONT_MATTER_FIELDS and fv.sub_field_name is None:
                 # To the end of the document rather than to the end of the front
@@ -2766,6 +2813,7 @@ class LayoutDocumentJatsAligner:
 
         # An abstract is a block, so it has the whole of each line it runs down.
         _fill_abstract_lines(annotated, layout_document)
+        _give_a_block_the_marker_it_opens_with(annotated, layout_document)
 
         total = len(field_values)
         if missed_by_field:
