@@ -1736,6 +1736,50 @@ def _relabel_anchors_over_what_nothing_explains(
                 )
 
 
+def _fill_abstract_lines(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+) -> None:
+    """Give an abstract the whole of each line it runs down.
+
+    An abstract is a block: the page sets it as whole lines, and two things
+    stand outside one.  The heading above it, which is why the line it begins
+    on is filled from its first word rather than from the line's start.  And
+    whatever begins on the line it ends on, which is why no line is filled past
+    the last word of the abstract on it -- 125 of GROBID's abstracts have a last
+    line that goes on to say `Keywords:` and 45 more that say `Key words:`,
+    besides the availability statements and copyright lines.
+
+    Only what nothing has claimed is filled, so a marker the page sets inside
+    one of those lines keeps its own label.
+    """
+    begun: Set[int] = set()
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        on_this_line = [
+            index for index, entry in enumerate(entries)
+            if entry is not None
+            and entry[0] == JatsFieldNames.ABSTRACT
+            and entry[1] is None
+        ]
+        if not on_this_line:
+            continue
+        instance_id = entries[on_this_line[0]][2]
+        # The line an abstract begins on is the only one with anything of its
+        # own outside it, and that is the heading above it.  A line it reaches
+        # later is its line, whatever the page printed in between.
+        fill_from = 0 if instance_id in begun else on_this_line[0]
+        fill_to = on_this_line[-1]
+        for index, (token, entry) in enumerate(zip(tokens, entries)):
+            if index < fill_from or index > fill_to or entry is not None:
+                continue
+            annotated.set_token_label(
+                token, JatsFieldNames.ABSTRACT, None, instance_id
+            )
+        begun.add(instance_id)
+
+
 def _label_further_author_names(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -2685,6 +2729,9 @@ class LayoutDocumentJatsAligner:
         _relabel_anchors_over_what_nothing_explains(
             annotated, token_index, self.config, anchor_matches, matched_ranges,
         )
+
+        # An abstract is a block, so it has the whole of each line it runs down.
+        _fill_abstract_lines(annotated, layout_document)
 
         total = len(field_values)
         if missed_by_field:
