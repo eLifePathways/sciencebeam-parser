@@ -475,11 +475,17 @@ def _build_token_index(  # pylint: disable=too-many-locals
 # little; a paragraph claiming the figure caption printed inside it stretches
 # it several times over.
 _MATCH_SPAN_TOLERANCE = 1.2
+# What a value may span when it is asked again over a window every other value's
+# answer has been taken out of.  What is left inside it is text nothing accounts
+# for, and only the value's own words are labelled from that answer, so the page
+# it reaches across costs it less than it does the first time.
+_CLEANED_RETRY_SPAN_TOLERANCE = 2.0
 
 
 def _match_quality(
     matching_blocks: List[Tuple[int, int, int]],
     needle_len: int,
+    span_tolerance: float = _MATCH_SPAN_TOLERANCE,
 ) -> float:
     """How much of the needle was found, against how much page it took to find it.
 
@@ -495,7 +501,7 @@ def _match_quality(
         return 0.0
     matched = sum(size for _, size in blocks)
     span = (blocks[-1][0] + blocks[-1][1]) - blocks[0][0]
-    return matched / max(needle_len, span / _MATCH_SPAN_TOLERANCE)
+    return matched / max(needle_len, span / span_tolerance)
 
 
 def _scan_tail_chars_at_token_starts(
@@ -721,6 +727,7 @@ def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
     threshold: float,
     furniture_ranges: Sequence[Tuple[int, int]],
     token_index: Optional['_TokenIndex'] = None,
+    span_tolerance: float = _MATCH_SPAN_TOLERANCE,
 ) -> Optional[_MatchResult]:
     """`_fuzzy_search_in_window` over a window the furniture has been taken out of."""
     cleaned, segments = _clean_window(
@@ -730,7 +737,7 @@ def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
         return None
     sm = LocalSequenceMatcher(a=cleaned, b=needle, scoring=_SCORING)
     blocks = sm.get_matching_blocks()
-    if _match_quality(blocks, len(needle)) < threshold:
+    if _match_quality(blocks, len(needle), span_tolerance) < threshold:
         return None
     matched_blocks = [(ai, bi, size) for ai, bi, size in blocks if size]
     if not matched_blocks:
@@ -764,6 +771,7 @@ def _fuzzy_search_in_window(  # pylint: disable=too-many-locals
     threshold: float,
     token_index: Optional['_TokenIndex'] = None,
     furniture_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+    span_tolerance: float = _MATCH_SPAN_TOLERANCE,
 ) -> Optional[_MatchResult]:
     """Try to find `needle` in haystack[window_start:window_end].
 
@@ -782,12 +790,12 @@ def _fuzzy_search_in_window(  # pylint: disable=too-many-locals
     if furniture_ranges:
         return _fuzzy_search_in_cleaned_window(
             haystack, needle, window_start, window_end, threshold, furniture_ranges,
-            token_index,
+            token_index, span_tolerance,
         )
     window = haystack[window_start:window_end]
     sm = LocalSequenceMatcher(a=window, b=needle, scoring=_SCORING)
     blocks = sm.get_matching_blocks()
-    quality = _match_quality(blocks, len(needle))
+    quality = _match_quality(blocks, len(needle), span_tolerance)
     if quality < threshold:
         return None
     matched_blocks = [(ai, bi, size) for ai, bi, size in blocks if size]
@@ -1336,6 +1344,8 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
     allow_pieces: bool = False,
     prefer_before: Optional[int] = None,
     skip_furniture: bool = False,
+    clean_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+    span_tolerance: float = _MATCH_SPAN_TOLERANCE,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -1365,7 +1375,10 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
             return exact
     window_size = get_search_window_size(need_len, config.max_window)
     stride = get_search_stride(window_size, need_len)
-    furniture_ranges = token_index.furniture_ranges if skip_furniture else None
+    furniture_ranges: Optional[Sequence[Tuple[int, int]]] = (
+        clean_ranges if clean_ranges is not None
+        else (token_index.furniture_ranges if skip_furniture else None)
+    )
 
     gap_match: Optional[_MatchResult] = None
     for seg_start, seg_end in segments:
@@ -1375,6 +1388,7 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
             result = _fuzzy_search_in_window(
                 haystack, needle, start, end, config.threshold, token_index,
                 furniture_ranges=furniture_ranges,
+                span_tolerance=span_tolerance,
             )
             if result is not None:
                 if _is_exact_sw_match(result, need_len):
@@ -1608,6 +1622,118 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
             field_value.field_name, field_value.sub_field_name, instance_id + found,
         )
     return found
+
+
+# How far either side of where a value answered the second question looks.  The
+# page it reaches across is what was printed inside it, and a first page's worth
+# of it is more than any of these corpora set there.
+# What a page sets after a heading, which belongs to the heading rather than to
+# the block beneath it.
+_HEADING_SEPARATORS: FrozenSet[str] = frozenset({':', '.', '-'})
+
+_RETRY_SLACK = 4000
+# What counts as the value's own words in that answer: shorter than this and it
+# is a word the page happens to share with it, which is what the first question
+# already settled.
+_RETRY_MIN_BLOCK_SIZE = 12
+
+
+def _iter_retry_blocks(
+    block_ranges: Sequence[Tuple[int, int]]
+) -> Iterator[Tuple[int, int]]:
+    """The runs of a second answer that are the value's own words.
+
+    A letter the page shares with the value is not the value, and the first
+    question already answered for the run it found; this one is here for the
+    runs it had to step over, and those are sentences.  What sits against one of
+    them is kept with it, the way the first answer keeps the bracket its
+    sentence opens with.
+    """
+    kept = [
+        (start, end) for start, end in block_ranges
+        if end - start >= _RETRY_MIN_BLOCK_SIZE
+    ]
+    if not kept:
+        return
+    for start, end in sorted(block_ranges):
+        against_one = any(
+            start <= kept_end + _MAX_HAYSTACK_GAP_TO_FILL
+            and end >= kept_start - _MAX_HAYSTACK_GAP_TO_FILL
+            for kept_start, kept_end in kept
+        )
+        if against_one:
+            yield start, end
+
+
+@dataclass
+class _AnchorMatch:
+    """What an anchor value answered, and what it was asked over."""
+    field_value: JatsFieldValue
+    masked_ranges: List[Tuple[int, int]]
+    own_range: Tuple[int, int]
+    instance_id: int
+
+
+def _relabel_anchors_over_what_nothing_explains(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    config: AlignmentConfig,
+    anchor_matches: Sequence['_AnchorMatch'],
+    matched_ranges: Sequence[Tuple[int, int]],
+) -> None:
+    """Ask a title or an abstract again, with every other answer taken out.
+
+    What is printed inside an abstract is mostly text the page explains and the
+    aligner has placed: the footnotes of the page it runs onto are the authors'
+    affiliations, their emails and their ORCIDs, and the match pays for crossing
+    them until it settles for a shorter run.  By the end of the loop each of
+    those is a range of its own, so the question can be asked again over a
+    window they have been taken out of -- which is what `_clean_window` already
+    does for the page's own furniture.
+
+    Over where it answered rather than over the document: the span is known, so
+    the window is the span and what the page sets either side of it, which is
+    how both halves of a value printed around an interruption come to be asked
+    about at once.
+
+    Only what nothing has claimed is labelled from the answer, so a value that
+    reaches further cannot take what another one is holding.
+    """
+    for anchor in anchor_matches:
+        own_start, own_end = anchor.own_range
+        clean_ranges = sorted(
+            set(token_index.furniture_ranges)
+            | {
+                (start, end) for start, end in matched_ranges
+                if (start, end) != anchor.own_range
+            }
+        )
+        if not clean_ranges:
+            continue
+        search_start = max(0, own_start - _RETRY_SLACK)
+        search_end = min(len(token_index.haystack), own_end + _RETRY_SLACK)
+        retry_config = AlignmentConfig(
+            threshold=config.threshold,
+            max_window=max(config.max_window, (search_end - search_start) * 2),
+        )
+        result = _fuzzy_match_field_value(
+            token_index, anchor.field_value, retry_config,
+            search_start=search_start,
+            search_end=search_end,
+            masked_ranges=anchor.masked_ranges or None,
+            clean_ranges=clean_ranges,
+            span_tolerance=_CLEANED_RETRY_SPAN_TOLERANCE,
+        )
+        if result is None:
+            continue
+        for block_start, block_end in _iter_retry_blocks(result[2]):
+            for token in token_index.tokens_in_range(block_start, block_end):
+                if annotated.get_token_field(token):
+                    continue
+                annotated.set_token_label(
+                    token, anchor.field_value.field_name,
+                    anchor.field_value.sub_field_name, anchor.instance_id,
+                )
 
 
 def _label_further_author_names(  # pylint: disable=too-many-arguments
@@ -1913,17 +2039,23 @@ def _fill_sub_field_gaps(
             pending = []
 
 
-def _attach_sub_field_trailing_periods(
+def _attach_sub_field_trailing_separators(
     annotated: JatsAnnotatedLayoutDocument,
     tokens: List[LayoutToken],
     field_name: str,
     sub_field_name: str,
+    separators: FrozenSet[str] = frozenset({'.'}),
 ) -> None:
-    """Relabel a bare '.' token that immediately follows a sub_field-labeled token.
+    """Relabel a bare separator token that immediately follows a sub_field token.
 
-    The PDF tokeniser splits 'D.' into 'D' and '.'.  The period is not in the
-    JATS text, so SW and gap-fill logic miss it.  This pass attaches such periods,
+    The PDF tokeniser splits 'D.' into 'D' and '.'.  The separator is not in the
+    JATS text, so SW and gap-fill logic miss it.  This pass attaches it,
     mirroring reference_annotator.get_suffix_extended_token_tags in the old tool.
+
+    The same shape ends a heading: a page printing `RESUMO:` sets the colon with
+    the heading rather than with the abstract, which is where GROBID has it --
+    none of the 880 abstracts its corpus carries opens with a colon and 46 of
+    them open straight after one.
     """
     last_was_sub = False
     last_instance = 0
@@ -1940,7 +2072,7 @@ def _attach_sub_field_trailing_periods(
         elif (
             last_was_sub
             and (entry is None or entry[0] == field_name)
-            and normalize_for_alignment(token.text or '') == '.'
+            and normalize_for_alignment(token.text or '') in separators
         ):
             annotated.set_token_label(token, field_name, sub_field_name, last_instance)
         else:
@@ -2134,6 +2266,9 @@ class LayoutDocumentJatsAligner:
         author_name_values: List[JatsFieldValue] = []
         # Where each per-author field has been placed already.
         per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+        # What each anchor value answered, so that it can be asked again once
+        # every other value has answered too.
+        anchor_matches: List[_AnchorMatch] = []
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -2480,6 +2615,13 @@ class LayoutDocumentJatsAligner:
                         ref_id_subfield_end.get(fv.field_name, 0), a_end
                     )
             instance_id = instance_by_field.get(fv.field_name, 0)
+            if fv.sub_field_name is None and fv.field_name in _ANCHOR_FIELDS:
+                anchor_matches.append(_AnchorMatch(
+                    field_value=fv,
+                    masked_ranges=list(masked or []),
+                    own_range=(a_start, a_end),
+                    instance_id=instance_id,
+                ))
             if fv.sub_field_name is None and fv.field_name == JatsFieldNames.REFERENCE:
                 annotated.reference_match_by_instance[instance_id] = (
                     fv.text, a_end - a_start
@@ -2527,9 +2669,21 @@ class LayoutDocumentJatsAligner:
             annotated, token_index.tokens,
             JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR,
         )
-        _attach_sub_field_trailing_periods(
+        _attach_sub_field_trailing_separators(
             annotated, token_index.tokens,
             JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR,
+        )
+        # The punctuation a heading is printed with belongs to the heading.
+        _attach_sub_field_trailing_separators(
+            annotated, token_index.tokens,
+            JatsFieldNames.ABSTRACT, JatsSubFieldNames.ABSTRACT_TITLE,
+            separators=_HEADING_SEPARATORS,
+        )
+
+        # Last of all, because it labels only what nothing has claimed: every
+        # other pass has to have finished claiming before it can know that.
+        _relabel_anchors_over_what_nothing_explains(
+            annotated, token_index, self.config, anchor_matches, matched_ranges,
         )
 
         total = len(field_values)
