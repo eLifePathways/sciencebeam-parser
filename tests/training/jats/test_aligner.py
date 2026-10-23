@@ -1,5 +1,5 @@
 # pylint: disable=too-many-lines
-from typing import Optional, Sequence, Set, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
 
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
@@ -2460,7 +2460,7 @@ class TestAValueReadToTheEndOfWhatItSays:
 
 def _filler_of_length(target: int) -> str:
     """Words enough to fill that many characters of the haystack."""
-    words = []
+    words: List[str] = []
     length = 0
     while length < target:
         word = f'filler{len(words)}'

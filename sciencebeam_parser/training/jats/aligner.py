@@ -1768,6 +1768,26 @@ class _AnchorMatch:
     instance_id: int
 
 
+def _label_what_the_second_answer_found(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    anchor: '_AnchorMatch',
+    block_ranges: Sequence[Tuple[int, int]],
+) -> None:
+    """Label what the value reached the second time, over what nothing claimed."""
+    for block_start, block_end in _iter_retry_blocks(block_ranges):
+        if _overlaps(token_index.side_column_ranges, block_start, block_end):
+            # The panel beside the article is not what the value reaches.
+            continue
+        for token in token_index.tokens_in_range(block_start, block_end):
+            if annotated.get_token_field(token):
+                continue
+            annotated.set_token_label(
+                token, anchor.field_value.field_name,
+                anchor.field_value.sub_field_name, anchor.instance_id,
+            )
+
+
 def _relabel_anchors_over_what_nothing_explains(
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -1827,17 +1847,9 @@ def _relabel_anchors_over_what_nothing_explains(
         )
         if result is None:
             continue
-        for block_start, block_end in _iter_retry_blocks(result[2]):
-            if _overlaps(token_index.side_column_ranges, block_start, block_end):
-                # The panel beside the article is not what the value reaches.
-                continue
-            for token in token_index.tokens_in_range(block_start, block_end):
-                if annotated.get_token_field(token):
-                    continue
-                annotated.set_token_label(
-                    token, anchor.field_value.field_name,
-                    anchor.field_value.sub_field_name, anchor.instance_id,
-                )
+        _label_what_the_second_answer_found(
+            annotated, token_index, anchor, result[2]
+        )
 
 
 def _fill_abstract_lines(
@@ -1867,9 +1879,10 @@ def _fill_abstract_lines(
             and entry[0] == JatsFieldNames.ABSTRACT
             and entry[1] is None
         ]
-        if not on_this_line:
+        first = entries[on_this_line[0]] if on_this_line else None
+        if first is None:
             continue
-        instance_id = entries[on_this_line[0]][2]
+        instance_id = first[2]
         # The line an abstract begins on is the only one with anything of its
         # own outside it, and that is the heading above it.  A line it reaches
         # later is its line, whatever the page printed in between.
@@ -2184,37 +2197,13 @@ def _gap_between_blocks(
     return gap
 
 
-def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
-    annotated: JatsAnnotatedLayoutDocument,
+def _iter_chain_cover(
     token_index: _TokenIndex,
     block_ranges: List[Tuple[int, int]],
-    field_name: str,
-    sub_field_name: Optional[str],
-    instance_id: int,
-    skip_side_columns: bool = False,
-    protect_fields: FrozenSet[str] = frozenset(),
-) -> None:
-    """Label tokens using anchor+chain strategy (see module constants for rationale).
-
-    The forward anchor+chain is extended by a backward pre-anchor pass: non-anchor
-    blocks that immediately precede the first anchor (tight gap ≤ _MAX_HAYSTACK_GAP_TO_FILL)
-    are included, so dense sub-tokens like DOI segments ("10", ".", "1128", "/")
-    that appear before the first long segment are not silently dropped.  Blocks with
-    a larger gap before the first anchor (sidebar text, page headers) remain excluded.
-
-    Pre-anchor blocks that start mid-token (tail characters of a longer token
-    incidentally matching the needle start) are skipped to prevent overwriting labels
-    already set by earlier field values on that token.
-    """
-    pre_anchor = _pre_anchor_indices(block_ranges)
-    if pre_anchor is None:
-        # No anchor blocks at all: label everything so short field values are preserved.
-        for block_start, block_end in block_ranges:
-            for token in token_index.tokens_in_range(block_start, block_end):
-                if annotated.get_token_field(token) in protect_fields:
-                    continue
-                annotated.set_token_label(token, field_name, sub_field_name, instance_id)
-        return
+    pre_anchor: Set[int],
+    skip_side_columns: bool,
+) -> Iterator[Tuple[int, int]]:
+    """What the chain gives the value, as the haystack each of its blocks covers."""
     prev_included_end: Optional[int] = None
     for i, (block_start, block_end) in enumerate(block_ranges):
         if _lies_in_furniture(token_index, block_start, block_end):
@@ -2255,7 +2244,43 @@ def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
             else block_start
         )
         assert fill_start is not None
-        for token in token_index.tokens_in_range(fill_start, block_end):
+        yield fill_start, block_end
+        prev_included_end = block_end
+
+
+def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    block_ranges: List[Tuple[int, int]],
+    field_name: str,
+    sub_field_name: Optional[str],
+    instance_id: int,
+    skip_side_columns: bool = False,
+    protect_fields: FrozenSet[str] = frozenset(),
+) -> None:
+    """Label tokens using anchor+chain strategy (see module constants for rationale).
+
+    The forward anchor+chain is extended by a backward pre-anchor pass: non-anchor
+    blocks that immediately precede the first anchor (tight gap ≤ _MAX_HAYSTACK_GAP_TO_FILL)
+    are included, so dense sub-tokens like DOI segments ("10", ".", "1128", "/")
+    that appear before the first long segment are not silently dropped.  Blocks with
+    a larger gap before the first anchor (sidebar text, page headers) remain excluded.
+
+    Pre-anchor blocks that start mid-token (tail characters of a longer token
+    incidentally matching the needle start) are skipped to prevent overwriting labels
+    already set by earlier field values on that token.
+    """
+    pre_anchor = _pre_anchor_indices(block_ranges)
+    covered = (
+        # No anchor blocks at all: label everything so short field values are
+        # preserved.
+        block_ranges if pre_anchor is None
+        else _iter_chain_cover(
+            token_index, block_ranges, pre_anchor, skip_side_columns
+        )
+    )
+    for start, end in covered:
+        for token in token_index.tokens_in_range(start, end):
             if annotated.get_token_field(token) in protect_fields:
                 # The marker closing a byline is the author's: GROBID keeps it
                 # inside the author on 434 of its 1,344 bylines and outside one
@@ -2264,7 +2289,6 @@ def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
                 # already taken is not the one at the head of the block.
                 continue
             annotated.set_token_label(token, field_name, sub_field_name, instance_id)
-        prev_included_end = block_end
 
 
 def _fill_sub_field_gaps(
