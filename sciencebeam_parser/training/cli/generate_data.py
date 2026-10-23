@@ -892,6 +892,9 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
         # the pair in one <note type="copyright"> on 179 of its 454 of them and
         # never writes two side by side.
         _HEADER_LABELS_BANDED_PER_VALUE = HEADER_LABELS_BANDED_PER_VALUE
+        _HEADER_UNLABELLED_SUB_FIELDS = frozenset({
+            JatsSubFieldNames.ABSTRACT_TITLE,
+        })
         _HEADER_ADDRESS_SUB_FIELDS = frozenset({
             JatsSubFieldNames.AUTHOR_AFF_ADDR,
             JatsSubFieldNames.AUTHOR_AFF_CITY,
@@ -918,6 +921,10 @@ class HeaderModelTrainingDataGenerator(AbstractDocumentModelTrainingDataGenerato
             sub_field_name = annotated.get_token_sub_field(token)
             if sub_field_name in _HEADER_ADDRESS_SUB_FIELDS:
                 label: Optional[str] = '<address>'
+            elif sub_field_name in _HEADER_UNLABELLED_SUB_FIELDS:
+                # The heading above a block is background, as it is throughout
+                # GROBID's corpus: none of its 880 abstracts opens with one.
+                label = None
             else:
                 label = HEADER_LABEL_BY_FIELD.get(field_name)
             if label is None:

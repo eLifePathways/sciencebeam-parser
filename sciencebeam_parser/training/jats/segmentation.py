@@ -258,6 +258,13 @@ def _tag_by_coordinates(
         seg_lines, y_ratio_by_line, config
     )
     for seg_line in seg_lines:
+        if id(seg_line) in corresponding_author_lines:
+            # The note at the foot of the title page says what it is.  One
+            # token of it that a paragraph of the body happens to use as well
+            # carries the line otherwise, because a line is voted on by what is
+            # labelled on it and three tokens can be carried by one.
+            seg_line.seg_label = SEG_FRONT
+            continue
         if seg_line.seg_label is not None:
             continue
         y_ratio = y_ratio_by_line[id(seg_line)]
@@ -1857,6 +1864,168 @@ def get_cover_page_line_ids(layout_document: LayoutDocument) -> Set[int]:
         if _opens_a_deposit_page(page_lines)
         for seg_line in page_lines
     }
+
+
+# What tells a column the page sets beside the article from the article's own.
+# The gutter measured between ORE's panel and the column beside it is 11 points,
+# and the rule reads the same over the twenty documents anywhere from 8 to 10.
+_SIDE_COLUMN_MIN_GUTTER = 10.0
+# A panel is narrower than what it is set beside.  Two columns of body text are
+# the same width, which is what this keeps the rule away from.
+_SIDE_COLUMN_MAX_WIDTH_SHARE = 0.7
+_SIDE_COLUMN_MIN_LINES = 3
+_SIDE_COLUMN_MIN_Y_OVERLAP = 50.0
+
+
+def _get_line_box(seg_line: _SegLine) -> Optional[Tuple[float, float, float]]:
+    """Where a line starts, where it ends and how far down the page it sits."""
+    boxes = [
+        token.coordinates for token in (seg_line.layout_line.tokens or [])
+        if token.coordinates is not None and token.coordinates
+    ]
+    if not boxes:
+        return None
+    return (
+        min(box.x for box in boxes),
+        max(box.x + box.width for box in boxes),
+        min(box.y for box in boxes),
+    )
+
+
+def _iter_side_column_lines(
+    page_lines: List[Tuple[_SegLine, Tuple[float, float, float]]]
+) -> Iterator[_SegLine]:
+    """The lines of the narrower of two columns the page sets side by side.
+
+    Read from the lines themselves rather than from where they start: a page is
+    full width at the top and splits lower down, so the question is asked of
+    each band in turn -- below this line, does every line fall on one side of a
+    gutter or the other?
+    """
+    for band_start in sorted({box[2] for _, box in page_lines}):
+        below = [(line, box) for line, box in page_lines if box[2] >= band_start]
+        if len(below) < 2 * _SIDE_COLUMN_MIN_LINES:
+            continue
+        for boundary in sorted({box[1] for _, box in below}):
+            left = [(line, box) for line, box in below if box[1] <= boundary]
+            right = [(line, box) for line, box in below if box[0] > boundary]
+            if len(left) + len(right) != len(below):
+                continue
+            if min(len(left), len(right)) < _SIDE_COLUMN_MIN_LINES:
+                continue
+            gutter = min(box[0] for _, box in right) - max(box[1] for _, box in left)
+            if gutter < _SIDE_COLUMN_MIN_GUTTER:
+                continue
+            left_width = max(b[1] for _, b in left) - min(b[0] for _, b in left)
+            right_width = max(b[1] for _, b in right) - min(b[0] for _, b in right)
+            if (
+                min(left_width, right_width) / max(left_width, right_width)
+                > _SIDE_COLUMN_MAX_WIDTH_SHARE
+            ):
+                continue
+            left_y = [box[2] for _, box in left]
+            right_y = [box[2] for _, box in right]
+            overlap = min(max(left_y), max(right_y)) - max(min(left_y), min(right_y))
+            if overlap < _SIDE_COLUMN_MIN_Y_OVERLAP:
+                continue
+            for line, _box in (right if right_width < left_width else left):
+                yield line
+            return
+
+
+def _get_line_band(line: LayoutLine) -> Optional[Tuple[float, float]]:
+    """How far down the page a line starts and ends."""
+    boxes = [
+        token.coordinates for token in (line.tokens or [])
+        if token.coordinates is not None and token.coordinates
+    ]
+    if not boxes:
+        return None
+    return (
+        min(box.y for box in boxes),
+        max(box.y + box.height for box in boxes),
+    )
+
+
+def _lines_a_page_sets_after_the_rest(page_lines: List[LayoutLine]) -> List[LayoutLine]:
+    """The lines handed over first that the page sets below the ones after them."""
+    found = [_get_line_band(line) for line in page_lines]
+    if len(page_lines) < 2 or any(band is None for band in found):
+        return []
+    bands = [band for band in found if band is not None]
+    tops: List[float] = []
+    highest = bands[0][0]
+    for band in bands:
+        highest = min(highest, band[0])
+        tops.append(highest)
+    feet: List[float] = [0.0] * len(bands)
+    lowest = bands[-1][1]
+    for index in range(len(bands) - 1, -1, -1):
+        lowest = max(lowest, bands[index][1])
+        feet[index] = lowest
+    for split in range(1, len(page_lines)):
+        if feet[split] <= tops[split - 1]:
+            return page_lines[:split]
+    return []
+
+
+def get_lines_in_printed_order(
+    layout_document: LayoutDocument, furniture_line_ids: Set[int]
+) -> List[LayoutLine]:
+    """The document's lines in the order the page sets them.
+
+    pdfalto reads a page column by column, and a block running the full width
+    under two columns belongs to neither: `ore` hands over the metadata block at
+    the foot of its second page before the column above it, so a thousand
+    characters stand between the two halves of an abstract that the page sets
+    nothing between.
+
+    Said without a column model, which is what makes it safe to say: where a
+    page's content falls into two groups, the ones handed over first set wholly
+    below the ones after them, the page prints the second group first.
+
+    Of the page's content, because the running head and the page number are
+    printed around it rather than in it, and either would deny every page the
+    question -- `ore` sets its page number below the block that is out of
+    place.  They keep the place they were handed over in; nothing reads them.
+    """
+    lines: List[LayoutLine] = []
+    for page in layout_document.pages:
+        page_lines = [line for block in page.blocks for line in block.lines]
+        positions = [
+            index for index, line in enumerate(page_lines)
+            if id(line) not in furniture_line_ids
+        ]
+        content = [page_lines[index] for index in positions]
+        early = _lines_a_page_sets_after_the_rest(content)
+        reordered = content[len(early):] + early
+        for index, line in zip(positions, reordered):
+            page_lines[index] = line
+        lines.extend(page_lines)
+    return lines
+
+
+def get_side_column_line_ids(layout_document: LayoutDocument) -> Set[int]:
+    """The lines of a column the page sets beside the one the article runs down.
+
+    `ore` sets its peer review panel down the side of the first page.  The panel
+    is nobody's value, so nothing else says where it is, and a title or an
+    abstract that runs down the column beside it can take a line of it by
+    coincidence -- `Open Peer` reads enough like the words of an abstract for a
+    few characters to match there.
+    """
+    seg_lines = _build_seg_lines(layout_document)
+    side_column_line_ids: Set[int] = set()
+    for page_lines in _get_seg_lines_by_page_number(seg_lines).values():
+        with_boxes = [
+            (seg_line, box) for seg_line, box in (
+                (seg_line, _get_line_box(seg_line)) for seg_line in page_lines
+            ) if box is not None
+        ]
+        side_column_line_ids.update(
+            id(seg_line.layout_line) for seg_line in _iter_side_column_lines(with_boxes)
+        )
+    return side_column_line_ids
 
 
 def get_page_furniture_line_ids(

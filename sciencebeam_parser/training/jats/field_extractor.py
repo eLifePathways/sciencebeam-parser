@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from itertools import chain
 from typing import (
     Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
@@ -108,6 +109,26 @@ def _reference_parent_text(ref_el: etree._Element) -> str:
     return ' '.join(' '.join(parts).split())
 
 
+# What a reference's numbering is separated from the reference by, where the
+# publisher's conversion swept it into the first value instead: `16.-Sala
+# Situacional` declares the source as `-Sala Situacional`.  A title or a
+# publication's name does not open with one, and the page prints it beside the
+# marker, which is background.
+_LEADING_SEPARATORS = '-\u2013\u2014.,;:'
+
+_NAME_SUB_FIELDS: FrozenSet[str] = frozenset({
+    JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,
+    JatsSubFieldNames.REFERENCE_SOURCE,
+    JatsSubFieldNames.REFERENCE_PUBLISHER_NAME,
+    JatsSubFieldNames.REFERENCE_PUBLISHER_LOC,
+})
+
+
+def _without_leading_separator(text: str) -> str:
+    without = text.lstrip(_LEADING_SEPARATORS).lstrip()
+    return without if without[:1].isalnum() else text
+
+
 def _iter_sub_field_values(
     parent_el: etree._Element,
     field_name: str,
@@ -117,6 +138,8 @@ def _iter_sub_field_values(
     for sub_field_name, xpath in sub_xpath_by_sub_field:
         for child in parent_el.xpath(xpath):
             text = element_text(child)
+            if sub_field_name in _NAME_SUB_FIELDS:
+                text = _without_leading_separator(text)
             if text:
                 yield JatsFieldValue(
                     text=text,
@@ -258,15 +281,19 @@ def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
     return parts
 
 
-def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
-    """Each author of the group, as the byline prints them.
+def _contrib_group_author_texts(
+    contrib_group: etree._Element
+) -> List[Tuple[str, str]]:
+    """Each author of the group, as the byline prints them and as the rest of
+    the page does.
 
     JATS stores names in Surname-Given order; PDFs display Given-Surname, so each
     name part is reversed.  Each carries its own affiliation, footnote and
-    correspondence markers, because GROBID labels the whole byline `<author>`,
-    the markers between the names included.
+    correspondence markers in the byline, because GROBID labels the whole byline
+    `<author>`, the markers between the names included.  A correspondence block
+    prints the name without them, so the bare name is carried beside it.
     """
-    author_parts: List[str] = []
+    author_parts: List[Tuple[str, str]] = []
     for contrib in contrib_group.xpath(
         'contrib[not(@contrib-type) or @contrib-type="author"]'
     ):
@@ -287,8 +314,29 @@ def _contrib_group_author_texts(contrib_group: etree._Element) -> List[str]:
             )
             if x.text and x.text.strip()
         ]
-        author_parts.append(' '.join([name_text] + markers))
+        author_parts.append((' '.join([name_text] + markers), name_text))
     return author_parts
+
+
+# How many authors the citation a renderer composes names before "et al.", and
+# how many it names in full rather than reaching for one.
+_SELF_CITATION_NAMES = 3
+_SELF_CITATION_NAMES_IN_FULL = 4
+
+
+def _cited_names(names: Sequence[str]) -> Sequence[str]:
+    if len(names) <= _SELF_CITATION_NAMES_IN_FULL:
+        return names
+    return names[:_SELF_CITATION_NAMES]
+
+
+def element_text_of_xpath(root: etree._Element, xpath: str) -> str:
+    """The text of the first element the xpath finds, or nothing."""
+    for el in root.xpath(xpath):
+        text = element_text(el)
+        if text:
+            return text
+    return ''
 
 
 # The statements whose value is written without the words introducing it, which
@@ -384,12 +432,30 @@ class JatsFieldExtractor:
         # <trans-abstract>.  Both are printed, so both are the header the page
         # shows; read only the first and the other is left unlabelled, and which
         # region it ends up in is decided by whatever happens to border it.
+        #
+        # The heading above an abstract is not part of it, which is how GROBID
+        # has it: of the 880 abstracts its header corpus carries, none opens
+        # with one.  The value keeps it, because it is what the page prints
+        # above the text and what tells one abstract's opening from another's,
+        # and it is offered again as a sub-field, which is looked for inside the
+        # abstract's own match and carries no header label.  A structured
+        # abstract's inner headings -- Background, Methods -- are printed in its
+        # run and stay inside it.
         for el in root.xpath(
             'front/article-meta/abstract | front/article-meta/trans-abstract'
         ):
             text = element_text(el)
-            if text:
-                yield JatsFieldValue(text=text, field_name=JatsFieldNames.ABSTRACT)
+            if not text:
+                continue
+            yield JatsFieldValue(text=text, field_name=JatsFieldNames.ABSTRACT)
+            for title_el in el.xpath('./title'):
+                heading = element_text(title_el)
+                if heading:
+                    yield JatsFieldValue(
+                        text=heading,
+                        field_name=JatsFieldNames.ABSTRACT,
+                        sub_field_name=JatsSubFieldNames.ABSTRACT_TITLE,
+                    )
 
         # Per GROBID annotation guidelines, the "Keywords" heading is not annotated
         # in the header model.  It is still emitted as KEYWORDS_TITLE so that the
@@ -456,11 +522,116 @@ class JatsFieldExtractor:
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.ARTICLE_NOTES)
 
+    def _iter_self_citation_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """How the article asks to be cited, as the renderer composes it.
+
+        No element carries it: the page sets the authors, the title and where it
+        appeared, and the renderer builds the line from the metadata.  The
+        identifier at the end of it is left out, because GROBID writes that as
+        the `<idno>` beside the reference rather than as part of it.
+
+        Every author up to four, and three where there are more: that is what
+        the renderer prints, four names joined with "and" on the papers that
+        have four and three with "et al." on the ones with five and with
+        eleven.  Listing the rest would add names the page does not print, and
+        the match pays for those where it does not pay for the words it skips.
+
+        In two values, because the renderer sets a phrase between them that no
+        element carries -- which version this is and how its reviewers voted --
+        and one value covering both halves pays for that phrase: on the document
+        whose reviewers disagreed at length it is 75 characters and the match
+        falls under the threshold.  Where it appeared is the second of them, as
+        a sub-field, so that it is looked for inside the citation: the journal,
+        the year and the volume are what the running foot of every page carries
+        as well.
+        """
+        names = [
+            name
+            for contrib in root.xpath(
+                'front/article-meta/contrib-group'
+                '/contrib[not(@contrib-type) or @contrib-type="author"]'
+            )
+            for name_el in [contrib.find('name')]
+            if name_el is not None
+            for name in [' '.join(part for part in (
+                (name_el.findtext('surname') or '').strip(),
+                _name_initials(name_el),
+            ) if part)]
+            if name
+        ]
+        title = element_text_of_xpath(root, 'front/article-meta/title-group/article-title')
+        journal = element_text_of_xpath(
+            root, 'front/journal-meta/journal-title-group/journal-title'
+            ' | front/journal-meta/journal-title'
+        )
+        year = element_text_of_xpath(
+            root, 'front/article-meta/pub-date[@pub-type="epub"]/year'
+        )
+        volume = element_text_of_xpath(root, 'front/article-meta/volume')
+        elocation = element_text_of_xpath(root, 'front/article-meta/elocation-id')
+        if not (names and title and journal and year and volume and elocation):
+            return
+        yield JatsFieldValue(
+            text=f'{", ".join(_cited_names(names))} {title}',
+            field_name=JatsFieldNames.SELF_CITATION,
+        )
+        yield JatsFieldValue(
+            text=f'{journal} {year}, {volume}:{elocation}',
+            field_name=JatsFieldNames.SELF_CITATION,
+            sub_field_name=JatsSubFieldNames.SELF_CITATION_SOURCE,
+        )
+
+    def _iter_publication_date_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """When this version was published, as the version history prints it.
+
+        The JATS carries the day, the month and the year apart, and the page
+        sets them as "06 Sep 2023": a zero-padded day, the month in three
+        letters, which is the form both of these publishers print.
+
+        Verbatim or not at all.  A date is eleven characters and a version
+        history prints one per version, so approximately matched it reaches the
+        neighbouring one -- "23 Jun 2022" and "12 Jul 2022" share nine of their
+        characters in the same places.
+        """
+        for el in root.xpath('front/article-meta/pub-date[@pub-type="epub"]'):
+            day, month, year = (
+                (el.findtext('day') or '').strip(),
+                (el.findtext('month') or '').strip(),
+                (el.findtext('year') or '').strip(),
+            )
+            if not (day and month and year):
+                continue
+            try:
+                printed = date(int(year), int(month), int(day)).strftime('%d %b %Y')
+            except ValueError:
+                continue
+            yield JatsFieldValue(
+                text=printed,
+                field_name=JatsFieldNames.PUBLICATION_DATE,
+                exact_only=True,
+            )
+
+    def _iter_front_identifier_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """The article's own DOI, as the page prints it.
+
+        A preprint server prints it as the resolver URL rather than as the bare
+        identifier the JATS carries, and prints it more than once: in the version
+        history and in the citation the renderer composes from the metadata.
+        """
+        for el in root.xpath('front/article-meta/article-id[@pub-id-type="doi"]'):
+            text = element_text(el)
+            if text:
+                yield JatsFieldValue(
+                    text=f'https://doi.org/{text}',
+                    field_name=JatsFieldNames.DOI,
+                )
+
     def _iter_front_contact_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         """An author's email and ORCID, which print beside the name they belong to.
 
-        The JATS carries each exactly as the page prints it, an ORCID as the full
-        URL, so neither needs building from parts.
+        The JATS carries an ORCID as the resolver URL whether the page prints it
+        that way or as the bare identifier, so the bare one goes with it as a
+        fallback.
         """
         for xpath, field_name in (
             ('front/article-meta//email', JatsFieldNames.EMAIL),
@@ -471,8 +642,16 @@ class JatsFieldExtractor:
         ):
             for el in root.xpath(xpath):
                 text = element_text(el)
-                if text:
-                    yield JatsFieldValue(text=text, field_name=field_name)
+                if not text:
+                    continue
+                fallback = (
+                    text.rsplit('/', 1)[-1]
+                    if field_name == JatsFieldNames.ORCID and '/' in text
+                    else None
+                )
+                yield JatsFieldValue(
+                    text=text, field_name=field_name, fallback_text=fallback or None
+                )
 
     def _iter_author_note_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         """The notes printed under the byline, and the declarations among them.
@@ -508,6 +687,7 @@ class JatsFieldExtractor:
         # appended to each name so the combined needle matches the PDF author line.
         for contrib_group in root.xpath('front/article-meta/contrib-group'):
             author_parts = _contrib_group_author_texts(contrib_group)
+            byline_texts = [byline_text for byline_text, _ in author_parts]
             # The merged value matches a byline printed as one run, which is what
             # it is for.  Where each author is printed against their own
             # affiliation instead, several hundred characters separate one name
@@ -518,15 +698,16 @@ class JatsFieldExtractor:
             # searched inside that match, and the run matches a few of its own
             # words somewhere even where it does not match the byline -- which
             # would confine the names to wherever those words happened to land.
-            for author_text in author_parts:
+            for byline_text, name_text in author_parts:
                 yield JatsFieldValue(
-                    text=author_text,
+                    text=byline_text,
                     field_name=JatsFieldNames.AUTHOR,
                     sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
+                    fallback_text=name_text,
                 )
-            if author_parts:
+            if byline_texts:
                 yield JatsFieldValue(
-                    text=' '.join(author_parts),
+                    text=' '.join(byline_texts),
                     field_name=JatsFieldNames.AUTHOR,
                 )
             role_text = _contrib_group_role_text(contrib_group)
@@ -554,9 +735,19 @@ class JatsFieldExtractor:
                 aff_el, JatsFieldNames.AUTHOR_AFF, _AFF_SUB_FIELDS
             )
 
+        # The notes first, and the contacts after them: a corresponding-author
+        # note is the email with a label in front of it, and whichever is
+        # matched last is the label the tokens keep.  The note has none of its
+        # own, so matched last it takes the email's away.
+        yield from self._iter_author_note_values(root)
+
         yield from self._iter_front_contact_values(root)
 
-        yield from self._iter_author_note_values(root)
+        yield from self._iter_self_citation_values(root)
+
+        yield from self._iter_front_identifier_values(root)
+
+        yield from self._iter_publication_date_values(root)
 
         yield from self._iter_front_notes_values(root)
 

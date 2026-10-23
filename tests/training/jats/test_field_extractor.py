@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 from collections import defaultdict
 
 from lxml import etree
@@ -55,6 +56,38 @@ class TestAbstract:
         abstracts = [v for v in fvs if v.field_name == JatsFieldNames.ABSTRACT]
         assert len(abstracts) == 1
         assert 'abstract' in abstracts[0].text.lower()
+
+    def test_offers_the_heading_above_an_abstract_as_a_sub_field(self):
+        """GROBID carries 880 abstracts and not one of them opens with its heading."""
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<abstract><title>Resumo</title><p>Primeiro paragrafo.</p></abstract>'
+            '</article-meta></front></article>'
+        )
+        abstracts = [
+            v for v in fvs
+            if v.field_name == JatsFieldNames.ABSTRACT and v.sub_field_name is None
+        ]
+        headings = [
+            v for v in fvs
+            if v.sub_field_name == JatsSubFieldNames.ABSTRACT_TITLE
+        ]
+        assert [v.text for v in abstracts] == ['Resumo Primeiro paragrafo.']
+        assert [v.text for v in headings] == ['Resumo']
+
+    def test_leaves_the_headings_a_structured_abstract_prints_in_its_run_alone(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<abstract><title>Abstract</title>'
+            '<sec><title>Methods</title><p>What was done.</p></sec>'
+            '</abstract>'
+            '</article-meta></front></article>'
+        )
+        headings = [
+            v.text for v in fvs
+            if v.sub_field_name == JatsSubFieldNames.ABSTRACT_TITLE
+        ]
+        assert headings == ['Abstract']
 
 
 class TestAuthor:
@@ -275,6 +308,33 @@ class TestReference:
         refs = [v for v in fvs if v.field_name == JatsFieldNames.REFERENCE]
         assert len(refs) >= 1
         assert 'A Study' in refs[0].text
+
+    def test_drops_the_markers_separator_from_a_name_the_conversion_swept_it_into(self):
+        """`16.-Sala Situacional` is numbered, and the dash is the numbering's."""
+        fvs = _field_values_for(
+            '<article><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<source>-Sala Situacional COVID-19 Peru</source>'
+            '<article-title>\u2013 A Study</article-title>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = {v.sub_field_name: v.text for v in fvs if v.sub_field_name}
+        assert sub[JatsSubFieldNames.REFERENCE_SOURCE] == 'Sala Situacional COVID-19 Peru'
+        assert sub[JatsSubFieldNames.REFERENCE_ARTICLE_TITLE] == 'A Study'
+
+    def test_keeps_the_punctuation_a_title_opens_with(self):
+        fvs = _field_values_for(
+            '<article><back><ref-list>'
+            '<ref id="b1"><element-citation>'
+            '<article-title>[Quick evidence reviews]</article-title>'
+            '<source>"Coopetition" in Business Networks</source>'
+            '</element-citation></ref>'
+            '</ref-list></back></article>'
+        )
+        sub = {v.sub_field_name: v.text for v in fvs if v.sub_field_name}
+        assert sub[JatsSubFieldNames.REFERENCE_ARTICLE_TITLE] == '[Quick evidence reviews]'
+        assert sub[JatsSubFieldNames.REFERENCE_SOURCE] == '"Coopetition" in Business Networks'
 
     def test_extracts_reference_author_subfield(self):
         fvs = _field_values_for(
@@ -900,6 +960,121 @@ class TestConflict:
             (JatsFieldNames.CONFLICT_SECTION_TITLE, 'Competing interests'),
             (JatsFieldNames.CONFLICT_SECTION_PARAGRAPH, 'The authors declare none.'),
         ]
+
+
+class TestCorrespondingAuthorNote:
+    def test_it_should_offer_the_email_after_the_note_holding_it(self):
+        """Whichever is matched last is the label the tokens keep."""
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<corresp>Write to <email>petra@example.org</email></corresp>'
+            '</author-notes></article-meta></front></article>'
+        )
+        fields = [v.field_name for v in fvs]
+        assert fields.index(JatsFieldNames.AUTHOR_NOTES) < fields.index(JatsFieldNames.EMAIL)
+
+
+class TestOrcid:
+    def test_offers_the_bare_identifier_where_the_page_prints_no_resolver(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><contrib-group><contrib>'
+            '<contrib-id contrib-id-type="orcid">https://orcid.org/0000-0002-1672-9686'
+            '</contrib-id></contrib></contrib-group></article-meta></front></article>'
+        )
+        orcid = [v for v in fvs if v.field_name == JatsFieldNames.ORCID]
+        assert len(orcid) == 1
+        assert orcid[0].text == 'https://orcid.org/0000-0002-1672-9686'
+        assert orcid[0].fallback_text == '0000-0002-1672-9686'
+
+
+class TestIdentifier:
+    def test_it_should_read_the_doi_as_the_page_prints_it(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<article-id pub-id-type="doi">10.1234/preprints.567</article-id>'
+            '<article-id pub-id-type="archive">PPR1</article-id>'
+            '</article-meta></front></article>'
+        )
+        assert [
+            v.text for v in fvs if v.field_name == JatsFieldNames.DOI
+        ] == ['https://doi.org/10.1234/preprints.567']
+
+
+class TestPublicationDate:
+    def test_it_should_read_the_date_as_the_version_history_prints_it(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<pub-date pub-type="epub"><day>6</day><month>9</month><year>2023</year></pub-date>'
+            '<pub-date pub-type="collection"><year>2022</year></pub-date>'
+            '</article-meta></front></article>'
+        )
+        dates = [v for v in fvs if v.field_name == JatsFieldNames.PUBLICATION_DATE]
+        assert [v.text for v in dates] == ['06 Sep 2023']
+        assert dates[0].exact_only is True
+
+    def test_it_should_say_nothing_for_a_date_without_a_day(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta>'
+            '<pub-date pub-type="epub"><month>9</month><year>2023</year></pub-date>'
+            '</article-meta></front></article>'
+        )
+        assert JatsFieldNames.PUBLICATION_DATE not in {v.field_name for v in fvs}
+
+
+class TestSelfCitation:
+    JATS = (
+        '<article>'
+        '<front>'
+        '<journal-meta><journal-title-group>'
+        '<journal-title>Ferry Studies</journal-title>'
+        '</journal-title-group></journal-meta>'
+        '<article-meta>'
+        '<title-group><article-title>Counting the western ferries</article-title></title-group>'
+        '<contrib-group>'
+        '<contrib contrib-type="author">'
+        '<name><surname>Vance</surname><given-names>Petra</given-names></name></contrib>'
+        '<contrib contrib-type="author">'
+        '<name><surname>Oduya</surname><given-names>K.L.</given-names></name></contrib>'
+        '<contrib contrib-type="author">'
+        '<name><surname>Petit</surname><given-names>Lars</given-names></name></contrib>'
+        '<contrib contrib-type="author">'
+        '<name><surname>Reyes</surname><given-names>Mia</given-names></name></contrib>'
+        '</contrib-group>'
+        '<volume>4</volume><elocation-id>266</elocation-id>'
+        '<pub-date pub-type="epub"><day>3</day><month>5</month><year>2024</year></pub-date>'
+        '{extra}'
+        '</article-meta></front></article>'
+    )
+
+    def test_it_should_name_four_authors_and_where_it_appeared(self):
+        fvs = _field_values_for(self.JATS.format(extra=''))
+        assert [
+            (v.sub_field_name, v.text) for v in fvs
+            if v.field_name == JatsFieldNames.SELF_CITATION
+        ] == [
+            (None, 'Vance P, Oduya KL, Petit L, Reyes M Counting the western ferries'),
+            (JatsSubFieldNames.SELF_CITATION_SOURCE, 'Ferry Studies 2024, 4:266'),
+        ]
+
+    def test_it_should_name_three_of_five_authors(self):
+        fvs = _field_values_for(self.JATS.replace(
+            '</contrib-group>',
+            '<contrib contrib-type="author">'
+            '<name><surname>Finch</surname><given-names>Ola</given-names></name>'
+            '</contrib></contrib-group>',
+        ).format(extra=''))
+        assert [
+            v.text for v in fvs
+            if v.field_name == JatsFieldNames.SELF_CITATION and v.sub_field_name is None
+        ] == ['Vance P, Oduya KL, Petit L Counting the western ferries']
+
+    def test_it_should_say_nothing_where_the_metadata_is_incomplete(self):
+        fvs = _field_values_for(
+            self.JATS.format(extra='').replace(
+                '<volume>4</volume>', ''
+            )
+        )
+        assert JatsFieldNames.SELF_CITATION not in {v.field_name for v in fvs}
 
 
 class TestManuscriptType:

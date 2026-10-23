@@ -1,5 +1,5 @@
 # pylint: disable=too-many-lines
-from typing import Optional, Sequence, Set, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
 
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
@@ -14,6 +14,8 @@ from sciencebeam_parser.training.jats.aligner import (
     AlignmentConfig,
     LayoutDocumentJatsAligner,
     extend_partial_reference_matches,
+    _build_token_index,
+    _fuzzy_match_field_value,
     _search_range,
     narrow_search_range_to_window,
     get_search_stride,
@@ -245,6 +247,135 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             for token in byline_tokens
         )
 
+    def test_identifier_is_labelled_wherever_the_front_matter_prints_it(self):
+        """A preprint server prints the article's identifier more than once."""
+        doi = 'https://doi.org/10.1234/preprints.567'
+        abstract_text = ' '.join(['word'] * 60)
+        doc = _make_doc(
+            'Author Name', doi, abstract_text, 'How to cite: ' + doi, 'Introduction',
+        )
+        fvs = [
+            _fv('Author Name', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+            _fv(doi, JatsFieldNames.DOI),
+        ]
+        annotated = self._align(doc, fvs)
+        lines = list(doc.iter_all_lines())
+        for index in (1, 3):
+            assert any(
+                annotated.get_token_field(token) == JatsFieldNames.DOI
+                for token in lines[index].tokens
+            ), f'the identifier on line {index} was not labelled'
+
+    def test_a_neighbouring_identifier_is_left_alone(self):
+        """The versions a preprint server has published differ in one character."""
+        doi = 'https://doi.org/10.1234/preprints.567.3'
+        other_version = 'https://doi.org/10.1234/preprints.567.1'
+        abstract_text = ' '.join(['word'] * 60)
+        doc = _make_doc('Author Name', doi, abstract_text, other_version, 'Introduction')
+        fvs = [
+            _fv('Author Name', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+            _fv(doi, JatsFieldNames.DOI),
+        ]
+        annotated = self._align(doc, fvs)
+        lines = list(doc.iter_all_lines())
+        assert not any(
+            annotated.get_token_field(token) == JatsFieldNames.DOI
+            for token in lines[3].tokens
+        )
+
+    def test_a_value_keeps_the_short_piece_it_opens_with(self):
+        """The page sets a space after each dot, and the match dropped the first.
+
+        Smith-Waterman stops when extending would not raise the score, and a
+        one-character opening separated by a gap scores net zero.
+        """
+        doc = _make_doc('J.J. Leahy and Nidal Khalaf', 'Introduction Body')
+        fvs = [_fv('J.J. Leahy', JatsFieldNames.AUTHOR)]
+        annotated = self._align(doc, fvs)
+        labelled = [
+            token.text for token in list(doc.iter_all_lines())[0].tokens
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        ]
+        assert labelled[:2] == ['J', '.']
+
+    def test_a_name_the_front_matter_prints_again_is_labelled_again(self):
+        """A correspondence block names the authors a second time."""
+        abstract_text = ' '.join(['word'] * 60)
+        doc = _make_doc(
+            'Petra Vance 1 , Kaya Oduya 2',
+            'Correspondence: Petra Vance (petra@example.org)',
+            abstract_text,
+            'Introduction Body',
+        )
+        fvs = [
+            _fv('Petra Vance 1', JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME),
+            _fv('Kaya Oduya 2', JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME),
+            _fv('Petra Vance 1 Kaya Oduya 2', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+        ]
+        fvs[0].fallback_text = 'Petra Vance'
+        fvs[1].fallback_text = 'Kaya Oduya'
+        annotated = self._align(doc, fvs)
+        second_line = list(doc.iter_all_lines())[1]
+        labelled = [
+            token.text for token in second_line.tokens
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        ]
+        assert labelled == ['Petra', 'Vance']
+
+    def test_an_affiliation_two_authors_share_is_labelled_under_each(self):
+        """The JATS declares it once per author and the page prints it once per author."""
+        abstract_text = ' '.join(['word'] * 60)
+        aff_text = 'Institute of Marine Research, Bergen, Norway'
+        doc = _make_doc(
+            'Petra Vance',
+            aff_text,
+            'Kaya Oduya',
+            aff_text,
+            abstract_text,
+            'Introduction Body',
+        )
+        fvs = [
+            _fv('Petra Vance Kaya Oduya', JatsFieldNames.AUTHOR),
+            _fv(aff_text, JatsFieldNames.AUTHOR_AFF),
+            _fv(aff_text, JatsFieldNames.AUTHOR_AFF),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+        ]
+        annotated = self._align(doc, fvs)
+        lines = list(doc.iter_all_lines())
+        labelled_lines = [
+            index for index, line in enumerate(lines)
+            if all(
+                annotated.get_token_field(token) == JatsFieldNames.AUTHOR_AFF
+                for token in line.tokens
+            )
+        ]
+        assert labelled_lines == [1, 3]
+
+    def test_an_orcid_the_page_prints_bare_is_labelled(self):
+        abstract_text = ' '.join(['word'] * 60)
+        doc = _make_doc(
+            'Petra Vance',
+            'ORCID: 0000-0002-1672-9686',
+            abstract_text,
+            'Introduction Body',
+        )
+        orcid = _fv('https://orcid.org/0000-0002-1672-9686', JatsFieldNames.ORCID)
+        orcid.fallback_text = '0000-0002-1672-9686'
+        annotated = self._align(doc, [
+            _fv('Petra Vance', JatsFieldNames.AUTHOR),
+            orcid,
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+        ])
+        second_line = list(doc.iter_all_lines())[1]
+        labelled = ''.join(
+            token.text for token in second_line.tokens
+            if annotated.get_token_field(token) == JatsFieldNames.ORCID
+        )
+        assert labelled == '0000-0002-1672-9686'
+
     def test_affiliation_found_after_body_when_not_in_front_matter(self):
         # Some journals place full author/affiliation blocks at the END of the paper.
         # The front-matter region constraint is soft: if the aff text is not found in
@@ -342,6 +473,33 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             annotated.get_token_instance(aff1_tokens[0])
             != annotated.get_token_instance(aff2_tokens[0])
         )
+
+    def test_an_abstract_is_read_across_what_the_page_prints_inside_it(self):
+        """The footnotes of the page it runs onto are matched values of their own."""
+        first_half = ' '.join(['alpha'] * 40)
+        second_half = ' '.join(['omega'] * 40)
+        interruption = 'Instituto de Pesquisa Economica Aplicada, Brasilia, Brasil'
+        doc = _make_doc(
+            'Petra Vance',
+            first_half,
+            interruption,
+            second_half,
+            'Introduction Body',
+        )
+        abstract_text = first_half + ' ' + second_half
+        annotated = self._align(doc, [
+            _fv('Petra Vance', JatsFieldNames.AUTHOR),
+            _fv(abstract_text, JatsFieldNames.ABSTRACT),
+            _fv(interruption, JatsFieldNames.AUTHOR_AFF),
+        ])
+        lines = list(doc.iter_all_lines())
+        labelled = [
+            {annotated.get_token_field(token) for token in line.tokens}
+            for line in lines
+        ]
+        assert labelled[1] == {JatsFieldNames.ABSTRACT}
+        assert labelled[2] == {JatsFieldNames.AUTHOR_AFF}
+        assert labelled[3] == {JatsFieldNames.ABSTRACT}
 
     def test_abstract_does_not_label_sidebar_content(self):
         # PDFs sometimes have a sidebar (e.g. Open Peer Review box) between the
@@ -2014,3 +2172,331 @@ class TestExtendPartialReferenceMatches:
         assert not extend_partial_reference_matches(
             annotated, document, {id(lines[0])}
         )
+
+
+class TestTheCitationThePageBreaksInTwo:
+    """Words a line sets inside one value belong to that value.
+
+    The renderer composes the citation the article asks to be cited by out of
+    the deposit's own fields, and prints inside it an abbreviated author list
+    and a review state that no field declares, so the value is looked for in
+    two halves.  GROBID writes one `<reference>`: across its 837 header
+    documents no line carries a single value on both sides of background.
+    """
+
+    NAMES = 'Rivera L, Okonkwo A, Berg S'
+    TITLE = 'A field guide to the herons of the northern marshes'
+    SOURCE = 'Marshland Reports 2031, 7:412'
+    LINE = (
+        'How to cite this article: ' + NAMES + ' et al. ' + TITLE
+        + ' [version 2; peer review: 1 approved] ' + SOURCE
+    )
+
+    def _align(self):
+        doc = _make_doc(
+            'A title the page sets above the names it was deposited with',
+            self.LINE,
+        )
+        field_values = [
+            _fv(self.NAMES + ' ' + self.TITLE, JatsFieldNames.SELF_CITATION),
+            JatsFieldValue(
+                text=self.SOURCE,
+                field_name=JatsFieldNames.SELF_CITATION,
+                sub_field_name=JatsSubFieldNames.SELF_CITATION_SOURCE,
+            ),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _citation_tokens(self) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.SELF_CITATION
+        }
+
+    def test_the_words_the_page_prints_inside_it(self):
+        # The abbreviation standing for the names it leaves out, and the state
+        # of the review, neither of which any field of the deposit declares.
+        assert {
+            'et', 'al', 'version', 'peer', 'review', 'approved'
+        } <= self._citation_tokens()
+
+    def test_where_it_appeared_which_is_the_second_half(self):
+        assert {'Marshland', 'Reports', '2031'} <= self._citation_tokens()
+
+    def test_the_words_introducing_it_stay_outside_it(self):
+        assert not {'How', 'cite', 'article'} & self._citation_tokens()
+
+
+class TestAnAbstractContinuedAboveTheBlockHandedOverFirst:
+    """A block the page sets below both halves of a value is not between them.
+
+    `ore` hands over the metadata block at the foot of its second page before
+    the column above it, so a thousand characters stood between the two halves
+    of an abstract that the page sets nothing between.  The haystack reads the
+    page in its own order, so they are next to each other.
+    """
+
+    HEAD = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them, and the counts were compared'
+        ' with the water levels recorded at the three gauges upstream.'
+    )
+    TAIL = (
+        'The birds returned to the same reed beds each year whatever the water'
+        ' had done the winter before.'
+    )
+    ABSTRACT = HEAD + ' ' + TAIL
+    BLOCK = [
+        'Corresponding author: a name and the address it is written to',
+        'Author roles: who wrote which part of it and who read the rest',
+        'Competing interests: none of the authors declared one of these',
+        'Grant information: the body that paid for it and what it paid',
+    ]
+
+    def _align(self):
+        doc = _paged_doc([
+            [('A survey of the herons of the northern marshes', 100.0)]
+            + [(self.HEAD, 200.0)],
+            [(line, 800.0 + 20 * index) for index, line in enumerate(self.BLOCK)]
+            + [(self.TAIL, 100.0)],
+        ])
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _abstract_tokens(self) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.ABSTRACT
+        }
+
+    def test_the_half_the_page_sets_above_the_block(self):
+        assert {'birds', 'returned', 'reed', 'beds'} <= self._abstract_tokens()
+
+    def test_the_block_itself_is_not_the_abstract(self):
+        assert not {'Grant', 'roles', 'Competing'} & self._abstract_tokens()
+
+
+def _column_line(
+    text: str, page_number: int, y: float, x: float, width: float
+) -> LayoutLine:
+    """A line set in a column of its own, every token across its whole width."""
+    return LayoutLine(tokens=[
+        LayoutToken(text=word, coordinates=LayoutPageCoordinates(
+            x=x, y=y, width=width, height=12, page_number=page_number
+        ))
+        for word in text.split()
+    ])
+
+
+class TestAnAbstractReadPastThePanelBesideIt:
+    """The column a page sets beside the article is not inside a value.
+
+    `ore` sets its peer review panel down the side of the first page, and an
+    abstract that runs out of that page and onto the next is printed around it.
+    The pass that asks an anchor again already refuses to label the panel; the
+    window it asks over leaves the panel out too, so the two halves of the
+    abstract are what the question is about.
+    """
+
+    HEAD_LINES = [
+        'The marshes north of the estuary were surveyed',
+        'over four summers to count the herons nesting',
+        'along them, and the counts were compared with',
+        'the water levels recorded at the three gauges',
+        'upstream, which the authority publishes each',
+        'spring for the catchment as a whole.',
+    ]
+    HEAD = ' '.join(HEAD_LINES)
+    TAIL = (
+        'The birds returned to the same reed beds each year whatever the water'
+        ' had done the winter before.'
+    )
+    ABSTRACT = HEAD + ' ' + TAIL
+    PANEL = [
+        'Open peer review',
+        'Approval status: awaiting the reports',
+        'version 2 revised, and the date it was',
+        'version 1, and the date that one was',
+        'Reviewers and where each of them works',
+        'The first of them, and the institute',
+        'they are at, and the town it is in',
+        'The second of them, and the institute',
+        'they are at, and the town it is in',
+        'The third of them, and the institute',
+        'they are at, and the town it is in',
+        'Any reports and responses or comments',
+        'on the article can be found at the end',
+    ]
+
+    def _align(self):
+        page_one = (
+            [_column_line(
+                'A survey of the herons of the northern marshes', 1, 100.0, 50.0, 260.0
+            )]
+            + [
+                _column_line(text, 1, 200.0 + 20 * index, 50.0, 260.0)
+                for index, text in enumerate(self.HEAD_LINES)
+            ]
+            + [
+                _column_line(text, 1, 200.0 + 20 * index, 350.0, 150.0)
+                for index, text in enumerate(self.PANEL)
+            ]
+        )
+        page_two = [_column_line(self.TAIL, 2, 100.0, 50.0, 260.0)]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=lines)],
+                meta=LayoutPageMeta(
+                    page_number=page_number,
+                    coordinates=LayoutPageCoordinates(
+                        x=0, y=0, width=600, height=1000, page_number=page_number
+                    ),
+                ),
+            )
+            for page_number, lines in enumerate([page_one, page_two], 1)
+        ])
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _abstract_tokens(self) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.ABSTRACT
+        }
+
+    def test_the_half_printed_past_the_panel(self):
+        assert {'birds', 'returned', 'reed', 'beds'} <= self._abstract_tokens()
+
+    def test_the_panel_itself_is_not_the_abstract(self):
+        assert not {'Approval', 'Reviewers', 'version'} & self._abstract_tokens()
+
+
+class TestHowFarTheFrontMatterReaches:
+    """Where the front matter reaches and where the abstract ended are two facts.
+
+    `ore` prints a thousand characters of front matter on the page after the
+    abstract, so a window measured from the abstract and a fixed distance holds
+    only while nothing moves.  The citation the renderer composes is printed
+    after the abstract, and the keywords after the heading above them, and
+    neither wants a floor that has followed every other value of the front
+    matter past where the page prints it.
+    """
+
+    def _range(self, field: str, front_matter_end: int, abstract_end: int):
+        return _search_range(
+            _fv('a value the front matter carries', field),
+            last_match_end=0,
+            body_floor=0,
+            body_content_end=0,
+            front_matter_end=front_matter_end,
+            keywords_floor=0,
+            reference_floor=0,
+            parent_match_by_field={},
+            abstract_end=abstract_end,
+        )
+
+    def test_a_value_of_it_is_looked_for_as_far_as_it_has_been_found_to_reach(self):
+        _start, far = self._range(JatsFieldNames.COPYRIGHT, 5000, 3000)
+        _start, near = self._range(JatsFieldNames.COPYRIGHT, 3000, 3000)
+        assert far is not None and near is not None and far > near
+
+    def test_the_citation_is_looked_for_after_the_abstract(self):
+        start, _end = self._range(JatsFieldNames.SELF_CITATION, 5000, 3000)
+        assert start == 3000
+
+    def test_the_keywords_are_looked_for_after_the_abstract(self):
+        start, _end = self._range(JatsFieldNames.KEYWORDS, 5000, 3000)
+        assert start == 3000
+
+
+FILLER = ' '.join(
+    f'a line of the page that nothing of the article declares number {index}'
+    for index in range(40)
+)
+
+
+class TestAValueReadToTheEndOfWhatItSays:
+    """Where a value may be looked for is not where its last word may fall.
+
+    A range's own end says the front matter reaches this far, and a statement
+    printed inside it says the rest of its last line.  The two are different
+    questions, and bounding the second by the first cost a grant statement the
+    end of the sentence it finishes on.
+    """
+
+    STATEMENT = (
+        'This work was paid for by the marshland authority under the grant that'
+        ' funds the heron counts, and the authority had no part in the counting'
+        ' or in what was written about it afterwards.'
+    )
+
+    def _match(self, search_end_offset):
+        doc = _make_doc('Grant information', self.STATEMENT)
+        token_index = _build_token_index(doc)
+        search_end = (
+            None if search_end_offset is None
+            else len(token_index.haystack) + search_end_offset
+        )
+        return _fuzzy_match_field_value(
+            token_index, _fv(self.STATEMENT, JatsFieldNames.FUNDING),
+            AlignmentConfig(), search_start=0, search_end=search_end,
+        )
+
+    def test_the_whole_of_it_where_the_range_ends_inside_it(self):
+        whole = self._match(None)
+        cut = self._match(-20)
+        assert whole is not None and cut is not None
+        assert cut[1] == whole[1]
+
+
+def _filler_of_length(target: int) -> str:
+    """Words enough to fill that many characters of the haystack."""
+    words: List[str] = []
+    length = 0
+    while length < target:
+        word = f'filler{len(words)}'
+        words.append(word)
+        length += len(word) + 1
+    return ' '.join(words)
+
+
+class TestAValueLyingAcrossAWindowBoundary:
+    """A value the first window cuts short keeps its last words.
+
+    The windows overlap so that a value lying across a boundary is found whole.
+    Two things see to it: a match that reads to the edge of its window is asked
+    again over a wider one, and where that answers no better the next window's
+    reading of the same span is kept, which is the fuller of the two.
+    """
+
+    STATEMENT = (
+        'The counts were taken by the authority every summer at the same three'
+        ' gauges, and the figures for the whole catchment are published each'
+        ' spring in a report of its own.'
+    )
+
+    def _aligned(self):
+        needle = normalize_for_alignment(self.STATEMENT)
+        window = get_search_window_size(len(needle), AlignmentConfig().max_window)
+        doc = _make_doc(_filler_of_length(window - 40), self.STATEMENT)
+        return doc, LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons', JatsFieldNames.TITLE),
+            _fv(self.STATEMENT, JatsFieldNames.FUNDING),
+        ])
+
+    def test_the_last_words_of_it_are_labelled(self):
+        doc, annotated = self._aligned()
+        labelled = {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.FUNDING
+        }
+        assert {'spring', 'report'} <= labelled

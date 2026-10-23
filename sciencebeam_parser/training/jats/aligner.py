@@ -1,6 +1,7 @@
 # pylint: disable=too-many-lines
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import (
     Dict, FrozenSet, Iterator, List, NamedTuple, Optional, Protocol, Sequence, Set,
@@ -12,10 +13,16 @@ from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
-from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSubFieldNames
+from sciencebeam_parser.training.jats.field_vocab import (
+    SEGMENTATION_LABEL_BY_FIELD,
+    JatsFieldNames,
+    JatsSubFieldNames,
+)
 from sciencebeam_parser.training.jats.segmentation import (
     get_cover_page_line_ids,
-    get_page_furniture_line_ids
+    get_lines_in_printed_order,
+    get_page_furniture_line_ids,
+    get_side_column_line_ids
 )
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 
@@ -38,18 +45,13 @@ class _TokenStarts(Protocol):
 # Body content is searched from the end of the last anchor match, so that front-matter
 # fields which false-match citations late in the document do not push the search start
 # past the actual body position.
+# What an affiliation does not take from: the byline it is printed under.
+_BYLINE_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.AUTHOR})
+
 _ANCHOR_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.TITLE,
     JatsFieldNames.ABSTRACT,
 })
-
-# The abstract match establishes the end of the front-matter region.  All non-anchor,
-# non-body fields (authors, affiliations, keywords) are then confined to
-# [0, abstract_end + _FRONT_MATTER_BUFFER] so they cannot false-match citations that
-# appear later in the document.  Authors physically precede the abstract in most PDFs
-# but follow it in JATS ordering, so without this constraint they would be searched
-# from last_match_end (≈abstract end) and miss their true page-1 position.
-_FRONT_MATTER_END_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.ABSTRACT})
 
 # A data-availability section is one run of consecutive values, so each of them
 # can be searched from where the previous one landed.  The section's own values
@@ -61,6 +63,43 @@ _AVAILABILITY_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.AVAILABILITY_SECTION_PARAGRAPH,
 })
 _FRONT_MATTER_BUFFER = 2000
+
+# What the front matter prints after the abstract rather than before it, and
+# further on than its bound reaches: the citation a renderer composes is set on
+# the second or the third page, where the front-matter window is the abstract
+# and a buffer.  Searched from the abstract instead, and to the end of the
+# document, because which page carries it varies by publisher and by paper.
+_AFTER_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.SELF_CITATION,
+})
+
+# What the front matter prints more than once, and is labelled wherever it
+# prints: a preprint server sets the article's identifier in its version history
+# and again in the citation the renderer composes.  GROBID's header corpus
+# labels a repeated identifier the same way, on 38 of its 835 documents.
+_REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.DOI,
+    JatsFieldNames.PUBLICATION_DATE,
+})
+
+# The notes that are matched so the region reads their lines as front matter
+# and carry no label of their own.  GROBID labels the name printed inside a
+# correspondence note as a byline, so a name is looked for inside one.
+_UNLABELLED_NOTE_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AUTHOR_NOTES,
+    JatsFieldNames.ARTICLE_NOTES,
+})
+
+# The author block's fields, which the JATS declares once per author and the
+# page prints once per author: three authors of one institute each carry the
+# same affiliation, and the page sets it under each of their names.  A second
+# value saying what the first one said is a second printing, so it is looked for
+# after the first rather than where the first already is.
+_PER_AUTHOR_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.AUTHOR_AFF,
+    JatsFieldNames.EMAIL,
+    JatsFieldNames.ORCID,
+})
 
 # The declarations a publisher files in the back matter and may print in the
 # front, which is where these two corpora's preprint servers print them: after
@@ -94,12 +133,37 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.KEYWORDS_TITLE,
     JatsFieldNames.EMAIL,
     JatsFieldNames.ORCID,
+    JatsFieldNames.DOI,
+    JatsFieldNames.PUBLICATION_DATE,
     # A declaration the publisher files as a note is printed with the front
     # matter, which on these corpora is before the abstract rather than after
     # the body: searched from the body floor, the page had already printed it.
     JatsFieldNames.CONFLICT_NOTE,
     JatsFieldNames.CONTRIBUTION_NOTE,
 })
+
+# How far the front matter reaches, which is as far as the last value of it that
+# has been found.  The abstract is what first says so: the fields above are then
+# confined to [0, front_matter_end + _FRONT_MATTER_BUFFER] so they cannot
+# false-match a citation printed later in the document, and authors, which
+# precede the abstract on the page but follow it in the JATS, are looked for at
+# the front rather than from where the abstract left the cursor.
+#
+# And every value of it found inside that window says the front matter reaches
+# at least that far, which is what keeps the bound from being a fixed distance:
+# `ore` prints a thousand characters of front matter on the page after the
+# abstract, and a buffer measured from the abstract alone covers them only while
+# nothing moves.  Each value can carry the bound one buffer further and only
+# from inside it, so the evidence is what extends it.
+_FRONT_MATTER_END_FIELDS: FrozenSet[str] = _FRONT_MATTER_FIELDS | {
+    JatsFieldNames.ABSTRACT,
+}
+# Where the abstract ended, which is a different fact and the one a floor wants:
+# the citation the renderer composes is printed after the abstract, and the
+# keywords after the heading above them.  Measured against the reach instead,
+# each would be looked for after every other value of the front matter, which on
+# `ore` is past where the page prints it.
+_ABSTRACT_END_FIELDS: FrozenSet[str] = frozenset({JatsFieldNames.ABSTRACT})
 
 # Fields that appear after the front matter region. They search from the body floor
 # (end of last anchor match) rather than from the global last_match_end.
@@ -218,6 +282,14 @@ _REFERENCE_IDENTIFIER_SUB_FIELDS = frozenset({
 # Fallback: when a field value produces NO anchor blocks at all (the entire text
 # is shorter than _MIN_ANCHOR_BLOCK_SIZE), every block is labelled so short
 # fields are never silently dropped.
+# A sub-field that is a search device rather than a label of its own: where the
+# citation appeared is looked for inside the citation, because every running
+# foot of the page carries the same words, and once found it is part of the
+# citation like the names and the title are.
+_SEARCH_ONLY_SUB_FIELDS = frozenset({
+    JatsSubFieldNames.SELF_CITATION_SOURCE,
+})
+
 _MIN_ANCHOR_BLOCK_SIZE = 5
 _MAX_HAYSTACK_GAP_TO_FILL = 3
 # Maximum number of non-author tokens permitted between two author spans before
@@ -260,6 +332,7 @@ class _TokenIndex:
         tokens: List[LayoutToken],
         skip_tokens: Optional[Set[int]] = None,
         no_space_after: Optional[Set[int]] = None,
+        order: Optional[Sequence[int]] = None,
     ) -> None:
         self.tokens = tokens
         if skip_tokens is None:
@@ -269,7 +342,8 @@ class _TokenIndex:
         parts: List[str] = []
         token_index_at: List[int] = []
 
-        for tok_idx, token in enumerate(tokens):
+        for tok_idx in (range(len(tokens)) if order is None else order):
+            token = tokens[tok_idx]
             if tok_idx in skip_tokens:
                 continue
             norm = normalize_for_alignment(token.text)
@@ -288,6 +362,8 @@ class _TokenIndex:
         # Where the page's own furniture lies in the haystack, as character
         # ranges.  Set by _build_token_index; empty means nothing is skipped.
         self.furniture_ranges: List[Tuple[int, int]] = []
+        # Where the page sets a column beside the one the article runs down.
+        self.side_column_ranges: List[Tuple[int, int]] = []
         # Where a publisher's cover page lies, which no value of the article's
         # own is searched in.
         self.cover_ranges: List[Tuple[int, int]] = []
@@ -388,16 +464,26 @@ def _build_token_index(  # pylint: disable=too-many-locals
     # _fuzzy_search_in_window.
     furniture_line_ids = get_page_furniture_line_ids(layout_document)
     cover_line_ids = get_cover_page_line_ids(layout_document)
+    side_column_line_ids = get_side_column_line_ids(layout_document)
     furniture_token_indices: Set[int] = set()
     cover_token_indices: Set[int] = set()
+    side_column_token_indices: Set[int] = set()
+    token_range_by_line_id: Dict[int, Tuple[int, int]] = {}
     for line in layout_document.iter_all_lines():
         line_tokens: List[LayoutToken] = line.tokens or []
+        token_range_by_line_id[id(line)] = (
+            len(all_tokens), len(all_tokens) + len(line_tokens)
+        )
         if id(line) in furniture_line_ids:
             furniture_token_indices.update(
                 range(len(all_tokens), len(all_tokens) + len(line_tokens))
             )
         if id(line) in cover_line_ids:
             cover_token_indices.update(
+                range(len(all_tokens), len(all_tokens) + len(line_tokens))
+            )
+        if id(line) in side_column_line_ids:
+            side_column_token_indices.update(
                 range(len(all_tokens), len(all_tokens) + len(line_tokens))
             )
         outside_region = keep_line_ids is not None and id(line) not in keep_line_ids
@@ -419,13 +505,21 @@ def _build_token_index(  # pylint: disable=too-many-locals
                     if i > 0:
                         no_space_after.add(tok_global_idx - 1)
     token_index = _TokenIndex(
-        all_tokens, skip_tokens=skip_tokens, no_space_after=no_space_after
+        all_tokens, skip_tokens=skip_tokens, no_space_after=no_space_after,
+        order=[
+            token
+            for line in get_lines_in_printed_order(layout_document, furniture_line_ids)
+            for token in range(*token_range_by_line_id[id(line)])
+        ],
     )
     token_index.furniture_ranges = token_index.get_token_char_ranges(
         furniture_token_indices
     )
     token_index.cover_ranges = token_index.get_token_char_ranges(
         cover_token_indices
+    )
+    token_index.side_column_ranges = token_index.get_token_char_ranges(
+        side_column_token_indices
     )
     return token_index
 
@@ -435,11 +529,17 @@ def _build_token_index(  # pylint: disable=too-many-locals
 # little; a paragraph claiming the figure caption printed inside it stretches
 # it several times over.
 _MATCH_SPAN_TOLERANCE = 1.2
+# What a value may span when it is asked again over a window every other value's
+# answer has been taken out of.  What is left inside it is text nothing accounts
+# for, and only the value's own words are labelled from that answer, so the page
+# it reaches across costs it less than it does the first time.
+_CLEANED_RETRY_SPAN_TOLERANCE = 2.0
 
 
 def _match_quality(
     matching_blocks: List[Tuple[int, int, int]],
     needle_len: int,
+    span_tolerance: float = _MATCH_SPAN_TOLERANCE,
 ) -> float:
     """How much of the needle was found, against how much page it took to find it.
 
@@ -455,7 +555,7 @@ def _match_quality(
         return 0.0
     matched = sum(size for _, size in blocks)
     span = (blocks[-1][0] + blocks[-1][1]) - blocks[0][0]
-    return matched / max(needle_len, span / _MATCH_SPAN_TOLERANCE)
+    return matched / max(needle_len, span / span_tolerance)
 
 
 def _scan_tail_chars_at_token_starts(
@@ -544,6 +644,58 @@ def _extend_match_for_needle_tail(
     return ext_start + match_count, abs_block_ranges + [(ext_start, ext_start + match_count)]
 
 
+def _extend_match_for_needle_head(
+    window: str,
+    needle: str,
+    window_start: int,
+    abs_a_start: int,
+    matched_blocks: List[Tuple[int, int, int]],
+    abs_block_ranges: List[Tuple[int, int]],
+    token_index: Optional['_TokenStarts'] = None,
+) -> Tuple[int, List[Tuple[int, int]]]:
+    """Greedily extend the SW match to cover any unmatched needle prefix.
+
+    The same early stop as the tail, at the other end: a short first piece
+    separated from the rest by a gap scores net zero, so the traceback drops it.
+    `U.` before `S. Department of Interior`, the `z.` of an address, the first
+    initial of `J.J. Leahy` where the page sets a space after each dot.
+    `_extend_match_for_needle_tail` repairs the end of a value; this repairs its
+    start.
+
+    Each character of the prefix is looked for at a token's own start, within
+    the gap the fill allows, so that the extension takes the piece the page
+    prints rather than the tail of the word before it.
+    """
+    first_matched = min(bi for _, bi, size in matched_blocks if size)
+    needle_head = needle[:first_matched]
+    if not needle_head:
+        return abs_a_start, abs_block_ranges
+
+    position = abs_a_start - window_start
+    earliest = position
+    for char in reversed(needle_head):
+        limit = max(0, position - _MAX_HAYSTACK_GAP_TO_FILL - 1)
+        found = False
+        while position > limit:
+            position -= 1
+            if window[position] != char:
+                continue
+            if token_index is not None and not token_index.is_token_start(
+                window_start + position
+            ):
+                continue
+            earliest = position
+            found = True
+            break
+        if not found:
+            break
+    if earliest == abs_a_start - window_start:
+        return abs_a_start, abs_block_ranges
+
+    ext_start = window_start + earliest
+    return ext_start, [(ext_start, abs_a_start)] + abs_block_ranges
+
+
 def _clean_window(
     haystack: str,
     window_start: int,
@@ -629,6 +781,7 @@ def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
     threshold: float,
     furniture_ranges: Sequence[Tuple[int, int]],
     token_index: Optional['_TokenIndex'] = None,
+    span_tolerance: float = _MATCH_SPAN_TOLERANCE,
 ) -> Optional[_MatchResult]:
     """`_fuzzy_search_in_window` over a window the furniture has been taken out of."""
     cleaned, segments = _clean_window(
@@ -638,16 +791,22 @@ def _fuzzy_search_in_cleaned_window(  # pylint: disable=too-many-locals
         return None
     sm = LocalSequenceMatcher(a=cleaned, b=needle, scoring=_SCORING)
     blocks = sm.get_matching_blocks()
-    if _match_quality(blocks, len(needle)) < threshold:
+    if _match_quality(blocks, len(needle), span_tolerance) < threshold:
         return None
     matched_blocks = [(ai, bi, size) for ai, bi, size in blocks if size]
     if not matched_blocks:
         return None
     cleaned_end = matched_blocks[-1][0] + matched_blocks[-1][2]
     cleaned_ranges = [(ai, ai + size) for ai, _bi, size in matched_blocks]
+    cleaned_view = (
+        _CleanedTokenView(token_index, cleaned, segments) if token_index else None
+    )
     cleaned_end, cleaned_ranges = _extend_match_for_needle_tail(
-        cleaned, needle, 0, cleaned_end, matched_blocks, cleaned_ranges,
-        _CleanedTokenView(token_index, cleaned, segments) if token_index else None,
+        cleaned, needle, 0, cleaned_end, matched_blocks, cleaned_ranges, cleaned_view,
+    )
+    _, cleaned_ranges = _extend_match_for_needle_head(
+        cleaned, needle, 0, matched_blocks[0][0], matched_blocks, cleaned_ranges,
+        cleaned_view,
     )
     abs_block_ranges: List[Tuple[int, int]] = []
     for start, end in cleaned_ranges:
@@ -666,6 +825,7 @@ def _fuzzy_search_in_window(  # pylint: disable=too-many-locals
     threshold: float,
     token_index: Optional['_TokenIndex'] = None,
     furniture_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+    span_tolerance: float = _MATCH_SPAN_TOLERANCE,
 ) -> Optional[_MatchResult]:
     """Try to find `needle` in haystack[window_start:window_end].
 
@@ -684,12 +844,12 @@ def _fuzzy_search_in_window(  # pylint: disable=too-many-locals
     if furniture_ranges:
         return _fuzzy_search_in_cleaned_window(
             haystack, needle, window_start, window_end, threshold, furniture_ranges,
-            token_index,
+            token_index, span_tolerance,
         )
     window = haystack[window_start:window_end]
     sm = LocalSequenceMatcher(a=window, b=needle, scoring=_SCORING)
     blocks = sm.get_matching_blocks()
-    quality = _match_quality(blocks, len(needle))
+    quality = _match_quality(blocks, len(needle), span_tolerance)
     if quality < threshold:
         return None
     matched_blocks = [(ai, bi, size) for ai, bi, size in blocks if size]
@@ -704,6 +864,10 @@ def _fuzzy_search_in_window(  # pylint: disable=too-many-locals
     ]
     a_end, abs_block_ranges = _extend_match_for_needle_tail(
         window, needle, window_start, a_end, matched_blocks, abs_block_ranges, token_index
+    )
+    a_start, abs_block_ranges = _extend_match_for_needle_head(
+        window, needle, window_start, a_start, matched_blocks, abs_block_ranges,
+        token_index
     )
     return a_start, a_end, abs_block_ranges
 
@@ -997,6 +1161,11 @@ def _try_numeric_prefix_label_match(
     return result
 
 
+def _matched_length(result: _MatchResult) -> int:
+    """How much of the page a match accounts for, by its own blocks."""
+    return sum(end - start for start, end in result[2])
+
+
 def _is_exact_sw_match(result: _MatchResult, needle_len: int) -> bool:
     """True when SW found the needle as one contiguous block (no gaps)."""
     _, _, blocks = result
@@ -1234,6 +1403,8 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
     allow_pieces: bool = False,
     prefer_before: Optional[int] = None,
     skip_furniture: bool = False,
+    clean_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+    span_tolerance: float = _MATCH_SPAN_TOLERANCE,
 ) -> Optional[_MatchResult]:
     needle = normalize_for_alignment(field_value.text)
     if not needle:
@@ -1263,7 +1434,10 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
             return exact
     window_size = get_search_window_size(need_len, config.max_window)
     stride = get_search_stride(window_size, need_len)
-    furniture_ranges = token_index.furniture_ranges if skip_furniture else None
+    furniture_ranges: Optional[Sequence[Tuple[int, int]]] = (
+        clean_ranges if clean_ranges is not None
+        else (token_index.furniture_ranges if skip_furniture else None)
+    )
 
     gap_match: Optional[_MatchResult] = None
     for seg_start, seg_end in segments:
@@ -1273,11 +1447,46 @@ def _fuzzy_match_field_value(  # noqa: E501 pylint: disable=too-many-locals,too-
             result = _fuzzy_search_in_window(
                 haystack, needle, start, end, config.threshold, token_index,
                 furniture_ranges=furniture_ranges,
+                span_tolerance=span_tolerance,
             )
+            # Where a value may be looked for, which is not where its last word
+            # may fall: a range's own end says the front matter reaches this
+            # far, and a statement printed inside it says the rest of its last
+            # line.  A segment's end is a mask rather than a bound, so nothing
+            # reaches past that.
+            reach = (
+                min(len(haystack), hay_end + need_len)
+                if end >= hay_end else seg_end
+            )
+            if result is not None and result[1] >= end > start and reach > end:
+                # The match runs to the end of the window it was searched in,
+                # so what it was still reading may be the next word in the
+                # page.  Asked again over a window that reaches further, a
+                # grant statement keeps the half of its last line that the
+                # window had cut off.
+                wider = _fuzzy_search_in_window(
+                    haystack, needle, start, min(reach, end + window_size),
+                    config.threshold, token_index,
+                    furniture_ranges=furniture_ranges,
+                    span_tolerance=span_tolerance,
+                )
+                if wider is not None and _matched_length(wider) > _matched_length(result):
+                    result = wider
             if result is not None:
                 if _is_exact_sw_match(result, need_len):
                     return result
                 if gap_match is None:
+                    gap_match = result
+                elif (
+                    _overlaps([(gap_match[0], gap_match[1])], result[0], result[1])
+                    and _matched_length(result) > _matched_length(gap_match)
+                ):
+                    # The same place, read again in a window that reaches
+                    # further.  The windows overlap, so a value the first of
+                    # them cut short is whole in the next, and the fuller
+                    # reading of the same span is the better answer -- where
+                    # the two do not overlap they are two printings and the
+                    # first is still the one being asked about.
                     gap_match = result
             if end >= seg_end:
                 break
@@ -1328,9 +1537,94 @@ def narrow_search_range_to_window(
     return narrowed_start, narrowed_end
 
 
-# The per-field window rules have outgrown one function; splitting them is worth
-# doing next time this needs a branch.
-def _search_range(  # pylint: disable=too-many-locals
+def _sub_field_search_range(
+    fv: JatsFieldValue,
+    parent_match_by_field: Dict[str, Tuple[int, int, int]],
+) -> Tuple[int, Optional[int]]:
+    """Where a sub-field is looked for: inside the match its parent made."""
+    p_start, p_end, pre_parent_ref_floor = parent_match_by_field[fv.field_name]
+    if fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL and _is_pure_number(fv.text):
+        pre = _SUB_FIELD_PARENT_PRE_BUFFER
+    elif (
+        fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
+        and bool(_LABEL_DIGIT_PREFIX_RE.match(fv.text))
+    ):
+        pre = _SUB_FIELD_LABEL_DIGIT_PRE_BUFFER
+    elif fv.sub_field_name in {
+        JatsSubFieldNames.REFERENCE_AUTHOR,
+        JatsSubFieldNames.REFERENCE_SOURCE,
+    }:
+        # Source can precede the parent's SW match start when the PDF orders
+        # source before article-title but the JATS parent text has them reversed.
+        # SW then latches onto the article-title anchor and sets p_start after
+        # the source, so we need the same backward buffer as for authors.
+        pre = _SUB_FIELD_REFERENCE_AUTHOR_PRE_BUFFER
+    else:
+        pre = 0
+    # For authors and source: never extend before the end of the previous
+    # reference (prevents sub-field matches from bleeding into earlier bibls).
+    if fv.sub_field_name in {
+        JatsSubFieldNames.REFERENCE_AUTHOR,
+        JatsSubFieldNames.REFERENCE_SOURCE,
+    }:
+        sub_start = max(p_start - pre, pre_parent_ref_floor)
+    else:
+        sub_start = p_start - pre
+    return max(0, sub_start), p_end + _SUB_FIELD_PARENT_BUFFER
+
+
+def _anchor_search_start(
+    fv: JatsFieldValue,
+    last_match_end: int,
+    body_content_end: int,
+    reference_floor: int,
+    post_body_text_end: Optional[Dict[str, int]],
+    anchor_match_end_by_field: Optional[Dict[str, int]],
+) -> int:
+    """Where an anchor or a post-body value is looked for from.
+
+    Anchor fields (abstract, title) and post-body fields (sub-articles) both
+    search from last_match_end so they follow reading order and cannot fall
+    back to the front-matter window.
+
+    A post-body field searches from a floor rather than that cursor.
+    Sub-article values repeat within a document and do not follow the page, so a
+    cursor loses every value earlier than the last match.  The floor keeps what
+    the cursor was for -- body and figures lie before it -- while letting the
+    region be searched in any order, and no post-body match advances it, so it
+    cannot creep.
+    """
+    spent = (post_body_text_end or {}).get(_WIDE_SEARCH_BUDGET_KEY, 0)
+    if (
+        fv.field_name in _POST_BODY_FIELDS
+        and (fv.exact_only or spent < _POST_BODY_MAX_WIDE_SEARCHES)
+    ):
+        # The reference list, where there is one, is the floor rather than the
+        # last body match.  An author response quotes the paper, so a body
+        # paragraph can match inside the peer review and carry the floor past
+        # most of the region with it; the reference list cannot, because it
+        # prints between the body and the peer review.
+        #
+        # A repeated value still advances past its own previous match, because
+        # ORE prints one copy of each checklist question per reviewer and the
+        # copies have to land on different ones: searching every copy from the
+        # floor collapses them all onto the first.
+        start = max(
+            0,
+            (reference_floor if reference_floor > 0 else body_content_end) - 200,
+            (post_body_text_end or {}).get(fv.text, 0),
+        )
+    else:
+        own_end = (anchor_match_end_by_field or {}).get(fv.field_name)
+        base = own_end if own_end is not None else last_match_end
+        start = max(0, base - 200)
+    return start
+
+
+# The per-field window rules are split by the kind of statement each makes, and
+# the two longest of them have functions of their own; this says which applies.
+# pylint: disable-next=too-many-return-statements
+def _search_range(
     fv: JatsFieldValue,
     last_match_end: int,
     body_floor: int,
@@ -1341,37 +1635,11 @@ def _search_range(  # pylint: disable=too-many-locals
     parent_match_by_field: Dict[str, Tuple[int, int, int]],
     post_body_text_end: Optional[Dict[str, int]] = None,
     anchor_match_end_by_field: Optional[Dict[str, int]] = None,
+    abstract_end: int = 0,
 ) -> Tuple[int, Optional[int]]:
     """Return (search_start, search_end) for fv given current position state."""
     if is_contained_in_parent_match(fv, parent_match_by_field):
-        p_start, p_end, pre_parent_ref_floor = parent_match_by_field[fv.field_name]
-        if fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL and _is_pure_number(fv.text):
-            pre = _SUB_FIELD_PARENT_PRE_BUFFER
-        elif (
-            fv.sub_field_name == JatsSubFieldNames.REFERENCE_LABEL
-            and bool(_LABEL_DIGIT_PREFIX_RE.match(fv.text))
-        ):
-            pre = _SUB_FIELD_LABEL_DIGIT_PRE_BUFFER
-        elif fv.sub_field_name in {
-            JatsSubFieldNames.REFERENCE_AUTHOR,
-            JatsSubFieldNames.REFERENCE_SOURCE,
-        }:
-            # Source can precede the parent's SW match start when the PDF orders
-            # source before article-title but the JATS parent text has them reversed.
-            # SW then latches onto the article-title anchor and sets p_start after
-            # the source, so we need the same backward buffer as for authors.
-            pre = _SUB_FIELD_REFERENCE_AUTHOR_PRE_BUFFER
-        else:
-            pre = 0
-        # For authors and source: never extend before the end of the previous
-        # reference (prevents sub-field matches from bleeding into earlier bibls).
-        sub_start = max(p_start - pre, pre_parent_ref_floor) \
-            if fv.sub_field_name in {
-                JatsSubFieldNames.REFERENCE_AUTHOR,
-                JatsSubFieldNames.REFERENCE_SOURCE,
-            } \
-            else p_start - pre
-        return max(0, sub_start), p_end + _SUB_FIELD_PARENT_BUFFER
+        return _sub_field_search_range(fv, parent_match_by_field)
     if fv.field_name in _BODY_CONTENT_FIELDS:
         return max(0, max(body_floor, body_content_end) - 200), None
     if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
@@ -1381,53 +1649,391 @@ def _search_range(  # pylint: disable=too-many-locals
         # skip over all reference positions.
         return (max(0, reference_floor - 200) if reference_floor > 0 else max(0, body_floor)), None
     if fv.field_name in _ANCHOR_FIELDS or fv.field_name in _POST_BODY_FIELDS:
-        # Anchor fields (abstract, title) and post-body fields (sub-articles) both
-        # search from last_match_end so they follow reading order and cannot fall
-        # back to the front-matter window.
-        #
-        # A post-body field searches from a floor rather than that cursor.
-        # Sub-article values repeat within a document and do not follow the page,
-        # so a cursor loses every value earlier than the last match.  The floor
-        # keeps what the cursor was for -- body and figures lie before it -- while
-        # letting the region be searched in any order, and no post-body match
-        # advances it, so it cannot creep.
-        spent = (post_body_text_end or {}).get(_WIDE_SEARCH_BUDGET_KEY, 0)
-        if (
-            fv.field_name in _POST_BODY_FIELDS
-            and (fv.exact_only or spent < _POST_BODY_MAX_WIDE_SEARCHES)
-        ):
-            # The reference list, where there is one, is the floor rather than the
-            # last body match.  An author response quotes the paper, so a body
-            # paragraph can match inside the peer review and carry the floor past
-            # most of the region with it; the reference list cannot, because it
-            # prints between the body and the peer review.
-            #
-            # A repeated value still advances past its own previous match, because
-            # ORE prints one copy of each checklist question per reviewer and the
-            # copies have to land on different ones: searching every copy from the
-            # floor collapses them all onto the first.
-            start = max(
-                0,
-                (reference_floor if reference_floor > 0 else body_content_end) - 200,
-                (post_body_text_end or {}).get(fv.text, 0),
-            )
-        else:
-            own_end = (anchor_match_end_by_field or {}).get(fv.field_name)
-            base = own_end if own_end is not None else last_match_end
-            start = max(0, base - 200)
-        return start, None
+        return _anchor_search_start(
+            fv, last_match_end, body_content_end, reference_floor,
+            post_body_text_end, anchor_match_end_by_field,
+        ), None
+    if fv.field_name in _AFTER_FRONT_MATTER_FIELDS:
+        return max(0, abstract_end), None
     if front_matter_end > 0:
         # Front-matter constrained fields (authors, affs, keywords).
         # Keywords are anchored to just after the keywords header/abstract so
         # short common words ("confidence", "Bayesian") don't false-match in the
         # abstract.  Other front-matter fields start from position 0.
         is_keywords = fv.field_name in _KEYWORDS_FIELDS
-        start = max(keywords_floor, front_matter_end) if is_keywords else 0
+        start = max(keywords_floor, abstract_end) if is_keywords else 0
         return start, front_matter_end + _FRONT_MATTER_BUFFER
     return (
         0 if fv.field_name in _FRONT_MATTER_FIELDS
         else max(0, last_match_end - 200)
     ), None
+
+
+def _label_repeated_matches(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    field_value: JatsFieldValue,
+    config: AlignmentConfig,
+    search_start: int,
+    search_end: Optional[int],
+    masked_ranges: Optional[List[Tuple[int, int]]],
+    instance_id: int,
+) -> int:
+    """Label every further place the value is printed, and say how many.
+
+    Each one is its own instance, because the page sets them apart and the
+    training format writes an element per run.  The search starts where the last
+    match ended, so it cannot settle on the same place twice, and it stops at
+    the first miss rather than scanning the rest of the range for one.
+
+    Only where every character of it is there.  A repeat is another printing of
+    the same string, and a match missing a character of the needle is the
+    neighbouring string rather than this one -- a preprint server lists the
+    identifier of every version it has published, and they differ in their last
+    character.  The page sets the identifier in pieces the match reads across,
+    so this is not the same as matching it verbatim.
+    """
+    needle_length = len(normalize_for_alignment(field_value.text))
+    found = 0
+    start = search_start
+    while search_end is None or start < search_end:
+        match_range = _fuzzy_match_field_value(
+            token_index, field_value, config,
+            search_start=start, search_end=search_end,
+            masked_ranges=masked_ranges,
+        )
+        if match_range is None:
+            break
+        _, repeat_end, block_ranges = match_range
+        if repeat_end <= start:
+            break
+        start = repeat_end
+        if sum(end - begin for begin, end in block_ranges) < needle_length:
+            continue
+        found += 1
+        _label_tokens_for_blocks(
+            annotated, token_index, block_ranges,
+            field_value.field_name, field_value.sub_field_name, instance_id + found,
+        )
+    return found
+
+
+# How far either side of where a value answered the second question looks.  The
+# page it reaches across is what was printed inside it, and a first page's worth
+# of it is more than any of these corpora set there.
+# What a page sets after a heading, which belongs to the heading rather than to
+# the block beneath it.
+_HEADING_SEPARATORS: FrozenSet[str] = frozenset({':', '.', '-'})
+
+_RETRY_SLACK = 4000
+# What counts as the value's own words in that answer: shorter than this and it
+# is a word the page happens to share with it, which is what the first question
+# already settled.
+_RETRY_MIN_BLOCK_SIZE = 12
+
+
+def _iter_retry_blocks(
+    block_ranges: Sequence[Tuple[int, int]]
+) -> Iterator[Tuple[int, int]]:
+    """The runs of a second answer that are the value's own words.
+
+    A letter the page shares with the value is not the value, and the first
+    question already answered for the run it found; this one is here for the
+    runs it had to step over, and those are sentences.  What sits against one of
+    them is kept with it, the way the first answer keeps the bracket its
+    sentence opens with.
+    """
+    kept = [
+        (start, end) for start, end in block_ranges
+        if end - start >= _RETRY_MIN_BLOCK_SIZE
+    ]
+    if not kept:
+        return
+    for start, end in sorted(block_ranges):
+        against_one = any(
+            start <= kept_end + _MAX_HAYSTACK_GAP_TO_FILL
+            and end >= kept_start - _MAX_HAYSTACK_GAP_TO_FILL
+            for kept_start, kept_end in kept
+        )
+        if against_one:
+            yield start, end
+
+
+@dataclass
+class _AnchorMatch:
+    """What an anchor value answered, and what it was asked over."""
+    field_value: JatsFieldValue
+    masked_ranges: List[Tuple[int, int]]
+    own_range: Tuple[int, int]
+    instance_id: int
+
+
+def _label_what_the_second_answer_found(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    anchor: '_AnchorMatch',
+    block_ranges: Sequence[Tuple[int, int]],
+) -> None:
+    """Label what the value reached the second time, over what nothing claimed."""
+    for block_start, block_end in _iter_retry_blocks(block_ranges):
+        if _overlaps(token_index.side_column_ranges, block_start, block_end):
+            # The panel beside the article is not what the value reaches.
+            continue
+        for token in token_index.tokens_in_range(block_start, block_end):
+            if annotated.get_token_field(token):
+                continue
+            annotated.set_token_label(
+                token, anchor.field_value.field_name,
+                anchor.field_value.sub_field_name, anchor.instance_id,
+            )
+
+
+def _relabel_anchors_over_what_nothing_explains(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    config: AlignmentConfig,
+    anchor_matches: Sequence['_AnchorMatch'],
+    matched_ranges: Sequence[Tuple[int, int]],
+) -> None:
+    """Ask a title or an abstract again, with every other answer taken out.
+
+    What is printed inside an abstract is mostly text the page explains and the
+    aligner has placed: the footnotes of the page it runs onto are the authors'
+    affiliations, their emails and their ORCIDs, and the match pays for crossing
+    them until it settles for a shorter run.  By the end of the loop each of
+    those is a range of its own, so the question can be asked again over a
+    window they have been taken out of -- which is what `_clean_window` already
+    does for the page's own furniture.
+
+    Over where it answered rather than over the document: the span is known, so
+    the window is the span and what the page sets either side of it, which is
+    how both halves of a value printed around an interruption come to be asked
+    about at once.
+
+    One more thing comes out of the window, for the same reason the furniture
+    does: the column the page sets beside the article, which this pass already
+    refuses to label.  `ore` sets its peer review panel down the side of the
+    first page, and an abstract that runs off that page and onto the next is
+    printed around it.
+
+    Only what nothing has claimed is labelled from the answer, so a value that
+    reaches further cannot take what another one is holding.
+    """
+    for anchor in anchor_matches:
+        own_start, own_end = anchor.own_range
+        clean_ranges = sorted(
+            set(token_index.furniture_ranges)
+            | set(token_index.side_column_ranges)
+            | {
+                (start, end) for start, end in matched_ranges
+                if (start, end) != anchor.own_range
+            }
+        )
+        if not clean_ranges:
+            continue
+        search_start = max(0, own_start - _RETRY_SLACK)
+        search_end = min(len(token_index.haystack), own_end + _RETRY_SLACK)
+        retry_config = AlignmentConfig(
+            threshold=config.threshold,
+            max_window=max(config.max_window, (search_end - search_start) * 2),
+        )
+        result = _fuzzy_match_field_value(
+            token_index, anchor.field_value, retry_config,
+            search_start=search_start,
+            search_end=search_end,
+            masked_ranges=anchor.masked_ranges or None,
+            clean_ranges=clean_ranges,
+            span_tolerance=_CLEANED_RETRY_SPAN_TOLERANCE,
+        )
+        if result is None:
+            continue
+        _label_what_the_second_answer_found(
+            annotated, token_index, anchor, result[2]
+        )
+
+
+def _fill_abstract_lines(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+) -> None:
+    """Give an abstract the whole of each line it runs down.
+
+    An abstract is a block: the page sets it as whole lines, and two things
+    stand outside one.  The heading above it, which is why the line it begins
+    on is filled from its first word rather than from the line's start.  And
+    whatever begins on the line it ends on, which is why no line is filled past
+    the last word of the abstract on it -- 125 of GROBID's abstracts have a last
+    line that goes on to say `Keywords:` and 45 more that say `Key words:`,
+    besides the availability statements and copyright lines.
+
+    Only what nothing has claimed is filled, so a marker the page sets inside
+    one of those lines keeps its own label.
+    """
+    begun: Set[int] = set()
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        on_this_line = [
+            index for index, entry in enumerate(entries)
+            if entry is not None
+            and entry[0] == JatsFieldNames.ABSTRACT
+            and entry[1] is None
+        ]
+        first = entries[on_this_line[0]] if on_this_line else None
+        if first is None:
+            continue
+        instance_id = first[2]
+        # The line an abstract begins on is the only one with anything of its
+        # own outside it, and that is the heading above it.  A line it reaches
+        # later is its line, whatever the page printed in between.
+        fill_from = 0 if instance_id in begun else on_this_line[0]
+        fill_to = on_this_line[-1]
+        for index, (token, entry) in enumerate(zip(tokens, entries)):
+            if index < fill_from or index > fill_to or entry is not None:
+                continue
+            annotated.set_token_label(
+                token, JatsFieldNames.ABSTRACT, None, instance_id
+            )
+        begun.add(instance_id)
+
+
+def _join_what_a_line_prints_inside_one_value(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+) -> None:
+    """Words a line sets inside one value belong to that value.
+
+    A page composes the citation it asks to be cited by out of the deposit's
+    own fields, and prints inside it an `et al.` and a peer-review state the
+    deposit never declared, so the value matched the line in three pieces.
+    GROBID writes one: across its 837 header documents the only label a line
+    carries on both sides of background is a list -- two emails joined by `or`,
+    two ISSNs by a slash, two phone numbers -- and never a single value printed
+    around something else.
+
+    So where a line carries the same value on both sides of words nothing has
+    claimed, those words are the value's.  A list keeps its pieces apart
+    because each of its values is an instance of its own, and the page's
+    furniture and the column it sets beside the article keep theirs because
+    they are lines of their own.
+
+    The front matter only.  A reference is a line of fields rather than one
+    value printed whole, and the words between two pieces of its title are the
+    year it appeared and the publisher that issued it.
+    """
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        labelled = [index for index, entry in enumerate(entries) if entry is not None]
+        for left, right in zip(labelled, labelled[1:]):
+            entry = entries[left]
+            if right == left + 1 or entry is None or entry != entries[right]:
+                continue
+            field_name, sub_field_name, instance_id = entry
+            if SEGMENTATION_LABEL_BY_FIELD.get(field_name) != '<header>':
+                continue
+            for index in range(left + 1, right):
+                annotated.set_token_label(
+                    tokens[index], field_name, sub_field_name, instance_id
+                )
+
+
+def _give_a_block_the_marker_it_opens_with(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+) -> None:
+    """A marker a line opens with belongs to what that line says.
+
+    The same digit prints twice where a byline is followed by its affiliations:
+    once beside the name it belongs to, and once at the head of the affiliation
+    block.  The byline has the first, which is where GROBID keeps it, and the
+    block has the second -- so a marker standing at the start of a line the
+    affiliation runs along is the affiliation's, whichever value matched it.
+    """
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        if len(tokens) < 2:
+            continue
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        first, rest = entries[0], entries[1:]
+        if first is None or first[0] != JatsFieldNames.AUTHOR:
+            continue
+        following = next(
+            (entry for entry in rest if entry is not None), None
+        )
+        if following is None or following[0] != JatsFieldNames.AUTHOR_AFF:
+            continue
+        annotated.set_token_label(
+            tokens[0], following[0], following[1], following[2]
+        )
+
+
+def _label_further_titles(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    config: AlignmentConfig,
+    title_values: Sequence[JatsFieldValue],
+    search_end: Optional[int],
+    masked_ranges: List[Tuple[int, int]],
+    instance_id: int,
+) -> None:
+    """Label the title where the front matter prints it again.
+
+    A preprint server sets the title on the page its deposit opens with and
+    again above the abstract, and a reader asked for both.  As with the article's
+    identifier and the names its correspondence block repeats, the second
+    printing is the same value and carries the same label.
+
+    After everything else and over what nothing else claimed, within the front
+    matter and with the page's furniture masked: a journal that prints the title
+    in every running head prints it there as furniture, not as the title again.
+    """
+    for field_value in title_values:
+        instance_id += _label_repeated_matches(
+            annotated, token_index, field_value, config,
+            search_start=0,
+            search_end=search_end,
+            masked_ranges=masked_ranges,
+            instance_id=instance_id,
+        )
+
+
+def _label_further_author_names(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    config: AlignmentConfig,
+    author_values: Sequence[JatsFieldValue],
+    search_end: Optional[int],
+    masked_ranges: List[Tuple[int, int]],
+    instance_id: int,
+) -> None:
+    """Label each author's name where the front matter prints it again.
+
+    A correspondence block names the authors a second time, and GROBID labels
+    that name as a byline of its own: 100 of its 835 header documents carry a
+    `<docAuthor>` holding a name another one already holds, and the words
+    introducing it -- "Contact", "Correspondence to" -- stay background.
+
+    By the bare name rather than the byline's text, because the markers the
+    byline carries are not printed again.  After everything else, and over what
+    nothing else claimed: the copyright line names the first author, the
+    citation names three of them and the contribution statement names them all,
+    and each of those is a label of its own.
+    """
+    for field_value in author_values:
+        instance_id += _label_repeated_matches(
+            annotated, token_index,
+            JatsFieldValue(
+                text=field_value.fallback_text or field_value.text,
+                field_name=field_value.field_name,
+                sub_field_name=field_value.sub_field_name,
+            ),
+            config,
+            search_start=0,
+            search_end=search_end,
+            masked_ranges=masked_ranges,
+            instance_id=instance_id,
+        )
 
 
 def _pre_anchor_indices(
@@ -1535,6 +2141,16 @@ def _has_mid_token_within_gap_blocks(
     return False
 
 
+def _overlaps(
+    ranges: Sequence[Tuple[int, int]], block_start: int, block_end: int
+) -> bool:
+    """Whether a matched block reaches into any of these ranges at all."""
+    return any(
+        start < block_end and block_start < end
+        for start, end in ranges
+    )
+
+
 def _lies_in_furniture(
     token_index: _TokenIndex, block_start: int, block_end: int
 ) -> bool:
@@ -1581,36 +2197,23 @@ def _gap_between_blocks(
     return gap
 
 
-def _label_tokens_for_blocks(
-    annotated: JatsAnnotatedLayoutDocument,
+def _iter_chain_cover(
     token_index: _TokenIndex,
     block_ranges: List[Tuple[int, int]],
-    field_name: str,
-    sub_field_name: Optional[str],
-    instance_id: int,
-) -> None:
-    """Label tokens using anchor+chain strategy (see module constants for rationale).
-
-    The forward anchor+chain is extended by a backward pre-anchor pass: non-anchor
-    blocks that immediately precede the first anchor (tight gap ≤ _MAX_HAYSTACK_GAP_TO_FILL)
-    are included, so dense sub-tokens like DOI segments ("10", ".", "1128", "/")
-    that appear before the first long segment are not silently dropped.  Blocks with
-    a larger gap before the first anchor (sidebar text, page headers) remain excluded.
-
-    Pre-anchor blocks that start mid-token (tail characters of a longer token
-    incidentally matching the needle start) are skipped to prevent overwriting labels
-    already set by earlier field values on that token.
-    """
-    pre_anchor = _pre_anchor_indices(block_ranges)
-    if pre_anchor is None:
-        # No anchor blocks at all: label everything so short field values are preserved.
-        for block_start, block_end in block_ranges:
-            for token in token_index.tokens_in_range(block_start, block_end):
-                annotated.set_token_label(token, field_name, sub_field_name, instance_id)
-        return
+    pre_anchor: Set[int],
+    skip_side_columns: bool,
+) -> Iterator[Tuple[int, int]]:
+    """What the chain gives the value, as the haystack each of its blocks covers."""
     prev_included_end: Optional[int] = None
     for i, (block_start, block_end) in enumerate(block_ranges):
         if _lies_in_furniture(token_index, block_start, block_end):
+            continue
+        if skip_side_columns and _overlaps(
+            token_index.side_column_ranges, block_start, block_end
+        ):
+            # A value that runs down the article's column is not the panel the
+            # page sets beside it, so a few characters that read like its words
+            # there are a coincidence, the way the running foot's are.
             continue
         is_anchor = (block_end - block_start) >= _MIN_ANCHOR_BLOCK_SIZE
         within_gap = (
@@ -1641,9 +2244,51 @@ def _label_tokens_for_blocks(
             else block_start
         )
         assert fill_start is not None
-        for token in token_index.tokens_in_range(fill_start, block_end):
-            annotated.set_token_label(token, field_name, sub_field_name, instance_id)
+        yield fill_start, block_end
         prev_included_end = block_end
+
+
+def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    block_ranges: List[Tuple[int, int]],
+    field_name: str,
+    sub_field_name: Optional[str],
+    instance_id: int,
+    skip_side_columns: bool = False,
+    protect_fields: FrozenSet[str] = frozenset(),
+) -> None:
+    """Label tokens using anchor+chain strategy (see module constants for rationale).
+
+    The forward anchor+chain is extended by a backward pre-anchor pass: non-anchor
+    blocks that immediately precede the first anchor (tight gap ≤ _MAX_HAYSTACK_GAP_TO_FILL)
+    are included, so dense sub-tokens like DOI segments ("10", ".", "1128", "/")
+    that appear before the first long segment are not silently dropped.  Blocks with
+    a larger gap before the first anchor (sidebar text, page headers) remain excluded.
+
+    Pre-anchor blocks that start mid-token (tail characters of a longer token
+    incidentally matching the needle start) are skipped to prevent overwriting labels
+    already set by earlier field values on that token.
+    """
+    pre_anchor = _pre_anchor_indices(block_ranges)
+    covered = (
+        # No anchor blocks at all: label everything so short field values are
+        # preserved.
+        block_ranges if pre_anchor is None
+        else _iter_chain_cover(
+            token_index, block_ranges, pre_anchor, skip_side_columns
+        )
+    )
+    for start, end in covered:
+        for token in token_index.tokens_in_range(start, end):
+            if annotated.get_token_field(token) in protect_fields:
+                # The marker closing a byline is the author's: GROBID keeps it
+                # inside the author on 434 of its 1,344 bylines and outside one
+                # on 15.  An affiliation opens with the same digit, and the two
+                # printings sit next to each other, so the one the byline has
+                # already taken is not the one at the head of the block.
+                continue
+            annotated.set_token_label(token, field_name, sub_field_name, instance_id)
 
 
 def _fill_sub_field_gaps(
@@ -1695,17 +2340,23 @@ def _fill_sub_field_gaps(
             pending = []
 
 
-def _attach_sub_field_trailing_periods(
+def _attach_sub_field_trailing_separators(
     annotated: JatsAnnotatedLayoutDocument,
     tokens: List[LayoutToken],
     field_name: str,
     sub_field_name: str,
+    separators: FrozenSet[str] = frozenset({'.'}),
 ) -> None:
-    """Relabel a bare '.' token that immediately follows a sub_field-labeled token.
+    """Relabel a bare separator token that immediately follows a sub_field token.
 
-    The PDF tokeniser splits 'D.' into 'D' and '.'.  The period is not in the
-    JATS text, so SW and gap-fill logic miss it.  This pass attaches such periods,
+    The PDF tokeniser splits 'D.' into 'D' and '.'.  The separator is not in the
+    JATS text, so SW and gap-fill logic miss it.  This pass attaches it,
     mirroring reference_annotator.get_suffix_extended_token_tags in the old tool.
+
+    The same shape ends a heading: a page printing `RESUMO:` sets the colon with
+    the heading rather than with the abstract, which is where GROBID has it --
+    none of the 880 abstracts its corpus carries opens with a colon and 46 of
+    them open straight after one.
     """
     last_was_sub = False
     last_instance = 0
@@ -1722,7 +2373,7 @@ def _attach_sub_field_trailing_periods(
         elif (
             last_was_sub
             and (entry is None or entry[0] == field_name)
-            and normalize_for_alignment(token.text or '') == '.'
+            and normalize_for_alignment(token.text or '') in separators
         ):
             annotated.set_token_label(token, field_name, sub_field_name, last_instance)
         else:
@@ -1880,6 +2531,7 @@ class LayoutDocumentJatsAligner:
         body_content_end = 0
         availability_floor = 0
         front_matter_end = 0
+        abstract_end = 0
         keywords_floor = 0
         reference_floor = 0
         parent_match_by_field: Dict[str, Tuple[int, int, int]] = {}
@@ -1901,6 +2553,25 @@ class LayoutDocumentJatsAligner:
         # declaration: one that names the authors and nothing else matches the
         # byline as readily as it matches itself.
         byline_match_ranges: List[Tuple[int, int]] = []
+        # Where the title was placed, masked out of the search for the citation
+        # the renderer composes: the title is most of that line, and on a paper
+        # with two authors the title alone satisfies it.
+        title_match_ranges: List[Tuple[int, int]] = []
+        # Every range a value was placed over, and the names the byline holds: a
+        # name the front matter prints again is labelled last of all, over what
+        # nothing else has claimed.
+        matched_ranges: List[Tuple[int, int]] = []
+        # Where a note was placed.  A note carries no label of its own -- it is
+        # matched so that the region reads its lines as front matter -- so the
+        # name the page prints inside one is still a name nothing has claimed.
+        note_match_ranges: List[Tuple[int, int]] = []
+        author_name_values: List[JatsFieldValue] = []
+        title_values: List[JatsFieldValue] = []
+        # Where each per-author field has been placed already.
+        per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+        # What each anchor value answered, so that it can be asked again once
+        # every other value has answered too.
+        anchor_matches: List[_AnchorMatch] = []
 
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
@@ -1908,7 +2579,7 @@ class LayoutDocumentJatsAligner:
                 fv, last_match_end, body_floor, body_content_end,
                 front_matter_end, keywords_floor, reference_floor,
                 parent_match_by_field, post_body_text_end,
-                anchor_match_end_by_field,
+                anchor_match_end_by_field, abstract_end,
             )
             window = expected_window.get(value_index)
             if window is not None:
@@ -1949,6 +2620,13 @@ class LayoutDocumentJatsAligner:
                 else:
                     search_start = window[0]
                     search_end = window[1] if window[1] > window[0] + 1 else None
+            if (
+                fv.sub_field_name == JatsSubFieldNames.SELF_CITATION_SOURCE
+                and fv.field_name not in parent_match_by_field
+            ):
+                # Where it appeared is what every page's running foot carries,
+                # so it is taken from inside the citation or not at all.
+                continue
             masked: Optional[List[Tuple[int, int]]]
             if fv.sub_field_name is not None:
                 masked = sub_field_masked_ranges.get(fv.field_name)
@@ -1961,6 +2639,16 @@ class LayoutDocumentJatsAligner:
                 masked = reference_match_ranges
             else:
                 masked = None
+            if fv.field_name == JatsFieldNames.SELF_CITATION:
+                masked = (masked or []) + title_match_ranges
+            if fv.sub_field_name is None and fv.field_name in _PER_AUTHOR_FIELDS:
+                # Where this field already matched, because the page prints one
+                # of these per author and the JATS declares one per author: the
+                # second value saying what the first said is the second
+                # printing, and an affiliation printed inside another author's
+                # -- one department of the institute the first names in full --
+                # belongs to the line under its own author's name.
+                masked = (masked or []) + per_author_match_ranges[fv.field_name]
             # The cover restates the article's title, its authors and its
             # identifier, and a value is matched once: matched there, the
             # article's own front matter is left with nothing to match it, and
@@ -2040,8 +2728,13 @@ class LayoutDocumentJatsAligner:
                 and fv.sub_field_name is None
                 and window is None
             ):
+                # With the same mask the search it replaces was given.  The
+                # cover is the one place that search deliberately refused, and
+                # a value printed only there belongs to the publisher's deposit
+                # page rather than to the article's own front matter.
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config, search_start=0, search_end=None,
+                    masked_ranges=masked,
                 )
             # Body-content incremental constraint is also soft: body_content_end
             # can jump forward when a nested sub-section (e.g. a mathematical
@@ -2103,9 +2796,11 @@ class LayoutDocumentJatsAligner:
                     masked_ranges=masked,
                     skip_furniture=skip_furniture,
                 )
-            # Sub-field fallback: retry with fallback_text (e.g. surname only)
-            # when the primary JATS name text does not match the PDF text.
-            if match_range is None and fv.sub_field_name is not None and fv.fallback_text:
+            # Fallback: retry with fallback_text when the primary JATS text
+            # does not match the PDF text.  A name the page abbreviates is
+            # looked for by its surname; an ORCID the page prints bare is
+            # looked for without the resolver in front of it.
+            if match_range is None and fv.fallback_text:
                 fallback_fv = JatsFieldValue(
                     text=fv.fallback_text,
                     field_name=fv.field_name,
@@ -2117,13 +2812,18 @@ class LayoutDocumentJatsAligner:
                     masked_ranges=masked,
                     skip_furniture=skip_furniture,
                 )
-                if match_range is not None:
+                if match_range is not None and fv.sub_field_name is not None:
                     # Extend surname-only match with given-names initial from
                     # the original needle (e.g. "Y.-H." after "HSIEH").
                     match_range = _extend_match_with_given_names_tail(
                         match_range, fv.text, fv.fallback_text, token_index,
                     )
             if match_range is None:
+                LOGGER.debug(
+                    'unmatched: field=%s sub=%s range=%s..%s window=%s text=%r',
+                    fv.field_name, fv.sub_field_name, search_start, search_end,
+                    window, fv.text[:60],
+                )
                 if fv.sub_field_name is None:
                     missed_by_field[fv.field_name] = (
                         missed_by_field.get(fv.field_name, 0) + 1
@@ -2131,6 +2831,12 @@ class LayoutDocumentJatsAligner:
                 continue
             matched_count += 1
             a_start, a_end, block_ranges = match_range
+            if fv.field_name == JatsFieldNames.SELF_CITATION:
+                LOGGER.debug(
+                    'citation matched sub=%s at %s..%s: %r',
+                    fv.sub_field_name, a_start, a_end,
+                    token_index.haystack[max(0, a_start - 25):a_end + 25],
+                )
             # A document written in more than one language prints a title and an
             # abstract once per language, and the JATS declares the variants in
             # neither the page's order nor a consistent one: one document prints
@@ -2162,6 +2868,8 @@ class LayoutDocumentJatsAligner:
                 body_floor = max(body_floor, a_end)
             if fv.field_name in _FRONT_MATTER_END_FIELDS:
                 front_matter_end = max(front_matter_end, a_end)
+            if fv.field_name in _ABSTRACT_END_FIELDS:
+                abstract_end = max(abstract_end, a_end)
             if (
                 fv.field_name in _KEYWORDS_SECTION_ANCHOR_FIELDS
                 or fv.field_name in _KEYWORDS_FIELDS
@@ -2177,6 +2885,17 @@ class LayoutDocumentJatsAligner:
                 reference_match_ranges.append((a_start, a_end))
             if fv.field_name == JatsFieldNames.AUTHOR:
                 byline_match_ranges.append((a_start, a_end))
+            if fv.field_name == JatsFieldNames.TITLE:
+                title_match_ranges.append((a_start, a_end))
+            matched_ranges.append((a_start, a_end))
+            if fv.sub_field_name is None and fv.field_name in _UNLABELLED_NOTE_FIELDS:
+                note_match_ranges.append((a_start, a_end))
+            if fv.sub_field_name is None and fv.field_name in _PER_AUTHOR_FIELDS:
+                per_author_match_ranges[fv.field_name].append((a_start, a_end))
+            if fv.sub_field_name == JatsSubFieldNames.AUTHOR_NAME:
+                author_name_values.append(fv)
+            if fv.sub_field_name is None and fv.field_name == JatsFieldNames.TITLE:
+                title_values.append(fv)
             if fv.sub_field_name is None:
                 prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
                 prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)
@@ -2203,14 +2922,72 @@ class LayoutDocumentJatsAligner:
                         ref_id_subfield_end.get(fv.field_name, 0), a_end
                     )
             instance_id = instance_by_field.get(fv.field_name, 0)
+            if fv.sub_field_name is None and fv.field_name in _ANCHOR_FIELDS:
+                anchor_matches.append(_AnchorMatch(
+                    field_value=fv,
+                    masked_ranges=list(masked or []),
+                    own_range=(a_start, a_end),
+                    instance_id=instance_id,
+                ))
             if fv.sub_field_name is None and fv.field_name == JatsFieldNames.REFERENCE:
                 annotated.reference_match_by_instance[instance_id] = (
                     fv.text, a_end - a_start
                 )
             _label_tokens_for_blocks(
                 annotated, token_index, block_ranges,
-                fv.field_name, fv.sub_field_name, instance_id,
+                fv.field_name,
+                (
+                    None if fv.sub_field_name in _SEARCH_ONLY_SUB_FIELDS
+                    else fv.sub_field_name
+                ),
+                instance_id,
+                skip_side_columns=fv.field_name in _ANCHOR_FIELDS,
+                protect_fields=(
+                    _BYLINE_FIELDS
+                    if fv.field_name == JatsFieldNames.AUTHOR_AFF else frozenset()
+                ),
             )
+            if fv.field_name in _REPEATED_FRONT_MATTER_FIELDS and fv.sub_field_name is None:
+                # To the end of the document rather than to the end of the front
+                # matter, which is the abstract and a buffer here and stops
+                # short of the second page a preprint server's metadata runs
+                # onto.  Every printed occurrence of the article's own
+                # identifier is inside its header region -- 2 or 4 lines on each
+                # of `ore`'s documents and no line of any other region -- and
+                # the furniture is masked, which is where a journal that prints
+                # it under every page would put it.
+                instance_by_field[fv.field_name] = instance_id + _label_repeated_matches(
+                    annotated, token_index, fv, self.config,
+                    search_start=a_end, search_end=None,
+                    masked_ranges=(masked or []) + token_index.furniture_ranges,
+                    instance_id=instance_id,
+                )
+
+        _label_further_titles(
+            annotated, token_index, self.config, title_values,
+            search_end=(
+                front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
+            ),
+            masked_ranges=(
+                matched_ranges + token_index.cover_ranges + token_index.furniture_ranges
+            ),
+            instance_id=instance_by_field.get(JatsFieldNames.TITLE, 0),
+        )
+
+        _label_further_author_names(
+            annotated, token_index, self.config, author_name_values,
+            search_end=(
+                front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
+            ),
+            masked_ranges=(
+                [
+                    match_range for match_range in matched_ranges
+                    if match_range not in note_match_ranges
+                ]
+                + token_index.cover_ranges + token_index.furniture_ranges
+            ),
+            instance_id=instance_by_field.get(JatsFieldNames.AUTHOR, 0),
+        )
 
         # Merge per-name REFERENCE_AUTHOR spans into a single <author> element.
         # Separator tokens (commas, semicolons, initials with periods) between
@@ -2220,10 +2997,29 @@ class LayoutDocumentJatsAligner:
             annotated, token_index.tokens,
             JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR,
         )
-        _attach_sub_field_trailing_periods(
+        _attach_sub_field_trailing_separators(
             annotated, token_index.tokens,
             JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR,
         )
+        # The punctuation a heading is printed with belongs to the heading.
+        _attach_sub_field_trailing_separators(
+            annotated, token_index.tokens,
+            JatsFieldNames.ABSTRACT, JatsSubFieldNames.ABSTRACT_TITLE,
+            separators=_HEADING_SEPARATORS,
+        )
+
+        # Last of all, because it labels only what nothing has claimed: every
+        # other pass has to have finished claiming before it can know that.
+        _relabel_anchors_over_what_nothing_explains(
+            annotated, token_index, self.config, anchor_matches, matched_ranges,
+        )
+
+        # An abstract is a block, so it has the whole of each line it runs down.
+        _fill_abstract_lines(annotated, layout_document)
+        _give_a_block_the_marker_it_opens_with(annotated, layout_document)
+        # After every pass that claims, because what it fills is what the page
+        # prints inside a value and nothing else explains.
+        _join_what_a_line_prints_inside_one_value(annotated, layout_document)
 
         total = len(field_values)
         if missed_by_field:
