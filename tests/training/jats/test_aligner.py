@@ -2500,3 +2500,58 @@ class TestAValueLyingAcrossAWindowBoundary:
             if annotated.get_token_field(token) == JatsFieldNames.FUNDING
         }
         assert {'spring', 'report'} <= labelled
+
+
+class TestAnAuthorNamedAgainInAShortenedForm:
+    """A page may shorten an author's middle names to initials.
+
+    A line of ORCIDs sets `Ana B. Rivera` where the deposit declares
+    `Ana Beatriz Rivera`, and GROBID gives that form a byline of its
+    own, as it does the name a correspondence block names a second time.
+    """
+
+    NAMES = [
+        ('Ana Beatriz Rivera', 'Ana B. Rivera'),
+        ('Kofi Anum Okonkwo', 'Kofi A. Okonkwo'),
+    ]
+    BYLINE = 'Ana Beatriz Rivera 1 , Kofi Anum Okonkwo 2'
+
+    def _align(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'ORCIDs: Ana B. Rivera (0000-0002-1111-2222), Kofi A. Okonkwo'
+            ' (0000-0003-3333-4444)',
+            'The marshes north of the estuary were surveyed over four summers.',
+        )
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+        ]
+        for full, short in self.NAMES:
+            field_values.append(JatsFieldValue(
+                text=full,
+                field_name=JatsFieldNames.AUTHOR,
+                sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
+                fallback_text=full,
+                shortened_text=short,
+            ))
+        field_values.append(_fv(self.BYLINE, JatsFieldNames.AUTHOR))
+        field_values.append(_fv(
+            'The marshes north of the estuary were surveyed over four summers.',
+            JatsFieldNames.ABSTRACT,
+        ))
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _author_tokens(self) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        }
+
+    def test_the_shortened_name_is_the_author(self):
+        labelled = self._author_tokens()
+        assert {'Ana', 'B', 'Rivera', 'Kofi', 'A', 'Okonkwo'} <= labelled
+
+    def test_the_words_introducing_the_line_stay_outside_it(self):
+        assert 'ORCIDs' not in self._author_tokens()

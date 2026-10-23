@@ -1998,6 +1998,16 @@ def _label_further_titles(  # pylint: disable=too-many-arguments
         )
 
 
+def _author_name_ranges(
+    annotated: JatsAnnotatedLayoutDocument, token_index: _TokenIndex
+) -> List[Tuple[int, int]]:
+    """Where an author's name has been labelled so far."""
+    return token_index.get_token_char_ranges({
+        index for index, token in enumerate(token_index.tokens)
+        if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+    })
+
+
 def _label_further_author_names(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -2019,6 +2029,13 @@ def _label_further_author_names(  # pylint: disable=too-many-arguments
     nothing else claimed: the copyright line names the first author, the
     citation names three of them and the contribution statement names them all,
     and each of those is a label of its own.
+
+    And by the form a page shortens the name to, where it declares more than
+    one given name: a line of ORCIDs sets `Ana B. Rivera` where the
+    deposit declares `Ana Beatriz Rivera`, and GROBID gives that form a
+    byline of its own.  Over what the name itself has not already taken, because
+    the two forms share most of their characters and the shortened one would
+    otherwise be found inside the byline the full one is holding.
     """
     for field_value in author_values:
         instance_id += _label_repeated_matches(
@@ -2032,6 +2049,26 @@ def _label_further_author_names(  # pylint: disable=too-many-arguments
             search_start=0,
             search_end=search_end,
             masked_ranges=masked_ranges,
+            instance_id=instance_id,
+        )
+    shortened = [
+        field_value for field_value in author_values if field_value.shortened_text
+    ]
+    if not shortened:
+        return
+    taken = sorted(masked_ranges + _author_name_ranges(annotated, token_index))
+    for field_value in shortened:
+        instance_id += _label_repeated_matches(
+            annotated, token_index,
+            JatsFieldValue(
+                text=field_value.shortened_text or '',
+                field_name=field_value.field_name,
+                sub_field_name=field_value.sub_field_name,
+            ),
+            config,
+            search_start=0,
+            search_end=search_end,
+            masked_ranges=taken,
             instance_id=instance_id,
         )
 
