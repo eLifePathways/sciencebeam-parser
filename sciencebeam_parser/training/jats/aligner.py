@@ -1922,6 +1922,32 @@ def _fill_abstract_lines(
 _OPENING_SEPARATORS: FrozenSet[str] = frozenset({',', ';', '-'})
 
 
+def _iter_shortened_affiliations(text: str) -> Iterator[str]:
+    """The forms a panel sets an affiliation in, longest first.
+
+    A deposit declares the departments in front of the institution and the
+    region between the city and the country; the panel sets neither.  So each
+    form is a run of the declared parts with the leading ones dropped, with and
+    without the part before the last, and two parts is the least that still
+    names a place.
+
+    Longest first, so the fullest form the page actually sets is the one taken.
+    """
+    parts = [part.strip() for part in text.split(',') if part.strip()]
+    seen: Set[str] = set()
+    for dropped in range(len(parts) - 1):
+        kept = parts[dropped:]
+        for without_region in (False, True):
+            form_parts = kept[:-2] + kept[-1:] if without_region else kept
+            if len(form_parts) < 2:
+                continue
+            form = ', '.join(form_parts)
+            if form == text or form in seen:
+                continue
+            seen.add(form)
+            yield form
+
+
 def _release_the_separator_a_value_opens_with(
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -2887,6 +2913,19 @@ class LayoutDocumentJatsAligner:
             # forward from any of them has already passed it.  Only where
             # nothing was found at all: a declaration that is printed after the
             # body has been found there, and this never sees it.
+            if match_range is None and fv.field_name == JatsFieldNames.REVIEWER_AFF:
+                # The panel sets a shortened form of it, so the forms are
+                # tried and the one the page sets is the one that matches.
+                for form in _iter_shortened_affiliations(fv.text):
+                    match_range = _fuzzy_match_field_value(
+                        token_index,
+                        JatsFieldValue(text=form, field_name=fv.field_name),
+                        field_config,
+                        search_start=search_start, search_end=search_end,
+                        masked_ranges=masked,
+                    )
+                    if match_range is not None:
+                        break
             if (
                 match_range is None
                 and fv.sub_field_name is None
