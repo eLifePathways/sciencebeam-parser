@@ -659,7 +659,7 @@ class TestSubArticle:
             '<article-id pub-id-type="doi">10.21956/openreseurope.1.r1</article-id>'
             '<contrib-group>'
             '<contrib contrib-type="author"><name>'
-            '<surname>Heine</surname><given-names>Martin</given-names></name></contrib>'
+            '<surname>Brandt</surname><given-names>Nadia</given-names></name></contrib>'
             '<aff id="a1"><label>1</label>University Medical Centre Utrecht</aff>'
             '</contrib-group>'
             '<permissions><license><license-p>This is an open access peer review report.'
@@ -671,12 +671,12 @@ class TestSubArticle:
         )
         sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
         texts = [v.text for v in sub]
-        assert 'Martin Heine' in texts
+        assert 'Nadia Brandt' in texts
         assert 'University Medical Centre Utrecht' in texts
         assert 'This is an open access peer review report.' in texts
         assert '10.21956/openreseurope.1.r1' not in texts
         by_text = {v.text: v for v in sub}
-        assert by_text['Martin Heine'].exact_only
+        assert by_text['Nadia Brandt'].exact_only
         assert by_text['University Medical Centre Utrecht'].exact_only
         assert by_text['This is an open access peer review report.'].exact_only
 
@@ -1088,3 +1088,29 @@ class TestManuscriptType:
         assert [
             v.text for v in fvs if v.field_name == JatsFieldNames.MANUSCRIPT_TYPE
         ] == ['Method Article']
+
+
+class TestTheNameAPageShortens:
+    """An author declared with more than one given name is offered shortened too."""
+
+    @staticmethod
+    def _values(given: str, surname: str):
+        root = etree.fromstring(f'''
+            <article><front><article-meta><contrib-group>
+              <contrib contrib-type="author"><name>
+                <surname>{surname}</surname><given-names>{given}</given-names>
+              </name></contrib>
+            </contrib-group></article-meta></front></article>
+        '''.encode('utf-8'))
+        return [
+            value for value in JatsFieldExtractor().iter_field_values(root)
+            if value.sub_field_name == JatsSubFieldNames.AUTHOR_NAME
+        ]
+
+    def test_the_middle_names_become_initials(self):
+        values = self._values('Ana Beatriz', 'Rivera')
+        assert [value.shortened_text for value in values] == ['Ana B. Rivera']
+
+    def test_a_name_of_two_parts_is_not_offered_twice(self):
+        values = self._values('Ana', 'Rivera')
+        assert [value.shortened_text for value in values] == [None]

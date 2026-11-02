@@ -291,14 +291,14 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         Smith-Waterman stops when extending would not raise the score, and a
         one-character opening separated by a gap scores net zero.
         """
-        doc = _make_doc('J.J. Leahy and Nidal Khalaf', 'Introduction Body')
-        fvs = [_fv('J.J. Leahy', JatsFieldNames.AUTHOR)]
+        doc = _make_doc('R.J. Okonkwo and Ana Rivera', 'Introduction Body')
+        fvs = [_fv('R.J. Okonkwo', JatsFieldNames.AUTHOR)]
         annotated = self._align(doc, fvs)
         labelled = [
             token.text for token in list(doc.iter_all_lines())[0].tokens
             if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
         ]
-        assert labelled[:2] == ['J', '.']
+        assert labelled[:2] == ['R', '.']
 
     def test_a_name_the_front_matter_prints_again_is_labelled_again(self):
         """A correspondence block names the authors a second time."""
@@ -832,17 +832,17 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         )
 
     def test_author_gap_fill_bridges_unlabeled_period_before_et_al(self):
-        # When "Chowell G" and "et al." are separate needles, the "." between "G" and
+        # When "Okonkwo R" and "et al." are separate needles, the "." between "R" and
         # "et al." has no label from SW (parent bibl text skips "et al."). The gap fill
         # must bridge it so all tokens become one <author> element.
-        doc = _make_doc('CHOWELL, G. et al. Phenomenological models 2016')
+        doc = _make_doc('OKONKWO, R. et al. Growth models of an epidemic 2016')
         fvs = [
-            _fv('CHOWELL G Phenomenological models 2016', JatsFieldNames.REFERENCE),
+            _fv('OKONKWO R Growth models of an epidemic 2016', JatsFieldNames.REFERENCE),
             JatsFieldValue(
-                text='Chowell G',
+                text='Okonkwo R',
                 field_name=JatsFieldNames.REFERENCE,
                 sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
-                fallback_text='Chowell',
+                fallback_text='Okonkwo',
             ),
             JatsFieldValue(
                 text='et al.',
@@ -852,25 +852,25 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         ]
         annotated = self._align(doc, fvs)
         tokens = list(doc.iter_all_tokens())
-        period_after_g = tokens[3]  # 'CHOWELL'=0, ','=1, 'G'=2, '.'=3
-        assert period_after_g.text == '.', f'Expected "." got {period_after_g.text!r}'
-        sub = annotated.get_token_sub_field(period_after_g)
+        period_after_r = tokens[3]  # 'OKONKWO'=0, ','=1, 'R'=2, '.'=3
+        assert period_after_r.text == '.', f'Expected "." got {period_after_r.text!r}'
+        sub = annotated.get_token_sub_field(period_after_r)
         assert sub == JatsSubFieldNames.REFERENCE_AUTHOR, (
-            '"." after G should be labeled via gap fill'
+            '"." after R should be labeled via gap fill'
         )
 
     def test_author_gap_fill_bridges_middle_initial_before_et_al(self):
-        # "Vasconcelos GL" with "et al." as a separate needle — the ". L." between
-        # "G" and "et al." in the PDF are not in the JATS author text and must be
+        # "Brandt NL" with "et al." as a separate needle — the ". L." between
+        # "N" and "et al." in the PDF are not in the JATS author text and must be
         # bridged by gap fill so all tokens merge into one <author> element.
-        doc = _make_doc('VASCONCELOS, G. L. et al. Modelling fatality 2020')
+        doc = _make_doc('BRANDT, N. L. et al. Counting the herons 2020')
         fvs = [
-            _fv('VASCONCELOS GL Modelling fatality 2020', JatsFieldNames.REFERENCE),
+            _fv('BRANDT NL Counting the herons 2020', JatsFieldNames.REFERENCE),
             JatsFieldValue(
-                text='Vasconcelos GL',
+                text='Brandt NL',
                 field_name=JatsFieldNames.REFERENCE,
                 sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
-                fallback_text='Vasconcelos',
+                fallback_text='Brandt',
             ),
             JatsFieldValue(
                 text='et al.',
@@ -2034,10 +2034,10 @@ class TestReferenceInterruptedByPageFurniture:
 
     FOOT = 'Page 17 of 24 Open Research Europe 2025 5:251 Last updated 13 Mar 2026'
     TITLE = (
-        'Significance of Nonmetallic Inclusions for the clogging phenomenon in'
-        ' continuous casting of steel - a review.'
+        'Significance of the reed bed for the nesting behaviour of the heron on'
+        ' the marshes north of the estuary - a review.'
     )
-    REFERENCE = 'Michelic S, Bernhard C: ' + TITLE + ' Steel Res Int. 2022; 93(7): 2200086.'
+    REFERENCE = 'Okonkwo R, Brandt N: ' + TITLE + ' Marshland Reports 2022; 93(7): 2200086.'
 
     def _align(self):
         doc = _paged_doc([
@@ -2047,13 +2047,13 @@ class TestReferenceInterruptedByPageFurniture:
             ],
             [
                 ('Earlier reference text that fills the page before the one of interest', 300.0),
-                ('34. Michelic S, Bernhard C: Significance of Nonmetallic'
-                 ' Inclusions for the', 700.0),
+                ('34. Okonkwo R, Brandt N: Significance of the reed bed'
+                 ' for the nesting', 700.0),
                 (self.FOOT, 950.0),
             ],
             [
-                ('clogging phenomenon in continuous casting of steel - a review.'
-                 ' Steel Res Int. 2022; 93(7): 2200086.', 300.0),
+                ('behaviour of the heron on the marshes north of the estuary - a review.'
+                 ' Marshland Reports 2022; 93(7): 2200086.', 300.0),
                 (self.FOOT, 950.0),
             ],
         ])
@@ -2078,7 +2078,7 @@ class TestReferenceInterruptedByPageFurniture:
         doc, annotated = self._align()
         labelled = self._title_tokens(doc, annotated)
         assert 'Significance' in labelled, 'the half before the page break'
-        assert 'clogging' in labelled, 'the half after it'
+        assert 'behaviour' in labelled, 'the half after it'
 
     def test_the_running_foot_is_not_part_of_the_title(self):
         doc, annotated = self._align()
@@ -2107,10 +2107,10 @@ class TestExtendPartialReferenceMatches:
 
     # The half below the interruption is the longer one, so it is the half the
     # first pass keeps -- which is the shape the defect takes on the page.
-    FIRST_HALF = 'Gonzales AL Hancock JT effects of'
+    FIRST_HALF = 'Okonkwo RJ Brandt NL effects of'
     SECOND_HALF = (
-        'exposure to Facebook on self-esteem a journal of some length '
-        'Cyberpsychol Behav Soc Netw volume 14 issue 1 pages 79 to 83 2011'
+        'water level on the nesting of the heron a journal of some length '
+        'Marshland Reports volume 14 issue 1 pages 79 to 83 2011'
     )
     REFERENCE_TEXT = FIRST_HALF + ' ' + SECOND_HALF
 
@@ -2500,3 +2500,58 @@ class TestAValueLyingAcrossAWindowBoundary:
             if annotated.get_token_field(token) == JatsFieldNames.FUNDING
         }
         assert {'spring', 'report'} <= labelled
+
+
+class TestAnAuthorNamedAgainInAShortenedForm:
+    """A page may shorten an author's middle names to initials.
+
+    A line of ORCIDs sets `Ana B. Rivera` where the deposit declares
+    `Ana Beatriz Rivera`, and GROBID gives that form a byline of its
+    own, as it does the name a correspondence block names a second time.
+    """
+
+    NAMES = [
+        ('Ana Beatriz Rivera', 'Ana B. Rivera'),
+        ('Kofi Anum Okonkwo', 'Kofi A. Okonkwo'),
+    ]
+    BYLINE = 'Ana Beatriz Rivera 1 , Kofi Anum Okonkwo 2'
+
+    def _align(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'ORCIDs: Ana B. Rivera (0000-0002-1111-2222), Kofi A. Okonkwo'
+            ' (0000-0003-3333-4444)',
+            'The marshes north of the estuary were surveyed over four summers.',
+        )
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+        ]
+        for full, short in self.NAMES:
+            field_values.append(JatsFieldValue(
+                text=full,
+                field_name=JatsFieldNames.AUTHOR,
+                sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
+                fallback_text=full,
+                shortened_text=short,
+            ))
+        field_values.append(_fv(self.BYLINE, JatsFieldNames.AUTHOR))
+        field_values.append(_fv(
+            'The marshes north of the estuary were surveyed over four summers.',
+            JatsFieldNames.ABSTRACT,
+        ))
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _author_tokens(self) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        }
+
+    def test_the_shortened_name_is_the_author(self):
+        labelled = self._author_tokens()
+        assert {'Ana', 'B', 'Rivera', 'Kofi', 'A', 'Okonkwo'} <= labelled
+
+    def test_the_words_introducing_the_line_stay_outside_it(self):
+        assert 'ORCIDs' not in self._author_tokens()

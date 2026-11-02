@@ -32,6 +32,9 @@ class JatsFieldValue:
     sub_field_name: Optional[str] = None
     fallback_text: Optional[str] = None
     exact_only: bool = False
+    # The name as a page shortens it, which only the pass looking for an author
+    # named again reads.
+    shortened_text: Optional[str] = None
 
 
 def _iter_sub_article_stub_texts(
@@ -283,7 +286,7 @@ def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
 
 def _contrib_group_author_texts(
     contrib_group: etree._Element
-) -> List[Tuple[str, str]]:
+) -> List[Tuple[str, str, Optional[str]]]:
     """Each author of the group, as the byline prints them and as the rest of
     the page does.
 
@@ -293,7 +296,7 @@ def _contrib_group_author_texts(
     `<author>`, the markers between the names included.  A correspondence block
     prints the name without them, so the bare name is carried beside it.
     """
-    author_parts: List[Tuple[str, str]] = []
+    author_parts: List[Tuple[str, str, Optional[str]]] = []
     for contrib in contrib_group.xpath(
         'contrib[not(@contrib-type) or @contrib-type="author"]'
     ):
@@ -314,7 +317,11 @@ def _contrib_group_author_texts(
             )
             if x.text and x.text.strip()
         ]
-        author_parts.append((' '.join([name_text] + markers), name_text))
+        author_parts.append((
+            ' '.join([name_text] + markers),
+            name_text,
+            _shortened_name(given, surname),
+        ))
     return author_parts
 
 
@@ -345,6 +352,20 @@ _LEAD_IN_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
     JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
 })
+
+
+def _shortened_name(given: str, surname: str) -> Optional[str]:
+    """The name as a page shortens it, keeping the first given name in full.
+
+    A line of ORCIDs sets `Ana B. Rivera` where the deposit declares
+    `Ana Beatriz Rivera`, and GROBID gives that form a byline of its own.
+    Only where there is something to shorten, so a name of two parts is not
+    offered twice.
+    """
+    parts = [part for part in re.split(r'\s+', given) if part]
+    if len(parts) < 2 or not surname:
+        return None
+    return ' '.join([parts[0]] + [f'{part[0]}.' for part in parts[1:]] + [surname])
 
 
 def _name_initials(name_el: etree._Element) -> str:
@@ -687,7 +708,7 @@ class JatsFieldExtractor:
         # appended to each name so the combined needle matches the PDF author line.
         for contrib_group in root.xpath('front/article-meta/contrib-group'):
             author_parts = _contrib_group_author_texts(contrib_group)
-            byline_texts = [byline_text for byline_text, _ in author_parts]
+            byline_texts = [byline_text for byline_text, _, _ in author_parts]
             # The merged value matches a byline printed as one run, which is what
             # it is for.  Where each author is printed against their own
             # affiliation instead, several hundred characters separate one name
@@ -698,12 +719,13 @@ class JatsFieldExtractor:
             # searched inside that match, and the run matches a few of its own
             # words somewhere even where it does not match the byline -- which
             # would confine the names to wherever those words happened to land.
-            for byline_text, name_text in author_parts:
+            for byline_text, name_text, short_text in author_parts:
                 yield JatsFieldValue(
                     text=byline_text,
                     field_name=JatsFieldNames.AUTHOR,
                     sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
                     fallback_text=name_text,
+                    shortened_text=short_text,
                 )
             if byline_texts:
                 yield JatsFieldValue(

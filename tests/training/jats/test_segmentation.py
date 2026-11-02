@@ -630,12 +630,12 @@ class TestRegionStartsAtThePageTop:
         # PPR459453's list starts with an entry the JATS has no record of, so
         # the region begins four lines and a page break after its heading.
         heading = make_line('References', y=700.0, page_number=1)
-        first = make_line('Alfaro,', 'J.', '(2020).', 'BCCR:', 'actividades', y=720.0,
+        first = make_line('Okonkwo,', 'R.', '(2020).', 'Aguas:', 'corrientes', y=720.0,
                           page_number=1)
-        second = make_line('transporte', 'y', 'construccion', y=740.0, page_number=1)
+        second = make_line('locales', 'y', 'estuarios', y=740.0, page_number=1)
         number = make_line('18', y=960.0, page_number=1)
-        third = make_line('demia.', 'AmeliaRueda.com,', y=100.0, page_number=2)
-        entry = make_line('Almeida,', 'P.', '(2020).', 'Movimientos', 'sociales.',
+        third = make_line('arias.', 'MarshlandReports.org,', y=100.0, page_number=2)
+        entry = make_line('Brandt,', 'N.', '(2020).', 'Corrientes', 'locales.',
                           y=120.0, page_number=2)
         doc = LayoutDocument(pages=[
             LayoutPage(
