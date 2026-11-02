@@ -1114,3 +1114,52 @@ class TestTheNameAPageShortens:
     def test_a_name_of_two_parts_is_not_offered_twice(self):
         values = self._values('Ana', 'Rivera')
         assert [value.shortened_text for value in values] == [None]
+
+
+class TestTheReviewersAPlatformNames:
+    """Who reviewed the article, from the reports an open platform files."""
+
+    @staticmethod
+    def _values(reports_xml: str):
+        root = etree.fromstring(
+            f'<article><front><article-meta/></front>{reports_xml}</article>'.encode('utf-8')
+        )
+        return [
+            (value.field_name, value.text)
+            for value in JatsFieldExtractor().iter_field_values(root)
+            if value.field_name in (
+                JatsFieldNames.REVIEWER, JatsFieldNames.REVIEWER_AFF
+            )
+        ]
+
+    REPORT = '''
+        <sub-article article-type="reviewer-report">
+          <front-stub>
+            <contrib-group><contrib><name>
+              <surname>Rivera</surname><given-names>Ana Beatriz</given-names>
+            </name></contrib></contrib-group>
+            <aff><label>1</label>Marshland Institute, Estuary, Anglia</aff>
+          </front-stub>
+          <body/>
+        </sub-article>
+    '''
+
+    def test_the_name_is_given_first_as_the_panel_sets_it(self):
+        assert self._values(self.REPORT) == [
+            (JatsFieldNames.REVIEWER, 'Ana Beatriz Rivera'),
+            (JatsFieldNames.REVIEWER_AFF, 'Marshland Institute, Estuary, Anglia'),
+        ]
+
+    def test_a_reply_filed_inside_a_report_is_not_a_reviewer(self):
+        # The platform files the authors' answer as a sub-article of the report
+        # it answers, and its contributor is an author of the article.
+        with_reply = self.REPORT.replace('<body/>', '''<body/>
+          <sub-article article-type="reply">
+            <front-stub><contrib-group><contrib><name>
+              <surname>Okonkwo</surname><given-names>Kofi</given-names>
+            </name></contrib></contrib-group></front-stub>
+          </sub-article>''')
+        assert ('reviewer', 'Kofi Okonkwo') not in self._values(with_reply)
+
+    def test_a_reviewer_of_two_versions_is_offered_once(self):
+        assert self._values(self.REPORT + self.REPORT) == self._values(self.REPORT)

@@ -2555,3 +2555,110 @@ class TestAnAuthorNamedAgainInAShortenedForm:
 
     def test_the_words_introducing_the_line_stay_outside_it(self):
         assert 'ORCIDs' not in self._author_tokens()
+
+
+class TestAReviewerIsLabelledInThePanelOnly:
+    """The panel beside the front matter, and not the reports at the end.
+
+    An open review platform names its reviewers twice: in the panel it sets
+    down the side of the first page, and again at the head of each report it
+    publishes after the body. A value that reached the second took the review
+    region into the header with it.
+    """
+
+    NAME = 'Ana Beatriz Rivera'
+    AFF = 'Marshland Institute, Estuary, Anglia'
+    ARTICLE = [
+        'A survey of the herons of the northern marshes',
+        'Kofi Anum Okonkwo 1 , Nadia Brandt 2',
+        'The marshes north of the estuary were surveyed over four summers to',
+        'count the herons nesting along them, and the counts were compared',
+        'with the water levels recorded at the three gauges upstream, which',
+        'the authority publishes each spring for the catchment as a whole.',
+    ]
+    PANEL = [
+        'Open Peer Review',
+        'Approval Status',
+        'version 1',
+        NAME,
+        ', ' + AFF,
+        '1.',
+    ]
+
+    def _align(self):
+        page_one = (
+            [
+                _column_line(text, 1, 100.0 + 20 * index, 50.0, 260.0)
+                for index, text in enumerate(self.ARTICLE)
+            ]
+            + [
+                _column_line(text, 1, 100.0 + 20 * index, 350.0, 150.0)
+                for index, text in enumerate(self.PANEL)
+            ]
+        )
+        # The report itself, after the body, names the reviewer again.
+        page_two = [
+            _column_line('Reviewer Report', 2, 100.0, 50.0, 500.0),
+            _column_line(self.NAME, 2, 130.0, 50.0, 500.0),
+            _column_line(self.AFF, 2, 160.0, 50.0, 500.0),
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=lines)],
+                meta=LayoutPageMeta(
+                    page_number=page_number,
+                    coordinates=LayoutPageCoordinates(
+                        x=0, y=0, width=600, height=1000, page_number=page_number
+                    ),
+                ),
+            )
+            for page_number, lines in enumerate([page_one, page_two], 1)
+        ])
+        field_values = [
+            _fv(self.ARTICLE[0], JatsFieldNames.TITLE),
+            _fv(' '.join(self.ARTICLE[2:]), JatsFieldNames.ABSTRACT),
+            _fv(self.NAME, JatsFieldNames.REVIEWER),
+            _fv(self.AFF, JatsFieldNames.REVIEWER_AFF),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _reviewer_pages(self) -> Set[int]:
+        doc, annotated = self._align()
+        return {
+            token.coordinates.page_number
+            for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.REVIEWER
+            and token.coordinates
+        }
+
+    def test_the_name_in_the_panel_is_the_reviewer(self):
+        assert 1 in self._reviewer_pages()
+
+    def test_the_name_in_the_report_is_not(self):
+        assert 2 not in self._reviewer_pages()
+
+    def test_a_page_that_sets_no_panel_labels_no_reviewer(self):
+        """The rule itself: the panel is the only place a reviewer is looked for.
+
+        A document whose reviewers are named only in the reports it publishes
+        has nothing in the header to label, and the name must not be taken from
+        the region those reports are in.
+        """
+        doc = _make_doc(
+            self.ARTICLE[0],
+            self.ARTICLE[1],
+            ' '.join(self.ARTICLE[2:]),
+            'Reviewer Report',
+            self.NAME,
+            self.AFF,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.ARTICLE[0], JatsFieldNames.TITLE),
+            _fv(' '.join(self.ARTICLE[2:]), JatsFieldNames.ABSTRACT),
+            _fv(self.NAME, JatsFieldNames.REVIEWER),
+            _fv(self.AFF, JatsFieldNames.REVIEWER_AFF),
+        ])
+        assert not [
+            token for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.REVIEWER
+        ]

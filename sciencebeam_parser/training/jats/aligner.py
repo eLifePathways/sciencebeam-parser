@@ -140,6 +140,10 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     # the body: searched from the body floor, the page had already printed it.
     JatsFieldNames.CONFLICT_NOTE,
     JatsFieldNames.CONTRIBUTION_NOTE,
+    # The panel naming the reviewers is set beside the front matter, so a
+    # reviewer belongs at the front however far down the page the panel runs.
+    JatsFieldNames.REVIEWER,
+    JatsFieldNames.REVIEWER_AFF,
 })
 
 # How far the front matter reaches, which is as far as the last value of it that
@@ -307,6 +311,24 @@ _MatchResult = Tuple[int, int, List[Tuple[int, int]]]
 # PDF references (e.g. a ref whose year/volume/URL are absent, giving quality ~0.60)
 # while rejecting genuinely absent ones.
 _REFERENCE_PARENT_MIN_THRESHOLD = 0.55
+
+# Who reviewed the article, and where they work.  Both are looked for in the
+# panel the page sets beside the front matter and nowhere else: the reports
+# themselves name the same people at the end of the document, and a value that
+# reached them would take the review region into the header.
+_PANEL_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.REVIEWER,
+    JatsFieldNames.REVIEWER_AFF,
+})
+
+# What a reviewer's affiliation may be matched at.  The panel drops a part the
+# deposit carries -- `Łukasiewicz Center, Warsaw, Mazowieckie, Poland` is set as
+# `Łukasiewicz Center, Warsaw, Poland` -- which costs two fifths of the match and
+# leaves it at 0.60 on the documents measured.  The lower bar is the one a
+# reference's parent already takes, for the reason it takes it: the page prints
+# the value with parts of it missing, and the range it is looked for in is
+# narrow enough that a worse match has nowhere to land.
+_PANEL_MIN_THRESHOLD = _REFERENCE_PARENT_MIN_THRESHOLD
 
 
 @dataclass
@@ -2178,6 +2200,27 @@ def _has_mid_token_within_gap_blocks(
     return False
 
 
+def _outside(
+    ranges: Sequence[Tuple[int, int]], start: int, end: int
+) -> List[Tuple[int, int]]:
+    """Everything in [start, end) that these ranges do not cover.
+
+    Masking is how a search is kept out of somewhere; masking the complement is
+    how it is kept inside.
+    """
+    outside: List[Tuple[int, int]] = []
+    cursor = start
+    for range_start, range_end in sorted(ranges):
+        if range_end <= start or range_start >= end:
+            continue
+        if range_start > cursor:
+            outside.append((cursor, range_start))
+        cursor = max(cursor, range_end)
+    if cursor < end:
+        outside.append((cursor, end))
+    return outside
+
+
 def _overlaps(
     ranges: Sequence[Tuple[int, int]], block_start: int, block_end: int
 ) -> bool:
@@ -2713,8 +2756,19 @@ class LayoutDocumentJatsAligner:
             skip_furniture = (
                 fv.field_name in _REFERENCE_FIELDS or fv.field_name in _ANCHOR_FIELDS
             )
+            field_config = self.config
+            if fv.field_name in _PANEL_FIELDS:
+                # Inside the panel and nowhere else, and at the bar a value the
+                # page prints parts of takes.
+                masked = (masked or []) + _outside(
+                    token_index.side_column_ranges, 0, len(token_index.haystack)
+                )
+                field_config = AlignmentConfig(
+                    threshold=min(self.config.threshold, _PANEL_MIN_THRESHOLD),
+                    max_window=self.config.max_window,
+                )
             match_range = _fuzzy_match_field_value(
-                token_index, fv, self.config,
+                token_index, fv, field_config,
                 search_start=search_start, search_end=search_end,
                 masked_ranges=masked,
                 prefer_exact=fv.field_name in _POST_BODY_FIELDS,

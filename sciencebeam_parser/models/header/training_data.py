@@ -42,7 +42,11 @@ TRAINING_XML_ELEMENT_PATH_BY_LABEL_WITHOUT_ALIAS = {
     '<doctype>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="doctype"]'],
     '<conflict>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="conflict"]'],
     '<contribution>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="contribution"]'],
-    '<group>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="group"]']
+    '<group>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="group"]'],
+    # A note, because GROBID has no element for a reviewer and writes every
+    # other kind it has no element for the same way -- the copyright, the
+    # funding, the declarations and the group above.
+    '<reviewer>': ROOT_TRAINING_XML_ELEMENT_PATH + ['note[@type="reviewer"]']
 }
 
 

@@ -12,6 +12,10 @@ class JatsFieldNames:
     AUTHOR = 'author'
     AUTHOR_AFF = 'author_aff'
     AUTHOR_NOTES = 'author_notes'
+    # Who reviewed the article, and where they work, which an open review
+    # platform names in the panel it sets beside the front matter.
+    REVIEWER = 'reviewer'
+    REVIEWER_AFF = 'reviewer_aff'
     ARTICLE_NOTES = 'article_notes'
     FUNDING = 'funding'
     COPYRIGHT = 'copyright'
@@ -141,6 +145,8 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.DOI:                    '<header>',
     JatsFieldNames.PUBLICATION_DATE:       '<header>',
     JatsFieldNames.SELF_CITATION:          '<header>',
+    JatsFieldNames.REVIEWER:               '<header>',
+    JatsFieldNames.REVIEWER_AFF:           '<header>',
 }
 
 # ── Header model label mapping ────────────────────────────────────────────────
@@ -182,6 +188,17 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     # it as `<note type="doctype">` on 267 of its 835 header documents, "RESEARCH
     # ARTICLE" 88 times.
     JatsFieldNames.MANUSCRIPT_TYPE:  '<doctype>',
+    # Who reviewed the article.  GROBID has no label of its own for one and
+    # gives all three of its headers that name peer reviewers an `<editor>`,
+    # which is reported upstream as a defect rather than followed here, so this
+    # label is provisional and changes to whatever that settles on.
+    JatsFieldNames.REVIEWER:         '<reviewer>',
+    # Where they work, which takes the ordinary mark-up and not a label of its
+    # own: "Some affiliation/address information related to the editor can
+    # follow, they are encoded with the normal affiliation and address
+    # mark-ups", and GROBID's corpus does the same beside a reviewer.  Only the
+    # person's own label is in dispute.
+    JatsFieldNames.REVIEWER_AFF:     '<affiliation>',
 }
 
 # ── Fulltext model label mapping ──────────────────────────────────────────────
