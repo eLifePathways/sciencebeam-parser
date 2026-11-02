@@ -16,10 +16,14 @@ from sciencebeam_parser.training.jats.aligner import (
     extend_partial_reference_matches,
     _build_token_index,
     _fuzzy_match_field_value,
+    _release_the_separator_a_value_opens_with,
     _search_range,
     narrow_search_range_to_window,
     get_search_stride,
     get_search_window_size,
+)
+from sciencebeam_parser.training.jats.annotated_document import (
+    JatsAnnotatedLayoutDocument,
 )
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
@@ -2661,4 +2665,33 @@ class TestAReviewerIsLabelledInThePanelOnly:
         assert not [
             token for token in doc.iter_all_tokens()
             if annotated.get_token_field(token) == JatsFieldNames.REVIEWER
+        ]
+
+
+class TestTheSeparatorAValueOpensWith:
+    """The comma between a reviewer's name and where they work is neither's."""
+
+    def _released(self, first: int, last: int):
+        """The tokens from `first` to `last` labelled, then the pass run."""
+        doc = _make_doc('Ana Beatriz Rivera , Marshland Institute , Anglia')
+        token_index = _build_token_index(doc)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        for token in token_index.tokens[first:last + 1]:
+            annotated.set_token_label(token, JatsFieldNames.REVIEWER_AFF)
+        _release_the_separator_a_value_opens_with(
+            annotated, token_index, JatsFieldNames.REVIEWER_AFF
+        )
+        return [
+            token.text for token in token_index.tokens
+            if annotated.get_token_field(token) == JatsFieldNames.REVIEWER_AFF
+        ]
+
+    def test_a_span_that_opens_on_one_gives_it_back(self):
+        # ', Marshland Institute'
+        assert self._released(3, 5) == ['Marshland', 'Institute']
+
+    def test_a_separator_inside_the_span_is_the_value_s_own(self):
+        # ', Marshland Institute , Anglia'
+        assert self._released(3, 7) == [
+            'Marshland', 'Institute', ',', 'Anglia'
         ]

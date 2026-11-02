@@ -1919,6 +1919,33 @@ def _fill_abstract_lines(
         begun.add(instance_id)
 
 
+_OPENING_SEPARATORS: FrozenSet[str] = frozenset({',', ';', '-'})
+
+
+def _release_the_separator_a_value_opens_with(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    field_name: str,
+) -> None:
+    """A separator does not open a value.
+
+    The panel sets a reviewer's name and where they work with a comma between
+    them, and the comma belongs to neither, so a span that opens on one gives
+    it back.
+    """
+    previous: Optional[str] = None
+    for token in token_index.tokens:
+        field = annotated.get_token_field(token)
+        if (
+            field == field_name
+            and previous != field_name
+            and token.text in _OPENING_SEPARATORS
+        ):
+            del annotated.token_label_by_id[id(token)]
+            continue
+        previous = field
+
+
 def _join_what_a_line_prints_inside_one_value(
     annotated: JatsAnnotatedLayoutDocument,
     layout_document: LayoutDocument,
@@ -2646,6 +2673,9 @@ class LayoutDocumentJatsAligner:
         # name the page prints inside one is still a name nothing has claimed.
         note_match_ranges: List[Tuple[int, int]] = []
         author_name_values: List[JatsFieldValue] = []
+        # Where the panel last named a reviewer, which is where the
+        # affiliation that came with them is looked for.
+        reviewer_end = 0
         title_values: List[JatsFieldValue] = []
         # Where each per-author field has been placed already.
         per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
@@ -2757,6 +2787,11 @@ class LayoutDocumentJatsAligner:
                 fv.field_name in _REFERENCE_FIELDS or fv.field_name in _ANCHOR_FIELDS
             )
             field_config = self.config
+            if fv.field_name == JatsFieldNames.REVIEWER_AFF and reviewer_end:
+                # Where the reviewer it belongs to was named: the panel sets
+                # each entry as a name and then where they work, so the
+                # affiliation is what follows the name it came with.
+                search_start = max(search_start, reviewer_end)
             if fv.field_name in _PANEL_FIELDS:
                 # Inside the panel and nowhere else, and at the bar a value the
                 # page prints parts of takes.
@@ -2976,6 +3011,8 @@ class LayoutDocumentJatsAligner:
                 reference_match_ranges.append((a_start, a_end))
             if fv.field_name == JatsFieldNames.AUTHOR:
                 byline_match_ranges.append((a_start, a_end))
+            if fv.field_name == JatsFieldNames.REVIEWER:
+                reviewer_end = a_end
             if fv.field_name == JatsFieldNames.TITLE:
                 title_match_ranges.append((a_start, a_end))
             matched_ranges.append((a_start, a_end))
@@ -3111,6 +3148,9 @@ class LayoutDocumentJatsAligner:
         # After every pass that claims, because what it fills is what the page
         # prints inside a value and nothing else explains.
         _join_what_a_line_prints_inside_one_value(annotated, layout_document)
+        _release_the_separator_a_value_opens_with(
+            annotated, token_index, JatsFieldNames.REVIEWER_AFF
+        )
 
         total = len(field_values)
         if missed_by_field:
