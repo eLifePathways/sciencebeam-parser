@@ -16,6 +16,7 @@ from sciencebeam_parser.training.jats.aligner import (
     extend_partial_reference_matches,
     _build_token_index,
     _fuzzy_match_field_value,
+    _iter_shortened_affiliations,
     _release_the_separator_a_value_opens_with,
     _search_range,
     narrow_search_range_to_window,
@@ -2695,3 +2696,33 @@ class TestTheSeparatorAValueOpensWith:
         assert self._released(3, 7) == [
             'Marshland', 'Institute', ',', 'Anglia'
         ]
+
+
+class TestTheFormsAPanelSetsAnAffiliationIn:
+    """A deposit declares more of an affiliation than a panel sets.
+
+    The departments in front of the institution and the region between the city
+    and the country are declared and not set, so the forms are the runs of the
+    declared parts without them.  Longest first, and each is matched at the
+    ordinary bar, so a longer form that merely overlaps the page is refused
+    rather than taken and labelled only as far as the page carries it.
+    """
+
+    def test_the_leading_parts_and_the_region_are_what_come_off(self):
+        assert list(_iter_shortened_affiliations(
+            'Reed Bed Unit, Marshland Institute, Estuary, East, Anglia'
+        )) == [
+            'Reed Bed Unit, Marshland Institute, Estuary, Anglia',
+            'Marshland Institute, Estuary, East, Anglia',
+            'Marshland Institute, Estuary, Anglia',
+            'Estuary, East, Anglia',
+            'Estuary, Anglia',
+            'East, Anglia',
+        ]
+
+    def test_a_place_needs_two_parts_to_name_it(self):
+        assert not list(_iter_shortened_affiliations('Marshland Institute'))
+
+    def test_the_declared_form_is_not_offered_as_a_shortened_one(self):
+        forms = list(_iter_shortened_affiliations('Marshland Institute, Anglia'))
+        assert 'Marshland Institute, Anglia' not in forms

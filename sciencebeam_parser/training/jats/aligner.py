@@ -2917,10 +2917,14 @@ class LayoutDocumentJatsAligner:
                 # The panel sets a shortened form of it, so the forms are
                 # tried and the one the page sets is the one that matches.
                 for form in _iter_shortened_affiliations(fv.text):
+                    # At the ordinary bar, not the panel's lower one: a form
+                    # the page sets matches it outright, and a longer form that
+                    # merely overlaps would otherwise be taken first and label
+                    # only the part of itself the page carries.
                     match_range = _fuzzy_match_field_value(
                         token_index,
                         JatsFieldValue(text=form, field_name=fv.field_name),
-                        field_config,
+                        self.config,
                         search_start=search_start, search_end=search_end,
                         masked_ranges=masked,
                     )
