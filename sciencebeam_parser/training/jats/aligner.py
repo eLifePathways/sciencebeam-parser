@@ -658,7 +658,7 @@ def _extend_match_for_needle_head(
     The same early stop as the tail, at the other end: a short first piece
     separated from the rest by a gap scores net zero, so the traceback drops it.
     `U.` before `S. Department of Interior`, the `z.` of an address, the first
-    initial of `J.J. Leahy` where the page sets a space after each dot.
+    initial of `R.J. Okonkwo` where the page sets a space after each dot.
     `_extend_match_for_needle_tail` repairs the end of a value; this repairs its
     start.
 

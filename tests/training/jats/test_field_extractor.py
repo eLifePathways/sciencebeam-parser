@@ -659,7 +659,7 @@ class TestSubArticle:
             '<article-id pub-id-type="doi">10.21956/openreseurope.1.r1</article-id>'
             '<contrib-group>'
             '<contrib contrib-type="author"><name>'
-            '<surname>Heine</surname><given-names>Martin</given-names></name></contrib>'
+            '<surname>Brandt</surname><given-names>Nadia</given-names></name></contrib>'
             '<aff id="a1"><label>1</label>University Medical Centre Utrecht</aff>'
             '</contrib-group>'
             '<permissions><license><license-p>This is an open access peer review report.'
@@ -671,12 +671,12 @@ class TestSubArticle:
         )
         sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
         texts = [v.text for v in sub]
-        assert 'Martin Heine' in texts
+        assert 'Nadia Brandt' in texts
         assert 'University Medical Centre Utrecht' in texts
         assert 'This is an open access peer review report.' in texts
         assert '10.21956/openreseurope.1.r1' not in texts
         by_text = {v.text: v for v in sub}
-        assert by_text['Martin Heine'].exact_only
+        assert by_text['Nadia Brandt'].exact_only
         assert by_text['University Medical Centre Utrecht'].exact_only
         assert by_text['This is an open access peer review report.'].exact_only
 
