@@ -422,3 +422,68 @@ class TestNarrowingToSomeCorpora:
         """`--include-corpus` admits an opt-in corpus; it never excludes one."""
         records = fetch_data(_BASE_CONFIG, "smoke", "train", repo / "bench", include=["ore"])
         assert {record["corpus"] for record in records} == {"ore", "biorxiv"}
+
+
+class TestFetchTrainingSourceCorrections:
+    """The reviewed changes to a deposit are applied as it is fetched."""
+
+    ENTRY = (
+        "reason: The article prints a second language the deposit does not"
+        " declare.\n"
+        "kind: correction\n"
+        "changes:\n"
+        "  - under: .\n"
+        "    xml: |\n"
+        "      <trans-abstract xml:lang='pt'><p>Um parágrafo.</p></trans-abstract>\n"
+    )
+
+    def _corrections(self, tmp_path: Path, document_id: str = "ore0") -> Path:
+        corpus_dir = tmp_path / "source-corrections" / "ore"
+        corpus_dir.mkdir(parents=True)
+        (corpus_dir / f"{document_id}.yml").write_text(self.ENTRY, encoding="utf-8")
+        return tmp_path / "source-corrections"
+
+    def _deposit(self, out: Path, document_id: str) -> str:
+        return (out / "train/ore" / f"{document_id}.jats.xml").read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_change_reaches_the_deposit_the_fetch_wrote(
+        self, repo: Path, tmp_path: Path
+    ):
+        out = repo / "out"
+        fetch_training_source(
+            _BASE_CONFIG, "full", "train", out,
+            corrections_dir=self._corrections(tmp_path),
+        )
+        assert "trans-abstract" in self._deposit(out, "ore0")
+        assert "trans-abstract" not in self._deposit(out, "ore1")
+
+    def test_a_deposit_an_earlier_fetch_left_is_corrected_too(
+        self, repo: Path, tmp_path: Path
+    ):
+        # The fetch writes only what is missing, so a tree left without the
+        # entry would otherwise generate from the deposit as published.
+        out = repo / "out"
+        fetch_training_source(_BASE_CONFIG, "full", "train", out)
+        assert "trans-abstract" not in self._deposit(out, "ore0")
+
+        fetch_training_source(
+            _BASE_CONFIG, "full", "train", out,
+            corrections_dir=self._corrections(tmp_path),
+        )
+        assert "trans-abstract" in self._deposit(out, "ore0")
+
+    def test_the_deposit_as_published_is_kept(self, repo: Path, tmp_path: Path):
+        out = repo / "out"
+        fetch_training_source(
+            _BASE_CONFIG, "full", "train", out,
+            corrections_dir=self._corrections(tmp_path),
+        )
+        as_deposited = out / "train/ore/ore0.as-deposited.xml"
+        assert "trans-abstract" not in as_deposited.read_text(encoding="utf-8")
+
+    def test_nothing_is_applied_without_an_overlay(self, repo: Path):
+        out = repo / "out"
+        fetch_training_source(_BASE_CONFIG, "full", "train", out)
+        assert not list((out / "train/ore").glob("*.as-deposited.xml"))

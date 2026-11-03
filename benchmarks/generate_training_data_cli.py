@@ -39,6 +39,7 @@ from benchmarks.training_intent import (
     validate_intent,
 )
 from benchmarks.training_source_config import (
+    get_default_corrections_path,
     DEFAULT_CONFIG,
     get_default_selection_path,
 )
@@ -168,12 +169,13 @@ def discard_stash(stash: Optional[Path]) -> None:
         shutil.rmtree(stash)
 
 
-def _fetch_modes(
+def _fetch_modes(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     cfg: dict,
     split: str,
     source_root: Path,
     pairs: Sequence[PairIntent],
     selection_dir: Path,
+    corrections_dir: Path,
 ) -> None:
     for mode, corpora in group_corpora_by_mode(pairs).items():
         LOGGER.info("Fetching %s at mode %r", ", ".join(corpora), mode)
@@ -181,6 +183,7 @@ def _fetch_modes(
             cfg, mode, split, source_root / mode,
             include=corpora, selection_dir=selection_dir,
             recheck_upstream=False,
+            corrections_dir=corrections_dir,
         )
 
 
@@ -306,6 +309,7 @@ def main(argv=None):
             cfg, args.split, source_root, pairs,
             Path(args.selection_path) if args.selection_path
             else get_default_selection_path(args.config),
+            get_default_corrections_path(args.config),
         )
 
     errors = []

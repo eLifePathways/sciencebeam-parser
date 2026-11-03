@@ -26,6 +26,7 @@ from benchmarks.corpus_source import (
     read_manifest_ids_by_stratum,
     resolve_source,
 )
+from benchmarks.corrections import overlay_corpus
 from benchmarks.sampling import positional_ids, stratified_ids
 from benchmarks.training_records import SourceManifest, read_source_manifest
 from benchmarks.training_selection import (
@@ -515,6 +516,7 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
     include: Optional[Iterable[str]] = None,
     selection_dir: Optional[Path] = None,
     recheck_upstream: bool = True,
+    corrections_dir: Optional[Path] = None,
 ) -> List[Dict[str, str]]:
     """Fetch PDF + JATS XML for CC-BY corpora only.
 
@@ -533,6 +535,11 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
     still describe what is on disk be taken from them, without reading the dataset
     at all. It needs `selection_dir`, and is for a caller rebuilding from these
     trees rather than one whose job is to fetch.
+
+    `corrections_dir` holds the reviewed changes a deposit needs, and they are
+    applied to what is written here. Every fetch applies them, including one that
+    reads nothing upstream, so a tree left by an earlier fetch carries them too
+    and generation cannot run from a deposit a change had not reached.
     """
     allowed: Set[str] = set(cfg.get("cc_by_corpora", []))
     filtered_sampling = {
@@ -543,7 +550,7 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
     in_split = allowed.intersection(cfg["dataset"]["splits"].get(split, {}))
     if include is not None:
         in_split = in_split.intersection(include)
-    return _fetch(
+    records = _fetch(
         filtered_cfg,
         mode,
         split,
@@ -555,6 +562,23 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
         selection_dir=selection_dir,
         recheck_upstream=recheck_upstream,
     )
+    if corrections_dir is not None:
+        _apply_corrections(corrections_dir, in_split, data_dir / split)
+    return records
+
+
+def _apply_corrections(
+    corrections_dir: Path, corpora: Collection[str], split_dir: Path
+) -> None:
+    """Apply the reviewed changes to the deposits this fetch left on disk."""
+    for corpus in sorted(corpora):
+        applied = overlay_corpus(corrections_dir, corpus, split_dir / corpus)
+        for one in applied:
+            if one.overlaid:
+                LOGGER.info(
+                    "Corpus %r: %s was generated from a deposit %s changed",
+                    corpus, one.document_id, one.kind,
+                )
 
 
 def get_corpus_variants(

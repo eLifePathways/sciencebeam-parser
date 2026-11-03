@@ -19,6 +19,7 @@ import yaml
 from benchmarks.fetch import fetch_training_source
 from benchmarks.training_intent import get_declared_pairs, group_corpora_by_mode
 from benchmarks.training_source_config import (
+    get_default_corrections_path,
     DEFAULT_CONFIG,
     get_default_selection_path,
 )
@@ -137,6 +138,7 @@ def main(argv=None):
         records = fetch_training_source(
             cfg, mode, args.split, source_root / mode,
             include=corpora, selection_dir=selection_dir,
+            corrections_dir=get_default_corrections_path(args.config),
         )
         LOGGER.info(
             "Fetched %d record(s) to %s", len(records), source_root / mode
