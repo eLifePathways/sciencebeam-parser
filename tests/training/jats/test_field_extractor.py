@@ -938,13 +938,13 @@ class TestConflict:
             ),
         ]
 
-    def test_it_should_leave_a_correspondence_note_as_an_author_note(self):
+    def test_it_should_leave_a_correspondence_note_unlabelled(self):
         fvs = _field_values_for(
             '<article><front><article-meta><author-notes>'
             '<corresp>Write to <email>petra@example.org</email></corresp>'
             '</author-notes></article-meta></front></article>'
         )
-        assert JatsFieldNames.AUTHOR_NOTES in {v.field_name for v in fvs}
+        assert JatsFieldNames.CORRESPONDENCE in {v.field_name for v in fvs}
         assert JatsFieldNames.CONFLICT_NOTE not in {v.field_name for v in fvs}
 
     def test_it_should_keep_a_section_as_a_section(self):
@@ -971,7 +971,9 @@ class TestCorrespondingAuthorNote:
             '</author-notes></article-meta></front></article>'
         )
         fields = [v.field_name for v in fvs]
-        assert fields.index(JatsFieldNames.AUTHOR_NOTES) < fields.index(JatsFieldNames.EMAIL)
+        assert fields.index(JatsFieldNames.CORRESPONDENCE) < fields.index(
+            JatsFieldNames.EMAIL
+        )
 
 
 class TestOrcid:
@@ -1163,3 +1165,51 @@ class TestTheReviewersAPlatformNames:
 
     def test_a_reviewer_of_two_versions_is_offered_once(self):
         assert self._values(self.REPORT + self.REPORT) == self._values(self.REPORT)
+
+
+class TestCorrespondenceBlockValues:
+    """What a correspondence block declares beyond the name and the email."""
+
+    CORRESP = (
+        '<article><front><article-meta><author-notes>'
+        '<corresp>Correspondence: <institution>Example University</institution>,'
+        ' <addr-line>1 Example Road, Exampleton</addr-line>.'
+        ' <phone>(00) 0000-0000</phone>'
+        ' <email>someone@example.org</email></corresp>'
+        '</author-notes></article-meta></front></article>'
+    )
+
+    def _values(self, xml: str):
+        return {
+            value.field_name: value.text
+            for value in _field_values_for(xml)
+            if value.field_name in {
+                JatsFieldNames.CORRESP_AFF,
+                JatsFieldNames.CORRESP_ADDRESS,
+                JatsFieldNames.CORRESP_PHONE,
+            }
+        }
+
+    def test_the_institution_address_and_telephone_are_each_a_value(self):
+        assert self._values(self.CORRESP) == {
+            JatsFieldNames.CORRESP_AFF: 'Example University',
+            JatsFieldNames.CORRESP_ADDRESS: '1 Example Road, Exampleton',
+            JatsFieldNames.CORRESP_PHONE: '(00) 0000-0000',
+        }
+
+    def test_a_block_the_deposit_holds_as_prose_declares_none_of_them(self):
+        prose = (
+            '<article><front><article-meta><author-notes>'
+            '<corresp>Correspondence: Example University, 1 Example Road,'
+            ' Exampleton. (00) 0000-0000</corresp>'
+            '</author-notes></article-meta></front></article>'
+        )
+        assert self._values(prose) == {}
+
+    def test_the_block_is_still_offered_whole_to_the_region(self):
+        notes = [
+            value.text for value in _field_values_for(self.CORRESP)
+            if value.field_name == JatsFieldNames.CORRESPONDENCE
+        ]
+        assert len(notes) == 1
+        assert 'Example University' in notes[0]

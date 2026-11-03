@@ -12,6 +12,15 @@ class JatsFieldNames:
     AUTHOR = 'author'
     AUTHOR_AFF = 'author_aff'
     AUTHOR_NOTES = 'author_notes'
+    # What a correspondence block says beyond the name and the email: where to
+    # write to, and the telephone number to ring.  A deposit holding that as
+    # prose declares none of them, so they are read from the elements a
+    # correction supplies.
+    # The block itself, which is what says where its values are printed.
+    CORRESPONDENCE = 'correspondence'
+    CORRESP_AFF = 'corresp_aff'
+    CORRESP_ADDRESS = 'corresp_address'
+    CORRESP_PHONE = 'corresp_phone'
     # Who reviewed the article, and where they work, which an open review
     # platform names in the panel it sets beside the front matter.
     REVIEWER = 'reviewer'
@@ -147,6 +156,10 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.SELF_CITATION:          '<header>',
     JatsFieldNames.REVIEWER:               '<header>',
     JatsFieldNames.REVIEWER_AFF:           '<header>',
+    JatsFieldNames.CORRESPONDENCE:         '<header>',
+    JatsFieldNames.CORRESP_AFF:            '<header>',
+    JatsFieldNames.CORRESP_ADDRESS:        '<header>',
+    JatsFieldNames.CORRESP_PHONE:          '<header>',
 }
 
 # ── Header model label mapping ────────────────────────────────────────────────
@@ -199,6 +212,14 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     # mark-ups", and GROBID's corpus does the same beside a reviewer.  Only the
     # person's own label is in dispute.
     JatsFieldNames.REVIEWER_AFF:     '<affiliation>',
+    # A correspondence block's institution, address and telephone number, which
+    # GROBID labels on the documents whose background says "correspond": of the
+    # 254 it has, 106 carry an `<address>`, 106 an `<affiliation>` and 43 a
+    # `<phone>`.  The institution takes the ordinary affiliation mark-up, as a
+    # reviewer's does.
+    JatsFieldNames.CORRESP_AFF:      '<affiliation>',
+    JatsFieldNames.CORRESP_ADDRESS:  '<address>',
+    JatsFieldNames.CORRESP_PHONE:    '<phone>',
 }
 
 # ── Fulltext model label mapping ──────────────────────────────────────────────
