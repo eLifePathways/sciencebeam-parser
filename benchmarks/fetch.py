@@ -26,7 +26,7 @@ from benchmarks.corpus_source import (
     read_manifest_ids_by_stratum,
     resolve_source,
 )
-from benchmarks.corrections import overlay_corpus
+from benchmarks.corrections import substitute_corrected_deposits
 from benchmarks.sampling import positional_ids, stratified_ids
 from benchmarks.training_records import SourceManifest, read_source_manifest
 from benchmarks.training_selection import (
@@ -536,10 +536,11 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
     at all. It needs `selection_dir`, and is for a caller rebuilding from these
     trees rather than one whose job is to fetch.
 
-    `corrections_dir` holds the reviewed changes a deposit needs, and they are
-    applied to what is written here. Every fetch applies them, including one that
-    reads nothing upstream, so a tree left by an earlier fetch carries them too
-    and generation cannot run from a deposit a change had not reached.
+    `corrections_dir` holds the corrected deposits the corpus declares, and a
+    document that has one is read from it rather than from what the dataset
+    published. Every fetch does this, including one that reads nothing upstream,
+    so a tree left by an earlier fetch carries them too and generation cannot
+    run from a deposit a correction had not reached.
     """
     allowed: Set[str] = set(cfg.get("cc_by_corpora", []))
     filtered_sampling = {
@@ -570,15 +571,16 @@ def fetch_training_source(  # pylint: disable=too-many-arguments,too-many-positi
 def _apply_corrections(
     corrections_dir: Path, corpora: Collection[str], split_dir: Path
 ) -> None:
-    """Apply the reviewed changes to the deposits this fetch left on disk."""
+    """Read each document that has a corrected deposit from that instead."""
     for corpus in sorted(corpora):
-        applied = overlay_corpus(corrections_dir, corpus, split_dir / corpus)
-        for one in applied:
-            if one.overlaid:
-                LOGGER.info(
-                    "Corpus %r: %s was generated from a deposit %s changed",
-                    corpus, one.document_id, one.kind,
-                )
+        corrected = substitute_corrected_deposits(
+            corrections_dir, corpus, split_dir / corpus
+        )
+        if corrected:
+            LOGGER.info(
+                "Corpus %r: %d document(s) read from a corrected deposit: %s",
+                corpus, len(corrected), ", ".join(corrected),
+            )
 
 
 def get_corpus_variants(
