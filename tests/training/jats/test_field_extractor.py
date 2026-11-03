@@ -277,17 +277,17 @@ class TestAffiliation:
         # may be continuation of the institution/department name: some publishers split a
         # single department name across two <institution> tags, leaving the second half
         # as the tail of the first — e.g.
-        #   <institution>Dept of Microbiology</institution>, Immunology and Parasitology,
-        #   <institution>University X</institution>, City, Country
-        # "Immunology and Parasitology" is NOT an address.
+        #   <institution>Example Department</institution>, Example Division,
+        #   <institution>Example University</institution>, City, Country
+        # "Example Division" is NOT an address.
         fvs = _field_values_for(
             '<article><front><article-meta>'
             '<aff id="a1">'
             '<label>1</label>'
-            '<institution>Departamento de Microbiologia</institution>'
-            ', Imunologia e Parasitologia, '
-            '<institution>Universidade Federal de Santa Catarina</institution>'
-            ', Florianopolis, Brasil'
+            '<institution>Example Department</institution>'
+            ', Example Division, '
+            '<institution>Example University</institution>'
+            ', Exampleton, Exampleland'
             '</aff>'
             '</article-meta></front></article>'
         )
@@ -310,17 +310,17 @@ class TestReference:
         assert 'A Study' in refs[0].text
 
     def test_drops_the_markers_separator_from_a_name_the_conversion_swept_it_into(self):
-        """`16.-Sala Situacional` is numbered, and the dash is the numbering's."""
+        """`16.-Example Situation` is numbered, and the dash is the numbering's."""
         fvs = _field_values_for(
             '<article><back><ref-list>'
             '<ref id="b1"><element-citation>'
-            '<source>-Sala Situacional COVID-19 Peru</source>'
+            '<source>-Example Situation Report</source>'
             '<article-title>\u2013 A Study</article-title>'
             '</element-citation></ref>'
             '</ref-list></back></article>'
         )
         sub = {v.sub_field_name: v.text for v in fvs if v.sub_field_name}
-        assert sub[JatsSubFieldNames.REFERENCE_SOURCE] == 'Sala Situacional COVID-19 Peru'
+        assert sub[JatsSubFieldNames.REFERENCE_SOURCE] == 'Example Situation Report'
         assert sub[JatsSubFieldNames.REFERENCE_ARTICLE_TITLE] == 'A Study'
 
     def test_keeps_the_punctuation_a_title_opens_with(self):
@@ -328,13 +328,13 @@ class TestReference:
             '<article><back><ref-list>'
             '<ref id="b1"><element-citation>'
             '<article-title>[Quick evidence reviews]</article-title>'
-            '<source>"Coopetition" in Business Networks</source>'
+            '<source>"Exampling" in Example Networks</source>'
             '</element-citation></ref>'
             '</ref-list></back></article>'
         )
         sub = {v.sub_field_name: v.text for v in fvs if v.sub_field_name}
         assert sub[JatsSubFieldNames.REFERENCE_ARTICLE_TITLE] == '[Quick evidence reviews]'
-        assert sub[JatsSubFieldNames.REFERENCE_SOURCE] == '"Coopetition" in Business Networks'
+        assert sub[JatsSubFieldNames.REFERENCE_SOURCE] == '"Exampling" in Example Networks'
 
     def test_extracts_reference_author_subfield(self):
         fvs = _field_values_for(
@@ -659,8 +659,8 @@ class TestSubArticle:
             '<article-id pub-id-type="doi">10.21956/openreseurope.1.r1</article-id>'
             '<contrib-group>'
             '<contrib contrib-type="author"><name>'
-            '<surname>Brandt</surname><given-names>Nadia</given-names></name></contrib>'
-            '<aff id="a1"><label>1</label>University Medical Centre Utrecht</aff>'
+            '<surname>Black</surname><given-names>Alice</given-names></name></contrib>'
+            '<aff id="a1"><label>1</label>Example Institute Exampleton</aff>'
             '</contrib-group>'
             '<permissions><license><license-p>This is an open access peer review report.'
             '</license-p></license></permissions>'
@@ -671,13 +671,13 @@ class TestSubArticle:
         )
         sub = [v for v in fvs if v.field_name == JatsFieldNames.SUB_ARTICLE]
         texts = [v.text for v in sub]
-        assert 'Nadia Brandt' in texts
-        assert 'University Medical Centre Utrecht' in texts
+        assert 'Alice Black' in texts
+        assert 'Example Institute Exampleton' in texts
         assert 'This is an open access peer review report.' in texts
         assert '10.21956/openreseurope.1.r1' not in texts
         by_text = {v.text: v for v in sub}
-        assert by_text['Nadia Brandt'].exact_only
-        assert by_text['University Medical Centre Utrecht'].exact_only
+        assert by_text['Alice Black'].exact_only
+        assert by_text['Example Institute Exampleton'].exact_only
         assert by_text['This is an open access peer review report.'].exact_only
 
     def test_a_report_paragraph_is_not_exact_only(self):
@@ -894,19 +894,19 @@ class TestContribution:
         fvs = _field_values_for(
             '<article><front><article-meta><contrib-group>'
             '<contrib contrib-type="author">'
-            '<name><surname>Vance</surname><given-names>Petra</given-names></name>'
+            '<name><surname>Smith</surname><given-names>Mary</given-names></name>'
             '<role content-type="http://credit.niso.org/">Methodology</role>'
             '<role content-type="http://credit.niso.org/">Validation</role>'
             '</contrib>'
             '<contrib contrib-type="author">'
-            '<name><surname>Oduya</surname><given-names>K.L.</given-names></name>'
+            '<name><surname>Jones</surname><given-names>J.L.</given-names></name>'
             '<role content-type="http://credit.niso.org/">Supervision</role>'
             '</contrib>'
             '</contrib-group></article-meta></front></article>'
         )
         assert [
             v.text for v in fvs if v.field_name == JatsFieldNames.CONTRIBUTION_NOTE
-        ] == ['Vance P: Methodology, Validation; Oduya KL: Supervision']
+        ] == ['Smith M: Methodology, Validation; Jones JL: Supervision']
 
 
 class TestConflict:
@@ -1032,13 +1032,13 @@ class TestSelfCitation:
         '<title-group><article-title>Counting the western ferries</article-title></title-group>'
         '<contrib-group>'
         '<contrib contrib-type="author">'
-        '<name><surname>Vance</surname><given-names>Petra</given-names></name></contrib>'
+        '<name><surname>Smith</surname><given-names>Mary</given-names></name></contrib>'
         '<contrib contrib-type="author">'
-        '<name><surname>Oduya</surname><given-names>K.L.</given-names></name></contrib>'
+        '<name><surname>Jones</surname><given-names>J.L.</given-names></name></contrib>'
         '<contrib contrib-type="author">'
-        '<name><surname>Petit</surname><given-names>Lars</given-names></name></contrib>'
+        '<name><surname>Brown</surname><given-names>Bob</given-names></name></contrib>'
         '<contrib contrib-type="author">'
-        '<name><surname>Reyes</surname><given-names>Mia</given-names></name></contrib>'
+        '<name><surname>Green</surname><given-names>Carol</given-names></name></contrib>'
         '</contrib-group>'
         '<volume>4</volume><elocation-id>266</elocation-id>'
         '<pub-date pub-type="epub"><day>3</day><month>5</month><year>2024</year></pub-date>'
@@ -1052,7 +1052,7 @@ class TestSelfCitation:
             (v.sub_field_name, v.text) for v in fvs
             if v.field_name == JatsFieldNames.SELF_CITATION
         ] == [
-            (None, 'Vance P, Oduya KL, Petit L, Reyes M Counting the western ferries'),
+            (None, 'Smith M, Jones JL, Brown B, Green C Counting the western ferries'),
             (JatsSubFieldNames.SELF_CITATION_SOURCE, 'Ferry Studies 2024, 4:266'),
         ]
 
@@ -1060,13 +1060,13 @@ class TestSelfCitation:
         fvs = _field_values_for(self.JATS.replace(
             '</contrib-group>',
             '<contrib contrib-type="author">'
-            '<name><surname>Finch</surname><given-names>Ola</given-names></name>'
+            '<name><surname>White</surname><given-names>Dave</given-names></name>'
             '</contrib></contrib-group>',
         ).format(extra=''))
         assert [
             v.text for v in fvs
             if v.field_name == JatsFieldNames.SELF_CITATION and v.sub_field_name is None
-        ] == ['Vance P, Oduya KL, Petit L Counting the western ferries']
+        ] == ['Smith M, Jones JL, Brown B Counting the western ferries']
 
     def test_it_should_say_nothing_where_the_metadata_is_incomplete(self):
         fvs = _field_values_for(
@@ -1108,9 +1108,58 @@ class TestTheNameAPageShortens:
         ]
 
     def test_the_middle_names_become_initials(self):
-        values = self._values('Ana Beatriz', 'Rivera')
-        assert [value.shortened_text for value in values] == ['Ana B. Rivera']
+        values = self._values('Mary Jane', 'Doe')
+        assert [value.shortened_text for value in values] == ['Mary J. Doe']
 
     def test_a_name_of_two_parts_is_not_offered_twice(self):
-        values = self._values('Ana', 'Rivera')
+        values = self._values('Mary', 'Doe')
         assert [value.shortened_text for value in values] == [None]
+
+
+class TestTheReviewersAPlatformNames:
+    """Who reviewed the article, from the reports an open platform files."""
+
+    @staticmethod
+    def _values(reports_xml: str):
+        root = etree.fromstring(
+            f'<article><front><article-meta/></front>{reports_xml}</article>'.encode('utf-8')
+        )
+        return [
+            (value.field_name, value.text)
+            for value in JatsFieldExtractor().iter_field_values(root)
+            if value.field_name in (
+                JatsFieldNames.REVIEWER, JatsFieldNames.REVIEWER_AFF
+            )
+        ]
+
+    REPORT = '''
+        <sub-article article-type="reviewer-report">
+          <front-stub>
+            <contrib-group><contrib><name>
+              <surname>Doe</surname><given-names>Mary Jane</given-names>
+            </name></contrib></contrib-group>
+            <aff><label>1</label>Example Institute, Exampleton, Exampleland</aff>
+          </front-stub>
+          <body/>
+        </sub-article>
+    '''
+
+    def test_the_name_is_given_first_as_the_panel_sets_it(self):
+        assert self._values(self.REPORT) == [
+            (JatsFieldNames.REVIEWER, 'Mary Jane Doe'),
+            (JatsFieldNames.REVIEWER_AFF, 'Example Institute, Exampleton, Exampleland'),
+        ]
+
+    def test_a_reply_filed_inside_a_report_is_not_a_reviewer(self):
+        # The platform files the authors' answer as a sub-article of the report
+        # it answers, and its contributor is an author of the article.
+        with_reply = self.REPORT.replace('<body/>', '''<body/>
+          <sub-article article-type="reply">
+            <front-stub><contrib-group><contrib><name>
+              <surname>Roe</surname><given-names>John</given-names>
+            </name></contrib></contrib-group></front-stub>
+          </sub-article>''')
+        assert ('reviewer', 'John Roe') not in self._values(with_reply)
+
+    def test_a_reviewer_of_two_versions_is_offered_once(self):
+        assert self._values(self.REPORT + self.REPORT) == self._values(self.REPORT)

@@ -1,8 +1,9 @@
+# pylint: disable=too-many-lines
 import re
 from datetime import date
 from itertools import chain
 from typing import (
-    Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
+    Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
 )
 from dataclasses import dataclass
 
@@ -113,8 +114,8 @@ def _reference_parent_text(ref_el: etree._Element) -> str:
 
 
 # What a reference's numbering is separated from the reference by, where the
-# publisher's conversion swept it into the first value instead: `16.-Sala
-# Situacional` declares the source as `-Sala Situacional`.  A title or a
+# publisher's conversion swept it into the first value instead: `16.-Example
+# Situation` declares the source as `-Example Situation`.  A title or a
 # publication's name does not open with one, and the page prints it beside the
 # marker, which is background.
 _LEADING_SEPARATORS = '-\u2013\u2014.,;:'
@@ -125,6 +126,16 @@ _NAME_SUB_FIELDS: FrozenSet[str] = frozenset({
     JatsSubFieldNames.REFERENCE_PUBLISHER_NAME,
     JatsSubFieldNames.REFERENCE_PUBLISHER_LOC,
 })
+
+
+def _without_leading_marker(text: str) -> str:
+    """An affiliation without the marker the deposit opens it with.
+
+    A reviewer's affiliation is declared `1Example Institute, Exampleton, …`
+    and the panel sets it without the digit, which the panel has no second
+    affiliation to refer to.
+    """
+    return re.sub(r'^\s*\d+\s*', '', text or '')
 
 
 def _without_leading_separator(text: str) -> str:
@@ -357,8 +368,8 @@ _LEAD_IN_FIELDS: FrozenSet[str] = frozenset({
 def _shortened_name(given: str, surname: str) -> Optional[str]:
     """The name as a page shortens it, keeping the first given name in full.
 
-    A line of ORCIDs sets `Ana B. Rivera` where the deposit declares
-    `Ana Beatriz Rivera`, and GROBID gives that form a byline of its own.
+    A line of ORCIDs sets `Mary J. Doe` where the deposit declares
+    `Mary Jane Doe`, and GROBID gives that form a byline of its own.
     Only where there is something to shorten, so a name of two parts is not
     offered twice.
     """
@@ -542,6 +553,47 @@ class JatsFieldExtractor:
             text = element_text(el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.ARTICLE_NOTES)
+
+    def _iter_reviewer_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """Who reviewed the article, and where they work.
+
+        An open review platform files each report as a `<sub-article>` of its
+        own and prints the reviewers in the panel it sets beside the front
+        matter, with the name and the institution as one entry.
+
+        One reviewer per name rather than per report, because a platform files
+        a report per version and the same person reviews more than one of them.
+        The name is reversed as a byline's is, the deposit holding it
+        surname-first and the page setting it given-first.
+
+        The report's own stub, not everything under it: a reply to a review is
+        filed as a `<sub-article>` inside the report it answers, and its
+        contributor is the article's author rather than a reviewer.
+        """
+        seen: Set[str] = set()
+        for report in root.xpath('//sub-article[@article-type="reviewer-report"]'):
+            for contrib in report.xpath('./front-stub//contrib'):
+                name_el = contrib.find('name')
+                if name_el is None:
+                    continue
+                name_text = ' '.join(part for part in (
+                    (name_el.findtext('given-names') or '').strip(),
+                    (name_el.findtext('surname') or '').strip(),
+                ) if part)
+                if not name_text or name_text in seen:
+                    continue
+                seen.add(name_text)
+                yield JatsFieldValue(
+                    text=name_text, field_name=JatsFieldNames.REVIEWER
+                )
+            for aff in report.xpath('./front-stub//aff'):
+                aff_text = _without_leading_marker(element_text(aff))
+                if not aff_text or aff_text in seen:
+                    continue
+                seen.add(aff_text)
+                yield JatsFieldValue(
+                    text=aff_text, field_name=JatsFieldNames.REVIEWER_AFF
+                )
 
     def _iter_self_citation_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         """How the article asks to be cited, as the renderer composes it.
@@ -766,6 +818,8 @@ class JatsFieldExtractor:
         yield from self._iter_front_contact_values(root)
 
         yield from self._iter_self_citation_values(root)
+
+        yield from self._iter_reviewer_values(root)
 
         yield from self._iter_front_identifier_values(root)
 

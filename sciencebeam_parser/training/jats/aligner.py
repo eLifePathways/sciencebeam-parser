@@ -140,6 +140,10 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     # the body: searched from the body floor, the page had already printed it.
     JatsFieldNames.CONFLICT_NOTE,
     JatsFieldNames.CONTRIBUTION_NOTE,
+    # The panel naming the reviewers is set beside the front matter, so a
+    # reviewer belongs at the front however far down the page the panel runs.
+    JatsFieldNames.REVIEWER,
+    JatsFieldNames.REVIEWER_AFF,
 })
 
 # How far the front matter reaches, which is as far as the last value of it that
@@ -307,6 +311,24 @@ _MatchResult = Tuple[int, int, List[Tuple[int, int]]]
 # PDF references (e.g. a ref whose year/volume/URL are absent, giving quality ~0.60)
 # while rejecting genuinely absent ones.
 _REFERENCE_PARENT_MIN_THRESHOLD = 0.55
+
+# Who reviewed the article, and where they work.  Both are looked for in the
+# panel the page sets beside the front matter and nowhere else: the reports
+# themselves name the same people at the end of the document, and a value that
+# reached them would take the review region into the header.
+_PANEL_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.REVIEWER,
+    JatsFieldNames.REVIEWER_AFF,
+})
+
+# What a reviewer's affiliation may be matched at.  The panel drops a part the
+# deposit carries -- `Example Institute, Exampleton, East, Exampleland` is set as
+# `Example Institute, Exampleton, Exampleland` -- which costs two fifths of the match
+# and leaves it at 0.60 on the documents measured.  The lower bar is the one a
+# reference's parent already takes, for the reason it takes it: the page prints
+# the value with parts of it missing, and the range it is looked for in is
+# narrow enough that a worse match has nowhere to land.
+_PANEL_MIN_THRESHOLD = _REFERENCE_PARENT_MIN_THRESHOLD
 
 
 @dataclass
@@ -658,7 +680,7 @@ def _extend_match_for_needle_head(
     The same early stop as the tail, at the other end: a short first piece
     separated from the rest by a gap scores net zero, so the traceback drops it.
     `U.` before `S. Department of Interior`, the `z.` of an address, the first
-    initial of `R.J. Okonkwo` where the page sets a space after each dot.
+    initial of `J.A. Example` where the page sets a space after each dot.
     `_extend_match_for_needle_tail` repairs the end of a value; this repairs its
     start.
 
@@ -1897,6 +1919,59 @@ def _fill_abstract_lines(
         begun.add(instance_id)
 
 
+_OPENING_SEPARATORS: FrozenSet[str] = frozenset({',', ';', '-'})
+
+
+def _iter_shortened_affiliations(text: str) -> Iterator[str]:
+    """The forms a panel sets an affiliation in, longest first.
+
+    A deposit declares the departments in front of the institution and the
+    region between the city and the country; the panel sets neither.  So each
+    form is a run of the declared parts with the leading ones dropped, with and
+    without the part before the last, and two parts is the least that still
+    names a place.
+
+    Longest first, so the fullest form the page actually sets is the one taken.
+    """
+    parts = [part.strip() for part in text.split(',') if part.strip()]
+    seen: Set[str] = set()
+    for dropped in range(len(parts) - 1):
+        kept = parts[dropped:]
+        for without_region in (False, True):
+            form_parts = kept[:-2] + kept[-1:] if without_region else kept
+            if len(form_parts) < 2:
+                continue
+            form = ', '.join(form_parts)
+            if form == text or form in seen:
+                continue
+            seen.add(form)
+            yield form
+
+
+def _release_the_separator_a_value_opens_with(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    field_name: str,
+) -> None:
+    """A separator does not open a value.
+
+    The panel sets a reviewer's name and where they work with a comma between
+    them, and the comma belongs to neither, so a span that opens on one gives
+    it back.
+    """
+    previous: Optional[str] = None
+    for token in token_index.tokens:
+        field = annotated.get_token_field(token)
+        if (
+            field == field_name
+            and previous != field_name
+            and token.text in _OPENING_SEPARATORS
+        ):
+            del annotated.token_label_by_id[id(token)]
+            continue
+        previous = field
+
+
 def _join_what_a_line_prints_inside_one_value(
     annotated: JatsAnnotatedLayoutDocument,
     layout_document: LayoutDocument,
@@ -2031,8 +2106,8 @@ def _label_further_author_names(  # pylint: disable=too-many-arguments
     and each of those is a label of its own.
 
     And by the form a page shortens the name to, where it declares more than
-    one given name: a line of ORCIDs sets `Ana B. Rivera` where the
-    deposit declares `Ana Beatriz Rivera`, and GROBID gives that form a
+    one given name: a line of ORCIDs sets `Mary J. Doe` where the
+    deposit declares `Mary Jane Doe`, and GROBID gives that form a
     byline of its own.  Over what the name itself has not already taken, because
     the two forms share most of their characters and the shortened one would
     otherwise be found inside the byline the full one is holding.
@@ -2176,6 +2251,27 @@ def _has_mid_token_within_gap_blocks(
             return True
         prev_end = block_end
     return False
+
+
+def _outside(
+    ranges: Sequence[Tuple[int, int]], start: int, end: int
+) -> List[Tuple[int, int]]:
+    """Everything in [start, end) that these ranges do not cover.
+
+    Masking is how a search is kept out of somewhere; masking the complement is
+    how it is kept inside.
+    """
+    outside: List[Tuple[int, int]] = []
+    cursor = start
+    for range_start, range_end in sorted(ranges):
+        if range_end <= start or range_start >= end:
+            continue
+        if range_start > cursor:
+            outside.append((cursor, range_start))
+        cursor = max(cursor, range_end)
+    if cursor < end:
+        outside.append((cursor, end))
+    return outside
 
 
 def _overlaps(
@@ -2603,6 +2699,9 @@ class LayoutDocumentJatsAligner:
         # name the page prints inside one is still a name nothing has claimed.
         note_match_ranges: List[Tuple[int, int]] = []
         author_name_values: List[JatsFieldValue] = []
+        # Where the panel last named a reviewer, which is where the
+        # affiliation that came with them is looked for.
+        reviewer_end = 0
         title_values: List[JatsFieldValue] = []
         # Where each per-author field has been placed already.
         per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
@@ -2713,8 +2812,24 @@ class LayoutDocumentJatsAligner:
             skip_furniture = (
                 fv.field_name in _REFERENCE_FIELDS or fv.field_name in _ANCHOR_FIELDS
             )
+            field_config = self.config
+            if fv.field_name == JatsFieldNames.REVIEWER_AFF and reviewer_end:
+                # Where the reviewer it belongs to was named: the panel sets
+                # each entry as a name and then where they work, so the
+                # affiliation is what follows the name it came with.
+                search_start = max(search_start, reviewer_end)
+            if fv.field_name in _PANEL_FIELDS:
+                # Inside the panel and nowhere else, and at the bar a value the
+                # page prints parts of takes.
+                masked = (masked or []) + _outside(
+                    token_index.side_column_ranges, 0, len(token_index.haystack)
+                )
+                field_config = AlignmentConfig(
+                    threshold=min(self.config.threshold, _PANEL_MIN_THRESHOLD),
+                    max_window=self.config.max_window,
+                )
             match_range = _fuzzy_match_field_value(
-                token_index, fv, self.config,
+                token_index, fv, field_config,
                 search_start=search_start, search_end=search_end,
                 masked_ranges=masked,
                 prefer_exact=fv.field_name in _POST_BODY_FIELDS,
@@ -2798,6 +2913,23 @@ class LayoutDocumentJatsAligner:
             # forward from any of them has already passed it.  Only where
             # nothing was found at all: a declaration that is printed after the
             # body has been found there, and this never sees it.
+            if match_range is None and fv.field_name == JatsFieldNames.REVIEWER_AFF:
+                # The panel sets a shortened form of it, so the forms are
+                # tried and the one the page sets is the one that matches.
+                for form in _iter_shortened_affiliations(fv.text):
+                    # At the ordinary bar, not the panel's lower one: a form
+                    # the page sets matches it outright, and a longer form that
+                    # merely overlaps would otherwise be taken first and label
+                    # only the part of itself the page carries.
+                    match_range = _fuzzy_match_field_value(
+                        token_index,
+                        JatsFieldValue(text=form, field_name=fv.field_name),
+                        self.config,
+                        search_start=search_start, search_end=search_end,
+                        masked_ranges=masked,
+                    )
+                    if match_range is not None:
+                        break
             if (
                 match_range is None
                 and fv.sub_field_name is None
@@ -2922,6 +3054,8 @@ class LayoutDocumentJatsAligner:
                 reference_match_ranges.append((a_start, a_end))
             if fv.field_name == JatsFieldNames.AUTHOR:
                 byline_match_ranges.append((a_start, a_end))
+            if fv.field_name == JatsFieldNames.REVIEWER:
+                reviewer_end = a_end
             if fv.field_name == JatsFieldNames.TITLE:
                 title_match_ranges.append((a_start, a_end))
             matched_ranges.append((a_start, a_end))
@@ -3057,6 +3191,9 @@ class LayoutDocumentJatsAligner:
         # After every pass that claims, because what it fills is what the page
         # prints inside a value and nothing else explains.
         _join_what_a_line_prints_inside_one_value(annotated, layout_document)
+        _release_the_separator_a_value_opens_with(
+            annotated, token_index, JatsFieldNames.REVIEWER_AFF
+        )
 
         total = len(field_values)
         if missed_by_field:

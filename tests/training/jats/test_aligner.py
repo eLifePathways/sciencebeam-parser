@@ -16,10 +16,15 @@ from sciencebeam_parser.training.jats.aligner import (
     extend_partial_reference_matches,
     _build_token_index,
     _fuzzy_match_field_value,
+    _iter_shortened_affiliations,
+    _release_the_separator_a_value_opens_with,
     _search_range,
     narrow_search_range_to_window,
     get_search_stride,
     get_search_window_size,
+)
+from sciencebeam_parser.training.jats.annotated_document import (
+    JatsAnnotatedLayoutDocument,
 )
 from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
@@ -233,7 +238,7 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         rather than a statement about them.
         """
         abstract_text = ' '.join(['word'] * 60)
-        byline = 'Petra Vance, Kaya Oduya, Lars Petit'
+        byline = 'Mary Smith, John Jones, Bob Brown'
         doc = _make_doc(byline, abstract_text, 'Introduction Body')
         fvs = [
             _fv(byline, JatsFieldNames.AUTHOR),
@@ -291,54 +296,54 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         Smith-Waterman stops when extending would not raise the score, and a
         one-character opening separated by a gap scores net zero.
         """
-        doc = _make_doc('R.J. Okonkwo and Ana Rivera', 'Introduction Body')
-        fvs = [_fv('R.J. Okonkwo', JatsFieldNames.AUTHOR)]
+        doc = _make_doc('J.A. Example and Mary Doe', 'Introduction Body')
+        fvs = [_fv('J.A. Example', JatsFieldNames.AUTHOR)]
         annotated = self._align(doc, fvs)
         labelled = [
             token.text for token in list(doc.iter_all_lines())[0].tokens
             if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
         ]
-        assert labelled[:2] == ['R', '.']
+        assert labelled[:2] == ['J', '.']
 
     def test_a_name_the_front_matter_prints_again_is_labelled_again(self):
         """A correspondence block names the authors a second time."""
         abstract_text = ' '.join(['word'] * 60)
         doc = _make_doc(
-            'Petra Vance 1 , Kaya Oduya 2',
-            'Correspondence: Petra Vance (petra@example.org)',
+            'Mary Smith 1 , John Jones 2',
+            'Correspondence: Mary Smith (petra@example.org)',
             abstract_text,
             'Introduction Body',
         )
         fvs = [
-            _fv('Petra Vance 1', JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME),
-            _fv('Kaya Oduya 2', JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME),
-            _fv('Petra Vance 1 Kaya Oduya 2', JatsFieldNames.AUTHOR),
+            _fv('Mary Smith 1', JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME),
+            _fv('John Jones 2', JatsFieldNames.AUTHOR, JatsSubFieldNames.AUTHOR_NAME),
+            _fv('Mary Smith 1 John Jones 2', JatsFieldNames.AUTHOR),
             _fv(abstract_text, JatsFieldNames.ABSTRACT),
         ]
-        fvs[0].fallback_text = 'Petra Vance'
-        fvs[1].fallback_text = 'Kaya Oduya'
+        fvs[0].fallback_text = 'Mary Smith'
+        fvs[1].fallback_text = 'John Jones'
         annotated = self._align(doc, fvs)
         second_line = list(doc.iter_all_lines())[1]
         labelled = [
             token.text for token in second_line.tokens
             if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
         ]
-        assert labelled == ['Petra', 'Vance']
+        assert labelled == ['Mary', 'Smith']
 
     def test_an_affiliation_two_authors_share_is_labelled_under_each(self):
         """The JATS declares it once per author and the page prints it once per author."""
         abstract_text = ' '.join(['word'] * 60)
-        aff_text = 'Institute of Marine Research, Bergen, Norway'
+        aff_text = 'Example Institute, Exampleton, Exampleland'
         doc = _make_doc(
-            'Petra Vance',
+            'Mary Smith',
             aff_text,
-            'Kaya Oduya',
+            'John Jones',
             aff_text,
             abstract_text,
             'Introduction Body',
         )
         fvs = [
-            _fv('Petra Vance Kaya Oduya', JatsFieldNames.AUTHOR),
+            _fv('Mary Smith John Jones', JatsFieldNames.AUTHOR),
             _fv(aff_text, JatsFieldNames.AUTHOR_AFF),
             _fv(aff_text, JatsFieldNames.AUTHOR_AFF),
             _fv(abstract_text, JatsFieldNames.ABSTRACT),
@@ -357,7 +362,7 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
     def test_an_orcid_the_page_prints_bare_is_labelled(self):
         abstract_text = ' '.join(['word'] * 60)
         doc = _make_doc(
-            'Petra Vance',
+            'Mary Smith',
             'ORCID: 0000-0002-1672-9686',
             abstract_text,
             'Introduction Body',
@@ -365,7 +370,7 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         orcid = _fv('https://orcid.org/0000-0002-1672-9686', JatsFieldNames.ORCID)
         orcid.fallback_text = '0000-0002-1672-9686'
         annotated = self._align(doc, [
-            _fv('Petra Vance', JatsFieldNames.AUTHOR),
+            _fv('Mary Smith', JatsFieldNames.AUTHOR),
             orcid,
             _fv(abstract_text, JatsFieldNames.ABSTRACT),
         ])
@@ -480,7 +485,7 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         second_half = ' '.join(['omega'] * 40)
         interruption = 'Instituto de Pesquisa Economica Aplicada, Brasilia, Brasil'
         doc = _make_doc(
-            'Petra Vance',
+            'Mary Smith',
             first_half,
             interruption,
             second_half,
@@ -488,7 +493,7 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         )
         abstract_text = first_half + ' ' + second_half
         annotated = self._align(doc, [
-            _fv('Petra Vance', JatsFieldNames.AUTHOR),
+            _fv('Mary Smith', JatsFieldNames.AUTHOR),
             _fv(abstract_text, JatsFieldNames.ABSTRACT),
             _fv(interruption, JatsFieldNames.AUTHOR_AFF),
         ])
@@ -607,19 +612,19 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         # within_gap and are not part of pre_anchor, so they are dropped.
         headnote = 'Journal Name 2025, 5:251 Last updated: 13 MAR 2026'
         ref_text = (
-            'Smith J 2020 Clogging phenomenon in continuous casting of steel '
-            'a review Steel Res Int 10.1002/srin.201800'
+            'Smith J 2020 Example study of example widgets in example conditions '
+            'a review Example Res Int 10.1002/exam.201800'
         )
         # Doc layout: ref pre-break line, then the running headnote, then ref suffix
         doc = _make_doc(
-            'Smith J 2020 Clogging phenomenon in continuous casting of steel',
+            'Smith J 2020 Example study of example widgets in example conditions',
             headnote,
-            'a review Steel Res Int 10.1002/srin.201800',
+            'a review Example Res Int 10.1002/exam.201800',
         )
         fvs = [
             _fv(ref_text, JatsFieldNames.REFERENCE),
             _fv(
-                'Clogging phenomenon in continuous casting of steel a review',
+                'Example study of example widgets in example conditions a review',
                 JatsFieldNames.REFERENCE,
                 JatsSubFieldNames.REFERENCE_ARTICLE_TITLE,
             ),
@@ -832,17 +837,17 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         )
 
     def test_author_gap_fill_bridges_unlabeled_period_before_et_al(self):
-        # When "Okonkwo R" and "et al." are separate needles, the "." between "R" and
+        # When "Roe J" and "et al." are separate needles, the "." between "J" and
         # "et al." has no label from SW (parent bibl text skips "et al."). The gap fill
         # must bridge it so all tokens become one <author> element.
-        doc = _make_doc('OKONKWO, R. et al. Growth models of an epidemic 2016')
+        doc = _make_doc('ROE, J. et al. Growth models of an epidemic 2016')
         fvs = [
-            _fv('OKONKWO R Growth models of an epidemic 2016', JatsFieldNames.REFERENCE),
+            _fv('ROE J Growth models of an epidemic 2016', JatsFieldNames.REFERENCE),
             JatsFieldValue(
-                text='Okonkwo R',
+                text='Roe J',
                 field_name=JatsFieldNames.REFERENCE,
                 sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
-                fallback_text='Okonkwo',
+                fallback_text='Roe',
             ),
             JatsFieldValue(
                 text='et al.',
@@ -852,25 +857,25 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         ]
         annotated = self._align(doc, fvs)
         tokens = list(doc.iter_all_tokens())
-        period_after_r = tokens[3]  # 'OKONKWO'=0, ','=1, 'R'=2, '.'=3
-        assert period_after_r.text == '.', f'Expected "." got {period_after_r.text!r}'
-        sub = annotated.get_token_sub_field(period_after_r)
+        period_after_initial = tokens[3]  # 'ROE'=0, ','=1, 'J'=2, '.'=3
+        assert period_after_initial.text == '.', f'Expected "." got {period_after_initial.text!r}'
+        sub = annotated.get_token_sub_field(period_after_initial)
         assert sub == JatsSubFieldNames.REFERENCE_AUTHOR, (
-            '"." after R should be labeled via gap fill'
+            '"." after J should be labeled via gap fill'
         )
 
     def test_author_gap_fill_bridges_middle_initial_before_et_al(self):
-        # "Brandt NL" with "et al." as a separate needle — the ". L." between
-        # "N" and "et al." in the PDF are not in the JATS author text and must be
+        # "Black AL" with "et al." as a separate needle — the ". L." between
+        # "A" and "et al." in the PDF are not in the JATS author text and must be
         # bridged by gap fill so all tokens merge into one <author> element.
-        doc = _make_doc('BRANDT, N. L. et al. Counting the herons 2020')
+        doc = _make_doc('BLACK, A. L. et al. Counting the herons 2020')
         fvs = [
-            _fv('BRANDT NL Counting the herons 2020', JatsFieldNames.REFERENCE),
+            _fv('BLACK AL Counting the herons 2020', JatsFieldNames.REFERENCE),
             JatsFieldValue(
-                text='Brandt NL',
+                text='Black AL',
                 field_name=JatsFieldNames.REFERENCE,
                 sub_field_name=JatsSubFieldNames.REFERENCE_AUTHOR,
-                fallback_text='Brandt',
+                fallback_text='Black',
             ),
             JatsFieldValue(
                 text='et al.',
@@ -890,12 +895,12 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         # REFERENCE_LABEL "1" can match the "1" in "1987" if the citation number is
         # outside the parent bibl match range.  The masking that REFERENCE_LABEL adds
         # must not block REFERENCE_YEAR from labeling "1987".
-        doc = _make_doc('Lewis RW Roberts PM Applied Scientific Research 1987')
+        doc = _make_doc('Doe RW Roe PM Applied Example Research 1987')
         fvs = [
-            _fv('1 Lewis RW Roberts PM Applied Scientific Research 1987',
+            _fv('1 Doe RW Roe PM Applied Example Research 1987',
                 JatsFieldNames.REFERENCE),
             _fv('1', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
-            _fv('Applied Scientific Research', JatsFieldNames.REFERENCE,
+            _fv('Applied Example Research', JatsFieldNames.REFERENCE,
                 JatsSubFieldNames.REFERENCE_SOURCE),
             _fv('1987', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_YEAR),
         ]
@@ -1303,13 +1308,13 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
         # a preceding DOI fragment like "2020-0248".
         doc = _make_doc(
             'Preceding ref doi 2020-0248',
-            '20- Kato T study title Stress Health 2015',
+            '20- Doe T study title Example Health 2015',
         )
         fvs = [
             _fv('Preceding ref doi 2020-0248', JatsFieldNames.REFERENCE),
-            _fv('20- Kato T study title Stress Health 2015', JatsFieldNames.REFERENCE),
+            _fv('20- Doe T study title Example Health 2015', JatsFieldNames.REFERENCE),
             _fv('20-', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_LABEL),
-            _fv('Kato T', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Doe T', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
         ]
         annotated = self._align(doc, fvs)
         tokens = list(doc.iter_all_tokens())
@@ -1688,10 +1693,10 @@ class TestPostBodyRegionFloor:
         )
 
     def test_an_exact_only_value_matches_verbatim_text(self):
-        doc = _make_doc('Introduction', 'University Medical Centre Utrecht')
+        doc = _make_doc('Introduction', 'Example Institute Exampleton')
         annotated = self._align(doc, [
             JatsFieldValue(
-                text='University Medical Centre Utrecht',
+                text='Example Institute Exampleton',
                 field_name=JatsFieldNames.SUB_ARTICLE,
                 exact_only=True,
             ),
@@ -1702,10 +1707,10 @@ class TestPostBodyRegionFloor:
         )
 
     def test_an_exact_only_value_does_not_match_near_text(self):
-        doc = _make_doc('Introduction', 'University Medical Center of Utrecht')
+        doc = _make_doc('Introduction', 'Example Institute of Exampleton')
         annotated = self._align(doc, [
             JatsFieldValue(
-                text='University Medical Centre Utrecht',
+                text='Example Institute Exampleton',
                 field_name=JatsFieldNames.SUB_ARTICLE,
                 exact_only=True,
             ),
@@ -1719,12 +1724,12 @@ class TestReferenceSubFieldContainment:
     ANCHOR_BEFORE = 'A unique opening sentence about autophagy in cultured plant cells'
     ANCHOR_AFTER = 'A unique closing sentence about the limitations of the present study'
     REFERENCE_ONE = (
-        'Fleming PS, Koletsi D, Ioannidis JP: The first cited title.'
-        ' J Clin Epidemiol. 2016; 78: 34-42.'
+        'Smith PS, Jones D, Brown JP: The first cited title.'
+        ' J Example Epid. 2016; 78: 34-42.'
     )
     REFERENCE_TWO = (
-        'Howick J, Koletsi D, Pandis N: The second cited title.'
-        ' J Clin Epidemiol. 2020; 126: 154-159.'
+        'Green J, Jones D, White N: The second cited title.'
+        ' J Example Epid. 2020; 126: 154-159.'
     )
 
     def _align(self):
@@ -1739,13 +1744,13 @@ class TestReferenceSubFieldContainment:
         field_values = [
             _fv(self.ANCHOR_BEFORE, JatsFieldNames.BODY_SECTION_PARAGRAPH),
             _fv(self.REFERENCE_ONE, JatsFieldNames.REFERENCE),
-            _fv('Fleming PS', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
-            _fv('Koletsi D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
-            _fv('J Clin Epidemiol', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_SOURCE),
+            _fv('Smith PS', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Jones D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('J Example Epid', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_SOURCE),
             _fv(self.REFERENCE_TWO, JatsFieldNames.REFERENCE),
-            _fv('Howick J', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
-            _fv('Koletsi D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
-            _fv('J Clin Epidemiol', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_SOURCE),
+            _fv('Green J', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('Jones D', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_AUTHOR),
+            _fv('J Example Epid', JatsFieldNames.REFERENCE, JatsSubFieldNames.REFERENCE_SOURCE),
             _fv(self.ANCHOR_AFTER, JatsFieldNames.BODY_SECTION_PARAGRAPH),
         ]
         return doc, LayoutDocumentJatsAligner().align(doc, field_values)
@@ -1779,7 +1784,7 @@ class TestReferenceSubFieldContainment:
             (line_index, token)
             for line_index in (3, 4)
             for token in lines[line_index].tokens
-            if token.text == 'Koletsi'
+            if token.text == 'Jones'
         ]
         assert len(shared) == 2
         assert {
@@ -1895,12 +1900,12 @@ class TestReferenceStaysInTheList:
     the element before it takes the whole line.
     """
 
-    FIRST = 'Arcos R Gertrudix M Arribas C: survey instrument for evaluating effects. Zenodo. 2001'
+    FIRST = 'Doe R Roe M Fox C: survey instrument for evaluating effects. Zenodo. 2001'
     SECOND = (
-        'Arcos R Gertrudix M Arribas C: checklist for responses to disinformation.'
+        'Doe R Roe M Fox C: checklist for responses to disinformation.'
         ' Zenodo. 2002'
     )
-    THIRD = 'Bail C Guay B: assessing the impact of research agency accounts. Science. 2003'
+    THIRD = 'Black C Brown B: assessing the impact of research agency accounts. Example Sci. 2003'
     FILLER_ONE = (
         'Competing interests: no competing interests were disclosed by any of the'
         ' authors of this article, and the grant reference numbers are listed below'
@@ -2037,7 +2042,7 @@ class TestReferenceInterruptedByPageFurniture:
         'Significance of the reed bed for the nesting behaviour of the heron on'
         ' the marshes north of the estuary - a review.'
     )
-    REFERENCE = 'Okonkwo R, Brandt N: ' + TITLE + ' Marshland Reports 2022; 93(7): 2200086.'
+    REFERENCE = 'Roe J, Black A: ' + TITLE + ' Example Reports 2022; 93(7): 2200086.'
 
     def _align(self):
         doc = _paged_doc([
@@ -2047,13 +2052,13 @@ class TestReferenceInterruptedByPageFurniture:
             ],
             [
                 ('Earlier reference text that fills the page before the one of interest', 300.0),
-                ('34. Okonkwo R, Brandt N: Significance of the reed bed'
+                ('34. Roe J, Black A: Significance of the reed bed'
                  ' for the nesting', 700.0),
                 (self.FOOT, 950.0),
             ],
             [
                 ('behaviour of the heron on the marshes north of the estuary - a review.'
-                 ' Marshland Reports 2022; 93(7): 2200086.', 300.0),
+                 ' Example Reports 2022; 93(7): 2200086.', 300.0),
                 (self.FOOT, 950.0),
             ],
         ])
@@ -2107,10 +2112,10 @@ class TestExtendPartialReferenceMatches:
 
     # The half below the interruption is the longer one, so it is the half the
     # first pass keeps -- which is the shape the defect takes on the page.
-    FIRST_HALF = 'Okonkwo RJ Brandt NL effects of'
+    FIRST_HALF = 'Roe JA Black AL effects of'
     SECOND_HALF = (
         'water level on the nesting of the heron a journal of some length '
-        'Marshland Reports volume 14 issue 1 pages 79 to 83 2011'
+        'Example Reports volume 14 issue 1 pages 79 to 83 2011'
     )
     REFERENCE_TEXT = FIRST_HALF + ' ' + SECOND_HALF
 
@@ -2184,9 +2189,9 @@ class TestTheCitationThePageBreaksInTwo:
     documents no line carries a single value on both sides of background.
     """
 
-    NAMES = 'Rivera L, Okonkwo A, Berg S'
+    NAMES = 'Doe L, Roe A, Fox S'
     TITLE = 'A field guide to the herons of the northern marshes'
-    SOURCE = 'Marshland Reports 2031, 7:412'
+    SOURCE = 'Example Reports 2031, 7:412'
     LINE = (
         'How to cite this article: ' + NAMES + ' et al. ' + TITLE
         + ' [version 2; peer review: 1 approved] ' + SOURCE
@@ -2222,7 +2227,7 @@ class TestTheCitationThePageBreaksInTwo:
         } <= self._citation_tokens()
 
     def test_where_it_appeared_which_is_the_second_half(self):
-        assert {'Marshland', 'Reports', '2031'} <= self._citation_tokens()
+        assert {'Example', 'Reports', '2031'} <= self._citation_tokens()
 
     def test_the_words_introducing_it_stay_outside_it(self):
         assert not {'How', 'cite', 'article'} & self._citation_tokens()
@@ -2505,22 +2510,22 @@ class TestAValueLyingAcrossAWindowBoundary:
 class TestAnAuthorNamedAgainInAShortenedForm:
     """A page may shorten an author's middle names to initials.
 
-    A line of ORCIDs sets `Ana B. Rivera` where the deposit declares
-    `Ana Beatriz Rivera`, and GROBID gives that form a byline of its
+    A line of ORCIDs sets `Mary J. Doe` where the deposit declares
+    `Mary Jane Doe`, and GROBID gives that form a byline of its
     own, as it does the name a correspondence block names a second time.
     """
 
     NAMES = [
-        ('Ana Beatriz Rivera', 'Ana B. Rivera'),
-        ('Kofi Anum Okonkwo', 'Kofi A. Okonkwo'),
+        ('Mary Jane Doe', 'Mary J. Doe'),
+        ('John Alan Roe', 'John A. Roe'),
     ]
-    BYLINE = 'Ana Beatriz Rivera 1 , Kofi Anum Okonkwo 2'
+    BYLINE = 'Mary Jane Doe 1 , John Alan Roe 2'
 
     def _align(self):
         doc = _make_doc(
             'A survey of the herons of the northern marshes',
             self.BYLINE,
-            'ORCIDs: Ana B. Rivera (0000-0002-1111-2222), Kofi A. Okonkwo'
+            'ORCIDs: Mary J. Doe (0000-0002-1111-2222), John A. Roe'
             ' (0000-0003-3333-4444)',
             'The marshes north of the estuary were surveyed over four summers.',
         )
@@ -2551,7 +2556,173 @@ class TestAnAuthorNamedAgainInAShortenedForm:
 
     def test_the_shortened_name_is_the_author(self):
         labelled = self._author_tokens()
-        assert {'Ana', 'B', 'Rivera', 'Kofi', 'A', 'Okonkwo'} <= labelled
+        assert {'Mary', 'J', 'Doe', 'John', 'A', 'Roe'} <= labelled
 
     def test_the_words_introducing_the_line_stay_outside_it(self):
         assert 'ORCIDs' not in self._author_tokens()
+
+
+class TestAReviewerIsLabelledInThePanelOnly:
+    """The panel beside the front matter, and not the reports at the end.
+
+    An open review platform names its reviewers twice: in the panel it sets
+    down the side of the first page, and again at the head of each report it
+    publishes after the body. A value that reached the second took the review
+    region into the header with it.
+    """
+
+    NAME = 'Mary Jane Doe'
+    AFF = 'Example Institute, Exampleton, Exampleland'
+    ARTICLE = [
+        'A survey of the herons of the northern marshes',
+        'John Alan Roe 1 , Alice Black 2',
+        'The marshes north of the estuary were surveyed over four summers to',
+        'count the herons nesting along them, and the counts were compared',
+        'with the water levels recorded at the three gauges upstream, which',
+        'the authority publishes each spring for the catchment as a whole.',
+    ]
+    PANEL = [
+        'Open Peer Review',
+        'Approval Status',
+        'version 1',
+        NAME,
+        ', ' + AFF,
+        '1.',
+    ]
+
+    def _align(self):
+        page_one = (
+            [
+                _column_line(text, 1, 100.0 + 20 * index, 50.0, 260.0)
+                for index, text in enumerate(self.ARTICLE)
+            ]
+            + [
+                _column_line(text, 1, 100.0 + 20 * index, 350.0, 150.0)
+                for index, text in enumerate(self.PANEL)
+            ]
+        )
+        # The report itself, after the body, names the reviewer again.
+        page_two = [
+            _column_line('Reviewer Report', 2, 100.0, 50.0, 500.0),
+            _column_line(self.NAME, 2, 130.0, 50.0, 500.0),
+            _column_line(self.AFF, 2, 160.0, 50.0, 500.0),
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=lines)],
+                meta=LayoutPageMeta(
+                    page_number=page_number,
+                    coordinates=LayoutPageCoordinates(
+                        x=0, y=0, width=600, height=1000, page_number=page_number
+                    ),
+                ),
+            )
+            for page_number, lines in enumerate([page_one, page_two], 1)
+        ])
+        field_values = [
+            _fv(self.ARTICLE[0], JatsFieldNames.TITLE),
+            _fv(' '.join(self.ARTICLE[2:]), JatsFieldNames.ABSTRACT),
+            _fv(self.NAME, JatsFieldNames.REVIEWER),
+            _fv(self.AFF, JatsFieldNames.REVIEWER_AFF),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _reviewer_pages(self) -> Set[int]:
+        doc, annotated = self._align()
+        return {
+            token.coordinates.page_number
+            for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.REVIEWER
+            and token.coordinates
+        }
+
+    def test_the_name_in_the_panel_is_the_reviewer(self):
+        assert 1 in self._reviewer_pages()
+
+    def test_the_name_in_the_report_is_not(self):
+        assert 2 not in self._reviewer_pages()
+
+    def test_a_page_that_sets_no_panel_labels_no_reviewer(self):
+        """The rule itself: the panel is the only place a reviewer is looked for.
+
+        A document whose reviewers are named only in the reports it publishes
+        has nothing in the header to label, and the name must not be taken from
+        the region those reports are in.
+        """
+        doc = _make_doc(
+            self.ARTICLE[0],
+            self.ARTICLE[1],
+            ' '.join(self.ARTICLE[2:]),
+            'Reviewer Report',
+            self.NAME,
+            self.AFF,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.ARTICLE[0], JatsFieldNames.TITLE),
+            _fv(' '.join(self.ARTICLE[2:]), JatsFieldNames.ABSTRACT),
+            _fv(self.NAME, JatsFieldNames.REVIEWER),
+            _fv(self.AFF, JatsFieldNames.REVIEWER_AFF),
+        ])
+        assert not [
+            token for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.REVIEWER
+        ]
+
+
+class TestTheSeparatorAValueOpensWith:
+    """The comma between a reviewer's name and where they work is neither's."""
+
+    def _released(self, first: int, last: int):
+        """The tokens from `first` to `last` labelled, then the pass run."""
+        doc = _make_doc('Mary Jane Doe , Example Institute , Exampleland')
+        token_index = _build_token_index(doc)
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        for token in token_index.tokens[first:last + 1]:
+            annotated.set_token_label(token, JatsFieldNames.REVIEWER_AFF)
+        _release_the_separator_a_value_opens_with(
+            annotated, token_index, JatsFieldNames.REVIEWER_AFF
+        )
+        return [
+            token.text for token in token_index.tokens
+            if annotated.get_token_field(token) == JatsFieldNames.REVIEWER_AFF
+        ]
+
+    def test_a_span_that_opens_on_one_gives_it_back(self):
+        # ', Example Institute'
+        assert self._released(3, 5) == ['Example', 'Institute']
+
+    def test_a_separator_inside_the_span_is_the_value_s_own(self):
+        # ', Example Institute , Exampleland'
+        assert self._released(3, 7) == [
+            'Example', 'Institute', ',', 'Exampleland'
+        ]
+
+
+class TestTheFormsAPanelSetsAnAffiliationIn:
+    """A deposit declares more of an affiliation than a panel sets.
+
+    The departments in front of the institution and the region between the city
+    and the country are declared and not set, so the forms are the runs of the
+    declared parts without them.  Longest first, and each is matched at the
+    ordinary bar, so a longer form that merely overlaps the page is refused
+    rather than taken and labelled only as far as the page carries it.
+    """
+
+    def test_the_leading_parts_and_the_region_are_what_come_off(self):
+        assert list(_iter_shortened_affiliations(
+            'Example Unit, Example Institute, Exampleton, East, Exampleland'
+        )) == [
+            'Example Unit, Example Institute, Exampleton, Exampleland',
+            'Example Institute, Exampleton, East, Exampleland',
+            'Example Institute, Exampleton, Exampleland',
+            'Exampleton, East, Exampleland',
+            'Exampleton, Exampleland',
+            'East, Exampleland',
+        ]
+
+    def test_a_place_needs_two_parts_to_name_it(self):
+        assert not list(_iter_shortened_affiliations('Example Institute'))
+
+    def test_the_declared_form_is_not_offered_as_a_shortened_one(self):
+        forms = list(_iter_shortened_affiliations('Example Institute, Exampleland'))
+        assert 'Example Institute, Exampleland' not in forms
