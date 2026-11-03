@@ -15,6 +15,7 @@ from pathlib import Path
 from benchmarks.training_selection import SELECTION_DIRECTORY_NAME
 
 DEFAULT_CONFIG = "data/generated-training-data/training-source.yml"
+CORRECTIONS_DIRECTORY_NAME = "source-corrections"
 
 
 def get_default_selection_path(config_path: str) -> Path:
@@ -24,3 +25,12 @@ def get_default_selection_path(config_path: str) -> Path:
     the corpus and both are committed with it.
     """
     return Path(config_path).parent / SELECTION_DIRECTORY_NAME
+
+
+def get_default_corrections_path(config_path: str) -> Path:
+    """Where the reviewed changes to a deposit sit, relative to the config.
+
+    Beside it, for the same reason the selection is: a change to a deposit
+    describes the corpus, and is committed with it.
+    """
+    return Path(config_path).parent / CORRECTIONS_DIRECTORY_NAME

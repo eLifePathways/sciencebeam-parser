@@ -422,6 +422,30 @@ def _iter_aff_elements(root: etree._Element) -> Iterator[etree._Element]:
     )
 
 
+_CORRESP_FIELD_BY_TAG: Dict[str, str] = {
+    'institution': JatsFieldNames.CORRESP_AFF,
+    'addr-line': JatsFieldNames.CORRESP_ADDRESS,
+    'phone': JatsFieldNames.CORRESP_PHONE,
+}
+
+
+def _iter_corresp_values(corresp: etree._Element) -> Iterator[JatsFieldValue]:
+    """What a correspondence block declares beyond the name and the email.
+
+    A deposit that holds the block as prose declares none of these, and the
+    aligner has nothing to divide it by: where the institution ends and the
+    address begins is a judgement, so it is made in a reviewed correction to
+    the deposit rather than here.
+    """
+    for el in corresp:
+        field_name = _CORRESP_FIELD_BY_TAG.get(str(el.tag))
+        if field_name is None:
+            continue
+        text = element_text(el)
+        if text:
+            yield JatsFieldValue(text=text, field_name=field_name)
+
+
 class JatsFieldExtractor:
     """Extract (text, field_name, sub_field_name) triples from a JATS <article> root."""
 
@@ -744,7 +768,15 @@ class JatsFieldExtractor:
                 if el.tag == 'fn' else None
             )
             if note_field is None:
-                yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_NOTES)
+                if el.tag == 'corresp':
+                    yield JatsFieldValue(
+                        text=text, field_name=JatsFieldNames.CORRESPONDENCE
+                    )
+                    yield from _iter_corresp_values(el)
+                else:
+                    yield JatsFieldValue(
+                        text=text, field_name=JatsFieldNames.AUTHOR_NOTES
+                    )
                 continue
             statement = statement_text(el)
             if statement:

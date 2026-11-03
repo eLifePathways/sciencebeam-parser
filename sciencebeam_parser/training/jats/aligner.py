@@ -88,6 +88,17 @@ _REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
 _UNLABELLED_NOTE_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.AUTHOR_NOTES,
     JatsFieldNames.ARTICLE_NOTES,
+    JatsFieldNames.CORRESPONDENCE,
+})
+
+# What a correspondence block declares, which belongs inside the block and
+# nowhere else.  An institution it names is often the one a byline already
+# carries, so a search of the whole region finds the byline's printing, which
+# another field is holding, and the block's own is left background.
+_CORRESP_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.CORRESP_AFF,
+    JatsFieldNames.CORRESP_ADDRESS,
+    JatsFieldNames.CORRESP_PHONE,
 })
 
 # The author block's fields, which the JATS declares once per author and the
@@ -2702,6 +2713,7 @@ class LayoutDocumentJatsAligner:
         # Where the panel last named a reviewer, which is where the
         # affiliation that came with them is looked for.
         reviewer_end = 0
+        correspondence_ranges: List[Tuple[int, int]] = []
         title_values: List[JatsFieldValue] = []
         # Where each per-author field has been placed already.
         per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
@@ -2818,6 +2830,13 @@ class LayoutDocumentJatsAligner:
                 # each entry as a name and then where they work, so the
                 # affiliation is what follows the name it came with.
                 search_start = max(search_start, reviewer_end)
+            if fv.field_name in _CORRESP_FIELDS and correspondence_ranges:
+                # Inside the block that declares it: the block locates itself,
+                # and what it names is printed there rather than wherever the
+                # same words appear again.
+                masked = (masked or []) + _outside(
+                    correspondence_ranges, 0, len(token_index.haystack)
+                )
             if fv.field_name in _PANEL_FIELDS:
                 # Inside the panel and nowhere else, and at the bar a value the
                 # page prints parts of takes.
@@ -3056,6 +3075,8 @@ class LayoutDocumentJatsAligner:
                 byline_match_ranges.append((a_start, a_end))
             if fv.field_name == JatsFieldNames.REVIEWER:
                 reviewer_end = a_end
+            if fv.field_name == JatsFieldNames.CORRESPONDENCE:
+                correspondence_ranges.append((a_start, a_end))
             if fv.field_name == JatsFieldNames.TITLE:
                 title_match_ranges.append((a_start, a_end))
             matched_ranges.append((a_start, a_end))

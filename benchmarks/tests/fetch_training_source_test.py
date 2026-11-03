@@ -422,3 +422,62 @@ class TestNarrowingToSomeCorpora:
         """`--include-corpus` admits an opt-in corpus; it never excludes one."""
         records = fetch_data(_BASE_CONFIG, "smoke", "train", repo / "bench", include=["ore"])
         assert {record["corpus"] for record in records} == {"ore", "biorxiv"}
+
+
+class TestFetchTrainingSourceCorrections:
+    """A document the corpus corrects is fetched from its corrected deposit."""
+
+    CORRECTED = "<article id='ore0'><corrected/></article>"
+
+    def _corrections(self, tmp_path: Path, document_id: str = "ore0") -> Path:
+        corpus_dir = tmp_path / "source-corrections" / "ore"
+        corpus_dir.mkdir(parents=True)
+        (corpus_dir / f"{document_id}.jats.xml").write_text(
+            self.CORRECTED, encoding="utf-8"
+        )
+        return tmp_path / "source-corrections"
+
+    def _deposit(self, out: Path, document_id: str) -> str:
+        return (out / "train/ore" / f"{document_id}.jats.xml").read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_corrected_deposit_is_what_the_fetch_leaves(
+        self, repo: Path, tmp_path: Path
+    ):
+        out = repo / "out"
+        fetch_training_source(
+            _BASE_CONFIG, "full", "train", out,
+            corrections_dir=self._corrections(tmp_path),
+        )
+        assert self._deposit(out, "ore0") == self.CORRECTED
+        assert "corrected" not in self._deposit(out, "ore1")
+
+    def test_a_deposit_an_earlier_fetch_left_is_corrected_too(
+        self, repo: Path, tmp_path: Path
+    ):
+        # The fetch writes only what is missing, so a tree left without the
+        # correction would otherwise generate from the deposit as published.
+        out = repo / "out"
+        fetch_training_source(_BASE_CONFIG, "full", "train", out)
+        assert "corrected" not in self._deposit(out, "ore0")
+
+        fetch_training_source(
+            _BASE_CONFIG, "full", "train", out,
+            corrections_dir=self._corrections(tmp_path),
+        )
+        assert self._deposit(out, "ore0") == self.CORRECTED
+
+    def test_the_deposit_as_published_is_kept(self, repo: Path, tmp_path: Path):
+        out = repo / "out"
+        fetch_training_source(
+            _BASE_CONFIG, "full", "train", out,
+            corrections_dir=self._corrections(tmp_path),
+        )
+        as_deposited = out / "train/ore/ore0.as-deposited.xml"
+        assert "corrected" not in as_deposited.read_text(encoding="utf-8")
+
+    def test_nothing_is_substituted_without_a_correction(self, repo: Path):
+        out = repo / "out"
+        fetch_training_source(_BASE_CONFIG, "full", "train", out)
+        assert not list((out / "train/ore").glob("*.as-deposited.xml"))
