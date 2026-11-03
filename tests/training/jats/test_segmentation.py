@@ -233,7 +233,7 @@ class TestDeclarationsInTheFrontMatter:
                 2: JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
                 3: JatsFieldNames.ABSTRACT,
             },
-            'Petra Vance and Kaya Oduya',
+            'Mary Smith and John Jones',
             'Both authors drew the maps.',
             'The authors own no shares in the ferry company.',
             'The ferries of the western isles are counted here.',
@@ -253,7 +253,7 @@ class TestDeclarationsInTheFrontMatter:
                 2: JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
                 4: JatsFieldNames.BODY_SECTION_PARAGRAPH,
             },
-            'Petra Vance and Kaya Oduya',
+            'Mary Smith and John Jones',
             'Both authors drew the maps.',
             'The authors own no shares in the ferry company.',
             'The ferries of the western isles are counted here.',
@@ -274,7 +274,7 @@ class TestDeclarationsInTheFrontMatter:
             'The count ran from spring to autumn.',
             'Both authors drew the maps.',
             'The authors own no shares in the ferry company.',
-            'Vance P and Oduya K. Counting ferries. 2021.',
+            'Smith M and Jones J. Counting ferries. 2021.',
         )
         assert labels == [
             SEG_FRONT, SEG_BODY, SEG_CONTRIBUTION, SEG_CONFLICT, SEG_REFERENCES,
@@ -630,12 +630,12 @@ class TestRegionStartsAtThePageTop:
         # PPR459453's list starts with an entry the JATS has no record of, so
         # the region begins four lines and a page break after its heading.
         heading = make_line('References', y=700.0, page_number=1)
-        first = make_line('Okonkwo,', 'R.', '(2020).', 'Aguas:', 'corrientes', y=720.0,
+        first = make_line('Roe,', 'R.', '(2020).', 'Aguas:', 'corrientes', y=720.0,
                           page_number=1)
         second = make_line('locales', 'y', 'estuarios', y=740.0, page_number=1)
         number = make_line('18', y=960.0, page_number=1)
-        third = make_line('arias.', 'MarshlandReports.org,', y=100.0, page_number=2)
-        entry = make_line('Brandt,', 'N.', '(2020).', 'Corrientes', 'locales.',
+        third = make_line('arias.', 'ExampleReports.org,', y=100.0, page_number=2)
+        entry = make_line('Black,', 'N.', '(2020).', 'Corrientes', 'locales.',
                           y=120.0, page_number=2)
         doc = LayoutDocument(pages=[
             LayoutPage(

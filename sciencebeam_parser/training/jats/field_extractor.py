@@ -114,8 +114,8 @@ def _reference_parent_text(ref_el: etree._Element) -> str:
 
 
 # What a reference's numbering is separated from the reference by, where the
-# publisher's conversion swept it into the first value instead: `16.-Sala
-# Situacional` declares the source as `-Sala Situacional`.  A title or a
+# publisher's conversion swept it into the first value instead: `16.-Example
+# Situation` declares the source as `-Example Situation`.  A title or a
 # publication's name does not open with one, and the page prints it beside the
 # marker, which is background.
 _LEADING_SEPARATORS = '-\u2013\u2014.,;:'
@@ -131,8 +131,8 @@ _NAME_SUB_FIELDS: FrozenSet[str] = frozenset({
 def _without_leading_marker(text: str) -> str:
     """An affiliation without the marker the deposit opens it with.
 
-    A reviewer's affiliation is declared `1Łukasiewicz Center, Warsaw, …` and
-    the panel sets it without the digit, which the panel has no second
+    A reviewer's affiliation is declared `1Example Institute, Exampleton, …`
+    and the panel sets it without the digit, which the panel has no second
     affiliation to refer to.
     """
     return re.sub(r'^\s*\d+\s*', '', text or '')
@@ -368,8 +368,8 @@ _LEAD_IN_FIELDS: FrozenSet[str] = frozenset({
 def _shortened_name(given: str, surname: str) -> Optional[str]:
     """The name as a page shortens it, keeping the first given name in full.
 
-    A line of ORCIDs sets `Ana B. Rivera` where the deposit declares
-    `Ana Beatriz Rivera`, and GROBID gives that form a byline of its own.
+    A line of ORCIDs sets `Mary J. Doe` where the deposit declares
+    `Mary Jane Doe`, and GROBID gives that form a byline of its own.
     Only where there is something to shorten, so a name of two parts is not
     offered twice.
     """

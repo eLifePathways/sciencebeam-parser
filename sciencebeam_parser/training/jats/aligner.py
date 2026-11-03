@@ -322,9 +322,9 @@ _PANEL_FIELDS: FrozenSet[str] = frozenset({
 })
 
 # What a reviewer's affiliation may be matched at.  The panel drops a part the
-# deposit carries -- `Łukasiewicz Center, Warsaw, Mazowieckie, Poland` is set as
-# `Łukasiewicz Center, Warsaw, Poland` -- which costs two fifths of the match and
-# leaves it at 0.60 on the documents measured.  The lower bar is the one a
+# deposit carries -- `Example Institute, Exampleton, East, Exampleland` is set as
+# `Example Institute, Exampleton, Exampleland` -- which costs two fifths of the match
+# and leaves it at 0.60 on the documents measured.  The lower bar is the one a
 # reference's parent already takes, for the reason it takes it: the page prints
 # the value with parts of it missing, and the range it is looked for in is
 # narrow enough that a worse match has nowhere to land.
@@ -680,7 +680,7 @@ def _extend_match_for_needle_head(
     The same early stop as the tail, at the other end: a short first piece
     separated from the rest by a gap scores net zero, so the traceback drops it.
     `U.` before `S. Department of Interior`, the `z.` of an address, the first
-    initial of `R.J. Okonkwo` where the page sets a space after each dot.
+    initial of `J.A. Example` where the page sets a space after each dot.
     `_extend_match_for_needle_tail` repairs the end of a value; this repairs its
     start.
 
@@ -2106,8 +2106,8 @@ def _label_further_author_names(  # pylint: disable=too-many-arguments
     and each of those is a label of its own.
 
     And by the form a page shortens the name to, where it declares more than
-    one given name: a line of ORCIDs sets `Ana B. Rivera` where the
-    deposit declares `Ana Beatriz Rivera`, and GROBID gives that form a
+    one given name: a line of ORCIDs sets `Mary J. Doe` where the
+    deposit declares `Mary Jane Doe`, and GROBID gives that form a
     byline of its own.  Over what the name itself has not already taken, because
     the two forms share most of their characters and the shortened one would
     otherwise be found inside the byline the full one is holding.
