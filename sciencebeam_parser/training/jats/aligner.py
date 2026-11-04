@@ -2798,6 +2798,13 @@ class LayoutDocumentJatsAligner:
                 # -- one department of the institute the first names in full --
                 # belongs to the line under its own author's name.
                 masked = (masked or []) + per_author_match_ranges[fv.field_name]
+            if fv.field_name == JatsFieldNames.MANUSCRIPT_TYPE:
+                # Over what nothing else has answered.  One publisher's whole
+                # answer is "article", a word the abstract of almost any paper
+                # also uses, and the page prints no display line for it to land
+                # on; taken inside the abstract it labels a word out of the
+                # middle of it as the kind of article this is.
+                masked = (masked or []) + matched_ranges
             # The cover restates the article's title, its authors and its
             # identifier, and a value is matched once: matched there, the
             # article's own front matter is left with nothing to match it, and
@@ -2907,6 +2914,44 @@ class LayoutDocumentJatsAligner:
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config, search_start=0, search_end=None,
                     masked_ranges=masked,
+                )
+            # An anchor value searches from where its own field last landed, so
+            # a document printed in two languages reaches the variant the page
+            # sets after the one already matched and not the one it sets
+            # before.  The deposit declares the variants in neither the page's
+            # order nor a consistent one, so ask again over what the forward
+            # search skipped -- and only there, since what lies after it has
+            # just been looked through.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                and fv.field_name in anchor_match_end_by_field
+                and search_start > 0
+                and window is None
+            ):
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, self.config,
+                    search_start=0, search_end=search_start,
+                    masked_ranges=masked,
+                    skip_furniture=skip_furniture,
+                )
+            # The keywords are looked for after the abstract, and a document
+            # printed in two languages prints a keyword line per language, each
+            # after its own abstract.  The floor is the furthest abstract, so
+            # the line the page sets after the first one is behind it.  Over
+            # what the floor skipped, and with every value already placed taken
+            # out: a title shares most of its words with its own keywords, and
+            # is what the line would otherwise be found in.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                and fv.field_name in _KEYWORDS_FIELDS
+                and search_start > 0
+            ):
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, self.config,
+                    search_start=0, search_end=search_start,
+                    masked_ranges=(masked or []) + matched_ranges,
                 )
             # Body-content incremental constraint is also soft: body_content_end
             # can jump forward when a nested sub-section (e.g. a mathematical
