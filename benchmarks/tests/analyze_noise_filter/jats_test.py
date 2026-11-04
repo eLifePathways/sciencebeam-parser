@@ -42,12 +42,12 @@ class TestJatsTextIndex:
 
 class TestIndexJatsFilenamesByStem:
     def test_should_strip_the_compound_jats_suffix(self):
-        result = index_jats_filenames_by_stem(['a/b/PPR459390.jats.xml'])
-        assert result == {'PPR459390': 'a/b/PPR459390.jats.xml'}
+        result = index_jats_filenames_by_stem(['a/b/example-doc.jats.xml'])
+        assert result == {'example-doc': 'a/b/example-doc.jats.xml'}
 
     def test_should_strip_a_plain_xml_suffix(self):
-        result = index_jats_filenames_by_stem(['a/b/PPR459390.xml'])
-        assert result == {'PPR459390': 'a/b/PPR459390.xml'}
+        result = index_jats_filenames_by_stem(['a/b/example-doc.xml'])
+        assert result == {'example-doc': 'a/b/example-doc.xml'}
 
 
 class TestJatsTextIndexTitles:

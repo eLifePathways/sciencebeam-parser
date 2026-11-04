@@ -143,7 +143,7 @@ class TestGetQualityVerdict:
         assert verdict.detail['jats_status'] == 'unparsable'
 
     def test_should_exclude_a_document_short_at_the_tei_stage_naming_that_stage(self):
-        # PPR459453: a 45-entry reference list truncated to a 109-word region.
+        # A 45-entry reference list truncated to a 109-word region.
         verdict = _verdict(
             jats_status='ok', jats_reference_count=45, written=True,
             entity_element_count=2, entity_start_count=2, sequence_count=1,
@@ -161,7 +161,7 @@ class TestGetQualityVerdict:
         assert verdict.detail['entity_ratio'] == 0.025
 
     def test_should_keep_a_document_holding_more_elements_than_the_jats_has(self):
-        # PPR534793: 22 references, 25 elements, from references split across a page.
+        # 22 references, 25 elements, from references split across a page.
         verdict = _verdict(
             jats_status='ok', jats_reference_count=22, written=True,
             entity_element_count=25, entity_start_count=25, sequence_count=1,

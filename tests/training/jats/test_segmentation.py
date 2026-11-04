@@ -107,7 +107,7 @@ class TestPageColumns:
         return doc, lines, annotate(doc, fields)
 
     def test_a_region_reaches_a_fragment_set_right_on_a_one_column_page(self):
-        # PPR458890 ends a reference with its DOI set further along the row;
+        # A document ends a reference with its DOI set further along the row;
         # the column is the page's, not wherever the last line happens to start.
         doc, lines, annotated = self._page(
             *[(f'Reference entry number {i} here.', 89.7, True) for i in range(5)],
@@ -144,7 +144,7 @@ class TestFootnoteReach:
         return doc, lines, number, fields
 
     def test_a_note_reaches_its_last_line_with_only_a_page_number_past_it(self):
-        # PPR459453 ends a note one line short of what the page prints, with
+        # A page ends a note one line short of what it prints, with
         # the page number the only thing under it.
         doc, lines, number, fields = self._page(
             ('se han senalado las relaciones cercanas', JatsFieldNames.BACK_FOOTNOTE),
@@ -179,7 +179,7 @@ class TestCorrespondingAuthorNote:
         return doc, lines
 
     def test_the_note_at_the_foot_of_the_title_page_is_front_matter(self):
-        # PPR459133 sets "*Autor correspondente" and the e-mail addresses under
+        # A page sets "*Autor correspondente" and the e-mail addresses under
         # it at the foot of page one, in two blocks.  GROBID's corpus labels
         # such a line `<front>` 339 times and `<footnote>` never.
         doc, lines = self._title_page(
@@ -300,7 +300,7 @@ class TestTrailingHeading:
         ]
 
     def test_a_heading_under_the_last_reference_goes_with_what_follows(self):
-        # PPR458963 sets "TABLAS" under its last reference, at the foot of the
+        # A page sets "TABLAS" under its last reference, at the foot of the
         # page, where the region grown to the page end takes it.
         doc, lines = self._two_pages(
             ['Smith J. A study of things. Journal. 2020;1(2):3-4.', 'TABLAS'],
@@ -311,8 +311,8 @@ class TestTrailingHeading:
         assert labels == [SEG_REFERENCES, SEG_BODY, SEG_BODY]
 
     def test_a_doi_the_last_reference_ends_with_stays_in_the_list(self):
-        # PPR458937's list ends "10.1016/S2213-2600(20)30132-6", which is part
-        # of the reference rather than a heading for what follows.
+        # A list ends with a reference's own DOI, which is part of the reference
+        # rather than a heading for what follows.
         doc, lines = self._two_pages(
             ['Smith J. A study of things. Journal. 2020;1(2):3-4. doi:',
              '10.1016/S2213-2600(20)30132-6'],
@@ -325,7 +325,7 @@ class TestTrailingHeading:
 
 class TestSupplementaryAnnex:
     def test_a_supplementary_heading_opens_an_annex(self):
-        # PPR458963 prints "MATERIAL SUPLEMENTARIO" and 14 pages under it; its
+        # A page prints "MATERIAL SUPLEMENTARIO" and the pages under it; its
         # JATS carries only a pointer to an attached file, so nothing grounds
         # them and they fall to the body.
         heading = make_line('MATERIAL', 'SUPLEMENTARIO', y=200.0)
@@ -371,7 +371,7 @@ class TestDepositCoverPage:
         return [labels[id(line)] for line in doc.iter_all_lines()]
 
     def test_a_status_label_with_its_value_elsewhere_still_opens_a_cover(self):
-        # PPR459581 and PPR459643 set "Estado:" on a line of its own, so the
+        # Some pages set "Estado:" on a line of its own, so the
         # word "preprint" the notice is recognised by is not on it.
         doc = self._pages([
             'Estado:',
@@ -386,7 +386,7 @@ class TestDepositCoverPage:
         assert SEG_COVER not in self._labels(doc)
 
     def test_a_submission_sheet_is_a_cover_whatever_it_opens_with(self):
-        # PPR458890 carries the review system's sheet on its second page.  The
+        # A document carries the review system's sheet on its second page.  The
         # "For Review Only" watermark is set a letter to a line, so the page
         # does not open with anything that names it.
         doc = self._pages(
@@ -456,7 +456,7 @@ class TestCoordinateBasedDetection:
         assert [labels[id(line)] for line in numbers] == [SEG_PAGE, SEG_PAGE]
 
     def test_a_page_number_the_jats_vote_claimed_still_becomes_page(self):
-        # PPR458837 prints its number in the same corner of all 23 pages; the
+        # A document prints its number in the same corner of every page; the
         # aligner matched 7 of them into the article's text, which is where the
         # number stopped being furniture.
         numbers = [
@@ -627,7 +627,7 @@ class TestRegionStartsAtThePageTop:
         assert derive_labels(doc, annotated)[id(heading)] == SEG_BODY
 
     def test_the_region_reaches_back_over_an_entry_the_jats_does_not_carry(self):
-        # PPR459453's list starts with an entry the JATS has no record of, so
+        # A list starts with an entry the JATS has no record of, so
         # the region begins four lines and a page break after its heading.
         heading = make_line('References', y=700.0, page_number=1)
         first = make_line('Roe,', 'R.', '(2020).', 'Aguas:', 'corrientes', y=720.0,
@@ -738,10 +738,10 @@ class TestFrontThreshold:
         assert labels[id(lines[2])] == SEG_FRONT
 
     def test_a_correspondence_block_beyond_the_threshold_is_kept(self):
-        # PPR458834 and PPR522900 print who to write to after their reference
-        # lists, which is the case this rule exists for.  The block carries its
-        # own field rather than the note's, so naming one of them here is what
-        # keeps the other from silently leaving the region.
+        # A preprint server prints who to write to after the reference list,
+        # which is the case this rule exists for.  The block carries its own
+        # field rather than the note's, so asserting on that field here is what
+        # keeps it from silently leaving the region.
         lines = [make_line(f'word{i}') for i in range(3)]
         doc = make_doc_with_page(LayoutBlock(lines=lines))
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)

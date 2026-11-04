@@ -917,19 +917,19 @@ class TestQualityRecord:
 class TestGetDocumentIdForTeiFile:
     def test_should_strip_the_model_suffix(self):
         assert get_document_id_for_tei_file(
-            '/tei/PPR459453.references.referenceSegmenter.tei.xml',
+            '/tei/example-doc.references.referenceSegmenter.tei.xml',
             '.references.referenceSegmenter.tei.xml'
-        ) == 'PPR459453'
+        ) == 'example-doc'
 
     def test_should_strip_a_gzip_suffix_first(self):
         assert get_document_id_for_tei_file(
-            '/tei/PPR459453.references.tei.xml.gz', '.references.tei.xml'
-        ) == 'PPR459453'
+            '/tei/example-doc.references.tei.xml.gz', '.references.tei.xml'
+        ) == 'example-doc'
 
     def test_should_fall_back_for_a_model_with_no_declared_suffix(self):
-        assert get_document_id_for_tei_file('/tei/PPR459453.tei.xml', None) == 'PPR459453'
+        assert get_document_id_for_tei_file('/tei/example-doc.tei.xml', None) == 'example-doc'
 
     def test_should_fall_back_when_the_file_does_not_carry_the_suffix(self):
         assert get_document_id_for_tei_file(
-            '/tei/PPR459453.something-else.tei.xml', '.references.tei.xml'
-        ) == 'PPR459453'
+            '/tei/example-doc.something-else.tei.xml', '.references.tei.xml'
+        ) == 'example-doc'
