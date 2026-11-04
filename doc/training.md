@@ -85,14 +85,14 @@ that model's `corpus`, otherwise they are flat in the output path under the same
 filenames:
 
 ```text
-reference-segmenter/quality/PPR459453.reference-segmenter.quality.json
-citation/quality/PPR459453.citation.quality.json
+reference-segmenter/quality/example-doc.reference-segmenter.quality.json
+citation/quality/example-doc.citation.quality.json
 ```
 
 ```json
 {
-  "document_id": "PPR459453",
-  "source_filename": "PPR459453.pdf",
+  "document_id": "example-doc",
+  "source_filename": "example-doc.pdf",
   "status": "ok",
   "model": "citation",
   "jats": {"status": "ok", "reference_count": 45, "aligned_reference_count": 2},
@@ -151,15 +151,15 @@ With `--use-directory-structure` the record sits beside the `tei` and `raw`
 directories, otherwise it is `<document>.<model>.spans.jsonl` in the output path:
 
 ```text
-segmentation/corpus/spans/PPR459453.segmentation.spans.jsonl
-header/corpus/spans/PPR459453.header.spans.jsonl
+segmentation/corpus/spans/example-doc.segmentation.spans.jsonl
+header/corpus/spans/example-doc.header.spans.jsonl
 ```
 
 The first line describes the document, its pages and the labels the model can
 write; every line after it is one span, in the order the `tei` writes them:
 
 ```json
-{"format": "sciencebeam-training-spans", "version": 1, "document_id": "PPR459453",
+{"format": "sciencebeam-training-spans", "version": 1, "document_id": "example-doc",
  "model": "header", "line_count": 44, "span_count": 50, "page_count": 22,
  "labels": ["<title>", "<author>", "<address>"],
  "pages": [{"page": 1, "width": 595.28, "height": 841.89}]}
@@ -289,7 +289,7 @@ python -m sciencebeam_parser.training.cli.generate_delft_data \
 
 ```json
 {
-  "document_id": "PPR459453", "model": "reference-segmenter", "corpus": "scielo_preprints-jats",
+  "document_id": "example-doc", "model": "reference-segmenter", "corpus": "scielo_preprints-jats",
   "sequence_count": 1, "entity_start_count": 2,
   "generated": {"jats": {"reference_count": 45}, "entity_element_count": 2}
 }
@@ -317,11 +317,11 @@ that failed and the numbers behind it, and the summary says what was kept per
 corpus:
 
 ```text
-excluding 5-264_v2: excluded (jats-not-readable) [jats_status=unparsable]
-excluding PPR459453: excluded (elements-short-of-jats)
+excluding example-2_v2: excluded (jats-not-readable) [jats_status=unparsable]
+excluding example-doc: excluded (elements-short-of-jats)
   [element_ratio=0.044, entity_element_count=2, jats_reference_count=45]
 ore / reference-segmenter: kept 37 of 38 documents (3% excluded);
-  jats-not-readable: ['5-264_v2']
+  jats-not-readable: ['example-2_v2']
 ```
 
 The same reasons are written to each row of the record, so a corpus that shrinks

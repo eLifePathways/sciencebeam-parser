@@ -189,14 +189,14 @@ class TestStashAndRestore:
     def test_a_document_is_not_restored_by_one_whose_id_starts_the_same(
         self, tmp_path: Path
     ):
-        pair = self._pair_with(tmp_path, "2-114_v1", "2-114_v10")
+        pair = self._pair_with(tmp_path, "example-1_v1", "example-1_v10")
         stash = stash_pair(pair)
         (pair / "corpus" / "tei").mkdir(parents=True)
 
-        restored = restore_unproduced_documents(pair, stash, ["2-114_v1"], "segmentation")
+        restored = restore_unproduced_documents(pair, stash, ["example-1_v1"], "segmentation")
 
-        assert restored == ["2-114_v1"]
-        assert not (pair / "corpus" / "tei" / "2-114_v10.segmentation.tei.xml").exists()
+        assert restored == ["example-1_v1"]
+        assert not (pair / "corpus" / "tei" / "example-1_v10.segmentation.tei.xml").exists()
 
     def test_discarding_removes_the_stash(self, tmp_path: Path):
         pair = self._pair_with(tmp_path, "a")

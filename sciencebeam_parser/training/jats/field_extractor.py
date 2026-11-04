@@ -920,7 +920,7 @@ class JatsFieldExtractor:
 
         `<floats-group>` is where a publisher puts tables and figures that print
         after the reference list rather than beside the text that cites them.
-        Nothing else reads it, so its pages -- seventeen of them on `PPR458717`,
+        Nothing else reads it, so its pages -- seventeen of them on one document,
         and some share of 49 of 50 scielo documents -- had no field to align
         against and fell to the `<body>` sink.
 

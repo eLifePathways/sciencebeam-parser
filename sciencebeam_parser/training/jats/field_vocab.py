@@ -144,8 +144,8 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.REFERENCE:              '<references>',
     JatsFieldNames.PAGE_NO:                '<page>',
     # An email and an ORCID print inside the author block, so a line carrying one
-    # is front matter: it claims two contact lines on `PPR459453` that read as
-    # body without it, and an affiliation line on `PPR459468` that reads as a
+    # is front matter: it claims two contact lines on one document that read as
+    # body without it, and an affiliation line on another that reads as a
     # page foot.
     JatsFieldNames.EMAIL:                  '<header>',
     JatsFieldNames.ORCID:                  '<header>',
