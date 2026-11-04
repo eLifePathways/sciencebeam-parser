@@ -11,6 +11,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.aligner import (
+    _may_answer_in_pieces,
     AlignmentConfig,
     LayoutDocumentJatsAligner,
     extend_partial_reference_matches,
@@ -2516,8 +2517,8 @@ class TestAnAuthorNamedAgainInAShortenedForm:
     """
 
     NAMES = [
-        ('Mary Jane Doe', 'Mary J. Doe'),
-        ('John Alan Roe', 'John A. Roe'),
+        ('Mary Jane Doe', ('Mary J. Doe', 'Doe MJ')),
+        ('John Alan Roe', ('John A. Roe', 'Roe JA')),
     ]
     BYLINE = 'Mary Jane Doe 1 , John Alan Roe 2'
 
@@ -2538,7 +2539,7 @@ class TestAnAuthorNamedAgainInAShortenedForm:
                 field_name=JatsFieldNames.AUTHOR,
                 sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
                 fallback_text=full,
-                shortened_text=short,
+                shortened_texts=short,
             ))
         field_values.append(_fv(self.BYLINE, JatsFieldNames.AUTHOR))
         field_values.append(_fv(
@@ -2881,3 +2882,152 @@ class TestTheKeywordLineBetweenTwoAbstracts:
         labels = self._labels()
         title_run = labels[:len(self.TITLE.split())]
         assert {field for _text, field in title_run} == {JatsFieldNames.TITLE}
+
+
+class TestAnAuthorNamedAgainSurnameFirst:
+    """An ORCID list may set the surname first and the given names as initials.
+
+    `Doe MJ` where the deposit declares `Mary Jane Doe`, one line per author
+    with the identifier after it.  The identifier is labelled on its own, and
+    without this the name in front of it is left as background.
+    """
+
+    NAMES = [
+        ('Mary Jane Doe', ('Mary J. Doe', 'Doe MJ')),
+        ('John Alan Roe', ('John A. Roe', 'Roe JA')),
+    ]
+    BYLINE = 'Mary Jane Doe 1 , John Alan Roe 2'
+
+    def _author_tokens(self) -> Set[str]:
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'Doe MJ: https://orcid.org/0000-0002-1111-2222',
+            'Roe JA: https://orcid.org/0000-0003-3333-4444',
+            'The marshes north of the estuary were surveyed over four summers.',
+        )
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+        ]
+        for full, short in self.NAMES:
+            field_values.append(JatsFieldValue(
+                text=full,
+                field_name=JatsFieldNames.AUTHOR,
+                sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
+                fallback_text=full,
+                shortened_texts=short,
+            ))
+        field_values.append(_fv(self.BYLINE, JatsFieldNames.AUTHOR))
+        field_values.append(_fv(
+            'The marshes north of the estuary were surveyed over four summers.',
+            JatsFieldNames.ABSTRACT,
+        ))
+        annotated = LayoutDocumentJatsAligner().align(doc, field_values)
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        }
+
+    def test_the_name_in_front_of_each_identifier_is_the_author(self):
+        assert {'Doe', 'MJ', 'Roe', 'JA'} <= self._author_tokens()
+
+    def test_the_identifier_itself_is_not_taken_as_a_name(self):
+        assert 'orcid' not in self._author_tokens()
+
+
+class TestTheWordAnAbstractSharesWithASectionHeading:
+    """A structured abstract opens with the heading of its first section.
+
+    The deposit declares that heading twice over, once inside the abstract and
+    once as the body's own section title, and the page prints it twice.  The
+    body value is steered by a window when its opening words are not unique,
+    and the window reaches back past the abstract, so the heading is found
+    inside the abstract and takes the word from it.  Refused there, it takes
+    nothing.
+
+    The heading the body itself prints is left unlabelled, which is what it was
+    before: the body value answered inside the abstract and has no second
+    answer.  What matters here is that the two do not trade places -- an
+    abstract reaching down to the body's own heading is how a section title in
+    the middle of a paper came to be labelled as front matter.
+    """
+
+    TITLE = 'Counting the herons of the northern marshes'
+    ABSTRACT = (
+        'Introduction The marshes north of the estuary were surveyed over four'
+        ' summers to count the herons nesting along them, and the counts were'
+        ' set beside the water levels the three gauges upstream recorded.'
+    )
+    SECTION_TITLE = 'Introduction'
+    SECTION_PARAGRAPH = (
+        'A series of counts was made at each of the gauges in turn, beginning'
+        ' upstream and working down towards the open water of the estuary.'
+    )
+
+    def _introductions(self):
+        doc = _make_doc(
+            self.TITLE,
+            self.ABSTRACT,
+            self.SECTION_TITLE,
+            self.SECTION_PARAGRAPH,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.TITLE, JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+            _fv(self.SECTION_TITLE, JatsFieldNames.BODY_SECTION_TITLE),
+            _fv(self.SECTION_PARAGRAPH, JatsFieldNames.BODY_SECTION_PARAGRAPH),
+        ])
+        return [
+            annotated.get_token_field(token)
+            for token in doc.iter_all_tokens() if token.text == 'Introduction'
+        ]
+
+    def test_the_one_the_abstract_opens_with_stays_the_abstract(self):
+        assert self._introductions()[0] == JatsFieldNames.ABSTRACT
+
+    def test_the_one_the_body_prints_is_not_the_abstract(self):
+        assert self._introductions()[1] != JatsFieldNames.ABSTRACT
+
+
+class TestWhetherAValueMayAnswerInPiecesFirst:
+    """Which values are offered an assembled answer straight away.
+
+    A repeated anchor is not.  Taken first, an answer assembled out of runs the
+    page sets apart stops the searches that would have looked for the value
+    whole: a deposit that lifts its abstract out of its own body supplies
+    sentences all down the paper, the pieces are taken from there, and the
+    variant the page prints above is never looked for.  The pieces then carry a
+    front-matter label into the middle of the paper, which the segmentation
+    corpus reads as a second front matter region.
+
+    It is still offered one last of all, which is how an abstract the page
+    breaks across a column is kept.
+    """
+
+    @staticmethod
+    def _may(field: str, placed_already: bool = False, **kwargs) -> bool:
+        return _may_answer_in_pieces(
+            JatsFieldValue(text='a value', field_name=field, **kwargs),
+            {field: 100} if placed_already else {},
+        )
+
+    def test_a_first_abstract_may(self):
+        assert self._may(JatsFieldNames.ABSTRACT)
+
+    def test_a_second_abstract_may_not(self):
+        assert not self._may(JatsFieldNames.ABSTRACT, placed_already=True)
+
+    def test_a_second_title_may_not(self):
+        assert not self._may(JatsFieldNames.TITLE, placed_already=True)
+
+    def test_a_body_paragraph_may_whether_or_not_one_was_placed(self):
+        assert self._may(JatsFieldNames.BODY_SECTION_PARAGRAPH)
+        assert self._may(JatsFieldNames.BODY_SECTION_PARAGRAPH, placed_already=True)
+
+    def test_a_sub_field_may_not(self):
+        assert not self._may(
+            JatsFieldNames.AUTHOR, sub_field_name=JatsSubFieldNames.AUTHOR_NAME
+        )
+
+    def test_a_value_wanted_verbatim_may_not(self):
+        assert not self._may(JatsFieldNames.MANUSCRIPT_TYPE, exact_only=True)

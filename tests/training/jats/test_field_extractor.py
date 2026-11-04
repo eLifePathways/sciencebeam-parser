@@ -1111,11 +1111,17 @@ class TestTheNameAPageShortens:
 
     def test_the_middle_names_become_initials(self):
         values = self._values('Mary Jane', 'Doe')
-        assert [value.shortened_text for value in values] == ['Mary J. Doe']
+        assert [value.shortened_texts for value in values] == [
+            ('Mary J. Doe', 'Mary Doe', 'Doe MJ')
+        ]
 
-    def test_a_name_of_two_parts_is_not_offered_twice(self):
+    def test_a_name_of_two_parts_is_still_offered_surname_first(self):
         values = self._values('Mary', 'Doe')
-        assert [value.shortened_text for value in values] == [None]
+        assert [value.shortened_texts for value in values] == [('Doe M',)]
+
+    def test_a_name_with_no_surname_is_not_shortened(self):
+        values = self._values('Mary', '')
+        assert [value.shortened_texts for value in values] == [()]
 
 
 class TestTheReviewersAPlatformNames:
