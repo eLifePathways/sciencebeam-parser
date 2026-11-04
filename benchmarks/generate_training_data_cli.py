@@ -237,11 +237,17 @@ def _restore_and_discard(
 
 
 def _documents_asked_for(corpus_source: Path) -> List[str]:
-    """Every document the mode names, whether or not its source can still be read."""
+    """Every document the mode names and the dataset still publishes.
+
+    A document a release has removed is not among them, so what was generated
+    for it before is discarded with the stash rather than restored. The corpus
+    follows the dataset: a release removes a document for a reason, and keeping
+    its data would train on something the publisher has withdrawn.
+    """
     manifest = read_source_manifest(corpus_source)
     if manifest is None:
         return []
-    return list(manifest.selected_document_ids) + list(manifest.missing_document_ids)
+    return list(manifest.selected_document_ids)
 
 
 def _parse_args(argv: Optional[Sequence[str]]) -> Tuple[argparse.Namespace, List[str]]:

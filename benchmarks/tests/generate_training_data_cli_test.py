@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from typing import List, Tuple
@@ -8,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from benchmarks.generate_training_data_cli import (
+    _documents_asked_for,
     discard_stash,
     main,
     restore_unproduced_documents,
@@ -15,6 +17,7 @@ from benchmarks.generate_training_data_cli import (
     stash_pair,
 )
 from benchmarks.training_intent import PairIntent
+from benchmarks.training_records import SourceManifest
 
 CONFIG = """\
 dataset:
@@ -143,11 +146,12 @@ class TestStashAndRestore:
         assert (pair / "verdicts" / "a.json").is_file()
 
     def test_restores_a_document_the_run_did_not_produce(self, tmp_path: Path):
-        """A timeout, an error or a source row that has gone all look the same here.
+        """A timeout and an error look the same here, and are both recovered.
 
         The rebuild cleared the pair before it ran, so without this the document
         is deleted and never written again -- data that was good and may have been
-        reviewed.
+        reviewed. A source row the dataset no longer publishes is the other case,
+        and is not asked for at all.
         """
         pair = self._pair_with(tmp_path, "made", "failed")
         stash = stash_pair(pair)
@@ -468,3 +472,33 @@ class TestRestoringAfterAPartialWrite:
 
         assert not restore_unproduced_documents(pair, stash, ["a"], "segmentation")
         assert not (pair / "corpus" / "tei" / "a.segmentation.tei.xml").exists()
+
+
+class TestDocumentsAskedFor:
+    """What a rebuild asks for, which is what it keeps."""
+
+    def _source_with(
+        self, tmp_path: Path, selected: List[str], missing: List[str]
+    ) -> Path:
+        corpus_source = tmp_path / "ore"
+        corpus_source.mkdir(parents=True)
+        manifest = SourceManifest(
+            corpus="ore", split="train", mode="medium", seed=42,
+            repo_id="org/repo", revision="v2.0.0", location="train.parquet",
+            selected_document_ids=selected, missing_document_ids=missing,
+        )
+        SourceManifest.get_file_path(corpus_source).write_text(
+            json.dumps(manifest.to_json_dict()), encoding="utf-8"
+        )
+        return corpus_source
+
+    def test_a_document_the_dataset_still_publishes_is_asked_for(self, tmp_path: Path):
+        source = self._source_with(tmp_path, ["a", "b"], [])
+        assert _documents_asked_for(source) == ["a", "b"]
+
+    def test_a_document_a_release_removed_is_not(self, tmp_path: Path):
+        source = self._source_with(tmp_path, ["a"], ["withdrawn"])
+        assert _documents_asked_for(source) == ["a"]
+
+    def test_a_tree_with_no_manifest_asks_for_nothing(self, tmp_path: Path):
+        assert not _documents_asked_for(tmp_path / "nowhere")
