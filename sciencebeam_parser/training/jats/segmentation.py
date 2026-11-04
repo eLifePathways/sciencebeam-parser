@@ -1632,9 +1632,13 @@ def _find_missing_page_numbers(
         min_page_number = known.page_number + 1
 
 
-# Front matter a paper may print after its reference list.  An author note
-# carries the corresponding author, which a preprint server sets at the end.
-_LATE_FRONT_FIELDS = frozenset({JatsFieldNames.AUTHOR_NOTES})
+# Front matter a paper may print after its reference list.  A correspondence
+# block names who to write to, which a preprint server sets at the end, and an
+# author note carries the rest.
+_LATE_FRONT_FIELDS = frozenset({
+    JatsFieldNames.AUTHOR_NOTES,
+    JatsFieldNames.CORRESPONDENCE,
+})
 
 
 def _is_grounded_in(

@@ -137,6 +137,7 @@ _FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.AUTHOR,
     JatsFieldNames.AUTHOR_AFF,
     JatsFieldNames.AUTHOR_NOTES,
+    JatsFieldNames.CORRESPONDENCE,
     JatsFieldNames.COPYRIGHT,
     JatsFieldNames.FUNDING,
     JatsFieldNames.MANUSCRIPT_TYPE,

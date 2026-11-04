@@ -727,14 +727,26 @@ class TestFrontThreshold:
         assert labels[id(lines[2])] == SEG_BODY
 
     def test_an_author_note_beyond_the_threshold_is_kept(self):
-        # PPR458834 and PPR522900 print the corresponding author's address
-        # after their reference lists; that block is front matter wherever a
+        # A note the deposit files under the byline is front matter wherever a
         # preprint server sets it.
         lines = [make_line(f'word{i}') for i in range(3)]
         doc = make_doc_with_page(LayoutBlock(lines=lines))
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         for t in lines[2].tokens:
             annotated.set_token_label(t, JatsFieldNames.AUTHOR_NOTES)
+        labels = derive_labels(doc, annotated, front_max_start_line_index=1)
+        assert labels[id(lines[2])] == SEG_FRONT
+
+    def test_a_correspondence_block_beyond_the_threshold_is_kept(self):
+        # PPR458834 and PPR522900 print who to write to after their reference
+        # lists, which is the case this rule exists for.  The block carries its
+        # own field rather than the note's, so naming one of them here is what
+        # keeps the other from silently leaving the region.
+        lines = [make_line(f'word{i}') for i in range(3)]
+        doc = make_doc_with_page(LayoutBlock(lines=lines))
+        annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
+        for t in lines[2].tokens:
+            annotated.set_token_label(t, JatsFieldNames.CORRESPONDENCE)
         labels = derive_labels(doc, annotated, front_max_start_line_index=1)
         assert labels[id(lines[2])] == SEG_FRONT
 
