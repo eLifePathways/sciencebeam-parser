@@ -82,6 +82,21 @@ _REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.PUBLICATION_DATE,
 })
 
+# What the front matter prints more than once and is labelled wherever it
+# prints there, as against anywhere in the document.  A correspondence block
+# repeats an author's address under their name, and the page says it again
+# beside the byline.  GROBID's own header corpus is of two minds about this:
+# four of its 837 documents label the same address twice and three leave the
+# second one background, which is too few either way to be a convention, so
+# this follows the reviews of our own corpus, which ask for both.
+#
+# To the end of the front matter rather than of the document, because an
+# address is printed again in a reference list and in a peer review report,
+# and neither of those is this article's correspondence.
+_REPEATED_IN_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.EMAIL,
+})
+
 # The notes that are matched so the region reads their lines as front matter
 # and carry no label of their own.  GROBID labels the name printed inside a
 # correspondence note as a byline, so a name is looked for inside one.
@@ -3263,6 +3278,20 @@ class LayoutDocumentJatsAligner:
                 skip_side_columns=fv.field_name in _ANCHOR_FIELDS,
                 protect_fields=_protected_fields(fv),
             )
+            if (
+                fv.field_name in _REPEATED_IN_FRONT_MATTER_FIELDS
+                and fv.sub_field_name is None
+            ):
+                instance_by_field[fv.field_name] = instance_id + _label_repeated_matches(
+                    annotated, token_index, fv, self.config,
+                    search_start=a_end,
+                    search_end=(
+                        front_matter_end + _FRONT_MATTER_BUFFER
+                        if front_matter_end else None
+                    ),
+                    masked_ranges=(masked or []) + token_index.furniture_ranges,
+                    instance_id=instance_id,
+                )
             if fv.field_name in _REPEATED_FRONT_MATTER_FIELDS and fv.sub_field_name is None:
                 # To the end of the document rather than to the end of the front
                 # matter, which is the abstract and a buffer here and stops

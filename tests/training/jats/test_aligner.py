@@ -3031,3 +3031,49 @@ class TestWhetherAValueMayAnswerInPiecesFirst:
 
     def test_a_value_wanted_verbatim_may_not(self):
         assert not self._may(JatsFieldNames.MANUSCRIPT_TYPE, exact_only=True)
+
+
+class TestAnAddressTheFrontMatterSaysTwice:
+    """A correspondence block repeats an address the byline already gave.
+
+    The deposit declares it once, so without this only the first printing is
+    labelled and the second is background, under a name that is labelled.
+    GROBID's own header corpus is of two minds about it, four documents to
+    three, which is too few either way to be a convention; the reviews of our
+    own corpus ask for both.
+    """
+
+    EMAIL = 'm.doe@example.org'
+    BYLINE = 'Mary Jane Doe 1 , John Alan Roe 2'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _emailed_tokens(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'Example Institute, Exampleton, Exampleland',
+            'e-mail: ' + self.EMAIL,
+            'Correspondence to Mary Jane Doe: ' + self.EMAIL,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.BYLINE, JatsFieldNames.AUTHOR),
+            _fv('Example Institute, Exampleton, Exampleland', JatsFieldNames.AUTHOR_AFF),
+            _fv(self.EMAIL, JatsFieldNames.EMAIL),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            index for index, token in enumerate(doc.iter_all_tokens())
+            if annotated.get_token_field(token) == JatsFieldNames.EMAIL
+        ]
+
+    def test_both_printings_are_labelled(self):
+        labelled = self._emailed_tokens()
+        # the address is one run of tokens, and the page sets two of them
+        assert len(labelled) > 0
+        gaps = [b - a for a, b in zip(labelled, labelled[1:]) if b - a > 1]
+        assert len(gaps) == 1, f'expected two runs, got {labelled}'
