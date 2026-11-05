@@ -12,6 +12,7 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.training.jats.aligner import (
     _is_a_run_of,
+    _letters_of,
     _is_bare_marker,
     _name_words,
     _is_printed_once_per_author,
@@ -3565,3 +3566,33 @@ class TestTheColonAStatementIsIntroducedBy:
     def test_the_statement_itself_is_kept(self):
         labels = self._labels()
         assert ('WADS', JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH) in labels
+
+
+class TestWhetherARepeatIsTheSamePrinting:
+    """How a repeat of a name is told from a different one.
+
+    A deposit hyphenates a surname and the page sets it with a space, so the
+    repeat falls a character short of the value.  That is where a different
+    author and an ordinary word also sit: `Duarte CE` reaches `Duarte FC` one
+    short and `Ferreira C` reaches the Spanish `ferencias` two short.  No
+    length tells the first from the others; the letters do.
+    """
+
+    @staticmethod
+    def _same(printed: str, declared: str) -> bool:
+        return _letters_of(printed) == _letters_of(declared)
+
+    def test_the_same_name_without_its_hyphen(self):
+        assert self._same('Gómez Noronha', 'Gómez-Noronha')
+
+    def test_the_same_name_the_page_spaces_differently(self):
+        assert self._same('vera - pinto', 'Vera-Pinto')
+
+    def test_a_different_author_by_one_letter(self):
+        assert not self._same('Duarte FC', 'Duarte CE')
+
+    def test_a_word_that_is_not_a_name(self):
+        assert not self._same('ferencias', 'Ferreira C')
+
+    def test_a_name_missing_a_part(self):
+        assert not self._same('Alessandro Cavalcanti', 'Alessandro Leite Cavalcanti')

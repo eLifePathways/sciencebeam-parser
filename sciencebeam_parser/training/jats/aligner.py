@@ -1726,11 +1726,24 @@ def _search_range(
     ), None
 
 
+def _letters_of(text: str) -> str:
+    """A value's letters and digits, with what the page sets between them gone.
+
+    A deposit writes `Gomez-Noronha` and the page sets `Gomez Noronha`, which
+    is the same name differently punctuated.  It writes `Duarte CE` and another
+    author is `Duarte FC`, which is a different name by one letter: those are
+    the two cases a repeat has to tell apart, and the punctuation is what gets
+    in the way of telling them apart by length.
+    """
+    return ''.join(re.findall(r'\w+', normalize_for_alignment(text)))
+
+
 def _is_the_same_printing(
     token_index: '_TokenIndex',
     block_ranges: Sequence[Tuple[int, int]],
     field_value: JatsFieldValue,
     exact: bool,
+    by_letters: bool = False,
 ) -> bool:
     """Whether what the match reached is another printing of the value.
 
@@ -1747,15 +1760,29 @@ def _is_the_same_printing(
     in a character is still that printing.
     """
     needle = normalize_for_alignment(field_value.text)
+    covered = sum(end - begin for begin, end in block_ranges)
+    if by_letters and covered < len(needle):
+        # Every letter of it, and nothing about the punctuation: a deposit
+        # writing `Gomez-Noronha` and a page setting `Gomez Noronha` fall short
+        # by the hyphen alone.  Length cannot be relaxed to let that through,
+        # because the printings one character short are also a different author
+        # and an ordinary word, and both differ in their letters.
+        #
+        # Beside the length rather than instead of it, so a printing that
+        # already satisfied one is not turned away by the other.
+        matched = ''.join(
+            token_index.haystack[begin:end] for begin, end in block_ranges
+        )
+        return _letters_of(matched) == _letters_of(needle)
     if exact:
         matched = ''.join(
             token_index.haystack[begin:end] for begin, end in block_ranges
         )
         return matched.replace(' ', '') == needle.replace(' ', '')
-    return sum(end - begin for begin, end in block_ranges) >= len(needle)
+    return covered >= len(needle)
 
 
-def _label_repeated_matches(  # pylint: disable=too-many-arguments
+def _label_repeated_matches(  # pylint: disable=too-many-arguments,too-many-locals
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
     field_value: JatsFieldValue,
@@ -1766,6 +1793,7 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
     instance_id: int,
     only_unclaimed: bool = False,
     exact: bool = False,
+    by_letters: bool = False,
 ) -> int:
     """Label every further place the value is printed, and say how many.
 
@@ -1795,7 +1823,9 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
         if repeat_end <= start:
             break
         start = repeat_end
-        if not _is_the_same_printing(token_index, block_ranges, field_value, exact):
+        if not _is_the_same_printing(
+            token_index, block_ranges, field_value, exact, by_letters
+        ):
             continue
         found += 1
         _label_tokens_for_blocks(
@@ -2387,6 +2417,7 @@ def _label_further_author_names(  # pylint: disable=too-many-arguments
             search_end=search_end,
             masked_ranges=masked_ranges,
             instance_id=instance_id,
+            by_letters=True,
         )
     shortened = [
         field_value for field_value in author_values if field_value.shortened_texts
@@ -2409,6 +2440,7 @@ def _label_further_author_names(  # pylint: disable=too-many-arguments
                 masked_ranges=taken,
                 instance_id=instance_id,
                 only_unclaimed=True,
+                by_letters=True,
             )
 
 
