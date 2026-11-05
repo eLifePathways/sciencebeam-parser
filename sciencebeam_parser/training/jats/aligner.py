@@ -2053,9 +2053,23 @@ def _join_what_a_line_prints_inside_one_value(
 _MARKER_PUNCTUATION: FrozenSet[str] = frozenset({'.', '-', ')', ':', ','})
 
 
+# The digits a page sets a marker in, raised or on the line, and the symbols it
+# reaches for instead once it runs out of them.
+_SUPERSCRIPT_DIGITS = '\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079'
+_MARKER_SYMBOLS = '*\u2020\u2021\u00a7'
+
+
 def _is_bare_marker(text: str) -> bool:
-    """Whether a token is only a marker tying a name to an affiliation."""
-    return bool(re.fullmatch(r'[0-9]{1,2}|[a-z]|[*\u2020\u2021\u00a7]', text))
+    """Whether a token is only a marker tying a name to an affiliation.
+
+    A page sets the marker raised where its fonts allow it, and the extraction
+    keeps it raised, so the superscript digits are markers as much as the
+    ordinary ones.
+    """
+    return bool(re.fullmatch(
+        r'[0-9]{1,2}|[a-z]|[%s]{1,2}|[%s]' % (_SUPERSCRIPT_DIGITS, _MARKER_SYMBOLS),
+        text,
+    ))
 
 
 def _give_an_affiliation_the_marker_before_it(

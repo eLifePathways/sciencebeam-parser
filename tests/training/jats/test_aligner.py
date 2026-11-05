@@ -3216,6 +3216,9 @@ class TestWhatCountsAsABareMarker:
     def test_the_symbols_a_page_uses_instead(self):
         assert _is_bare_marker('*') and _is_bare_marker('†')
 
+    def test_a_raised_digit(self):
+        assert _is_bare_marker('\u00b3') and _is_bare_marker('\u2074')
+
     def test_not_a_word(self):
         assert not _is_bare_marker('and') and not _is_bare_marker('Universidad')
 
