@@ -2421,6 +2421,31 @@ def _iter_chain_cover(
         prev_included_end = block_end
 
 
+def _is_printed_once_per_author(
+    fv: JatsFieldValue,
+    declared_affiliation_count: int,
+) -> bool:
+    """Whether every printing of this affiliation is this affiliation.
+
+    A deposit that declares one affiliation for all of its authors says nothing
+    about which printing belongs to whom, because they all do: the page sets
+    the institution again under each name and every one of them is the value.
+    So each printing is labelled, the way an address a correspondence block
+    repeats is.
+
+    A deposit that declares several is the opposite case.  Which printing
+    belongs to which author is then the whole question, one affiliation is
+    printed inside another -- a department of the institute the first names in
+    full -- and the per-author masking is what answers it.  Labelling every
+    printing of each would undo that answer.
+    """
+    return (
+        fv.sub_field_name is None
+        and fv.field_name == JatsFieldNames.AUTHOR_AFF
+        and declared_affiliation_count == 1
+    )
+
+
 def _may_answer_in_pieces(
     fv: JatsFieldValue,
     anchor_match_end_by_field: Dict[str, int],
@@ -2803,6 +2828,11 @@ class LayoutDocumentJatsAligner:
         # every other value has answered too.
         anchor_matches: List[_AnchorMatch] = []
 
+        declared_affiliation_count = sum(
+            1 for field_value in field_values
+            if field_value.sub_field_name is None
+            and field_value.field_name == JatsFieldNames.AUTHOR_AFF
+        )
         expected_window = _expected_windows(token_index, field_values, self.config)
         for value_index, fv in enumerate(field_values):
             search_start, search_end = _search_range(
@@ -3289,7 +3319,7 @@ class LayoutDocumentJatsAligner:
             if (
                 fv.field_name in _REPEATED_IN_FRONT_MATTER_FIELDS
                 and fv.sub_field_name is None
-            ):
+            ) or _is_printed_once_per_author(fv, declared_affiliation_count):
                 # From the start of the document rather than from this match,
                 # with this match taken out: the page sets its Portuguese
                 # keyword line above its English one and names the

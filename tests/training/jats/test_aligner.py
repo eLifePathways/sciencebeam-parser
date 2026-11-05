@@ -11,6 +11,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.aligner import (
+    _is_printed_once_per_author,
     _may_answer_in_pieces,
     AlignmentConfig,
     LayoutDocumentJatsAligner,
@@ -3128,3 +3129,75 @@ class TestAKeywordLineThePageSetsPerLanguage:
             if annotated.get_token_field(token) == JatsFieldNames.KEYWORDS
         }
         assert 'Palavras-chave' not in labelled
+
+
+class TestWhetherEveryPrintingIsTheSameAffiliation:
+    """Whether the page's repeated institution is the one affiliation declared.
+
+    A deposit declaring one affiliation for all of its authors says nothing
+    about which printing belongs to whom, because they all do.  A deposit
+    declaring several says exactly that, one is printed inside another, and the
+    per-author masking is what sorts them out.
+    """
+
+    @staticmethod
+    def _once(field: str, declared: int, **kwargs) -> bool:
+        return _is_printed_once_per_author(
+            JatsFieldValue(text='Example Institute', field_name=field, **kwargs),
+            declared,
+        )
+
+    def test_one_declared_affiliation_is_every_printing_of_it(self):
+        assert self._once(JatsFieldNames.AUTHOR_AFF, 1)
+
+    def test_several_declared_affiliations_are_not(self):
+        assert not self._once(JatsFieldNames.AUTHOR_AFF, 2)
+
+    def test_a_sub_field_is_not(self):
+        assert not self._once(
+            JatsFieldNames.AUTHOR_AFF, 1,
+            sub_field_name=JatsSubFieldNames.AUTHOR_AFF_ADDR,
+        )
+
+    def test_another_field_is_not(self):
+        assert not self._once(JatsFieldNames.AUTHOR, 1)
+
+
+class TestOneInstitutionUnderEveryAuthor:
+    """A deposit may declare one affiliation for a byline of several authors.
+
+    The page then sets the institution again under each name, and the deposit
+    has one value to answer with, so only the first printing was labelled and
+    the rest were background under names that were labelled.
+    """
+
+    AFFILIATION = 'Example Institute, Exampleton, Exampleland'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _affiliation_runs(self) -> int:
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe. ' + self.AFFILIATION,
+            'John Alan Roe. ' + self.AFFILIATION,
+            'Ann Example Smith. ' + self.AFFILIATION,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe John Alan Roe Ann Example Smith', JatsFieldNames.AUTHOR),
+            _fv(self.AFFILIATION, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        indices = [
+            index for index, token in enumerate(doc.iter_all_tokens())
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR_AFF
+        ]
+        if not indices:
+            return 0
+        return 1 + sum(1 for a, b in zip(indices, indices[1:]) if b - a > 1)
+
+    def test_every_printing_is_labelled(self):
+        assert self._affiliation_runs() == 3
