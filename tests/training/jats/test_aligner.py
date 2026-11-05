@@ -11,7 +11,9 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.aligner import (
+    _is_a_run_of,
     _is_bare_marker,
+    _name_words,
     _is_printed_once_per_author,
     _may_answer_in_pieces,
     AlignmentConfig,
@@ -3327,3 +3329,92 @@ class TestTheMarkerOnTheLineAboveAnAffiliation:
             and (index == 0 or labels[index - 1][1] != JatsFieldNames.AUTHOR_AFF)
         ]
         assert [labels[index][0] for index in starts] == ['1']
+
+
+class TestWhetherARunOpensOrClosesADeclaredName:
+    """A deposit writes some names surname first and some given first."""
+
+    @staticmethod
+    def _run(printed: str, declared: str) -> bool:
+        return _is_a_run_of(_name_words(printed), _name_words(declared))
+
+    def test_the_opening_of_a_name(self):
+        assert self._run('Doe-Smith', 'Doe-Smith Mary')
+
+    def test_the_close_of_a_name(self):
+        assert self._run('del Roe-Jones', 'John del Roe-Jones')
+
+    def test_the_whole_of_it(self):
+        assert self._run('Mary Doe', 'Mary Doe')
+
+    def test_not_a_run_out_of_the_middle(self):
+        assert not self._run('Example', 'Mary Example Doe Smith Jones')
+
+    def test_not_an_initial_on_its_own(self):
+        assert not self._run('J', 'John del Roe-Jones')
+
+    def test_not_a_word_the_name_does_not_have(self):
+        assert not self._run('Orcid', 'Mary Doe')
+
+
+class TestTheNameAPageSetsInFrontOfAnIdentifier:
+    """A page lists its ORCIDs as `Orcid: <name> <identifier>`.
+
+    The name it sets there is often only the surname, which the deposit never
+    declares on its own, so the identifier was labelled and the name in front
+    of it was background.  Looking for a bare surname across the front matter
+    is what does not work; the identifier is what says a name is in front of
+    it.
+    """
+
+    NAMES = ['Doe-Smith Mary', 'John del Roe-Jones']
+    BYLINE = 'Mary Doe-Smith 1 , John del Roe-Jones 2'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'Orcid: Doe-Smith https://orcid.org/0000-0002-1111-2222',
+            'Orcid: del Roe-Jones https://orcid.org/0000-0003-3333-4444',
+            self.ABSTRACT,
+        )
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+        ]
+        for name in self.NAMES:
+            field_values.append(JatsFieldValue(
+                text=name, field_name=JatsFieldNames.AUTHOR,
+                sub_field_name=JatsSubFieldNames.AUTHOR_NAME, fallback_text=name,
+            ))
+        field_values.append(_fv(self.BYLINE, JatsFieldNames.AUTHOR))
+        for orcid in (
+            'https://orcid.org/0000-0002-1111-2222',
+            'https://orcid.org/0000-0003-3333-4444',
+        ):
+            field_values.append(_fv(orcid, JatsFieldNames.ORCID))
+        field_values.append(_fv(self.ABSTRACT, JatsFieldNames.ABSTRACT))
+        annotated = LayoutDocumentJatsAligner().align(doc, field_values)
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_name_in_front_of_each_identifier_is_the_author(self):
+        labels = self._labels()
+        before = [
+            labels[index - 1][1] for index, (_t, field) in enumerate(labels)
+            if field == JatsFieldNames.ORCID and index
+            and labels[index - 1][1] != JatsFieldNames.ORCID
+        ]
+        assert before == [JatsFieldNames.AUTHOR, JatsFieldNames.AUTHOR]
+
+    def test_the_word_introducing_the_line_stays_outside_it(self):
+        authored = [
+            index for index, (t, f) in enumerate(self._labels())
+            if t == 'Orcid' and f == JatsFieldNames.AUTHOR
+        ]
+        assert not authored

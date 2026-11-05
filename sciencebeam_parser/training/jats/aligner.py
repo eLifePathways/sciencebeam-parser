@@ -2196,6 +2196,109 @@ def _author_name_ranges(
     })
 
 
+def _name_words(text: str) -> List[str]:
+    """The words of a name, with the punctuation between them dropped.
+
+    A page breaks `Miranda-Soberón` into three tokens and the deposit writes it
+    as one, so the hyphen cannot be part of the comparison.
+    """
+    return re.findall(r'\w+', normalize_for_alignment(text))
+
+
+def _is_a_run_of(words: Sequence[str], name_words: Sequence[str]) -> bool:
+    """Whether the page's run opens or closes a name the deposit declares.
+
+    A deposit writes some of its names surname first and some given first, so
+    the part a page keeps is at one end or the other.  Whole words either way,
+    and at least one of more than a letter, so an initial on its own is not a
+    name.
+    """
+    if not words or len(words) > len(name_words):
+        return False
+    if not any(len(word) > 1 for word in words):
+        return False
+    return (
+        list(name_words[:len(words)]) == list(words)
+        or list(name_words[-len(words):]) == list(words)
+    )
+
+
+def _longest_name_run_before(
+    tokens: Sequence[LayoutToken],
+    entries: Sequence[Optional[Tuple[str, Optional[str], int]]],
+    index: int,
+    declared: Sequence[Sequence[str]],
+) -> List[int]:
+    """The run before `index` that says the most of a name the deposit declares.
+
+    By the words it reaches, not the tokens: the punctuation introducing the
+    name adds no word, so taking it would widen the run without saying any more
+    of the name.
+    """
+    longest: List[int] = []
+    most_words = 0
+    walked: List[int] = []
+    position = index - 1
+    while position >= 0 and entries[position] is None:
+        walked.insert(0, position)
+        words = _name_words(' '.join(tokens[at].text for at in walked))
+        if len(words) > most_words and any(
+            _is_a_run_of(words, name) for name in declared
+        ):
+            longest = list(walked)
+            most_words = len(words)
+        position -= 1
+    return longest
+
+
+def _give_an_identifier_the_name_before_it(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+    author_values: Sequence[JatsFieldValue],
+    instance_id: int,
+) -> int:
+    """Label the name a page sets in front of an author's identifier.
+
+    A page lists its ORCIDs one per line as `Orcid: <name> <identifier>`, and
+    the name it sets there is often only the surname, which the deposit never
+    declares on its own.  The identifier is what says a name is in front of it,
+    so the run is read from there rather than searched for: a bare surname is a
+    word before it is a name, and looked for across the front matter it labels
+    the local part of an email address and, on one page, the word "challenge".
+
+    Only a run that is the tail of a name the deposit declares, so the
+    "Orcid:" introducing it stays background, and only on the identifier's own
+    line.
+    """
+    declared = [
+        _name_words(field_value.fallback_text or field_value.text)
+        for field_value in author_values
+    ]
+    if not declared:
+        return 0
+    found = 0
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        for index, entry in enumerate(entries):
+            if entry is None or entry[0] != JatsFieldNames.ORCID:
+                continue
+            if index == 0:
+                continue
+            previous = entries[index - 1]
+            if previous is not None and previous[0] == JatsFieldNames.ORCID:
+                continue
+            longest = _longest_name_run_before(tokens, entries, index, declared)
+            if not longest:
+                continue
+            found += 1
+            for at in longest:
+                annotated.set_token_label(
+                    tokens[at], JatsFieldNames.AUTHOR, None, instance_id + found
+                )
+    return found
+
+
 def _label_further_author_names(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -3462,6 +3565,21 @@ class LayoutDocumentJatsAligner:
                 + token_index.cover_ranges + token_index.furniture_ranges
             ),
             instance_id=instance_by_field.get(JatsFieldNames.AUTHOR, 0),
+        )
+        instance_by_field[JatsFieldNames.AUTHOR] = (
+            instance_by_field.get(JatsFieldNames.AUTHOR, 0)
+            + _give_an_identifier_the_name_before_it(
+                annotated, layout_document,
+                # Every name the deposit declares, not only the ones that
+                # answered elsewhere: a byline printed in the other order
+                # leaves a name unmatched, and the page still sets it in front
+                # of that author's identifier.
+                [
+                    field_value for field_value in field_values
+                    if field_value.sub_field_name == JatsSubFieldNames.AUTHOR_NAME
+                ],
+                instance_by_field.get(JatsFieldNames.AUTHOR, 0),
+            )
         )
 
         # Merge per-name REFERENCE_AUTHOR spans into a single <author> element.
