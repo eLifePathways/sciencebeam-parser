@@ -3474,3 +3474,55 @@ class TestANoteDoesNotTakeTheNameItIntroduces:
     def test_the_words_introducing_it_are_not(self):
         labels = self._labels()
         assert ('Correspondence', JatsFieldNames.AUTHOR) not in labels
+
+
+class TestAnIdentifierThatDiffersInOneCharacter:
+    """A repeat of the article's identifier is every character of it.
+
+    A preprint server prints the identifier of each version it has published
+    and they differ in their last character, which is why a repeat has to be
+    exact.  The check counted how much of the page the match covered instead,
+    and an alignment that steps over one character on each side covers as many
+    characters as the value has: a paper citing a protocol whose identifier
+    differs from its own in one digit had that protocol labelled as its own.
+    """
+
+    OWN = 'https://doi.org/10.12688/openreseurope.14041.2'
+    CITED = 'https://doi.org/10.12688/openreseurope.14044.2'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _identified(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.OWN,
+            'see the protocol ( Open Res Europe 2022 , 1:113 ( ' + self.CITED + ' ) )',
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.OWN, JatsFieldNames.DOI),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        labels = [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+        runs: List[Tuple[str, bool]] = []
+        for text, field in labels:
+            if field == JatsFieldNames.DOI:
+                if runs and runs[-1][1]:
+                    runs[-1] = (runs[-1][0] + text, True)
+                else:
+                    runs.append((text, True))
+            elif runs and runs[-1][1]:
+                runs.append(('', False))
+        return [text for text, _ in runs if text]
+
+    def test_the_article_keeps_its_own(self):
+        assert any('14041' in run for run in self._identified())
+
+    def test_the_one_it_cites_is_not_taken_for_it(self):
+        assert not any('14044' in run for run in self._identified())

@@ -1409,11 +1409,11 @@ def _match_field_value_in_pieces(
     pieces = [piece for piece in _iter_needle_pieces(field_value.text) if piece]
     if len(pieces) < 2:
         return None
+    needle_length = len(normalize_for_alignment(field_value.text))
     matches = list(_iter_piece_matches(
         token_index, field_value, config, pieces,
         search_start, search_end, masked_ranges,
     ))
-    needle_length = len(normalize_for_alignment(field_value.text))
     if not matches or not needle_length:
         return None
     covered = sum(len(normalize_for_alignment(piece)) for piece, _ in matches)
@@ -1726,6 +1726,35 @@ def _search_range(
     ), None
 
 
+def _is_the_same_printing(
+    token_index: '_TokenIndex',
+    block_ranges: Sequence[Tuple[int, int]],
+    field_value: JatsFieldValue,
+    exact: bool,
+) -> bool:
+    """Whether what the match reached is another printing of the value.
+
+    An identifier is every character of it.  A preprint server lists the one it
+    gave each version and they differ in their last character, and a paper
+    cites a protocol whose identifier differs from its own in one digit, so a
+    near miss is a different identifier rather than the same one set again.
+    Counting how much of the page the match covers does not see that: an
+    alignment stepping over one character on each side covers exactly as many
+    as the value has.
+
+    A name or a keyword line is not read that way.  The page hyphenates, breaks
+    and accents those differently from the deposit, and a printing that differs
+    in a character is still that printing.
+    """
+    needle = normalize_for_alignment(field_value.text)
+    if exact:
+        matched = ''.join(
+            token_index.haystack[begin:end] for begin, end in block_ranges
+        )
+        return matched.replace(' ', '') == needle.replace(' ', '')
+    return sum(end - begin for begin, end in block_ranges) >= len(needle)
+
+
 def _label_repeated_matches(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -1736,6 +1765,7 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
     masked_ranges: Optional[List[Tuple[int, int]]],
     instance_id: int,
     only_unclaimed: bool = False,
+    exact: bool = False,
 ) -> int:
     """Label every further place the value is printed, and say how many.
 
@@ -1751,7 +1781,6 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
     character.  The page sets the identifier in pieces the match reads across,
     so this is not the same as matching it verbatim.
     """
-    needle_length = len(normalize_for_alignment(field_value.text))
     found = 0
     start = search_start
     while search_end is None or start < search_end:
@@ -1766,7 +1795,7 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
         if repeat_end <= start:
             break
         start = repeat_end
-        if sum(end - begin for begin, end in block_ranges) < needle_length:
+        if not _is_the_same_printing(token_index, block_ranges, field_value, exact):
             continue
         found += 1
         _label_tokens_for_blocks(
@@ -3545,6 +3574,7 @@ class LayoutDocumentJatsAligner:
                     search_start=a_end, search_end=None,
                     masked_ranges=(masked or []) + token_index.furniture_ranges,
                     instance_id=instance_id,
+                    exact=True,
                 )
 
         _label_further_titles(
