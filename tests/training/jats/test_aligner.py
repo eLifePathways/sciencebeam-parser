@@ -11,6 +11,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.aligner import (
+    _is_bare_marker,
     _is_printed_once_per_author,
     _may_answer_in_pieces,
     AlignmentConfig,
@@ -3201,3 +3202,125 @@ class TestOneInstitutionUnderEveryAuthor:
 
     def test_every_printing_is_labelled(self):
         assert self._affiliation_runs() == 3
+
+
+class TestWhatCountsAsABareMarker:
+    """Only a marker tying a name to an affiliation, never a word."""
+
+    def test_a_digit_or_two(self):
+        assert _is_bare_marker('1') and _is_bare_marker('12')
+
+    def test_a_single_letter(self):
+        assert _is_bare_marker('a')
+
+    def test_the_symbols_a_page_uses_instead(self):
+        assert _is_bare_marker('*') and _is_bare_marker('†')
+
+    def test_not_a_word(self):
+        assert not _is_bare_marker('and') and not _is_bare_marker('Universidad')
+
+    def test_not_a_longer_number(self):
+        assert not _is_bare_marker('2021')
+
+
+class TestTheMarkerAnAffiliationIsPrintedBehind:
+    """A page lists its affiliations behind the marker tying each to a name.
+
+    The deposit declares that marker against the name, so at the head of the
+    block it answers to nothing and is left as background, which breaks the
+    only link between a name and where that author works.  GROBID keeps it
+    inside the affiliation on 2,076 of its runs and outside one on 78.
+    """
+
+    FIRST = 'Example Institute, Exampleton, Exampleland'
+    SECOND = 'Second Example Institute, Exampleton, Exampleland'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe 1 , John Alan Roe 2',
+            '1 .- ' + self.FIRST + '. 2 .- ' + self.SECOND,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1 , John Alan Roe 2', JatsFieldNames.AUTHOR),
+            _fv(self.FIRST, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.SECOND, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def _affiliation_opening(self):
+        labels = self._labels()
+        starts = [
+            index for index, (_t, f) in enumerate(labels)
+            if f == JatsFieldNames.AUTHOR_AFF
+            and (index == 0 or labels[index - 1][1] != JatsFieldNames.AUTHOR_AFF)
+        ]
+        return [labels[index][0] for index in starts]
+
+    def test_each_affiliation_opens_with_its_marker(self):
+        assert self._affiliation_opening() == ['1', '2']
+
+    def test_the_stop_closing_the_one_above_is_left_to_it(self):
+        labels = self._labels()
+        for index, (text, field) in enumerate(labels):
+            if text == '2' and field == JatsFieldNames.AUTHOR_AFF:
+                assert labels[index - 1][0] == '.'
+                assert labels[index - 1][1] != JatsFieldNames.AUTHOR_AFF
+                return
+        raise AssertionError('the second marker was not labelled')
+
+
+class TestTheMarkerOnTheLineAboveAnAffiliation:
+    """A marker the line above ends with belongs to what that line says.
+
+    A page sets the corresponding author's asterisk after their name and the
+    affiliation block on the line under it, where that affiliation carries a
+    marker of its own.  Taken as well, the asterisk puts the author's own
+    marker inside the affiliation it does not belong to.
+    """
+
+    AFFILIATION = 'Example Institute, Exampleton, Exampleland'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe 1 *',
+            '1 . ' + self.AFFILIATION,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1', JatsFieldNames.AUTHOR),
+            _fv(self.AFFILIATION, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_asterisk_is_not_the_affiliation(self):
+        assert ('*', JatsFieldNames.AUTHOR_AFF) not in self._labels()
+
+    def test_the_affiliation_still_opens_with_its_own_marker(self):
+        labels = self._labels()
+        starts = [
+            index for index, (_t, f) in enumerate(labels)
+            if f == JatsFieldNames.AUTHOR_AFF
+            and (index == 0 or labels[index - 1][1] != JatsFieldNames.AUTHOR_AFF)
+        ]
+        assert [labels[index][0] for index in starts] == ['1']

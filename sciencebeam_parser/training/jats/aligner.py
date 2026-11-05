@@ -2050,6 +2050,67 @@ def _join_what_a_line_prints_inside_one_value(
                 )
 
 
+_MARKER_PUNCTUATION: FrozenSet[str] = frozenset({'.', '-', ')', ':', ','})
+
+
+def _is_bare_marker(text: str) -> bool:
+    """Whether a token is only a marker tying a name to an affiliation."""
+    return bool(re.fullmatch(r'[0-9]{1,2}|[a-z]|[*\u2020\u2021\u00a7]', text))
+
+
+def _give_an_affiliation_the_marker_before_it(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+) -> None:
+    """The marker an affiliation is printed behind is the affiliation's.
+
+    A page lists its affiliations one per line behind the marker tying each to
+    a name, and sets the next one on the same line where they are short.  The
+    deposit declares the marker against the name instead, so at the head of the
+    block it is background, and the link between a name and where that author
+    works is then only in the markers the byline kept.
+
+    GROBID keeps the marker inside the affiliation on 2,076 of its runs and
+    outside one on 78.  Only a bare marker and the punctuation printed with it
+    is taken, so an affiliation behind a word keeps that word outside.
+
+    On the affiliation's own line, because a marker on the line above belongs
+    to what that line says: a page sets the corresponding author's asterisk
+    after their name and the affiliation block under it.
+    """
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        for index, entry in enumerate(entries):
+            if entry is None or entry[0] != JatsFieldNames.AUTHOR_AFF:
+                continue
+            if index == 0:
+                continue
+            previous = entries[index - 1]
+            if previous is not None and previous[0] == JatsFieldNames.AUTHOR_AFF:
+                continue
+            opening: List[int] = []
+            position = index - 1
+            found_marker = False
+            while position >= 0 and entries[position] is None:
+                text = tokens[position].text
+                if _is_bare_marker(text):
+                    # The marker itself ends the walk.  What stands before it
+                    # closes the affiliation above, and a full stop there is
+                    # that affiliation's rather than this one's.
+                    opening.append(position)
+                    found_marker = True
+                    break
+                if text not in _MARKER_PUNCTUATION:
+                    break
+                opening.append(position)
+                position -= 1
+            if not found_marker:
+                continue
+            for at in opening:
+                annotated.set_token_label(tokens[at], entry[0], entry[1], entry[2])
+
+
 def _give_a_block_the_marker_it_opens_with(
     annotated: JatsAnnotatedLayoutDocument,
     layout_document: LayoutDocument,
@@ -3417,6 +3478,7 @@ class LayoutDocumentJatsAligner:
         # An abstract is a block, so it has the whole of each line it runs down.
         _fill_abstract_lines(annotated, layout_document)
         _give_a_block_the_marker_it_opens_with(annotated, layout_document)
+        _give_an_affiliation_the_marker_before_it(annotated, layout_document)
         # After every pass that claims, because what it fills is what the page
         # prints inside a value and nothing else explains.
         _join_what_a_line_prints_inside_one_value(annotated, layout_document)
