@@ -90,11 +90,19 @@ _REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
 # second one background, which is too few either way to be a convention, so
 # this follows the reviews of our own corpus, which ask for both.
 #
+# A keyword line is here for a different reason.  A page prints one per
+# language and GROBID labels every one of them: all 43 of its documents
+# carrying more than one keyword run carry a run per language.  Where the terms
+# are technical names that do not translate the two lines read alike, and the
+# deposit then declares a single `kwd-group` for what the page sets twice, so
+# the second line is the one left background.
+#
 # To the end of the front matter rather than of the document, because an
-# address is printed again in a reference list and in a peer review report,
-# and neither of those is this article's correspondence.
+# address is printed again in a reference list and in a peer review report, and
+# neither of those is this article's correspondence.
 _REPEATED_IN_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.EMAIL,
+    JatsFieldNames.KEYWORDS,
 })
 
 # The notes that are matched so the region reads their lines as front matter
@@ -3282,14 +3290,31 @@ class LayoutDocumentJatsAligner:
                 fv.field_name in _REPEATED_IN_FRONT_MATTER_FIELDS
                 and fv.sub_field_name is None
             ):
+                # From the start of the document rather than from this match,
+                # with this match taken out: the page sets its Portuguese
+                # keyword line above its English one and names the
+                # correspondent above the byline, so the printing the deposit's
+                # own value answered is as often the second as the first.
                 instance_by_field[fv.field_name] = instance_id + _label_repeated_matches(
                     annotated, token_index, fv, self.config,
-                    search_start=a_end,
+                    search_start=0,
                     search_end=(
                         front_matter_end + _FRONT_MATTER_BUFFER
                         if front_matter_end else None
                     ),
-                    masked_ranges=(masked or []) + token_index.furniture_ranges,
+                    masked_ranges=(
+                        (masked or []) + token_index.furniture_ranges
+                        + [(a_start, a_end)]
+                        # And over what nothing else is holding.  A title says
+                        # most of what its own keywords say, and is where the
+                        # line would otherwise be found.  A note is not on the
+                        # list, because the block that names a correspondent
+                        # is where their address is printed again.
+                        + [
+                            match_range for match_range in matched_ranges
+                            if match_range not in note_match_ranges
+                        ]
+                    ),
                     instance_id=instance_id,
                 )
             if fv.field_name in _REPEATED_FRONT_MATTER_FIELDS and fv.sub_field_name is None:

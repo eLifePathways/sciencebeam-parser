@@ -3077,3 +3077,54 @@ class TestAnAddressTheFrontMatterSaysTwice:
         assert len(labelled) > 0
         gaps = [b - a for a, b in zip(labelled, labelled[1:]) if b - a > 1]
         assert len(gaps) == 1, f'expected two runs, got {labelled}'
+
+
+class TestAKeywordLineThePageSetsPerLanguage:
+    """A page sets a keyword line per language and the terms may not translate.
+
+    GROBID labels every one of them: all 43 of its header documents carrying
+    more than one keyword run carry a run per language.  Where the terms are
+    technical names the two lines read alike, and the deposit then declares a
+    single group for what the page sets twice, so without this the line above
+    is left background and the one below is labelled.
+    """
+
+    KEYWORDS = 'SARS-CoV-2, bayesian skyline, birth-death skyline'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _keyword_runs(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe 1 , John Alan Roe 2',
+            self.ABSTRACT,
+            'Palavras-chave: ' + self.KEYWORDS,
+            'Keywords: ' + self.KEYWORDS,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1 , John Alan Roe 2', JatsFieldNames.AUTHOR),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+            _fv(self.KEYWORDS, JatsFieldNames.KEYWORDS),
+        ])
+        indices = [
+            index for index, token in enumerate(doc.iter_all_tokens())
+            if annotated.get_token_field(token) == JatsFieldNames.KEYWORDS
+        ]
+        return 1 + sum(1 for a, b in zip(indices, indices[1:]) if b - a > 1)
+
+    def test_both_lines_are_labelled(self):
+        assert self._keyword_runs() == 2
+
+    def test_the_word_introducing_each_stays_outside_it(self):
+        doc = _make_doc('Palavras-chave: ' + self.KEYWORDS)
+        annotated = LayoutDocumentJatsAligner().align(
+            doc, [_fv(self.KEYWORDS, JatsFieldNames.KEYWORDS)]
+        )
+        labelled = {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.KEYWORDS
+        }
+        assert 'Palavras-chave' not in labelled
