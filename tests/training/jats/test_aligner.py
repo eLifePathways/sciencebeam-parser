@@ -3418,3 +3418,59 @@ class TestTheNameAPageSetsInFrontOfAnIdentifier:
             if t == 'Orcid' and f == JatsFieldNames.AUTHOR
         ]
         assert not authored
+
+
+class TestANoteDoesNotTakeTheNameItIntroduces:
+    """A correspondence block names the person to write to.
+
+    The block is matched so the region reads its lines as front matter, and it
+    carries no header label of its own.  Labelled over the author's name it
+    takes that name off the person it names, and the link between an author
+    and their address is lost.  GROBID labels the name a correspondence
+    statement introduces on 10 of the 13 its corpus carries.
+    """
+
+    NAME = 'Jane Example Smith'
+    BYLINE = 'Jane Example Smith 1 , John Alan Roe 2'
+    NOTE = 'Correspondence to Jane Example Smith, j.smith@example.org'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'Correspondence to ' + self.NAME,
+            'j.smith@example.org',
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            JatsFieldValue(
+                text=self.NAME, field_name=JatsFieldNames.AUTHOR,
+                sub_field_name=JatsSubFieldNames.AUTHOR_NAME, fallback_text=self.NAME,
+            ),
+            _fv(self.BYLINE, JatsFieldNames.AUTHOR),
+            _fv(self.NOTE, JatsFieldNames.CORRESPONDENCE),
+            _fv('j.smith@example.org', JatsFieldNames.EMAIL),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_name_the_block_names_is_the_author(self):
+        labels = self._labels()
+        start = next(
+            index for index, (text, _f) in enumerate(labels)
+            if text == 'Correspondence'
+        )
+        named = [f for _t, f in labels[start:start + 6]]
+        assert JatsFieldNames.AUTHOR in named
+
+    def test_the_words_introducing_it_are_not(self):
+        labels = self._labels()
+        assert ('Correspondence', JatsFieldNames.AUTHOR) not in labels

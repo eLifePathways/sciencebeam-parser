@@ -3493,6 +3493,12 @@ class LayoutDocumentJatsAligner:
                 instance_id,
                 skip_side_columns=fv.field_name in _ANCHOR_FIELDS,
                 protect_fields=_protected_fields(fv),
+                # A note carries no label of its own: it is matched so the
+                # region reads its lines as front matter.  Labelled over what
+                # another value holds it loses that value and gives nothing
+                # back, which is how a correspondence block took the author's
+                # name off the person it names.
+                only_unclaimed=fv.field_name in _UNLABELLED_NOTE_FIELDS,
             )
             if (
                 fv.field_name in _REPEATED_IN_FRONT_MATTER_FIELDS
