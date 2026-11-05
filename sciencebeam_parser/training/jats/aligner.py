@@ -1987,6 +1987,22 @@ def _fill_abstract_lines(
 
 _OPENING_SEPARATORS: FrozenSet[str] = frozenset({',', ';', '-'})
 
+# What a statement the page introduces by name opens on.  "Author's
+# contribution: WADS conceived ..." declares the colon with the words
+# introducing it, which GROBID keeps out of the statement.
+#
+# The colon alone.  A statement is one run of prose and the commas inside it
+# are its own, so releasing those as well only shortens the runs a page breaks
+# the statement into.
+_LEAD_IN_SEPARATORS: FrozenSet[str] = frozenset({':'})
+
+# The statements a page introduces by name, which the deposit declares without
+# the words that introduce them.
+_LEAD_IN_STATEMENT_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
+    JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+})
+
 
 def _iter_shortened_affiliations(text: str) -> Iterator[str]:
     """The forms a panel sets an affiliation in, longest first.
@@ -2018,6 +2034,7 @@ def _release_the_separator_a_value_opens_with(
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
     field_name: str,
+    separators: FrozenSet[str] = _OPENING_SEPARATORS,
 ) -> None:
     """A separator does not open a value.
 
@@ -2031,7 +2048,7 @@ def _release_the_separator_a_value_opens_with(
         if (
             field == field_name
             and previous != field_name
-            and token.text in _OPENING_SEPARATORS
+            and token.text in separators
         ):
             del annotated.token_label_by_id[id(token)]
             continue
@@ -3653,6 +3670,10 @@ class LayoutDocumentJatsAligner:
         _release_the_separator_a_value_opens_with(
             annotated, token_index, JatsFieldNames.REVIEWER_AFF
         )
+        for statement_field in sorted(_LEAD_IN_STATEMENT_FIELDS):
+            _release_the_separator_a_value_opens_with(
+                annotated, token_index, statement_field, _LEAD_IN_SEPARATORS
+            )
 
         total = len(field_values)
         if missed_by_field:

@@ -3526,3 +3526,42 @@ class TestAnIdentifierThatDiffersInOneCharacter:
 
     def test_the_one_it_cites_is_not_taken_for_it(self):
         assert not any('14044' in run for run in self._identified())
+
+
+class TestTheColonAStatementIsIntroducedBy:
+    """A page introduces a statement by name and the deposit declares neither.
+
+    "Author's contribution: WADS conceived ..." prints the words introducing
+    the statement and the colon with them, and the deposit holds only what
+    follows.  The match opens on the colon, which belongs to the introduction
+    rather than to the statement.
+    """
+
+    STATEMENT = 'WADS conceived and designed the analysis and collected the data'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.ABSTRACT,
+            "Author's contribution: " + self.STATEMENT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+            _fv(self.STATEMENT, JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_colon_is_not_the_statement(self):
+        assert (':', JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH) not in self._labels()
+
+    def test_the_statement_itself_is_kept(self):
+        labels = self._labels()
+        assert ('WADS', JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH) in labels
