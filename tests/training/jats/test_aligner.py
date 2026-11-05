@@ -11,6 +11,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.aligner import (
+    _may_answer_in_pieces,
     AlignmentConfig,
     LayoutDocumentJatsAligner,
     extend_partial_reference_matches,
@@ -2516,8 +2517,8 @@ class TestAnAuthorNamedAgainInAShortenedForm:
     """
 
     NAMES = [
-        ('Mary Jane Doe', 'Mary J. Doe'),
-        ('John Alan Roe', 'John A. Roe'),
+        ('Mary Jane Doe', ('Mary J. Doe', 'Doe MJ')),
+        ('John Alan Roe', ('John A. Roe', 'Roe JA')),
     ]
     BYLINE = 'Mary Jane Doe 1 , John Alan Roe 2'
 
@@ -2538,7 +2539,7 @@ class TestAnAuthorNamedAgainInAShortenedForm:
                 field_name=JatsFieldNames.AUTHOR,
                 sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
                 fallback_text=full,
-                shortened_text=short,
+                shortened_texts=short,
             ))
         field_values.append(_fv(self.BYLINE, JatsFieldNames.AUTHOR))
         field_values.append(_fv(
@@ -2726,3 +2727,404 @@ class TestTheFormsAPanelSetsAnAffiliationIn:
     def test_the_declared_form_is_not_offered_as_a_shortened_one(self):
         forms = list(_iter_shortened_affiliations('Example Institute, Exampleland'))
         assert 'Example Institute, Exampleland' not in forms
+
+
+class TestWhatTheArticleCallsItself:
+    """A word printed inside another value is not the article naming its kind.
+
+    A deposit whose whole answer is "article" offers a word the abstract of
+    almost any paper also uses, and the page prints no display line for it to
+    land on.  Matched over what the aligner has already placed, it takes that
+    word out of the middle of the abstract and labels it as the kind of article
+    this is.  The ranges every other value answered with are what it is asked
+    over.
+    """
+
+    TITLE = 'Counting the herons of the northern marshes'
+    ABSTRACT = (
+        'This article reports four summers of counts from the marshes north of'
+        ' the estuary, set beside the water levels the three gauges upstream'
+        ' recorded over the same summers.'
+    )
+
+    def _labels(self, *line_texts: str, declared: str):
+        doc = _make_doc(*line_texts)
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.TITLE, JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+            JatsFieldValue(
+                text=declared,
+                field_name=JatsFieldNames.MANUSCRIPT_TYPE,
+                exact_only=True,
+            ),
+        ])
+        return {
+            token.text: annotated.get_token_field(token)
+            for token in doc.iter_all_tokens()
+        }
+
+    def test_the_word_the_abstract_uses_is_left_to_the_abstract(self):
+        labels = self._labels(self.TITLE, self.ABSTRACT, declared='article')
+        assert labels['article'] == JatsFieldNames.ABSTRACT
+
+    def test_the_display_line_the_page_prints_is_still_found(self):
+        labels = self._labels(
+            'RESEARCH ARTICLE', self.TITLE, self.ABSTRACT,
+            declared='RESEARCH ARTICLE',
+        )
+        assert labels['RESEARCH'] == JatsFieldNames.MANUSCRIPT_TYPE
+
+
+class TestTheSecondAbstractThePagePrintsFirst:
+    """Two languages, declared in one order and printed in the other.
+
+    A deposit declares a title and an abstract once per language, and the order
+    it declares them in is not the order the page sets them.  Each anchor value
+    is looked for from where its own field last landed, so the variant the page
+    prints first is behind the one already matched and out of reach.  Asked
+    again over what the forward search skipped, it is found where the page has
+    it.
+
+    The two abstracts here stand for two languages: what matters is that the
+    deposit declares them the other way round from the page.
+    """
+
+    TITLE_AS_PRINTED_FIRST = 'Counting the herons of the northern marshes'
+    TITLE_AS_PRINTED_SECOND = 'A survey of the heron nests above the estuary'
+    ABSTRACT_AS_PRINTED_FIRST = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them, and the counts were set beside'
+        ' the water levels the three gauges upstream recorded.'
+    )
+    ABSTRACT_AS_PRINTED_SECOND = (
+        'Four summers of nest counts from the estuary marshes are reported'
+        ' here, together with the upstream water levels recorded over the same'
+        ' summers at each of the three gauges.'
+    )
+
+    def _abstract_tokens(self) -> Set[str]:
+        doc = _make_doc(
+            self.TITLE_AS_PRINTED_FIRST,
+            self.TITLE_AS_PRINTED_SECOND,
+            self.ABSTRACT_AS_PRINTED_FIRST,
+            self.ABSTRACT_AS_PRINTED_SECOND,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.TITLE_AS_PRINTED_SECOND, JatsFieldNames.TITLE),
+            _fv(self.TITLE_AS_PRINTED_FIRST, JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT_AS_PRINTED_SECOND, JatsFieldNames.ABSTRACT),
+            _fv(self.ABSTRACT_AS_PRINTED_FIRST, JatsFieldNames.ABSTRACT),
+        ])
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.ABSTRACT
+        }
+
+    def test_the_one_the_page_prints_first_is_still_the_abstract(self):
+        assert {'surveyed', 'nesting', 'gauges'} <= self._abstract_tokens()
+
+    def test_the_one_the_page_prints_second_keeps_its_own_words(self):
+        assert {'reported', 'together'} <= self._abstract_tokens()
+
+
+class TestTheKeywordLineBetweenTwoAbstracts:
+    """A keyword line per language, each printed after its own abstract.
+
+    The keywords are looked for after the abstract, and the floor that says so
+    is the furthest abstract the document has, so the line the page sets
+    between the two is behind it.  Asked again over what the floor skipped, it
+    is found -- over what nothing else holds, because the title of a language
+    says much of what that language's keywords say.
+    """
+
+    TITLE = 'HERONS, MARSHES, ESTUARY, WATER LEVELS: A SURVEY OF THE NORTHERN COAST'
+    ABSTRACT_FIRST = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them, and the counts were set beside'
+        ' the water levels the three gauges upstream recorded.'
+    )
+    KEYWORDS_FIRST = 'herons, marshes, estuary, water levels'
+    ABSTRACT_SECOND = (
+        'Four summers of nest counts from the estuary marshes are reported'
+        ' here, together with the upstream water levels recorded over the same'
+        ' summers at each of the three gauges.'
+    )
+    KEYWORDS_SECOND = 'nest counts, gauges, four summers'
+
+    def _labels(self):
+        doc = _make_doc(
+            self.TITLE,
+            self.ABSTRACT_FIRST,
+            'Keywords: ' + self.KEYWORDS_FIRST,
+            self.ABSTRACT_SECOND,
+            'Keywords: ' + self.KEYWORDS_SECOND,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.TITLE, JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT_FIRST, JatsFieldNames.ABSTRACT),
+            _fv(self.ABSTRACT_SECOND, JatsFieldNames.ABSTRACT),
+            _fv(self.KEYWORDS_FIRST, JatsFieldNames.KEYWORDS),
+            _fv(self.KEYWORDS_SECOND, JatsFieldNames.KEYWORDS),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_line_the_page_sets_between_the_abstracts_is_found(self):
+        labels = self._labels()
+        keyword_words = [
+            text for text, field in labels if field == JatsFieldNames.KEYWORDS
+        ]
+        assert 'estuary' in keyword_words and 'gauges' in keyword_words
+
+    def test_the_title_is_not_where_the_line_is_found(self):
+        labels = self._labels()
+        title_run = labels[:len(self.TITLE.split())]
+        assert {field for _text, field in title_run} == {JatsFieldNames.TITLE}
+
+
+class TestAnAuthorNamedAgainSurnameFirst:
+    """An ORCID list may set the surname first and the given names as initials.
+
+    `Doe MJ` where the deposit declares `Mary Jane Doe`, one line per author
+    with the identifier after it.  The identifier is labelled on its own, and
+    without this the name in front of it is left as background.
+    """
+
+    NAMES = [
+        ('Mary Jane Doe', ('Mary J. Doe', 'Doe MJ')),
+        ('John Alan Roe', ('John A. Roe', 'Roe JA')),
+    ]
+    BYLINE = 'Mary Jane Doe 1 , John Alan Roe 2'
+
+    def _author_tokens(self) -> Set[str]:
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'Doe MJ: https://orcid.org/0000-0002-1111-2222',
+            'Roe JA: https://orcid.org/0000-0003-3333-4444',
+            'The marshes north of the estuary were surveyed over four summers.',
+        )
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+        ]
+        for full, short in self.NAMES:
+            field_values.append(JatsFieldValue(
+                text=full,
+                field_name=JatsFieldNames.AUTHOR,
+                sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
+                fallback_text=full,
+                shortened_texts=short,
+            ))
+        field_values.append(_fv(self.BYLINE, JatsFieldNames.AUTHOR))
+        field_values.append(_fv(
+            'The marshes north of the estuary were surveyed over four summers.',
+            JatsFieldNames.ABSTRACT,
+        ))
+        annotated = LayoutDocumentJatsAligner().align(doc, field_values)
+        return {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        }
+
+    def test_the_name_in_front_of_each_identifier_is_the_author(self):
+        assert {'Doe', 'MJ', 'Roe', 'JA'} <= self._author_tokens()
+
+    def test_the_identifier_itself_is_not_taken_as_a_name(self):
+        assert 'orcid' not in self._author_tokens()
+
+
+class TestTheWordAnAbstractSharesWithASectionHeading:
+    """A structured abstract opens with the heading of its first section.
+
+    The deposit declares that heading twice over, once inside the abstract and
+    once as the body's own section title, and the page prints it twice.  The
+    body value is steered by a window when its opening words are not unique,
+    and the window reaches back past the abstract, so the heading is found
+    inside the abstract and takes the word from it.  Refused there, it takes
+    nothing.
+
+    The heading the body itself prints is left unlabelled, which is what it was
+    before: the body value answered inside the abstract and has no second
+    answer.  What matters here is that the two do not trade places -- an
+    abstract reaching down to the body's own heading is how a section title in
+    the middle of a paper came to be labelled as front matter.
+    """
+
+    TITLE = 'Counting the herons of the northern marshes'
+    ABSTRACT = (
+        'Introduction The marshes north of the estuary were surveyed over four'
+        ' summers to count the herons nesting along them, and the counts were'
+        ' set beside the water levels the three gauges upstream recorded.'
+    )
+    SECTION_TITLE = 'Introduction'
+    SECTION_PARAGRAPH = (
+        'A series of counts was made at each of the gauges in turn, beginning'
+        ' upstream and working down towards the open water of the estuary.'
+    )
+
+    def _introductions(self):
+        doc = _make_doc(
+            self.TITLE,
+            self.ABSTRACT,
+            self.SECTION_TITLE,
+            self.SECTION_PARAGRAPH,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.TITLE, JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+            _fv(self.SECTION_TITLE, JatsFieldNames.BODY_SECTION_TITLE),
+            _fv(self.SECTION_PARAGRAPH, JatsFieldNames.BODY_SECTION_PARAGRAPH),
+        ])
+        return [
+            annotated.get_token_field(token)
+            for token in doc.iter_all_tokens() if token.text == 'Introduction'
+        ]
+
+    def test_the_one_the_abstract_opens_with_stays_the_abstract(self):
+        assert self._introductions()[0] == JatsFieldNames.ABSTRACT
+
+    def test_the_one_the_body_prints_is_not_the_abstract(self):
+        assert self._introductions()[1] != JatsFieldNames.ABSTRACT
+
+
+class TestWhetherAValueMayAnswerInPiecesFirst:
+    """Which values are offered an assembled answer straight away.
+
+    A repeated anchor is not.  Taken first, an answer assembled out of runs the
+    page sets apart stops the searches that would have looked for the value
+    whole: a deposit that lifts its abstract out of its own body supplies
+    sentences all down the paper, the pieces are taken from there, and the
+    variant the page prints above is never looked for.  The pieces then carry a
+    front-matter label into the middle of the paper, which the segmentation
+    corpus reads as a second front matter region.
+
+    It is still offered one last of all, which is how an abstract the page
+    breaks across a column is kept.
+    """
+
+    @staticmethod
+    def _may(field: str, placed_already: bool = False, **kwargs) -> bool:
+        return _may_answer_in_pieces(
+            JatsFieldValue(text='a value', field_name=field, **kwargs),
+            {field: 100} if placed_already else {},
+        )
+
+    def test_a_first_abstract_may(self):
+        assert self._may(JatsFieldNames.ABSTRACT)
+
+    def test_a_second_abstract_may_not(self):
+        assert not self._may(JatsFieldNames.ABSTRACT, placed_already=True)
+
+    def test_a_second_title_may_not(self):
+        assert not self._may(JatsFieldNames.TITLE, placed_already=True)
+
+    def test_a_body_paragraph_may_whether_or_not_one_was_placed(self):
+        assert self._may(JatsFieldNames.BODY_SECTION_PARAGRAPH)
+        assert self._may(JatsFieldNames.BODY_SECTION_PARAGRAPH, placed_already=True)
+
+    def test_a_sub_field_may_not(self):
+        assert not self._may(
+            JatsFieldNames.AUTHOR, sub_field_name=JatsSubFieldNames.AUTHOR_NAME
+        )
+
+    def test_a_value_wanted_verbatim_may_not(self):
+        assert not self._may(JatsFieldNames.MANUSCRIPT_TYPE, exact_only=True)
+
+
+class TestAnAddressTheFrontMatterSaysTwice:
+    """A correspondence block repeats an address the byline already gave.
+
+    The deposit declares it once, so without this only the first printing is
+    labelled and the second is background, under a name that is labelled.
+    GROBID's own header corpus is of two minds about it, four documents to
+    three, which is too few either way to be a convention; the reviews of our
+    own corpus ask for both.
+    """
+
+    EMAIL = 'm.doe@example.org'
+    BYLINE = 'Mary Jane Doe 1 , John Alan Roe 2'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _emailed_tokens(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'Example Institute, Exampleton, Exampleland',
+            'e-mail: ' + self.EMAIL,
+            'Correspondence to Mary Jane Doe: ' + self.EMAIL,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.BYLINE, JatsFieldNames.AUTHOR),
+            _fv('Example Institute, Exampleton, Exampleland', JatsFieldNames.AUTHOR_AFF),
+            _fv(self.EMAIL, JatsFieldNames.EMAIL),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            index for index, token in enumerate(doc.iter_all_tokens())
+            if annotated.get_token_field(token) == JatsFieldNames.EMAIL
+        ]
+
+    def test_both_printings_are_labelled(self):
+        labelled = self._emailed_tokens()
+        # the address is one run of tokens, and the page sets two of them
+        assert len(labelled) > 0
+        gaps = [b - a for a, b in zip(labelled, labelled[1:]) if b - a > 1]
+        assert len(gaps) == 1, f'expected two runs, got {labelled}'
+
+
+class TestAKeywordLineThePageSetsPerLanguage:
+    """A page sets a keyword line per language and the terms may not translate.
+
+    GROBID labels every one of them: all 43 of its header documents carrying
+    more than one keyword run carry a run per language.  Where the terms are
+    technical names the two lines read alike, and the deposit then declares a
+    single group for what the page sets twice, so without this the line above
+    is left background and the one below is labelled.
+    """
+
+    KEYWORDS = 'SARS-CoV-2, bayesian skyline, birth-death skyline'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _keyword_runs(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe 1 , John Alan Roe 2',
+            self.ABSTRACT,
+            'Palavras-chave: ' + self.KEYWORDS,
+            'Keywords: ' + self.KEYWORDS,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1 , John Alan Roe 2', JatsFieldNames.AUTHOR),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+            _fv(self.KEYWORDS, JatsFieldNames.KEYWORDS),
+        ])
+        indices = [
+            index for index, token in enumerate(doc.iter_all_tokens())
+            if annotated.get_token_field(token) == JatsFieldNames.KEYWORDS
+        ]
+        return 1 + sum(1 for a, b in zip(indices, indices[1:]) if b - a > 1)
+
+    def test_both_lines_are_labelled(self):
+        assert self._keyword_runs() == 2
+
+    def test_the_word_introducing_each_stays_outside_it(self):
+        doc = _make_doc('Palavras-chave: ' + self.KEYWORDS)
+        annotated = LayoutDocumentJatsAligner().align(
+            doc, [_fv(self.KEYWORDS, JatsFieldNames.KEYWORDS)]
+        )
+        labelled = {
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.KEYWORDS
+        }
+        assert 'Palavras-chave' not in labelled

@@ -33,9 +33,9 @@ class JatsFieldValue:
     sub_field_name: Optional[str] = None
     fallback_text: Optional[str] = None
     exact_only: bool = False
-    # The name as a page shortens it, which only the pass looking for an author
-    # named again reads.
-    shortened_text: Optional[str] = None
+    # The forms a page shortens the name to, which only the pass looking for an
+    # author named again reads.
+    shortened_texts: Tuple[str, ...] = ()
 
 
 def _iter_sub_article_stub_texts(
@@ -297,7 +297,7 @@ def _aff_addr_parts(aff_el: etree._Element) -> List[str]:
 
 def _contrib_group_author_texts(
     contrib_group: etree._Element
-) -> List[Tuple[str, str, Optional[str]]]:
+) -> List[Tuple[str, str, Tuple[str, ...]]]:
     """Each author of the group, as the byline prints them and as the rest of
     the page does.
 
@@ -307,7 +307,7 @@ def _contrib_group_author_texts(
     `<author>`, the markers between the names included.  A correspondence block
     prints the name without them, so the bare name is carried beside it.
     """
-    author_parts: List[Tuple[str, str, Optional[str]]] = []
+    author_parts: List[Tuple[str, str, Tuple[str, ...]]] = []
     for contrib in contrib_group.xpath(
         'contrib[not(@contrib-type) or @contrib-type="author"]'
     ):
@@ -331,7 +331,7 @@ def _contrib_group_author_texts(
         author_parts.append((
             ' '.join([name_text] + markers),
             name_text,
-            _shortened_name(given, surname),
+            _shortened_names(given, surname),
         ))
     return author_parts
 
@@ -365,18 +365,34 @@ _LEAD_IN_FIELDS: FrozenSet[str] = frozenset({
 })
 
 
-def _shortened_name(given: str, surname: str) -> Optional[str]:
-    """The name as a page shortens it, keeping the first given name in full.
+def _shortened_names(given: str, surname: str) -> Tuple[str, ...]:
+    """The forms a page shortens a name to, longest first.
 
-    A line of ORCIDs sets `Mary J. Doe` where the deposit declares
-    `Mary Jane Doe`, and GROBID gives that form a byline of its own.
-    Only where there is something to shorten, so a name of two parts is not
-    offered twice.
+    A line of ORCIDs sets `Mary J. Doe` where the deposit declares `Mary Jane
+    Doe`; the same line on another page sets `Mary Doe`, with the middle names
+    dropped rather than initialled, and on a third `Doe MJ`, surname first and
+    the given names as bare initials.  GROBID gives any of them a byline of its
+    own.
+
+    The surname on its own is not among them.  It is a word before it is a
+    name: offered, it labels the local part of an email address, a surname in
+    a figure's source line, and on one `ore` document the word "challenge".
+
+    Longest first, so the fullest form the page actually sets is the one taken.
+    The first is offered only where there is something to shorten, so a name of
+    two parts is not offered twice.
     """
-    parts = [part for part in re.split(r'\s+', given) if part]
-    if len(parts) < 2 or not surname:
-        return None
-    return ' '.join([parts[0]] + [f'{part[0]}.' for part in parts[1:]] + [surname])
+    parts = [part for part in re.split(r'[^\w]+', given) if part]
+    if not parts or not surname:
+        return ()
+    forms = []
+    if len(parts) > 1:
+        forms.append(
+            ' '.join([parts[0]] + [f'{part[0]}.' for part in parts[1:]] + [surname])
+        )
+        forms.append(f'{parts[0]} {surname}')
+    forms.append(f"{surname} {''.join(part[0] for part in parts)}")
+    return tuple(forms)
 
 
 def _name_initials(name_el: etree._Element) -> str:
@@ -803,13 +819,13 @@ class JatsFieldExtractor:
             # searched inside that match, and the run matches a few of its own
             # words somewhere even where it does not match the byline -- which
             # would confine the names to wherever those words happened to land.
-            for byline_text, name_text, short_text in author_parts:
+            for byline_text, name_text, short_texts in author_parts:
                 yield JatsFieldValue(
                     text=byline_text,
                     field_name=JatsFieldNames.AUTHOR,
                     sub_field_name=JatsSubFieldNames.AUTHOR_NAME,
                     fallback_text=name_text,
-                    shortened_text=short_text,
+                    shortened_texts=short_texts,
                 )
             if byline_texts:
                 yield JatsFieldValue(

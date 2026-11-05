@@ -82,6 +82,29 @@ _REPEATED_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.PUBLICATION_DATE,
 })
 
+# What the front matter prints more than once and is labelled wherever it
+# prints there, as against anywhere in the document.  A correspondence block
+# repeats an author's address under their name, and the page says it again
+# beside the byline.  GROBID's own header corpus is of two minds about this:
+# four of its 837 documents label the same address twice and three leave the
+# second one background, which is too few either way to be a convention, so
+# this follows the reviews of our own corpus, which ask for both.
+#
+# A keyword line is here for a different reason.  A page prints one per
+# language and GROBID labels every one of them: all 43 of its documents
+# carrying more than one keyword run carry a run per language.  Where the terms
+# are technical names that do not translate the two lines read alike, and the
+# deposit then declares a single `kwd-group` for what the page sets twice, so
+# the second line is the one left background.
+#
+# To the end of the front matter rather than of the document, because an
+# address is printed again in a reference list and in a peer review report, and
+# neither of those is this article's correspondence.
+_REPEATED_IN_FRONT_MATTER_FIELDS: FrozenSet[str] = frozenset({
+    JatsFieldNames.EMAIL,
+    JatsFieldNames.KEYWORDS,
+})
+
 # The notes that are matched so the region reads their lines as front matter
 # and carry no label of their own.  GROBID labels the name printed inside a
 # correspondence note as a byline, so a name is looked for inside one.
@@ -1712,6 +1735,7 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
     search_end: Optional[int],
     masked_ranges: Optional[List[Tuple[int, int]]],
     instance_id: int,
+    only_unclaimed: bool = False,
 ) -> int:
     """Label every further place the value is printed, and say how many.
 
@@ -1748,6 +1772,7 @@ def _label_repeated_matches(  # pylint: disable=too-many-arguments
         _label_tokens_for_blocks(
             annotated, token_index, block_ranges,
             field_value.field_name, field_value.sub_field_name, instance_id + found,
+            only_unclaimed=only_unclaimed,
         )
     return found
 
@@ -2082,6 +2107,7 @@ def _label_further_titles(  # pylint: disable=too-many-arguments
             search_end=search_end,
             masked_ranges=masked_ranges,
             instance_id=instance_id,
+            only_unclaimed=True,
         )
 
 
@@ -2139,25 +2165,27 @@ def _label_further_author_names(  # pylint: disable=too-many-arguments
             instance_id=instance_id,
         )
     shortened = [
-        field_value for field_value in author_values if field_value.shortened_text
+        field_value for field_value in author_values if field_value.shortened_texts
     ]
     if not shortened:
         return
     taken = sorted(masked_ranges + _author_name_ranges(annotated, token_index))
     for field_value in shortened:
-        instance_id += _label_repeated_matches(
-            annotated, token_index,
-            JatsFieldValue(
-                text=field_value.shortened_text or '',
-                field_name=field_value.field_name,
-                sub_field_name=field_value.sub_field_name,
-            ),
-            config,
-            search_start=0,
-            search_end=search_end,
-            masked_ranges=taken,
-            instance_id=instance_id,
-        )
+        for shortened_text in field_value.shortened_texts:
+            instance_id += _label_repeated_matches(
+                annotated, token_index,
+                JatsFieldValue(
+                    text=shortened_text,
+                    field_name=field_value.field_name,
+                    sub_field_name=field_value.sub_field_name,
+                ),
+                config,
+                search_start=0,
+                search_end=search_end,
+                masked_ranges=taken,
+                instance_id=instance_id,
+                only_unclaimed=True,
+            )
 
 
 def _pre_anchor_indices(
@@ -2393,6 +2421,51 @@ def _iter_chain_cover(
         prev_included_end = block_end
 
 
+def _may_answer_in_pieces(
+    fv: JatsFieldValue,
+    anchor_match_end_by_field: Dict[str, int],
+) -> bool:
+    """Whether a value is offered an assembled answer straight away.
+
+    A sub-field is read inside its parent's match and a verbatim value is
+    verbatim, so neither is, ever.
+
+    A variant of a value already placed is not offered one yet.  Taken first,
+    an answer assembled out of runs the page sets apart stops the searches that
+    would have looked for the value whole: a deposit that lifts its abstract
+    out of its own body supplies sentences all down the paper, the pieces are
+    taken from there, and the variant the page prints above is never looked
+    for.  It is offered one last of all instead, which is how an abstract the
+    page breaks across a column is still kept.
+    """
+    if fv.sub_field_name is not None or fv.exact_only:
+        return False
+    return not (
+        fv.field_name in _ANCHOR_FIELDS
+        and fv.field_name in anchor_match_end_by_field
+    )
+
+
+def _protected_fields(fv: JatsFieldValue) -> FrozenSet[str]:
+    """What a value is refused, having matched where another one already is.
+
+    An affiliation is refused the byline's marker: the two printings sit next
+    to each other and open with the same digit.
+
+    A body section title is refused the abstract.  A structured abstract opens
+    with the heading of its first section, the deposit declares that heading
+    again as the body's own, and the body's copy is found inside the abstract
+    on a page that prints the abstract first.  Refused there, it takes nothing,
+    which is what it was worth: the page sets that printing inside the
+    abstract's own run.
+    """
+    if fv.field_name == JatsFieldNames.AUTHOR_AFF:
+        return _BYLINE_FIELDS
+    if fv.field_name == JatsFieldNames.BODY_SECTION_TITLE:
+        return frozenset({JatsFieldNames.ABSTRACT})
+    return frozenset()
+
+
 def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -2402,6 +2475,7 @@ def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
     instance_id: int,
     skip_side_columns: bool = False,
     protect_fields: FrozenSet[str] = frozenset(),
+    only_unclaimed: bool = False,
 ) -> None:
     """Label tokens using anchor+chain strategy (see module constants for rationale).
 
@@ -2426,6 +2500,13 @@ def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
     )
     for start, end in covered:
         for token in token_index.tokens_in_range(start, end):
+            if only_unclaimed and annotated.get_token_field(token):
+                # What another value is holding is that value.  A name the page
+                # shortens is a few characters long and the front matter prints
+                # those characters elsewhere: `Rodrigo Rocha` is inside
+                # `rodrigo.rocha@example.org`, which is an email address and
+                # not a second printing of the name.
+                continue
             if annotated.get_token_field(token) in protect_fields:
                 # The marker closing a byline is the author's: GROBID keeps it
                 # inside the author on 434 of its 1,344 bylines and outside one
@@ -2798,6 +2879,13 @@ class LayoutDocumentJatsAligner:
                 # -- one department of the institute the first names in full --
                 # belongs to the line under its own author's name.
                 masked = (masked or []) + per_author_match_ranges[fv.field_name]
+            if fv.field_name == JatsFieldNames.MANUSCRIPT_TYPE:
+                # Over what nothing else has answered.  One publisher's whole
+                # answer is "article", a word the abstract of almost any paper
+                # also uses, and the page prints no display line for it to land
+                # on; taken inside the abstract it labels a word out of the
+                # middle of it as the kind of article this is.
+                masked = (masked or []) + matched_ranges
             # The cover restates the article's title, its authors and its
             # identifier, and a value is matched once: matched there, the
             # article's own front matter is left with nothing to match it, and
@@ -2853,7 +2941,9 @@ class LayoutDocumentJatsAligner:
                 search_start=search_start, search_end=search_end,
                 masked_ranges=masked,
                 prefer_exact=fv.field_name in _POST_BODY_FIELDS,
-                allow_pieces=fv.sub_field_name is None and not fv.exact_only,
+                allow_pieces=_may_answer_in_pieces(
+                    fv, anchor_match_end_by_field
+                ),
                 prefer_before=prefer_before,
                 skip_furniture=skip_furniture,
             )
@@ -2907,6 +2997,65 @@ class LayoutDocumentJatsAligner:
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config, search_start=0, search_end=None,
                     masked_ranges=masked,
+                )
+            # An anchor value searches from where its own field last landed, so
+            # a document printed in two languages reaches the variant the page
+            # sets after the one already matched and not the one it sets
+            # before.  The deposit declares the variants in neither the page's
+            # order nor a consistent one, so ask again over what the forward
+            # search skipped -- and only there, since what lies after it has
+            # just been looked through.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                and fv.field_name in anchor_match_end_by_field
+                and search_start > 0
+                and window is None
+            ):
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, self.config,
+                    search_start=0, search_end=search_start,
+                    masked_ranges=masked,
+                    skip_furniture=skip_furniture,
+                )
+            # An answer assembled out of runs the page sets apart is the
+            # weakest one there is, so a repeated anchor is offered it only
+            # once it has been looked for whole, both where the order says and
+            # behind there.  Taken first, it answers the search and stops the
+            # others being asked: a deposit that lifts its abstract out of its
+            # own body supplies sentences all down the paper, and the variant
+            # the page prints above is never looked for at all.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                and not fv.exact_only
+                and not _may_answer_in_pieces(fv, anchor_match_end_by_field)
+            ):
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, field_config,
+                    search_start=search_start, search_end=search_end,
+                    masked_ranges=masked,
+                    allow_pieces=True,
+                    prefer_before=prefer_before,
+                    skip_furniture=skip_furniture,
+                )
+            # The keywords are looked for after the abstract, and a document
+            # printed in two languages prints a keyword line per language, each
+            # after its own abstract.  The floor is the furthest abstract, so
+            # the line the page sets after the first one is behind it.  Over
+            # what the floor skipped, and with every value already placed taken
+            # out: a title shares most of its words with its own keywords, and
+            # is what the line would otherwise be found in.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                and fv.field_name in _KEYWORDS_FIELDS
+                and search_start > 0
+            ):
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, self.config,
+                    search_start=0, search_end=search_start,
+                    masked_ranges=(masked or []) + matched_ranges,
                 )
             # Body-content incremental constraint is also soft: body_content_end
             # can jump forward when a nested sub-section (e.g. a mathematical
@@ -3135,11 +3284,39 @@ class LayoutDocumentJatsAligner:
                 ),
                 instance_id,
                 skip_side_columns=fv.field_name in _ANCHOR_FIELDS,
-                protect_fields=(
-                    _BYLINE_FIELDS
-                    if fv.field_name == JatsFieldNames.AUTHOR_AFF else frozenset()
-                ),
+                protect_fields=_protected_fields(fv),
             )
+            if (
+                fv.field_name in _REPEATED_IN_FRONT_MATTER_FIELDS
+                and fv.sub_field_name is None
+            ):
+                # From the start of the document rather than from this match,
+                # with this match taken out: the page sets its Portuguese
+                # keyword line above its English one and names the
+                # correspondent above the byline, so the printing the deposit's
+                # own value answered is as often the second as the first.
+                instance_by_field[fv.field_name] = instance_id + _label_repeated_matches(
+                    annotated, token_index, fv, self.config,
+                    search_start=0,
+                    search_end=(
+                        front_matter_end + _FRONT_MATTER_BUFFER
+                        if front_matter_end else None
+                    ),
+                    masked_ranges=(
+                        (masked or []) + token_index.furniture_ranges
+                        + [(a_start, a_end)]
+                        # And over what nothing else is holding.  A title says
+                        # most of what its own keywords say, and is where the
+                        # line would otherwise be found.  A note is not on the
+                        # list, because the block that names a correspondent
+                        # is where their address is printed again.
+                        + [
+                            match_range for match_range in matched_ranges
+                            if match_range not in note_match_ranges
+                        ]
+                    ),
+                    instance_id=instance_id,
+                )
             if fv.field_name in _REPEATED_FRONT_MATTER_FIELDS and fv.sub_field_name is None:
                 # To the end of the document rather than to the end of the front
                 # matter, which is the abstract and a buffer here and stops
