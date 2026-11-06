@@ -27,12 +27,13 @@ delft = [
     # delft is declared here, rather than left to arrive through
     # sciencebeam-trainer-delft, for its floor: the Hugging Face Hub support
     # (`delft.utilities.hub_models`, `delft.utilities.weights`) arrived in 1.2.0,
-    # and a published sciencebeam-trainer-delft still allows an older delft,
-    # which fails on import.
+    # and reading a model from a /resolve/ URL of the Hub, which the retrained
+    # profiles load from, in 1.2.1; a published sciencebeam-trainer-delft still
+    # allows an older delft, which fails on import or refuses the URL.
     # Both floors here are what a consumer installing this project from PyPI
     # resolves against; in this repo the source below wins over the first one,
     # and the commit it resolves to is in uv.lock.
-    "delft>=1.2.0",
+    "delft>=1.2.1",
 ]
 cv = [
     "layoutparser==0.3.2",

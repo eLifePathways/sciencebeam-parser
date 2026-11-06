@@ -666,8 +666,8 @@ wheels = [
 
 [[package]]
 name = "delft"
-version = "1.2.0"
-source = { git = "https://github.com/kermitt2/delft?rev=ff332f262019849f430bdb92502c385664808ec5#ff332f262019849f430bdb92502c385664808ec5" }
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "lmdb" },
@@ -685,6 +685,10 @@ dependencies = [
     { name = "transformers" },
     { name = "truecase" },
     { name = "unidecode" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/eb/d5/9c988ed20a7f832adb61542007fa2ba8e922e55e5cdf10ec338b865e32fd/delft-1.2.1.tar.gz", hash = "sha256:83656d194233ca64a220499ad0f495766ee0fb5cb2f0708d69104dbe392800d7", size = 208182, upload-time = "2026-11-06T17:23:25.639Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/47/e2b5f5d2db250e6b32250c0df876a12c25f92747113813a6066f5c106430/delft-1.2.1-py3-none-any.whl", hash = "sha256:ec9220c6267255ce91899c51c07f83b7f20aaff94bfe861296e95d0d2b0696fa", size = 237294, upload-time = "2026-11-06T17:23:24.031Z" },
 ]
 
 [[package]]
@@ -4362,7 +4366,7 @@ ocr = [
 
 [package.metadata]
 requires-dist = [
-    { name = "delft", marker = "extra == 'delft'", specifier = ">=1.2.0" },
+    { name = "delft", marker = "extra == 'delft'", specifier = ">=1.2.1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.124.0" },
     { name = "fsspec", specifier = ">=2022.1.0" },
     { name = "gcsfs", specifier = ">=2022.1.0" },
@@ -4405,7 +4409,7 @@ ocr = [{ name = "tesserocr", specifier = "==2.5.2" }]
 [[package]]
 name = "sciencebeam-trainer-delft"
 version = "0.0.0"
-source = { git = "https://github.com/eLifePathways/sciencebeam-trainer-delft?branch=feature%2Fhub-models#b70a95b0f5d7c5c50c738dfc9c6f982c5a8a5463" }
+source = { git = "https://github.com/eLifePathways/sciencebeam-trainer-delft?branch=feature%2Fhub-models#712360bd00bc12f43ef213b04b98069c91c53c46" }
 dependencies = [
     { name = "fsspec" },
     { name = "joblib" },
