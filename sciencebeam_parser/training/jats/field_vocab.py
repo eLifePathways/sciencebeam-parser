@@ -21,6 +21,9 @@ class JatsFieldNames:
     CORRESP_AFF = 'corresp_aff'
     CORRESP_ADDRESS = 'corresp_address'
     CORRESP_PHONE = 'corresp_phone'
+    # The number an affiliation declares, which a preprint server prints under
+    # each author rather than only beside the one to write to.
+    PHONE = 'phone'
     # Who reviewed the article, and where they work, which an open review
     # platform names in the panel it sets beside the front matter.
     REVIEWER = 'reviewer'
@@ -160,6 +163,7 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.CORRESP_AFF:            '<header>',
     JatsFieldNames.CORRESP_ADDRESS:        '<header>',
     JatsFieldNames.CORRESP_PHONE:          '<header>',
+    JatsFieldNames.PHONE:                  '<header>',
 }
 
 # ── Header model label mapping ────────────────────────────────────────────────
@@ -178,6 +182,12 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     # labels there, and the words introducing them are `<other>`.
     JatsFieldNames.COPYRIGHT:        '<copyright>',
     JatsFieldNames.FUNDING:          '<funding>',
+    # The same statement where the deposit files it as a section of its own
+    # rather than as a funding group, which is how a preprint server that has
+    # no funding group to file it in declares it.  The page prints it among
+    # the front matter either way, as it prints the conflict and contribution
+    # statements below.
+    JatsFieldNames.FUNDING_SECTION_PARAGRAPH: '<funding>',
     JatsFieldNames.EMAIL:            '<email>',
     JatsFieldNames.ORCID:            '<pubnum>',
     # GROBID writes the article's identifier as `<idno>`, which is what
@@ -220,6 +230,7 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     JatsFieldNames.CORRESP_AFF:      '<affiliation>',
     JatsFieldNames.CORRESP_ADDRESS:  '<address>',
     JatsFieldNames.CORRESP_PHONE:    '<phone>',
+    JatsFieldNames.PHONE:            '<phone>',
 }
 
 # ── Fulltext model label mapping ──────────────────────────────────────────────
