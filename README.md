@@ -91,7 +91,11 @@ header model. So far only the header model reads it.
 
 Authors and affiliations are read off the models' labels the way GROBID 0.9.1 reads them. A
 marker closes the author it follows, and a second title, forename or surname starts a new author.
-Affiliations are attached to authors as GROBID's `AuthorAffiliationAssigner` attaches them. With
+The header's affiliation and address blocks are labelled as one sequence and cut into
+affiliations by GROBID's rules: a marker on a new line or after another marker, a second
+institution after an address, a marker or a line break, or a second department or laboratory
+after an address or a line break, starts a new affiliation, and a gap between the blocks closes
+one. Affiliations are attached to authors as GROBID's `AuthorAffiliationAssigner` attaches them. With
 no marker anywhere, an affiliation block first goes to the authors named in the author blocks
 right before it in the header. Then, in order: a lone affiliation goes to every author and a lone
 author takes every affiliation; an affiliation goes to the authors carrying its marker; its
