@@ -413,8 +413,12 @@ class SemanticName(SemanticMixedContentWrapper):
 T_SemanticName = TypeVar('T_SemanticName', bound=SemanticName)
 
 
+@dataclass
 class SemanticAuthor(SemanticName):
-    pass
+    # The affiliations attached to the author, the way GROBID attaches them
+    # (see sciencebeam_parser.processors.fulltext.attach_affiliations): the
+    # same affiliation may be attached to several authors.
+    affiliations: List['SemanticAffiliationAddress'] = field(default_factory=list)
 
 
 class SemanticEditor(SemanticName):

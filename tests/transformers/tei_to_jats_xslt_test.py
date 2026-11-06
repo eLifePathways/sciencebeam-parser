@@ -641,6 +641,44 @@ class TestTeiToJatsXslt:
             assert affs[0].attrib.get('id') == AFFILIATION_1['key']
             assert affs[1].attrib.get('id') == AFFILIATION_2['key']
 
+        def test_should_add_a_shared_affiliation_once_with_an_xref_from_each_author(
+            self, tei_to_jats_xslt_fn
+        ):
+            # the TEI writes an affiliation out under each author it is attached to
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(authors=[
+                    _author(affiliation=_author_affiliation(**AFFILIATION_1)),
+                    _author(affiliation=_author_affiliation(**AFFILIATION_1))
+                ])
+            ))
+
+            persons = jats.xpath('front/article-meta/contrib-group/contrib')
+            assert [
+                _get_item(person, './xref[@ref-type="aff"]').attrib.get('rid')
+                for person in persons
+            ] == [AFFILIATION_1['key'], AFFILIATION_1['key']]
+
+            affs = jats.xpath('front/article-meta/aff')
+            assert [aff.attrib.get('id') for aff in affs] == [AFFILIATION_1['key']]
+
+        def test_should_add_an_xref_for_each_affiliation_of_an_author(
+            self, tei_to_jats_xslt_fn
+        ):
+            author = _author(affiliation=_author_affiliation(**AFFILIATION_1))
+            author.append(_author_affiliation(**AFFILIATION_2))
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[author])))
+
+            person = _get_item(jats, 'front/article-meta/contrib-group/contrib')
+            assert [
+                xref.attrib.get('rid')
+                for xref in person.xpath('./xref[@ref-type="aff"]')
+            ] == [AFFILIATION_1['key'], AFFILIATION_2['key']]
+
+            affs = jats.xpath('front/article-meta/aff')
+            assert [aff.attrib.get('id') for aff in affs] == [
+                AFFILIATION_1['key'], AFFILIATION_2['key']
+            ]
+
     class TestBody:
         def test_should_add_body(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
