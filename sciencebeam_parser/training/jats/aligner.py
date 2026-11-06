@@ -1772,6 +1772,41 @@ def _letters_of(text: str) -> str:
     return ''.join(re.findall(r'\w+', normalize_for_alignment(text)))
 
 
+# How long a word has to be before one letter's difference in it reads as the
+# page spelling a name differently rather than as a different name: an initial
+# differs from another author's initial in the only letter it has.
+_MIN_WORD_FOR_A_DIFFERENT_SPELLING = 4
+
+
+def _is_the_name_spelt_differently(printed: str, declared: str) -> bool:
+    """Whether a run is the declared name with one letter of it different.
+
+    A page naming its authors twice can spell one of them two ways, and the
+    deposit carries the byline's spelling, so the list beneath it answers to
+    nothing: the alignment steps over the letter that differs and the repeat
+    is then a letter short of the name.
+
+    One letter of one word, the word long enough that a letter is not most of
+    it.  No two authors any of these deposits declares are a letter apart, so
+    what this admits is the same person under either spelling.
+    """
+    printed_words = normalize_for_alignment(printed).split()
+    declared_words = normalize_for_alignment(declared).split()
+    if len(printed_words) != len(declared_words):
+        return False
+    differing = [
+        (_letters_of(one), _letters_of(other))
+        for one, other in zip(printed_words, declared_words)
+        if _letters_of(one) != _letters_of(other)
+    ]
+    if len(differing) != 1:
+        return False
+    one, other = differing[0]
+    if len(one) != len(other) or len(one) < _MIN_WORD_FOR_A_DIFFERENT_SPELLING:
+        return False
+    return sum(a != b for a, b in zip(one, other)) == 1
+
+
 def _is_the_same_printing(  # pylint: disable=too-many-arguments
     token_index: '_TokenIndex',
     block_ranges: Sequence[Tuple[int, int]],
@@ -1815,7 +1850,14 @@ def _is_the_same_printing(  # pylint: disable=too-many-arguments
         matched = ''.join(
             token_index.haystack[begin:end] for begin, end in block_ranges
         )
-        return _letters_of(matched) == _letters_of(needle)
+        if _letters_of(matched) == _letters_of(needle):
+            return True
+        # Read as the page sets it rather than as the match covers it: the
+        # letter a match steps over is still printed between the two halves
+        # of what it reached.
+        return _is_the_name_spelt_differently(
+            token_index.haystack[block_ranges[0][0]:block_ranges[-1][1]], needle
+        )
     if exact:
         matched = ''.join(
             token_index.haystack[begin:end] for begin, end in block_ranges
