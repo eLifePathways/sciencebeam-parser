@@ -95,7 +95,8 @@ include = ["sciencebeam_parser*"]
   "resources/xslt/*.xsl",
   "service/static/*.html",
   "service/static/*.css",
-  "service/static/*.js"
+  "service/static/*.js",
+  "service/static/swagger-ui/*"
 ]
 
 [tool.mypy]

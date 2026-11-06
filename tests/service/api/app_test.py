@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import json
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Optional
@@ -152,6 +153,21 @@ def _test_client(
 def _get_ok_json(response: httpx2.Response) -> dict:
     assert response.status_code == 200
     return response.json()
+
+
+class TestSwaggerUi:
+    def test_should_reference_nothing_outside_the_service(
+        self, test_client: TestClient
+    ):
+        response = test_client.get('/docs')
+        assert response.status_code == 200
+        assert not re.search(r'(?:href|src)="(?:https?:)?//', response.text)
+
+    def test_should_point_at_the_openapi_url_the_browser_can_reach(
+        self, test_client: TestClient
+    ):
+        response = test_client.get('/docs')
+        assert "url: '/openapi.json'" in response.text
 
 
 class TestApiApp:

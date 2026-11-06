@@ -146,6 +146,16 @@ class TestIndexHtmlFile:
         assert not re.search(r'(?:href|src)="(?:https?:)?//', html)
 
 
+class TestSwaggerUiAssets:
+    def test_should_ship_what_the_docs_page_references(self):
+        for filename in [
+            'swagger-ui-bundle.js', 'swagger-ui.css', 'favicon-32x32.png'
+        ]:
+            assert os.path.exists(
+                os.path.join(STATIC_DIRECTORY, 'swagger-ui', filename)
+            )
+
+
 class TestIndexRouter:
     def test_should_respond_with_html(self, sciencebeam_parser_mock: MagicMock):
         response = get_test_client(sciencebeam_parser_mock).get('/')
