@@ -667,7 +667,7 @@ wheels = [
 [[package]]
 name = "delft"
 version = "1.2.0"
-source = { git = "https://github.com/kermitt2/delft?rev=ff332f262019849f430bdb92502c385664808ec5#ff332f262019849f430bdb92502c385664808ec5" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "lmdb" },
@@ -685,6 +685,10 @@ dependencies = [
     { name = "transformers" },
     { name = "truecase" },
     { name = "unidecode" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/03/eb741fff1ce98596b03e4bdebcda407d661d1aca8b2862f9d37b609bb808/delft-1.2.0.tar.gz", hash = "sha256:a56d02399ac85aa1b3220bfe675a0eb61ec10174619b332a44e3f9b4bc83f503", size = 207577, upload-time = "2026-10-20T16:53:29.698Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/b5/f093c7e2df872927c622b04d325bac5ca5adc90d06fb9ddeec32ca771610/delft-1.2.0-py3-none-any.whl", hash = "sha256:8a06fa4fd5782b64ff20d56811bb05f99af3c7d301b96ded6eca90c703bf4b09", size = 236739, upload-time = "2026-10-20T16:53:28.181Z" },
 ]
 
 [[package]]
