@@ -2536,6 +2536,56 @@ def _give_a_block_the_marker_it_opens_with(
         )
 
 
+# How much of a value has to be left over before what the match stopped short
+# of is worth looking for: fewer words than this and the remainder is as likely
+# to be the punctuation the page sets differently as a line of the value.
+_MIN_UNMATCHED_TAIL = 12
+
+
+def _finish_what_the_match_left(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    field_value: JatsFieldValue,
+    config: AlignmentConfig,
+    block_ranges: Sequence[Tuple[int, int]],
+    search_end: Optional[int],
+    masked_ranges: List[Tuple[int, int]],
+    instance_id: int,
+) -> int:
+    """Look for the end of a value the match stopped short of.
+
+    A page sets its abstract down one column and the last line of it under the
+    column beside, so the lines are read in an order the abstract is not
+    printed in: everything the page sets between them comes first, and the
+    match settles for the run before the interruption.  What it stopped short
+    of is still the value, printed where the page puts it.
+
+    Over what nothing else holds, and within the front matter, so the words
+    the body repeats are not mistaken for the end of the abstract.
+    """
+    needle = normalize_for_alignment(field_value.text)
+    covered = sum(end - begin for begin, end in block_ranges)
+    if covered >= len(needle) - _MIN_UNMATCHED_TAIL:
+        return 0
+    tail = needle[covered:].strip()
+    if len(tail) < _MIN_UNMATCHED_TAIL:
+        return 0
+    return _label_repeated_matches(
+        annotated, token_index,
+        JatsFieldValue(
+            text=tail,
+            field_name=field_value.field_name,
+            sub_field_name=field_value.sub_field_name,
+        ),
+        config,
+        search_start=0,
+        search_end=search_end,
+        masked_ranges=masked_ranges,
+        instance_id=instance_id,
+        only_unclaimed=True,
+    )
+
+
 def _label_further_titles(  # pylint: disable=too-many-arguments
     annotated: JatsAnnotatedLayoutDocument,
     token_index: _TokenIndex,
@@ -4053,6 +4103,25 @@ class LayoutDocumentJatsAligner:
                 # name off the person it names.
                 only_unclaimed=fv.field_name in _UNLABELLED_NOTE_FIELDS,
             )
+            if fv.field_name == JatsFieldNames.ABSTRACT and fv.sub_field_name is None:
+                # The page sets the last line of an abstract under the column
+                # beside it, so the lines are read in an order the abstract is
+                # not printed in and the match settles for the run before the
+                # interruption.
+                instance_by_field[fv.field_name] = (
+                    instance_id + _finish_what_the_match_left(
+                        annotated, token_index, fv, self.config, block_ranges,
+                        search_end=(
+                            front_matter_end + _FRONT_MATTER_BUFFER
+                            if front_matter_end else None
+                        ),
+                        masked_ranges=(
+                            (masked or []) + matched_ranges
+                            + token_index.furniture_ranges
+                        ),
+                        instance_id=instance_id,
+                    )
+                )
             if (
                 fv.field_name in _REPEATED_IN_FRONT_MATTER_FIELDS
                 and fv.sub_field_name is None
