@@ -115,3 +115,52 @@ pre {
   overflow-wrap: anywhere;
   font-size: 13px;
 }
+
+.jats-article {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  padding: 24px 28px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.jats-article h1 { font-size: 20px; margin: 0 0 12px; }
+.jats-article h2 { font-size: 16px; margin: 24px 0 8px; }
+.jats-article h3 { font-size: 15px; margin: 20px 0 8px; }
+.jats-article h4, .jats-article h5, .jats-article h6 {
+  font-size: 14px;
+  margin: 16px 0 8px;
+}
+
+.jats-article p { margin: 0 0 12px; }
+
+.jats-journal { color: var(--muted); font-size: 13px; }
+.jats-authors { font-size: 14px; }
+
+.jats-affiliations {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.jats-abstract { margin-bottom: 8px; }
+
+.jats-figure, .jats-table {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+}
+
+.jats-caption { font-size: 14px; }
+.jats-label { font-weight: 600; }
+.jats-graphic { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+
+.jats-table table { border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.jats-table td { border: 1px solid var(--panel-line); padding: 4px 8px; }
+
+.jats-references { padding-left: 20px; font-size: 14px; }
+.jats-references li { margin-bottom: 8px; }
+.jats-doi { color: var(--muted); }

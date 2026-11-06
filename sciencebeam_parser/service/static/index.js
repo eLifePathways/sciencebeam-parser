@@ -1,3 +1,5 @@
+import { renderJatsXml } from '/static/jats-to-html.js';
+
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
 
 const PROFILE_HEADER = 'x-sciencebeam-profile';
@@ -21,6 +23,11 @@ const statusElement = document.getElementById('status');
 const resultSection = document.getElementById('result');
 const failureSection = document.getElementById('failure');
 const downloadButton = document.getElementById('download');
+const readingButton = document.getElementById('show-reading');
+const rawButton = document.getElementById('show-raw');
+const readingElement = document.getElementById('result-reading');
+const resultBody = document.getElementById('result-body');
+const resultNote = document.getElementById('result-note');
 
 let downloadUrl = null;
 let requestController = null;
@@ -89,11 +96,21 @@ function getSelectedOutput() {
   );
 }
 
+function getOutputHint(output) {
+  if (!output) {
+    return '';
+  }
+  if (output.is_readable) {
+    return '';
+  }
+  if (output.is_text) {
+    return 'Returned as the XML itself. The reading view is over JATS XML.';
+  }
+  return 'Returned as a file to download rather than as text to read here.';
+}
+
 function showSelectedOutputHint() {
-  const output = getSelectedOutput();
-  outputHint.textContent = output && !output.is_text
-    ? 'Returned as a file to download rather than as text to read here.'
-    : '';
+  outputHint.textContent = getOutputHint(getSelectedOutput());
 }
 
 function setUpIncludes() {
@@ -215,6 +232,37 @@ function setUpDownload(blob, filename) {
   };
 }
 
+function showReading(isReading) {
+  readingElement.hidden = !isReading;
+  resultBody.hidden = isReading;
+  readingButton.disabled = isReading;
+  rawButton.disabled = !isReading;
+}
+
+function showReadableResult(xmlText) {
+  readingElement.replaceChildren();
+  try {
+    readingElement.appendChild(renderJatsXml(xmlText, document));
+  } catch (error) {
+    resultNote.textContent = 'It could not be read as JATS: ' + error.message;
+    readingButton.hidden = true;
+    rawButton.hidden = true;
+    showReading(false);
+    return;
+  }
+  readingButton.hidden = false;
+  rawButton.hidden = false;
+  showReading(true);
+}
+
+function showUnreadableResult(output) {
+  readingElement.replaceChildren();
+  readingButton.hidden = true;
+  rawButton.hidden = true;
+  resultNote.textContent = getOutputHint(output);
+  showReading(false);
+}
+
 async function showResult(response, blob, file, elapsedSeconds) {
   const metaElement = document.getElementById('result-meta');
   metaElement.replaceChildren();
@@ -225,9 +273,16 @@ async function showResult(response, blob, file, elapsedSeconds) {
   addMetaRow(metaElement, 'Size', blob.size.toLocaleString() + ' bytes');
   addMetaRow(metaElement, 'Took', elapsedSeconds + 's');
   const output = getSelectedOutput();
-  document.getElementById('result-body').textContent = output && output.is_text
-    ? await blob.text()
-    : 'Not text. Download it to read it.';
+  resultNote.textContent = '';
+  const text = output && output.is_text ? await blob.text() : null;
+  resultBody.textContent = text === null
+    ? 'Not text. Download it to read it.'
+    : text;
+  if (output && output.is_readable && text !== null) {
+    showReadableResult(text);
+  } else {
+    showUnreadableResult(output);
+  }
   document.getElementById('result-curl').textContent = getEquivalentCurlCommand(file);
   setUpDownload(blob, getDownloadFilename(file));
   resultSection.hidden = false;
@@ -340,6 +395,8 @@ stopButton.addEventListener('click', () => {
 });
 
 sourceFileInput.addEventListener('change', checkSelectedFile);
+readingButton.addEventListener('click', () => showReading(true));
+rawButton.addEventListener('click', () => showReading(false));
 
 setUpSourceFileInput();
 setUpOutputSelect();

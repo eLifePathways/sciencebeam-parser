@@ -107,6 +107,15 @@ class TestGetDeploymentProps:
         assert is_text_by_media_type[MediaTypes.JATS_ZIP] is False
         assert is_text_by_media_type[MediaTypes.PDF] is False
 
+    def test_should_say_that_only_jats_xml_has_a_reading_view(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        props = get_deployment_props(sciencebeam_parser_mock)
+        assert [
+            item['media_type'] for item in props['output_media_types']
+            if item['is_readable']
+        ] == [MediaTypes.JATS_XML]
+
 
 class TestGetEmbeddedJson:
     def test_should_escape_angle_brackets_that_would_end_the_script(self):

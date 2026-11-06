@@ -49,6 +49,9 @@ OUTPUT_MEDIA_TYPE_LABELS = {
 TEXT_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.TEI_XML}
 
 
+READABLE_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML}
+
+
 INCLUDES_FIELD_NAMES: Sequence[str] = (
     RequestFieldNames.TITLE,
     RequestFieldNames.ABSTRACT,
@@ -86,7 +89,8 @@ def get_deployment_props(sciencebeam_parser: ScienceBeamParser) -> dict:
                 'media_type': media_type,
                 'label': OUTPUT_MEDIA_TYPE_LABELS[media_type],
                 'extension': guess_extension_for_media_type(media_type),
-                'is_text': media_type in TEXT_OUTPUT_MEDIA_TYPES
+                'is_text': media_type in TEXT_OUTPUT_MEDIA_TYPES,
+                'is_readable': media_type in READABLE_OUTPUT_MEDIA_TYPES
             }
             for media_type in CONVERT_RESPONSE_MEDIA_TYPES
         ],

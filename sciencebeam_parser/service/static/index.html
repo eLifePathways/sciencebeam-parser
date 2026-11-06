@@ -64,7 +64,13 @@
 <section id="result" hidden>
   <h2>Result</h2>
   <dl id="result-meta"></dl>
-  <p><button type="button" id="download">Download</button></p>
+  <div class="actions">
+    <button type="button" id="show-reading">Reading</button>
+    <button type="button" id="show-raw">Raw</button>
+    <button type="button" id="download">Download</button>
+  </div>
+  <p class="hint" id="result-note"></p>
+  <div id="result-reading"></div>
   <pre id="result-body"></pre>
   <h3>The same request</h3>
   <pre id="result-curl"></pre>
