@@ -12,6 +12,7 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.training.jats.aligner import (
     _is_a_run_of,
+    _is_a_name_word,
     _letters_of,
     _is_bare_marker,
     _name_words,
@@ -3379,6 +3380,61 @@ class TestTwoTitlesTheDepositWritesInTheOtherOrder:
     def test_both_printings_are_labelled(self):
         labelled = self._titles()
         assert 'levantamento' in labelled and 'herons' in labelled
+
+
+class TestAKeywordListThePageBracketsEachTermOf:
+    """A page may set every term of its keyword list in square brackets.
+
+    The deposit declares the terms and not the brackets, so the run matched
+    across the list carries the brackets printed between its terms and not
+    the two closing it in.
+    """
+
+    KEYWORDS = 'herons, marshes, estuaries'
+    PRINTED = 'Keywords: [herons], [marshes], [estuaries]'
+
+    def _labelled(self) -> List[str]:
+        doc = _make_doc('A survey of the herons of the northern marshes', self.PRINTED)
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.KEYWORDS, JatsFieldNames.KEYWORDS),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.KEYWORDS
+        ]
+
+    def test_the_list_keeps_the_brackets_closing_it_in(self):
+        labelled = self._labelled()
+        assert labelled[0] == '[' and labelled[-1] == ']'
+
+    def test_the_word_introducing_it_stays_outside(self):
+        assert 'Keywords' not in self._labelled()
+
+
+class TestWhatCouldBePartOfAName:
+    """Which word a page may set inside a name the deposit declares without it.
+
+    A middle name or an initial standing for one.  The word joining two names
+    is not one, which is what keeps a byline's names apart.
+    """
+
+    def test_a_middle_name(self):
+        assert _is_a_name_word('Jane')
+
+    def test_a_name_the_page_accents(self):
+        assert _is_a_name_word('\u00c1ngel')
+
+    def test_an_initial_with_its_full_stop(self):
+        assert _is_a_name_word('J.')
+
+    def test_the_word_joining_two_names(self):
+        assert not _is_a_name_word('and')
+        assert not _is_a_name_word('y')
+
+    def test_punctuation_or_a_marker(self):
+        assert not _is_a_name_word(',')
+        assert not _is_a_name_word('1')
 
 
 class TestWhatCountsAsABareMarker:
