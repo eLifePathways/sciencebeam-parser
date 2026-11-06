@@ -11,13 +11,13 @@
  * the same reading.
  */
 
-const AFFILIATION_PART_SELECTORS = [
-  'institution[content-type="orgdiv2"]',
-  'institution[content-type="orgdiv1"]',
-  'institution[content-type="orgname"]',
-  'addr-line',
-  'city',
-  'country'
+const AFFILIATION_PARTS = [
+  ['institution', 'orgdiv2'],
+  ['institution', 'orgdiv1'],
+  ['institution', 'orgname'],
+  ['addr-line', null],
+  ['city', null],
+  ['country', null]
 ];
 
 const REFERENCE_FIELDS = [
@@ -196,15 +196,14 @@ function getAuthors(articleMeta) {
 function getAffiliations(articleMeta) {
   return getChildElements(articleMeta, 'aff').map((aff) => ({
     id: getAttribute(aff, 'id'),
-    text: AFFILIATION_PART_SELECTORS
-      .map((selector) => {
-        const [name, contentType] = selector.split('[content-type="');
-        const parts = getChildElements(aff, name).filter(
+    text: AFFILIATION_PARTS
+      .map(([name, contentType]) => getChildElements(aff, name)
+        .filter(
           (child) => !contentType
-            || getAttribute(child, 'content-type') === contentType.slice(0, -2)
-        );
-        return parts.map((part) => getTextContent(part).trim()).join(', ');
-      })
+            || getAttribute(child, 'content-type') === contentType
+        )
+        .map((part) => getTextContent(part).trim())
+        .join(', '))
       .filter((part) => part)
       .join(', ')
   }));

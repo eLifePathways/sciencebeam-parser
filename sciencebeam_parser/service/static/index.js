@@ -285,7 +285,9 @@ function showSource(file) {
   if (isPdfFile(file)) {
     sourceActions.hidden = true;
     sourceNote.textContent = file.name;
-    showSourceBlob(file);
+    showSourceBlob(
+      file.type ? file : new Blob([file], { type: PDF_MEDIA_TYPE })
+    );
   } else {
     sourceActions.hidden = false;
     sourceNote.textContent = (
