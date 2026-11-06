@@ -2264,6 +2264,73 @@ def _release_the_separator_a_value_closes_with(
         del annotated.token_label_by_id[id(token)]
 
 
+# How many tokens the words introducing a value can run to before they are
+# the value in front of them rather than an introduction to the one behind.
+_MAX_INTRODUCING_TOKENS = 4
+
+# What a page calls the things it prints beside an affiliation.  GROBID puts
+# it as a principle that the prefix naming a field stays outside the mark-up,
+# and its own corpus has the word naming an email or a number under `<front>`
+# on 323 occurrences and inside an affiliation on none.
+_FIELD_NAMES_A_PAGE_PRINTS: FrozenSet[str] = frozenset({
+    'e-mail', 'email', 'correo', 'correo electrónico', 'correio',
+    'correio eletrônico', 'tel', 'tel.', 'teléfono', 'telefone', 'telefono',
+    'fone', 'phone', 'telephone', 'orcid', 'fax',
+})
+
+
+def _names_a_field(run: str) -> bool:
+    """Whether a run of words is the name a page gives what it prints next.
+
+    The whole run and nothing else: an affiliation closing on its country and
+    a page naming the address behind it read as one run, and the country is
+    the affiliation's.
+    """
+    return normalize_for_alignment(run).rstrip(':').strip() in _FIELD_NAMES_A_PAGE_PRINTS
+
+
+def _release_the_words_introducing_what_follows(
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    field_names: FrozenSet[str],
+) -> None:
+    """A value does not end on the words introducing the next one.
+
+    A page sets an author's contact details in a row, naming each before it
+    prints it: `e-mail:` before the address, `Fone:` before the number,
+    `ORCID:` before the identifier.  GROBID puts it as a principle that the
+    prefix naming a field stays outside the mark-up, and the last of the three
+    already does, because the affiliation's match stops before it.  The other
+    two fall inside that match and are read as the institution.
+
+    The colon is what says the words introduce something: a run reaching the
+    next value and ending on one is an introduction to it, whatever else it
+    is made of.
+    """
+    tokens = token_index.tokens
+    fields = [annotated.get_token_field(token) for token in tokens]
+    for index, field in enumerate(fields):
+        if field is None or field in field_names or index == 0:
+            continue
+        start = index
+        held: List[int] = []
+        while start > 0 and index - start < _MAX_INTRODUCING_TOKENS:
+            previous = fields[start - 1]
+            if previous is None:
+                start -= 1
+                continue
+            if previous in field_names:
+                held.append(start - 1)
+                start -= 1
+                continue
+            break
+        run = ''.join((tokens[at].text or '') for at in range(start, index))
+        if not held or not _names_a_field(run):
+            continue
+        for at in held:
+            del annotated.token_label_by_id[id(tokens[at])]
+
+
 def _join_what_a_line_prints_inside_one_value(
     annotated: JatsAnnotatedLayoutDocument,
     layout_document: LayoutDocument,
@@ -4128,6 +4195,10 @@ class LayoutDocumentJatsAligner:
             annotated, token_index, JatsFieldNames.REVIEWER_AFF
         )
         _release_the_separator_a_value_closes_with(
+            annotated, token_index,
+            frozenset({JatsFieldNames.AUTHOR_AFF, JatsFieldNames.REVIEWER_AFF}),
+        )
+        _release_the_words_introducing_what_follows(
             annotated, token_index,
             frozenset({JatsFieldNames.AUTHOR_AFF, JatsFieldNames.REVIEWER_AFF}),
         )

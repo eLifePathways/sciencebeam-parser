@@ -914,6 +914,14 @@ class JatsFieldExtractor:
             text = element_text(aff_el)
             if text:
                 yield JatsFieldValue(text=text, field_name=JatsFieldNames.AUTHOR_AFF)
+            # The number the affiliation declares, where a deposit holds one.
+            # A preprint server prints it under each author rather than only
+            # beside the one to write to, so it is not the correspondence
+            # block's to declare.
+            for phone_el in aff_el.xpath('./phone'):
+                phone = element_text(phone_el)
+                if phone:
+                    yield JatsFieldValue(text=phone, field_name=JatsFieldNames.PHONE)
             # Emit a bulk address value BEFORE individual sub-fields so that commas
             # between city and country also get the AUTHOR_AFF_ADDR sub-field label
             # (individual city/country sub-fields overwrite their own tokens afterward).
