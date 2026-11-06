@@ -6,6 +6,7 @@ const PROFILE_HEADER = 'x-sciencebeam-profile';
 const PROFILE_DIGEST_HEADER = 'x-sciencebeam-profile-digest';
 const LLM_USAGE_HEADER = 'x-sciencebeam-llm-usage';
 const SLOW_REQUEST_SECONDS = 10;
+const PDF_MEDIA_TYPE = 'application/pdf';
 
 const form = document.getElementById('convert-form');
 const sourceFileInput = document.getElementById('source-file');
@@ -28,8 +29,14 @@ const rawButton = document.getElementById('show-raw');
 const readingElement = document.getElementById('result-reading');
 const resultBody = document.getElementById('result-body');
 const resultNote = document.getElementById('result-note');
+const sourceSection = document.getElementById('source');
+const sourceNote = document.getElementById('source-note');
+const sourceActions = document.getElementById('source-actions');
+const showSourceButton = document.getElementById('show-source');
+const sourceFrame = document.getElementById('source-frame');
 
 let downloadUrl = null;
+let sourceUrl = null;
 let requestController = null;
 
 function describeAcceptedMediaTypes() {
@@ -221,6 +228,75 @@ function releaseDownloadUrl() {
   }
 }
 
+function releaseSourceUrl() {
+  if (sourceUrl) {
+    URL.revokeObjectURL(sourceUrl);
+    sourceUrl = null;
+  }
+}
+
+function showSourceBlob(blob) {
+  releaseSourceUrl();
+  sourceUrl = URL.createObjectURL(blob);
+  sourceFrame.src = sourceUrl;
+  sourceFrame.hidden = false;
+}
+
+function isPdfFile(file) {
+  return file.name.toLowerCase().endsWith('.pdf') || file.type === PDF_MEDIA_TYPE;
+}
+
+async function loadConvertedSource(file) {
+  showSourceButton.disabled = true;
+  sourceNote.textContent = 'Converting it to the PDF the parser reads.';
+  const formData = new FormData();
+  formData.append('input', file);
+  try {
+    const response = await fetch(deployment.api_path + '/convert', {
+      method: 'POST',
+      headers: { Accept: PDF_MEDIA_TYPE },
+      body: formData
+    });
+    if (!response.ok) {
+      sourceNote.textContent = (
+        'The PDF the parser reads could not be shown: ' + response.status + ' '
+        + response.statusText + '.'
+      );
+      return;
+    }
+    sourceNote.textContent = (
+      'The PDF the parser read, converted from ' + file.name + '.'
+    );
+    sourceActions.hidden = true;
+    showSourceBlob(await response.blob());
+  } catch (error) {
+    sourceNote.textContent = (
+      'The PDF the parser reads could not be fetched: ' + error.message
+    );
+  } finally {
+    showSourceButton.disabled = false;
+  }
+}
+
+function showSource(file) {
+  releaseSourceUrl();
+  sourceFrame.hidden = true;
+  sourceFrame.removeAttribute('src');
+  if (isPdfFile(file)) {
+    sourceActions.hidden = true;
+    sourceNote.textContent = file.name;
+    showSourceBlob(file);
+  } else {
+    sourceActions.hidden = false;
+    sourceNote.textContent = (
+      'The parser reads a PDF converted from ' + file.name + '. '
+      + 'Asking for it is a second request.'
+    );
+    showSourceButton.onclick = () => loadConvertedSource(file);
+  }
+  sourceSection.hidden = false;
+}
+
 function setUpDownload(blob, filename) {
   releaseDownloadUrl();
   downloadUrl = URL.createObjectURL(blob);
@@ -358,6 +434,7 @@ async function convert(file) {
       return;
     }
     await showResult(response, await response.blob(), file, elapsedSeconds);
+    showSource(file);
   } catch (error) {
     elapsed.stop();
     if (error.name === 'AbortError') {
@@ -384,7 +461,9 @@ form.addEventListener('submit', (event) => {
   }
   resultSection.hidden = true;
   failureSection.hidden = true;
+  sourceSection.hidden = true;
   releaseDownloadUrl();
+  releaseSourceUrl();
   convert(file);
 });
 

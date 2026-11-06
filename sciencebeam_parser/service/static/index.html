@@ -61,6 +61,16 @@
   </div>
 </form>
 
+<div class="panes">
+<section id="source" hidden>
+  <h2>Source</h2>
+  <p class="hint" id="source-note"></p>
+  <p id="source-actions" hidden>
+    <button type="button" id="show-source">Show the PDF the parser read</button>
+  </p>
+  <iframe id="source-frame" title="The document as the parser read it" hidden></iframe>
+</section>
+
 <section id="result" hidden>
   <h2>Result</h2>
   <dl id="result-meta"></dl>
@@ -75,6 +85,8 @@
   <h3>The same request</h3>
   <pre id="result-curl"></pre>
 </section>
+
+</div>
 
 <section id="failure" hidden>
   <h2>Failed</h2>

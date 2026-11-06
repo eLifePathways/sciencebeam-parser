@@ -24,7 +24,7 @@
 body {
   margin: 0 auto;
   padding: 24px 16px 64px;
-  max-width: 960px;
+  max-width: 1200px;
   background: var(--bg);
   color: var(--fg);
   font: 15px/1.5 system-ui, sans-serif;
@@ -164,3 +164,18 @@ pre {
 .jats-references { padding-left: 20px; font-size: 14px; }
 .jats-references li { margin-bottom: 8px; }
 .jats-doi { color: var(--muted); }
+
+.panes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 0 24px;
+  align-items: start;
+}
+
+#source-frame {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  background: var(--panel-bg);
+}
