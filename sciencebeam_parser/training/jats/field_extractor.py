@@ -362,6 +362,24 @@ def element_text_of_xpath(root: etree._Element, xpath: str) -> str:
 _HEADING_LENGTH = 40
 
 
+def _ack_kind(ack: etree._Element, el: etree._Element) -> str:
+    """What a paragraph under an acknowledgements block is a statement of.
+
+    A publisher files each statement as a section of its own inside the block
+    and lets each section's title say which it is, so the block's own title
+    answers for none of them and may not be there at all.  The nearest title
+    above the paragraph is the one that names it.
+    """
+    for parent in [el] + list(el.iterancestors()):
+        title_el = parent.find('title') if parent is not el else None
+        kind = match_fn_keywords(element_text(title_el)) if title_el is not None else None
+        if kind:
+            return kind
+        if parent is ack:
+            break
+    return 'acknowledgement'
+
+
 def _is_the_statements_own_name(text: str, field_name: str) -> bool:
     """Whether a paragraph is the heading of a statement rather than the
     statement.
@@ -379,10 +397,14 @@ def _is_the_statements_own_name(text: str, field_name: str) -> bool:
     if field_name not in _LEAD_IN_FIELDS or len(text) > _HEADING_LENGTH:
         return False
     # The name and nothing else.  A publisher that writes the heading into the
-    # prose as well puts a colon between the two, and a paragraph short enough
-    # to be a heading can still be the whole statement behind one.
+    # prose as well puts a colon between the two, and a statement short enough
+    # to be a heading and about its own subject -- `Autofinanciado.`, `No
+    # existe ningún tipo de financiación.` -- reads as one on the words alone.
+    # A heading does not end a sentence, which is what tells them apart.
     name = text.rstrip(':').strip()
-    return ':' not in name and bool(match_fn_keywords(name))
+    if ':' in name or name.endswith(('.', '!', '?')):
+        return False
+    return bool(match_fn_keywords(name))
 
 
 # The statements whose value is written without the words introducing it, which
@@ -1028,17 +1050,13 @@ class JatsFieldExtractor:
         # A publisher files a funding statement under `<ack>` and lets its title
         # say so, and the title is the better evidence of the two.
         for ack in root.xpath('//ack'):
-            title_el = ack.find('title')
-            kind = (
-                match_fn_keywords(element_text(title_el))
-                if title_el is not None else None
-            ) or 'acknowledgement'
             for el in ack.xpath('.//title'):
                 text = element_text(el)
                 if text:
                     entries.append((position[el], JatsFieldValue(
-                        text=text, field_name=TITLE_FIELD_BY_KIND[kind])))
+                        text=text, field_name=TITLE_FIELD_BY_KIND[_ack_kind(ack, el)])))
             for el in ack.xpath('.//p'):
+                kind = _ack_kind(ack, el)
                 field_name = PARAGRAPH_FIELD_BY_KIND[kind]
                 if _is_the_statements_own_name(element_text(el), field_name):
                     field_name = TITLE_FIELD_BY_KIND[kind]
