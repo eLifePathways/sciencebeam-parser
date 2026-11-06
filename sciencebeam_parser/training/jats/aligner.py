@@ -344,6 +344,14 @@ _MAX_AUTHOR_GAP_TOKENS = 10
 #   (abs_start, abs_end, [(block_start, block_end), ...])
 _MatchResult = Tuple[int, int, List[Tuple[int, int]]]
 
+# What a value can open with that an alignment drops: the punctuation the
+# deposit writes against the word and the page sets apart from it.
+_PUNCTUATION_IN_FRONT = re.compile(r'^[^\w\s]+')
+
+# How far in front of its match the opening of a value can lie: the space the
+# extraction leaves between two tokens and nothing more.
+_MAX_OPENING_GAP = 1
+
 # When a parent REFERENCE match fails at the primary threshold (0.8), retry at this
 # lower value.  JATS author initials may be concatenated ("CA") while the PDF expands
 # them ("C. A."), and institutional refs can omit boilerplate text that pads the needle
@@ -2955,6 +2963,43 @@ def _extend_match_with_given_names_tail(
     )
 
 
+def _open_the_match_where_the_value_opens(
+    match_range: '_MatchResult',
+    text: str,
+    token_index: '_TokenIndex',
+) -> '_MatchResult':
+    """Take in the punctuation a value opens with, where the match left it out.
+
+    A page sets a telephone number as `(99) 99999-9999` and the extraction
+    makes a token of the bracket, so the haystack stands it a space away from
+    the digits while the deposit writes it against them.  A local alignment
+    pays for that space to gain one character and declines, which leaves the
+    bracket to whatever is printed in front of the number.
+
+    So where the haystack holds the value's own opening immediately in front
+    of its match, the match begins there.  It has to be the value's: the
+    characters are the ones the value opens with, they are a token of their
+    own, and the match does not already cover them.
+    """
+    a_start, a_end, block_ranges = match_range
+    opening = _PUNCTUATION_IN_FRONT.match(normalize_for_alignment(text))
+    if not opening:
+        return match_range
+    wanted = opening.group()
+    if token_index.haystack[a_start:a_start + len(wanted)] == wanted:
+        return match_range
+    in_front = token_index.haystack[:a_start]
+    without_the_space = in_front.rstrip(' ')
+    if len(in_front) - len(without_the_space) > _MAX_OPENING_GAP:
+        return match_range
+    if not without_the_space.endswith(wanted):
+        return match_range
+    begin = len(without_the_space) - len(wanted)
+    if not token_index.is_token_start(begin):
+        return match_range
+    return (begin, a_end, [(begin, len(without_the_space))] + block_ranges)
+
+
 def _has_mid_token_within_gap_blocks(
     block_ranges: List[Tuple[int, int]],
     token_index: '_TokenIndex',
@@ -3976,7 +4021,9 @@ class LayoutDocumentJatsAligner:
                     )
                 continue
             matched_count += 1
-            a_start, a_end, block_ranges = match_range
+            a_start, a_end, block_ranges = _open_the_match_where_the_value_opens(
+                match_range, fv.text, token_index
+            )
             if fv.field_name == JatsFieldNames.SELF_CITATION:
                 LOGGER.debug(
                     'citation matched sub=%s at %s..%s: %r',
