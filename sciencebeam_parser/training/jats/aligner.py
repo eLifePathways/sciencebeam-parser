@@ -2272,6 +2272,8 @@ _MAX_INTRODUCING_TOKENS = 4
 # it as a principle that the prefix naming a field stays outside the mark-up,
 # and its own corpus has the word naming an email or a number under `<front>`
 # on 323 occurrences and inside an affiliation on none.
+_PUNCTUATION_BEHIND = re.compile(r'[^\w]+$')
+
 _FIELD_NAMES_A_PAGE_PRINTS: FrozenSet[str] = frozenset({
     'e-mail', 'email', 'correo', 'correo electrónico', 'correio',
     'correio eletrônico', 'tel', 'tel.', 'teléfono', 'telefone', 'telefono',
@@ -2282,11 +2284,13 @@ _FIELD_NAMES_A_PAGE_PRINTS: FrozenSet[str] = frozenset({
 def _names_a_field(run: str) -> bool:
     """Whether a run of words is the name a page gives what it prints next.
 
-    The whole run and nothing else: an affiliation closing on its country and
-    a page naming the address behind it read as one run, and the country is
-    the affiliation's.
+    The name and the punctuation printed with it, which GROBID keeps outside
+    the mark-up along with the name: a colon behind it, and the bracket a
+    number opens with where the match stopped short of it.
     """
-    return normalize_for_alignment(run).rstrip(':').strip() in _FIELD_NAMES_A_PAGE_PRINTS
+    return _PUNCTUATION_BEHIND.sub(
+        '', normalize_for_alignment(run)
+    ) in _FIELD_NAMES_A_PAGE_PRINTS
 
 
 def _release_the_words_introducing_what_follows(
@@ -2303,9 +2307,11 @@ def _release_the_words_introducing_what_follows(
     already does, because the affiliation's match stops before it.  The other
     two fall inside that match and are read as the institution.
 
-    The colon is what says the words introduce something: a run reaching the
-    next value and ending on one is an introduction to it, whatever else it
-    is made of.
+    The name is the words immediately in front of the value and no more: a
+    page setting a country at the end of an affiliation and the name of what
+    it prints next reads as one run, and the country is the affiliation's.  So
+    the shortest run reaching the value that names a field is the name, and
+    what runs on in front of it stays where it is.
     """
     tokens = token_index.tokens
     fields = [annotated.get_token_field(token) for token in tokens]
@@ -2319,16 +2325,15 @@ def _release_the_words_introducing_what_follows(
             if previous is None:
                 start -= 1
                 continue
-            if previous in field_names:
-                held.append(start - 1)
-                start -= 1
-                continue
-            break
-        run = ''.join((tokens[at].text or '') for at in range(start, index))
-        if not held or not _names_a_field(run):
-            continue
-        for at in held:
-            del annotated.token_label_by_id[id(tokens[at])]
+            if previous not in field_names:
+                break
+            held.append(start - 1)
+            start -= 1
+            run = ''.join((tokens[at].text or '') for at in range(start, index))
+            if _names_a_field(run):
+                for at in held:
+                    del annotated.token_label_by_id[id(tokens[at])]
+                break
 
 
 def _join_what_a_line_prints_inside_one_value(
