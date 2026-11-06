@@ -24,7 +24,10 @@ from sciencebeam_parser.training.jats.segmentation import (
     get_page_furniture_line_ids,
     get_side_column_line_ids
 )
-from sciencebeam_parser.training.jats.text_normalizer import normalize_for_alignment
+from sciencebeam_parser.training.jats.text_normalizer import (
+    normalize_for_alignment,
+    starts_with_a_combining_mark,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -550,6 +553,11 @@ def _build_token_index(  # pylint: disable=too-many-locals
             if outside_region:
                 skip_tokens.add(tok_global_idx)
                 continue
+            if i > 0 and starts_with_a_combining_mark(token.text or ''):
+                # The accent belongs to the word in front of it, which the font
+                # printed without one: joined back on, the page says the word
+                # the deposit declares rather than two halves of it.
+                no_space_after.add(tok_global_idx - 1)
             if i == len(line_tokens) - 1:
                 norm = normalize_for_alignment(token.text)
                 if norm == '-':
@@ -1020,15 +1028,31 @@ class _ExpectedWindow(NamedTuple):
     is_anchor: bool
 
 
-def _expected_windows(
+class _ExpectedPlaces(NamedTuple):
+    """Where each value is expected, and where a dropped anchor matched.
+
+    An anchor the order dropped is still a place the whole value matched, and
+    a deposit that writes its two titles in the opposite order to the page has
+    one of them dropped every time.  Kept apart from the windows, because it
+    is not a statement about where the value should be looked for first -- only
+    about where it is known to be if nothing else finds it.
+    """
+    windows: Dict[int, _ExpectedWindow]
+    dropped: Dict[int, int]
+
+
+def _expected_windows(  # pylint: disable=too-many-locals
     token_index: '_TokenIndex',
     field_values: Sequence[JatsFieldValue],
     config: AlignmentConfig,
-) -> Dict[int, _ExpectedWindow]:
+) -> _ExpectedPlaces:
     """Where each value is expected, from the anchors either side of it."""
-    anchors = _longest_increasing(
-        list(_iter_anchor_positions(token_index, field_values, config))
-    )
+    confirmed = list(_iter_anchor_positions(token_index, field_values, config))
+    anchors = _longest_increasing(confirmed)
+    kept = {index for index, _ in anchors}
+    dropped = {
+        index: position for index, position in confirmed if index not in kept
+    }
     # An anchor is placed at its own position.  Its opening words occur once in
     # the page and the whole of it matches there, so the search has nothing left
     # to decide -- and left to decide it can prefer an earlier, poorer match: the
@@ -1040,7 +1064,7 @@ def _expected_windows(
         for index, position in anchors
     }
     if len(anchors) < 2:
-        return windows
+        return _ExpectedPlaces(windows, dropped)
     # Of the rest, only the values that need placing.  A value whose opening
     # words occur nowhere has nothing for a window to choose between; steering
     # it only disturbs what the floors already get right.
@@ -1065,7 +1089,7 @@ def _expected_windows(
             # would only trade a wrong match for a worse one.
             if len(spots) > 1 and any(low <= spot < high for spot in spots):
                 windows[index] = _ExpectedWindow(low, high, False)
-    return windows
+    return _ExpectedPlaces(windows, dropped)
 
 
 def _get_unmasked_segments(
@@ -2135,6 +2159,11 @@ _SUPERSCRIPT_DIGITS = '\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2
 _MARKER_SYMBOLS = '*\u2020\u2021\u00a7'
 
 
+_MARKER_PATTERN = r'[0-9]{1,2}|[a-z]|[%s]{1,2}|[%s]' % (
+    _SUPERSCRIPT_DIGITS, _MARKER_SYMBOLS
+)
+
+
 def _is_bare_marker(text: str) -> bool:
     """Whether a token is only a marker tying a name to an affiliation.
 
@@ -2142,10 +2171,16 @@ def _is_bare_marker(text: str) -> bool:
     keeps it raised, so the superscript digits are markers as much as the
     ordinary ones.
     """
-    return bool(re.fullmatch(
-        r'[0-9]{1,2}|[a-z]|[%s]{1,2}|[%s]' % (_SUPERSCRIPT_DIGITS, _MARKER_SYMBOLS),
-        text,
-    ))
+    return bool(re.fullmatch(_MARKER_PATTERN, text))
+
+
+def _without_the_marker_it_opens_with(text: str) -> str:
+    """An affiliation without the marker the deposit declares it behind.
+
+    The marker belongs to the list the page sets behind it, and the printing
+    under an author's name has the name to tie it to instead.
+    """
+    return re.sub(r'^\s*(?:%s)\s*' % _MARKER_PATTERN, '', text)
 
 
 def _give_an_affiliation_the_marker_before_it(
@@ -2198,6 +2233,54 @@ def _give_an_affiliation_the_marker_before_it(
             if not found_marker:
                 continue
             for at in opening:
+                annotated.set_token_label(tokens[at], entry[0], entry[1], entry[2])
+
+
+# The punctuation a page sets between the markers closing a byline.  A slash
+# joins two of them where a block's opening marker never carries one.
+_BYLINE_MARKER_PUNCTUATION: FrozenSet[str] = _MARKER_PUNCTUATION | frozenset({'/'})
+
+
+def _give_a_byline_the_marker_behind_it(
+    annotated: JatsAnnotatedLayoutDocument,
+    layout_document: LayoutDocument,
+) -> None:
+    """A marker printed behind a byline is the byline's.
+
+    A deposit declares the markers tying each author to an affiliation and
+    says nothing about the rest, so a page that also ties them to a line of
+    degrees prints a letter the deposit has no value for: the degree is
+    declared as a role and the letter standing for it nowhere.  GROBID keeps
+    the markers closing a byline inside the author, which is where the letter
+    belongs beside the digits the deposit did declare.
+
+    On the byline's own line, up to the first token that is not a marker, and
+    over nothing another value is holding.  The punctuation between two
+    markers is taken with them and the punctuation behind the last is not: a
+    comma there separates this author from the next.
+    """
+    for line in layout_document.iter_all_lines():
+        tokens = line.tokens or []
+        entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
+        for index, entry in enumerate(entries):
+            if entry is None or entry[0] != JatsFieldNames.AUTHOR:
+                continue
+            if index + 1 < len(entries) and entries[index + 1] is not None:
+                continue
+            closing: List[int] = []
+            last_marker: Optional[int] = None
+            position = index + 1
+            while position < len(tokens) and entries[position] is None:
+                text = tokens[position].text
+                if _is_bare_marker(text):
+                    last_marker = len(closing)
+                elif text not in _BYLINE_MARKER_PUNCTUATION:
+                    break
+                closing.append(position)
+                position += 1
+            if last_marker is None:
+                continue
+            for at in closing[:last_marker + 1]:
                 annotated.set_token_label(tokens[at], entry[0], entry[1], entry[2])
 
 
@@ -2254,6 +2337,48 @@ def _label_further_titles(  # pylint: disable=too-many-arguments
     for field_value in title_values:
         instance_id += _label_repeated_matches(
             annotated, token_index, field_value, config,
+            search_start=0,
+            search_end=search_end,
+            masked_ranges=masked_ranges,
+            instance_id=instance_id,
+            only_unclaimed=True,
+        )
+
+
+def _label_further_affiliations(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    token_index: _TokenIndex,
+    config: AlignmentConfig,
+    affiliation_values: Sequence[JatsFieldValue],
+    search_end: Optional[int],
+    masked_ranges: List[Tuple[int, int]],
+    instance_id: int,
+) -> None:
+    """Label an affiliation where the front matter prints it again.
+
+    A bilingual preprint lists its affiliations behind their markers on the
+    side it is deposited in, and again under each name on the side it
+    translates into.  The second list is the same institutions in the same
+    words and carries the same label.
+
+    A review panel does the same thing for a different reason: two of its
+    reviewers work at the same institution, the deposit declares that
+    institution against each of them and the panel prints it under each name.
+
+    After everything else, because the front matter reaches as far as the
+    second abstract and that is not known while the affiliations themselves
+    are being placed: searched from the start of the document, within the
+    front matter, and over what nothing else claimed.
+    """
+    for field_value in affiliation_values:
+        instance_id += _label_repeated_matches(
+            annotated, token_index,
+            JatsFieldValue(
+                text=_without_the_marker_it_opens_with(field_value.text),
+                field_name=field_value.field_name,
+                sub_field_name=field_value.sub_field_name,
+            ),
+            config,
             search_start=0,
             search_end=search_end,
             masked_ranges=masked_ranges,
@@ -2677,9 +2802,40 @@ def _iter_chain_cover(
         prev_included_end = block_end
 
 
+def _shared_ends(first: str, second: str) -> int:
+    """How much of two values' text is the same at their ends."""
+    prefix = 0
+    while prefix < min(len(first), len(second)) and first[prefix] == second[prefix]:
+        prefix += 1
+    suffix = 0
+    while (
+        suffix < min(len(first), len(second)) - prefix
+        and first[-1 - suffix] == second[-1 - suffix]
+    ):
+        suffix += 1
+    return prefix + suffix
+
+
+def _reads_as_the_same_place(first: str, second: str) -> bool:
+    """Whether two declared affiliations are too alike to tell apart in print.
+
+    One printed inside another -- a department of the institute the next one
+    names in full -- is one case.  Two that name the same institution and
+    differ only in the degree they open with is the other, and a deposit that
+    gives every author of a laboratory their own is full of them.  A search
+    for either finds the other, so which printing belongs to whom is not
+    something the page can be asked.
+    """
+    if not first or not second:
+        return True
+    if first in second or second in first:
+        return True
+    return _shared_ends(first, second) * 2 > min(len(first), len(second))
+
+
 def _is_printed_once_per_author(
     fv: JatsFieldValue,
-    declared_affiliation_count: int,
+    declared_affiliations: Sequence[str],
 ) -> bool:
     """Whether every printing of this affiliation is this affiliation.
 
@@ -2689,16 +2845,23 @@ def _is_printed_once_per_author(
     So each printing is labelled, the way an address a correspondence block
     repeats is.
 
-    A deposit that declares several is the opposite case.  Which printing
-    belongs to which author is then the whole question, one affiliation is
-    printed inside another -- a department of the institute the first names in
-    full -- and the per-author masking is what answers it.  Labelling every
-    printing of each would undo that answer.
+    A deposit that declares several says the same thing as long as they are
+    separate institutions.  A bilingual preprint lists them once behind their
+    markers and again under each name on the side it translates into, and the
+    second list is the same institutions in the same words.
+
+    What it does not say is which printing belongs to whom where one
+    affiliation is printed inside another -- a department of the institute the
+    next one names in full.  Then the per-author masking is the only answer,
+    and labelling every printing of each would undo it.
     """
-    return (
-        fv.sub_field_name is None
-        and fv.field_name == JatsFieldNames.AUTHOR_AFF
-        and declared_affiliation_count == 1
+    if fv.sub_field_name is not None or fv.field_name != JatsFieldNames.AUTHOR_AFF:
+        return False
+    letters = [_letters_of(text) for text in declared_affiliations]
+    return not any(
+        _reads_as_the_same_place(first, second)
+        for index, first in enumerate(letters)
+        for second in letters[index + 1:]
     )
 
 
@@ -3078,18 +3241,20 @@ class LayoutDocumentJatsAligner:
         reviewer_end = 0
         correspondence_ranges: List[Tuple[int, int]] = []
         title_values: List[JatsFieldValue] = []
+        affiliation_values: List[JatsFieldValue] = []
         # Where each per-author field has been placed already.
         per_author_match_ranges: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
         # What each anchor value answered, so that it can be asked again once
         # every other value has answered too.
         anchor_matches: List[_AnchorMatch] = []
 
-        declared_affiliation_count = sum(
-            1 for field_value in field_values
+        declared_affiliations = [
+            field_value.text for field_value in field_values
             if field_value.sub_field_name is None
             and field_value.field_name == JatsFieldNames.AUTHOR_AFF
-        )
-        expected_window = _expected_windows(token_index, field_values, self.config)
+        ]
+        expected_places = _expected_windows(token_index, field_values, self.config)
+        expected_window = expected_places.windows
         for value_index, fv in enumerate(field_values):
             search_start, search_end = _search_range(
                 fv, last_match_end, body_floor, body_content_end,
@@ -3275,6 +3440,12 @@ class LayoutDocumentJatsAligner:
                 and search_end is not None
                 and fv.sub_field_name is None
                 and window is None
+                # Never the keywords.  This search is over the whole document
+                # and over what every other value is already holding, and a
+                # title says most of what its own keywords say: a page that
+                # names its subject in its title has the line found there.
+                # They have a search of their own, which takes neither.
+                and fv.field_name not in _KEYWORDS_FIELDS
             ):
                 # With the same mask the search it replaces was given.  The
                 # cover is the one place that search deliberately refused, and
@@ -3361,6 +3532,19 @@ class LayoutDocumentJatsAligner:
                 match_range = _fuzzy_match_field_value(
                     token_index, fv, self.config,
                     search_start=retry_floor, search_end=None,
+                    # A declaration is looked for over what nothing else is
+                    # holding, because this search runs to the end of the
+                    # document and a page sets its declarations in the same
+                    # words under one heading after another: `Declaration of
+                    # X:` then `Declaration of Y:`, and the first is taken
+                    # twice.  The body's own values share their text with each
+                    # other -- a figure's caption is printed inside the
+                    # paragraph that refers to it -- so they take the whole.
+                    masked_ranges=(
+                        (masked or []) + matched_ranges
+                        if fv.field_name in _FRONT_PRINTED_STATEMENT_FIELDS
+                        else None
+                    ),
                 )
             # A declaration the page prints among the front matter rather than
             # after the body is behind every floor there is -- the body, the
@@ -3442,6 +3626,32 @@ class LayoutDocumentJatsAligner:
                     match_range = _extend_match_with_given_names_tail(
                         match_range, fv.text, fv.fallback_text, token_index,
                     )
+            # Last of all, where the value's own confirmed match was dropped
+            # for contradicting the order the rest of the document follows.
+            # A deposit writes its two titles in one order and the page sets
+            # them in the other, so one of the two has to go -- and what went
+            # is still a place the whole value matched.  Asked only once
+            # nothing else has found it, so it can add a match and never move
+            # one.
+            if (
+                match_range is None
+                and fv.sub_field_name is None
+                # The fields a document printed in two languages prints twice,
+                # which is where a deposit's order and the page's come apart.
+                and fv.field_name in _ANCHOR_FIELDS
+                and value_index in expected_places.dropped
+            ):
+                dropped_at = expected_places.dropped[value_index]
+                match_range = _fuzzy_match_field_value(
+                    token_index, fv, self.config,
+                    search_start=dropped_at,
+                    search_end=dropped_at + _value_span(fv.text),
+                    # Over what nothing else is holding, so that a declaration
+                    # the page never prints cannot take the byline it reads
+                    # like.
+                    masked_ranges=(masked or []) + matched_ranges,
+                    skip_furniture=skip_furniture,
+                )
             if match_range is None:
                 LOGGER.debug(
                     'unmatched: field=%s sub=%s range=%s..%s window=%s text=%r',
@@ -3524,6 +3734,14 @@ class LayoutDocumentJatsAligner:
                 author_name_values.append(fv)
             if fv.sub_field_name is None and fv.field_name == JatsFieldNames.TITLE:
                 title_values.append(fv)
+            if (
+                _is_printed_once_per_author(fv, declared_affiliations)
+                or (
+                    fv.sub_field_name is None
+                    and fv.field_name == JatsFieldNames.REVIEWER_AFF
+                )
+            ):
+                affiliation_values.append(fv)
             if fv.sub_field_name is None:
                 prev_parent_end = parent_match_by_field.get(fv.field_name, (0, 0, 0))[1]
                 prev_id_end = ref_id_subfield_end.pop(fv.field_name, 0)
@@ -3581,7 +3799,7 @@ class LayoutDocumentJatsAligner:
             if (
                 fv.field_name in _REPEATED_IN_FRONT_MATTER_FIELDS
                 and fv.sub_field_name is None
-            ) or _is_printed_once_per_author(fv, declared_affiliation_count):
+            ) or _is_printed_once_per_author(fv, declared_affiliations):
                 # From the start of the document rather than from this match,
                 # with this match taken out: the page sets its Portuguese
                 # keyword line above its English one and names the
@@ -3651,6 +3869,17 @@ class LayoutDocumentJatsAligner:
             ),
             instance_id=instance_by_field.get(JatsFieldNames.AUTHOR, 0),
         )
+        _label_further_affiliations(
+            annotated, token_index, self.config, affiliation_values,
+            search_end=(
+                front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
+            ),
+            masked_ranges=(
+                matched_ranges + token_index.cover_ranges + token_index.furniture_ranges
+            ),
+            instance_id=instance_by_field.get(JatsFieldNames.AUTHOR_AFF, 0),
+        )
+
         instance_by_field[JatsFieldNames.AUTHOR] = (
             instance_by_field.get(JatsFieldNames.AUTHOR, 0)
             + _give_an_identifier_the_name_before_it(
@@ -3695,6 +3924,7 @@ class LayoutDocumentJatsAligner:
         # An abstract is a block, so it has the whole of each line it runs down.
         _fill_abstract_lines(annotated, layout_document)
         _give_a_block_the_marker_it_opens_with(annotated, layout_document)
+        _give_a_byline_the_marker_behind_it(annotated, layout_document)
         _give_an_affiliation_the_marker_before_it(annotated, layout_document)
         # After every pass that claims, because what it fills is what the page
         # prints inside a value and nothing else explains.

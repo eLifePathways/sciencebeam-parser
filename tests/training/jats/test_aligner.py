@@ -3136,35 +3136,53 @@ class TestAKeywordLineThePageSetsPerLanguage:
 
 
 class TestWhetherEveryPrintingIsTheSameAffiliation:
-    """Whether the page's repeated institution is the one affiliation declared.
+    """Whether the page's repeated institution is the affiliation declared.
 
     A deposit declaring one affiliation for all of its authors says nothing
-    about which printing belongs to whom, because they all do.  A deposit
-    declaring several says exactly that, one is printed inside another, and the
-    per-author masking is what sorts them out.
+    about which printing belongs to whom, because they all do, and separate
+    institutions say the same.  What it does say is which printing is which
+    where one affiliation is printed inside another, and the per-author
+    masking is then the only thing that sorts them out.
     """
 
+    ONE = ('Example Institute, Exampleton',)
+    SEPARATE = ('Example Institute, Exampleton', 'Sample College, Sampleton')
+    NESTED = (
+        'Department of Examples, Example Institute, Exampleton',
+        'Example Institute, Exampleton',
+    )
+    ALIKE = (
+        'Doctoral candidate in Examples. Example Institute, Exampleton',
+        'Doctor of Examples. Example Institute, Exampleton',
+    )
+
     @staticmethod
-    def _once(field: str, declared: int, **kwargs) -> bool:
+    def _once(field: str, declared: Sequence[str], **kwargs) -> bool:
         return _is_printed_once_per_author(
-            JatsFieldValue(text='Example Institute', field_name=field, **kwargs),
+            JatsFieldValue(text=declared[0], field_name=field, **kwargs),
             declared,
         )
 
     def test_one_declared_affiliation_is_every_printing_of_it(self):
-        assert self._once(JatsFieldNames.AUTHOR_AFF, 1)
+        assert self._once(JatsFieldNames.AUTHOR_AFF, self.ONE)
 
-    def test_several_declared_affiliations_are_not(self):
-        assert not self._once(JatsFieldNames.AUTHOR_AFF, 2)
+    def test_separate_declared_affiliations_are_too(self):
+        assert self._once(JatsFieldNames.AUTHOR_AFF, self.SEPARATE)
+
+    def test_an_affiliation_printed_inside_another_is_not(self):
+        assert not self._once(JatsFieldNames.AUTHOR_AFF, self.NESTED)
+
+    def test_two_that_name_the_same_place_are_not(self):
+        assert not self._once(JatsFieldNames.AUTHOR_AFF, self.ALIKE)
 
     def test_a_sub_field_is_not(self):
         assert not self._once(
-            JatsFieldNames.AUTHOR_AFF, 1,
+            JatsFieldNames.AUTHOR_AFF, self.ONE,
             sub_field_name=JatsSubFieldNames.AUTHOR_AFF_ADDR,
         )
 
     def test_another_field_is_not(self):
-        assert not self._once(JatsFieldNames.AUTHOR, 1)
+        assert not self._once(JatsFieldNames.AUTHOR, self.ONE)
 
 
 class TestOneInstitutionUnderEveryAuthor:
@@ -3205,6 +3223,162 @@ class TestOneInstitutionUnderEveryAuthor:
 
     def test_every_printing_is_labelled(self):
         assert self._affiliation_runs() == 3
+
+
+class TestAnAccentThePageSetsApart:
+    """A font may carry an accent as a character of its own.
+
+    The word then arrives in two tokens -- the letters up to the vowel, and
+    the mark with the rest of the word behind it -- and the deposit writes it
+    as one.  Read without their marks the two say the same word, so the value
+    comes out whole rather than in the pieces the accents cut it into.
+    """
+
+    STATEMENT = (
+        'Each author took part in the conception of the study, in the'
+        ' collection of its data and in the revision of the article.'
+    )
+    PRINTED = (
+        'Each author took part in the conceptio \u0301n of the study, in the'
+        ' collection of its data and in the revisio \u0301n of the article.'
+    )
+
+    def _runs(self) -> List[str]:
+        doc = _make_doc('A survey of the herons of the northern marshes', self.PRINTED)
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.STATEMENT, JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token)
+            == JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH
+        ]
+
+    def test_the_statement_keeps_the_words_the_accents_fall_in(self):
+        labelled = self._runs()
+        assert 'conceptio' in labelled and 'revisio' in labelled
+
+    def test_nothing_inside_the_statement_is_left_out(self):
+        labelled = self._runs()
+        assert labelled[0] == 'Each' and labelled[-1] == '.'
+        assert len(labelled) == len(list(_make_doc(self.PRINTED).iter_all_tokens()))
+
+
+class TestTheMarkerBehindAByline:
+    """A page may tie a name to more than the deposit declares.
+
+    The affiliation markers are declared against each author and the letter
+    tying the name to a line of degrees is not, so the page prints a marker
+    the deposit has no value for.  It closes the byline, which is where
+    GROBID keeps it.
+    """
+
+    BYLINE = 'Mary Jane Doe 1,a'
+    AFFILIATION = 'Example Institute, Exampleton, Exampleland'
+
+    def _byline_tokens(self) -> List[str]:
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE + ' (https://orcid.org/0000-0001-0000-0000)',
+            '1 ' + self.AFFILIATION,
+            'a Example Degree',
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1', JatsFieldNames.AUTHOR),
+            _fv('1 ' + self.AFFILIATION, JatsFieldNames.AUTHOR_AFF),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        ]
+
+    def test_the_marker_the_deposit_never_declared_closes_the_byline(self):
+        assert self._byline_tokens()[-2:] == [',', 'a']
+
+    def test_what_the_byline_is_printed_in_front_of_stays_outside(self):
+        assert '(' not in self._byline_tokens()
+
+
+class TestSeparateInstitutionsUnderEveryAuthor:
+    """A bilingual preprint prints its affiliations twice.
+
+    Behind their markers on the side it is deposited in, and again under each
+    name on the side it translates into.  The second list is the same
+    institutions in the same words, and the marker stays with the first.
+    """
+
+    FIRST = 'Example Institute, Exampleton, Exampleland'
+    SECOND = 'Sample College, Sampleton, Sampleland'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labelled(self) -> List[str]:
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe 1, John Alan Roe 2',
+            '1 ' + self.FIRST,
+            '2 ' + self.SECOND,
+            'Un levantamento das garcas dos pantanos do norte',
+            'Mary Jane Doe - ' + self.FIRST,
+            'John Alan Roe - ' + self.SECOND,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1 John Alan Roe 2', JatsFieldNames.AUTHOR),
+            _fv('1 ' + self.FIRST, JatsFieldNames.AUTHOR_AFF),
+            _fv('2 ' + self.SECOND, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR_AFF
+        ]
+
+    def test_each_institution_is_labelled_where_it_is_printed_again(self):
+        labelled = self._labelled()
+        assert labelled.count('Institute') == 2
+        assert labelled.count('College') == 2
+
+    def test_the_marker_stays_with_the_list_that_is_printed_behind_it(self):
+        assert self._labelled().count('1') == 1
+
+
+class TestTwoTitlesTheDepositWritesInTheOtherOrder:
+    """A deposit may declare its two titles in the order the page reverses.
+
+    Each one's opening words occur once on the page and the whole of it
+    matches there, so both are anchors -- and the two contradict each other,
+    which drops one of them.  What was dropped is still the place the value
+    matched, and nothing else finds it.
+    """
+
+    PRINTED_FIRST = 'Um levantamento das garcas dos pantanos do norte'
+    PRINTED_SECOND = 'A survey of the herons of the northern marshes'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _titles(self) -> List[str]:
+        doc = _make_doc(self.PRINTED_FIRST, self.PRINTED_SECOND, self.ABSTRACT)
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.PRINTED_SECOND, JatsFieldNames.TITLE),
+            _fv(self.PRINTED_FIRST, JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.TITLE
+        ]
+
+    def test_both_printings_are_labelled(self):
+        labelled = self._titles()
+        assert 'levantamento' in labelled and 'herons' in labelled
 
 
 class TestWhatCountsAsABareMarker:
