@@ -1,0 +1,117 @@
+:root {
+  color-scheme: light dark;
+  --fg: #111827;
+  --bg: #f8fafc;
+  --muted: #6b7280;
+  --panel-bg: #ffffff;
+  --panel-line: #cbd5e1;
+  --error: #b91c1c;
+  --accent: #1d4ed8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e5e7eb;
+    --bg: #111827;
+    --muted: #9ca3af;
+    --panel-bg: #1f2937;
+    --panel-line: #374151;
+    --error: #fca5a5;
+    --accent: #93c5fd;
+  }
+}
+
+body {
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  max-width: 960px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, sans-serif;
+}
+
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 32px 0 8px; }
+h3 { font-size: 15px; margin: 24px 0 8px; }
+
+a { color: var(--accent); }
+
+.subtitle { margin: 0 0 24px; color: var(--muted); }
+
+form {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.field { margin: 0; border: 0; padding: 0; }
+
+.field > label, legend {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.row { display: flex; align-items: center; gap: 8px; }
+.row input { width: 6em; }
+.inline { color: var(--muted); }
+
+.checkboxes { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.checkboxes label { font-weight: normal; }
+
+input, select, button {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+  padding: 4px 8px;
+  max-width: 100%;
+}
+
+button { background: var(--panel-bg); cursor: pointer; }
+button:disabled { cursor: default; color: var(--muted); }
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.error { margin: 4px 0 0; color: var(--error); font-size: 13px; }
+
+#status { color: var(--muted); }
+
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0 0 16px;
+}
+
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; }
+
+pre {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 0;
+  overflow: auto;
+  max-height: 60vh;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}

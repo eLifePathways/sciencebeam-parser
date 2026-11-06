@@ -35,6 +35,9 @@ from sciencebeam_parser.service.api.routers.status import create_status_router
 LOGGER = logging.getLogger(__name__)
 
 
+API_PATH = '/api'
+
+
 def create_api_app(
     sciencebeam_parser: ScienceBeamParser
 ) -> FastAPI:
