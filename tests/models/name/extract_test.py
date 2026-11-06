@@ -4,6 +4,7 @@ from typing import List
 from sciencebeam_parser.document.layout_document import LayoutBlock
 from sciencebeam_parser.document.semantic_document import (
     SemanticAuthor,
+    SemanticContentWrapper,
     SemanticEditor,
     SemanticGivenName,
     SemanticMarker,
@@ -16,6 +17,7 @@ from sciencebeam_parser.document.semantic_document import (
 )
 from sciencebeam_parser.models.name.extract import (
     NameSemanticExtractor,
+    capitalize_fully,
     iter_semantic_markers_for_layout_block
 )
 
@@ -57,7 +59,7 @@ class TestIterSemanticMarkersForLayoutBlock:
         assert semantic_content_wrapper.view_by_type(SemanticMarker).get_text_list() == ['11', '12']
         assert semantic_content_wrapper.merged_block.text == '11,12'
 
-    def test_should_split_marker_on_non_numeric_characters(self):
+    def test_should_split_marker_on_different_special_characters(self):
         semantic_markers = list(iter_semantic_markers_for_layout_block(
             LayoutBlock.for_text('+*!')
         ))
@@ -66,6 +68,37 @@ class TestIterSemanticMarkersForLayoutBlock:
             '+', '*', '!'
         ]
         assert semantic_content_wrapper.merged_block.text == '+*!'
+
+    def test_should_keep_a_run_of_the_same_special_character_as_one_marker(self):
+        # GROBID 0.9.1's AuthorParser.splitMarkers
+        semantic_markers = list(iter_semantic_markers_for_layout_block(
+            LayoutBlock.for_text('** ††')
+        ))
+        semantic_content_wrapper = SemanticMixedContentWrapper(semantic_markers)
+        assert semantic_content_wrapper.view_by_type(SemanticMarker).get_text_list() == [
+            '**', '††'
+        ]
+
+    def test_should_keep_letters_together_and_two_commas_as_a_marker(self):
+        semantic_markers = list(iter_semantic_markers_for_layout_block(
+            LayoutBlock.for_text('ab, c,,')
+        ))
+        semantic_content_wrapper = SemanticMixedContentWrapper(semantic_markers)
+        assert semantic_content_wrapper.view_by_type(SemanticMarker).get_text_list() == [
+            'ab', 'c', ',,'
+        ]
+        assert semantic_content_wrapper.merged_block.text == 'ab, c,,'
+
+
+class TestCapitalizeFully:
+    def test_should_capitalise_after_each_delimiter_and_lower_case_the_rest(self):
+        assert capitalize_fully('jean-pierre') == 'Jean-Pierre'
+        assert capitalize_fully('van der BERG') == 'Van Der Berg'
+        assert capitalize_fully('j.m.') == 'J.M.'
+
+    def test_should_not_capitalise_after_an_apostrophe_as_grobid_does_not(self):
+        assert capitalize_fully("o'neil") == "O'neil"
+        assert capitalize_fully('McDONALD') == 'Mcdonald'
 
 
 class TestNameSemanticExtractor:
@@ -103,7 +136,7 @@ class TestNameSemanticExtractor:
         assert author.given_name_text == 'John'
         assert author.surname_text == 'Smith'
 
-    def test_should_extract_multiple_authors(self):
+    def test_should_close_an_author_on_the_marker_that_follows_it(self):
         semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<forename>', LayoutBlock.for_text('John')),
@@ -127,9 +160,11 @@ class TestNameSemanticExtractor:
         assert author_2.surname_text == 'Madison'
         assert author_2.view_by_type(SemanticMarker).get_text() == '2'
 
-    def test_should_split_on_comma_before_marker(self):
-        # The model currently does not provide segmentation as such
-        # That is why the segmentation of authors is currently rule-based
+    def test_should_record_a_marker_before_a_name_on_the_author_before_it_as_grobid_does(self):
+        # GROBID's AuthorParser: "a marker introduces a new author, and the marker
+        # could be attached to the previous (usual) or following author (rare)";
+        # the markers of an author play no part in attaching affiliations, which
+        # go by the position of the marker in the author text
         semantic_content_list: List[SemanticAuthor] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<marker>', LayoutBlock.for_text('1')),
@@ -147,39 +182,12 @@ class TestNameSemanticExtractor:
         assert isinstance(author_1, SemanticAuthor)
         assert author_1.given_name_text == 'John'
         assert author_1.surname_text == 'Smith'
-        assert author_1.view_by_type(SemanticMarker).get_text() == '1'
+        assert author_1.view_by_type(SemanticMarker).get_text_list() == ['1', '2']
         author_2 = semantic_content_list[1]
         assert isinstance(author_2, SemanticAuthor)
         assert author_2.given_name_text == 'Maria'
         assert author_2.surname_text == 'Madison'
-        assert author_2.view_by_type(SemanticMarker).get_text() == '2'
-
-    def test_should_split_on_double_comma_before_marker(self):
-        # The model currently does not provide segmentation as such
-        # That is why the segmentation of authors is currently rule-based
-        semantic_content_list: List[SemanticAuthor] = list(
-            NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
-                ('<marker>', LayoutBlock.for_text('1')),
-                ('<forename>', LayoutBlock.for_text('John')),
-                ('<surname>', LayoutBlock.for_text('Smith')),
-                ('O', LayoutBlock.for_text(', ,')),
-                ('<marker>', LayoutBlock.for_text('2')),
-                ('<forename>', LayoutBlock.for_text('Maria')),
-                ('<surname>', LayoutBlock.for_text('Madison')),
-            ])
-        )
-        LOGGER.debug('semantic_content_list: %s', semantic_content_list)
-        assert len(semantic_content_list) == 2
-        author_1 = semantic_content_list[0]
-        assert isinstance(author_1, SemanticAuthor)
-        assert author_1.given_name_text == 'John'
-        assert author_1.surname_text == 'Smith'
-        assert author_1.view_by_type(SemanticMarker).get_text() == '1'
-        author_2 = semantic_content_list[1]
-        assert isinstance(author_2, SemanticAuthor)
-        assert author_2.given_name_text == 'Maria'
-        assert author_2.surname_text == 'Madison'
-        assert author_2.view_by_type(SemanticMarker).get_text() == '2'
+        assert not author_2.view_by_type(SemanticMarker).get_text_list()
 
     def test_should_split_on_second_title(self):
         # This matches the current rules in GROBID
@@ -248,6 +256,22 @@ class TestNameSemanticExtractor:
         assert author_2.given_name_text == 'Maria'
         assert author_2.surname_text == 'Madison'
 
+    def test_should_not_split_on_a_comma_between_names(self):
+        # GROBID's AuthorParser pays no attention to text labelled as other
+        semantic_content_list: List[SemanticContentWrapper] = list(
+            NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<forename>', LayoutBlock.for_text('John')),
+                ('O', LayoutBlock.for_text(',')),
+                ('<surname>', LayoutBlock.for_text('Smith')),
+            ])
+        )
+        assert len(semantic_content_list) == 1
+        author = semantic_content_list[0]
+        assert isinstance(author, SemanticAuthor)
+        assert author.given_name_text == 'John'
+        assert author.surname_text == 'Smith'
+        assert author.get_text() == 'John , Smith'
+
     def test_should_split_not_split_on_second_middlename(self):
         # This matches the current rules in GROBID
         semantic_content_list: List[SemanticAuthor] = list(
@@ -296,8 +320,11 @@ class TestNameSemanticExtractor:
         assert author_2.given_name_text == 'Maria'
         assert author_2.surname_text == 'Madison'
 
-    def test_should_parse_multiple_markers(self):
-        semantic_content_list: List[SemanticAuthor] = list(
+    def test_should_keep_the_markers_of_an_author_together_as_grobid_does(self):
+        # "John Smith 1 , 2 , Maria Madison 2 , 3": the first marker closes John
+        # Smith, the second opens the author Maria Madison fills, her own marker
+        # closes her, and the last marker makes no author (GROBID drops it)
+        semantic_content_list: List[SemanticContentWrapper] = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<forename>', LayoutBlock.for_text('John')),
                 ('<surname>', LayoutBlock.for_text('Smith')),
@@ -313,38 +340,59 @@ class TestNameSemanticExtractor:
             ])
         )
         LOGGER.debug('semantic_content_list: %s', semantic_content_list)
-        assert len(semantic_content_list) == 2
+        assert len(semantic_content_list) == 3
         author_1 = semantic_content_list[0]
         assert isinstance(author_1, SemanticAuthor)
         assert author_1.given_name_text == 'John'
         assert author_1.surname_text == 'Smith'
-        assert author_1.view_by_type(SemanticMarker).get_text_list() == ['1', '2']
+        assert author_1.view_by_type(SemanticMarker).get_text_list() == ['1']
         author_2 = semantic_content_list[1]
         assert isinstance(author_2, SemanticAuthor)
         assert author_2.given_name_text == 'Maria'
         assert author_2.surname_text == 'Madison'
-        assert author_2.view_by_type(SemanticMarker).get_text_list() == ['2', '3']
+        assert author_2.view_by_type(SemanticMarker).get_text_list() == ['2', '2']
+        trailing_note = semantic_content_list[2]
+        assert isinstance(trailing_note, SemanticNote)
+        assert trailing_note.note_type == 'invalid_author_name'
+        assert trailing_note.get_text() == ', 3'
 
-    def test_should_convert_name_parts_to_title_case(self):
+    def test_should_split_a_marker_cluster_into_its_markers(self):
+        semantic_content_list: List[SemanticContentWrapper] = list(
+            NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<forename>', LayoutBlock.for_text('John')),
+                ('<surname>', LayoutBlock.for_text('Smith')),
+                ('<marker>', LayoutBlock.for_text('1,2')),
+            ])
+        )
+        assert len(semantic_content_list) == 1
+        author = semantic_content_list[0]
+        assert isinstance(author, SemanticAuthor)
+        assert author.view_by_type(SemanticMarker).get_text_list() == ['1', '2']
+
+    def test_should_capitalise_name_parts_fully_but_not_title_or_suffix(self):
         semantic_content_list = list(
             NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
-                ('<forename>', LayoutBlock.for_text('JOHN')),
+                ('<title>', LayoutBlock.for_text('PROF.')),
+                ('<forename>', LayoutBlock.for_text('JEAN-PIERRE')),
                 ('<middlename>', LayoutBlock.for_text('MIDDLE')),
-                ('<surname>', LayoutBlock.for_text('SMITH')),
+                ('<surname>', LayoutBlock.for_text('van der BERG')),
+                ('<suffix>', LayoutBlock.for_text('JR')),
             ], name_type=SemanticAuthor)
         )
         assert len(semantic_content_list) == 1
         author = semantic_content_list[0]
         assert isinstance(author, SemanticAuthor)
         given_name = list(author.iter_by_type(SemanticGivenName))[0]
-        assert given_name.get_text() == 'JOHN'
-        assert given_name.value == 'John'
+        assert given_name.get_text() == 'JEAN-PIERRE'
+        assert given_name.value == 'Jean-Pierre'
         middle_name = list(author.iter_by_type(SemanticMiddleName))[0]
         assert middle_name.get_text() == 'MIDDLE'
         assert middle_name.value == 'Middle'
         surname = list(author.iter_by_type(SemanticSurname))[0]
-        assert surname.get_text() == 'SMITH'
-        assert surname.value == 'Smith'
+        assert surname.get_text() == 'van der BERG'
+        assert surname.value == 'Van Der Berg'
+        assert list(author.iter_by_type(SemanticNameTitle))[0].value is None
+        assert list(author.iter_by_type(SemanticNameSuffix))[0].value is None
 
     def test_should_treat_two_letter_uppercase_given_name_as_given_midde_name(self):
         semantic_content_list = list(
@@ -376,3 +424,16 @@ class TestNameSemanticExtractor:
         author = semantic_content_list[0]
         assert isinstance(author, SemanticNote)
         assert author.get_text() == 'J'
+
+    def test_should_consider_a_single_character_last_name_invalid_as_grobid_does(self):
+        semantic_content_list = list(
+            NameSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<forename>', LayoutBlock.for_text('John')),
+                ('<surname>', LayoutBlock.for_text('S'))
+            ], name_type=SemanticAuthor)
+        )
+        assert len(semantic_content_list) == 1
+        author = semantic_content_list[0]
+        assert isinstance(author, SemanticNote)
+        assert author.note_type == 'invalid_author_name'
+        assert author.get_text() == 'John S'
