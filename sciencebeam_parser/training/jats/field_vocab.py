@@ -178,6 +178,12 @@ HEADER_LABEL_BY_FIELD: Dict[str, str] = {
     # labels there, and the words introducing them are `<other>`.
     JatsFieldNames.COPYRIGHT:        '<copyright>',
     JatsFieldNames.FUNDING:          '<funding>',
+    # The same statement where the deposit files it as a section of its own
+    # rather than as a funding group, which is how a preprint server that has
+    # no funding group to file it in declares it.  The page prints it among
+    # the front matter either way, as it prints the conflict and contribution
+    # statements below.
+    JatsFieldNames.FUNDING_SECTION_PARAGRAPH: '<funding>',
     JatsFieldNames.EMAIL:            '<email>',
     JatsFieldNames.ORCID:            '<pubnum>',
     # GROBID writes the article's identifier as `<idno>`, which is what

@@ -359,7 +359,28 @@ def statement_text(el: etree._Element) -> str:
     heading = element_text(bold) if bold is not None else ''
     if heading and text.startswith(heading) and match_fn_keywords(heading):
         return text[len(heading):].strip()
-    return text
+    return _without_the_words_introducing_it(text)
+
+
+# How much of a statement its own name can take up before what opens it is a
+# sentence rather than a heading.
+_LEAD_IN_LENGTH = 40
+
+
+def _without_the_words_introducing_it(text: str) -> str:
+    """A statement without a heading the publisher left in its prose.
+
+    The heading is a run of bold text where a publisher marks it up and the
+    words before a colon where none does, and the page prints both the same
+    way.  Only where those words name the statement, so the colon of a
+    contribution statement naming an author keeps what follows it.
+    """
+    colon = text.find(':')
+    if colon < 0 or colon > _LEAD_IN_LENGTH:
+        return text
+    if not match_fn_keywords(text[:colon]):
+        return text
+    return text[colon + 1:].strip()
 
 
 class LabelledSections(NamedTuple):

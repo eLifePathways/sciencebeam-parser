@@ -147,6 +147,8 @@ _FRONT_PRINTED_STATEMENT_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
     JatsFieldNames.CONTRIBUTION_SECTION_TITLE,
     JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+    JatsFieldNames.FUNDING_SECTION_TITLE,
+    JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
 })
 
 # When the "Keywords" section header is matched, individual keyword values are searched
@@ -2547,6 +2549,27 @@ def _label_further_affiliations(  # pylint: disable=too-many-arguments
         )
 
 
+def _claimed_ranges(
+    annotated: JatsAnnotatedLayoutDocument, token_index: _TokenIndex
+) -> List[Tuple[int, int]]:
+    """Where a value with a label of its own is holding the page.
+
+    What a match spans and what it holds are not the same thing.  A value
+    the page breaks across a column spans everything printed between its
+    halves, and a review panel printed beside an abstract is inside that
+    span without a single token of it being the abstract's.  A search over
+    what nothing else holds has to read the tokens rather than the span.
+
+    A note is not holding anything: it carries no label of its own and is
+    matched so the region reads its lines as front matter.
+    """
+    return token_index.get_token_char_ranges({
+        index for index, token in enumerate(token_index.tokens)
+        if (annotated.get_token_field(token) or '') not in _UNLABELLED_NOTE_FIELDS
+        and annotated.get_token_field(token) is not None
+    })
+
+
 def _author_name_ranges(
     annotated: JatsAnnotatedLayoutDocument, token_index: _TokenIndex
 ) -> List[Tuple[int, int]]:
@@ -4035,7 +4058,8 @@ class LayoutDocumentJatsAligner:
                 front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
             ),
             masked_ranges=(
-                matched_ranges + token_index.cover_ranges + token_index.furniture_ranges
+                _claimed_ranges(annotated, token_index)
+                + token_index.cover_ranges + token_index.furniture_ranges
             ),
             instance_id=instance_by_field.get(JatsFieldNames.AUTHOR_AFF, 0),
         )

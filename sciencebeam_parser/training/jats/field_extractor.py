@@ -357,11 +357,42 @@ def element_text_of_xpath(root: etree._Element, xpath: str) -> str:
     return ''
 
 
+# How much of a statement its own name can take up before the paragraph is the
+# statement rather than the heading of one.
+_HEADING_LENGTH = 40
+
+
+def _is_the_statements_own_name(text: str, field_name: str) -> bool:
+    """Whether a paragraph is the heading of a statement rather than the
+    statement.
+
+    A publisher writes the heading as a paragraph of its own as readily as in
+    bold at the head of the prose, and the page prints both the same way.
+    GROBID puts it as a principle: the prefix naming a field stays outside the
+    mark-up, and only the useful content is encoded.
+
+    It is read as the section's title rather than dropped.  A title carries no
+    header label and still places the region, which is what the heading does
+    on the page: the segmentation region is the block the page sets, heading
+    and all.
+    """
+    if field_name not in _LEAD_IN_FIELDS or len(text) > _HEADING_LENGTH:
+        return False
+    # The name and nothing else.  A publisher that writes the heading into the
+    # prose as well puts a colon between the two, and a paragraph short enough
+    # to be a heading can still be the whole statement behind one.
+    name = text.rstrip(':').strip()
+    return ':' not in name and bool(match_fn_keywords(name))
+
+
 # The statements whose value is written without the words introducing it, which
-# is what the header model's labels are read from.
+# is what the header model's labels are read from.  GROBID puts it as a
+# principle: the prefix naming a field stays outside the mark-up, and only the
+# useful content is encoded.
 _LEAD_IN_FIELDS: FrozenSet[str] = frozenset({
     JatsFieldNames.CONFLICT_SECTION_PARAGRAPH,
     JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH,
+    JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
 })
 
 
@@ -990,10 +1021,19 @@ class JatsFieldExtractor:
                     entries.append((position[el], JatsFieldValue(
                         text=text, field_name=TITLE_FIELD_BY_KIND[kind])))
             for el in ack.xpath('.//p'):
-                text = element_text(el)
+                field_name = PARAGRAPH_FIELD_BY_KIND[kind]
+                if _is_the_statements_own_name(element_text(el), field_name):
+                    field_name = TITLE_FIELD_BY_KIND[kind]
+                # The heading again, where the publisher wrote it into the
+                # prose as well as into the section's title, which is how a
+                # page comes to print it twice over.
+                text = (
+                    statement_text(el) if field_name in _LEAD_IN_FIELDS
+                    else element_text(el)
+                )
                 if text:
                     entries.append((position[el], JatsFieldValue(
-                        text=text, field_name=PARAGRAPH_FIELD_BY_KIND[kind])))
+                        text=text, field_name=field_name)))
 
         for el in root.xpath('//app-group/title'):
             text = element_text(el)
@@ -1022,6 +1062,8 @@ class JatsFieldExtractor:
             if not labelled.claims(el) or is_bold_heading(el):
                 continue
             field_name = labelled.paragraph_field(el, '')
+            if _is_the_statements_own_name(element_text(el), field_name):
+                field_name = labelled.title_field(el, '')
             # A footnote states its kind in bold at the head of the paragraph as
             # often as in a paragraph of its own, and either way the page prints
             # it as a lead-in rather than as part of the statement -- for the two
