@@ -3127,12 +3127,19 @@ def _label_tokens_for_blocks(  # pylint: disable=too-many-arguments
     )
     for start, end in covered:
         for token in token_index.tokens_in_range(start, end):
-            if only_unclaimed and annotated.get_token_field(token):
+            holder = annotated.get_token_field(token)
+            if only_unclaimed and holder and holder not in _UNLABELLED_NOTE_FIELDS:
                 # What another value is holding is that value.  A name the page
                 # shortens is a few characters long and the front matter prints
                 # those characters elsewhere: `Rodrigo Rocha` is inside
                 # `rodrigo.rocha@example.org`, which is an email address and
                 # not a second printing of the name.
+                #
+                # A note holds nothing: it carries no label of its own and is
+                # matched so the region reads its lines as front matter.  It is
+                # matched before the names are looked for again, so the block
+                # naming who to write to is covered by one by the time the name
+                # inside it is searched for.
                 continue
             if annotated.get_token_field(token) in protect_fields:
                 # The marker closing a byline is the author's: GROBID keeps it

@@ -409,6 +409,11 @@ def _shortened_names(given: str, surname: str) -> Tuple[str, ...]:
     name: offered, it labels the local part of an email address, a surname in
     a figure's source line, and on one `ore` document the word "challenge".
 
+    A surname of several words is shortened the same way, and the page keeps
+    the particle it opens with: a deposit declaring `De Oliveira Siqueira` is
+    set as `de O. Siqueira`.  Split on spaces alone, so a surname the deposit
+    hyphenates stays the one word the page prints.
+
     Longest first, so the fullest form the page actually sets is the one taken.
     The first is offered only where there is something to shorten, so a name of
     two parts is not offered twice.
@@ -422,8 +427,21 @@ def _shortened_names(given: str, surname: str) -> Tuple[str, ...]:
             ' '.join([parts[0]] + [f'{part[0]}.' for part in parts[1:]] + [surname])
         )
         forms.append(f'{parts[0]} {surname}')
+    for shortened_surname in _shortened_surnames(surname):
+        forms.append(f'{parts[0]} {shortened_surname}')
     forms.append(f"{surname} {''.join(part[0] for part in parts)}")
     return tuple(forms)
+
+
+def _shortened_surnames(surname: str) -> Tuple[str, ...]:
+    """The forms a page shortens a surname of several words to."""
+    words = surname.split()
+    if len(words) < 3:
+        return ()
+    return (
+        ' '.join([words[0]] + [f'{word[0]}.' for word in words[1:-1]] + [words[-1]]),
+        ' '.join([f'{word[0]}.' for word in words[:-1]] + [words[-1]]),
+    )
 
 
 def _name_initials(name_el: etree._Element) -> str:
