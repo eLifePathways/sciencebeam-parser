@@ -10,7 +10,9 @@ from typing import (
 
 from sciencebeam_alignment.align import LocalSequenceMatcher, SimpleScoring
 
-from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken
+from sciencebeam_parser.document.layout_document import (
+    LayoutDocument, LayoutLine, LayoutToken,
+)
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_extractor import JatsFieldValue
 from sciencebeam_parser.training.jats.field_vocab import (
@@ -2059,7 +2061,7 @@ def _fill_abstract_lines(
     annotated: JatsAnnotatedLayoutDocument,
     layout_document: LayoutDocument,
 ) -> None:
-    """Give an abstract the whole of each line it runs down.
+    """Give an abstract the whole of each line it runs down, and those between.
 
     An abstract is a block: the page sets it as whole lines, and two things
     stand outside one.  The heading above it, which is why the line it begins
@@ -2069,35 +2071,71 @@ def _fill_abstract_lines(
     line that goes on to say `Keywords:` and 45 more that say `Key words:`,
     besides the availability statements and copyright lines.
 
+    A line the page sets between two of the abstract's lines is the abstract's
+    as well, however little of it the deposit declares: a publisher revising an
+    abstract after it was deposited leaves whole lines of the printing
+    answering to nothing.  The block is what says which lines those are, and
+    says nothing across two of them, which is what keeps an abstract that
+    answered in pieces down the paper from taking everything between them.
+
     Only what nothing has claimed is filled, so a marker the page sets inside
     one of those lines keeps its own label.
     """
     begun: Set[int] = set()
-    for line in layout_document.iter_all_lines():
-        tokens = line.tokens or []
+    for block in layout_document.iter_all_blocks():
+        lines = block.lines or []
+        tokens = [token for line in lines for token in (line.tokens or [])]
         entries = [annotated.token_label_by_id.get(id(token)) for token in tokens]
-        on_this_line = [
-            index for index, entry in enumerate(entries)
-            if entry is not None
-            and entry[0] == JatsFieldNames.ABSTRACT
-            and entry[1] is None
-        ]
-        first = entries[on_this_line[0]] if on_this_line else None
-        if first is None:
-            continue
-        instance_id = first[2]
-        # The line an abstract begins on is the only one with anything of its
-        # own outside it, and that is the heading above it.  A line it reaches
-        # later is its line, whatever the page printed in between.
-        fill_from = 0 if instance_id in begun else on_this_line[0]
-        fill_to = on_this_line[-1]
-        for index, (token, entry) in enumerate(zip(tokens, entries)):
-            if index < fill_from or index > fill_to or entry is not None:
-                continue
-            annotated.set_token_label(
-                token, JatsFieldNames.ABSTRACT, None, instance_id
+        by_instance: Dict[int, List[int]] = {}
+        for index, entry in enumerate(entries):
+            if (
+                entry is not None
+                and entry[0] == JatsFieldNames.ABSTRACT
+                and entry[1] is None
+            ):
+                by_instance.setdefault(entry[2], []).append(index)
+        # Each instance over its own run, so a block carrying an abstract in
+        # two languages does not read as one abstract printed around the other.
+        for instance_id, at in by_instance.items():
+            _fill_an_abstract_run(
+                annotated, tokens, entries,
+                # The line an abstract begins on is the only one with anything
+                # of its own outside it, and that is the heading above it.  A
+                # line it reaches later is its line, whatever the page printed
+                # in between.
+                _line_start_at(lines, at[0]) if instance_id in begun else at[0],
+                at[-1], instance_id,
             )
-        begun.add(instance_id)
+            begun.add(instance_id)
+
+
+def _line_start_at(lines: Sequence[LayoutLine], index: int) -> int:
+    """Where the line holding that token of a block begins."""
+    start = 0
+    for line in lines:
+        following = start + len(line.tokens or [])
+        if index < following:
+            return start
+        start = following
+    return start
+
+
+def _fill_an_abstract_run(  # pylint: disable=too-many-arguments
+    annotated: JatsAnnotatedLayoutDocument,
+    tokens: Sequence[LayoutToken],
+    entries: List[Optional[Tuple[str, Optional[str], int]]],
+    fill_from: int,
+    fill_to: int,
+    instance_id: int,
+) -> None:
+    """Give one instance of an abstract what nothing holds inside its run."""
+    for index in range(fill_from, fill_to + 1):
+        if entries[index] is not None:
+            continue
+        annotated.set_token_label(
+            tokens[index], JatsFieldNames.ABSTRACT, None, instance_id
+        )
+        entries[index] = annotated.token_label_by_id[id(tokens[index])]
 
 
 _OPENING_SEPARATORS: FrozenSet[str] = frozenset({',', ';', '-'})

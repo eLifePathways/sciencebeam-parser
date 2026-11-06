@@ -43,6 +43,18 @@ def _make_doc(*line_texts: str) -> LayoutDocument:
     return LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=lines)])])
 
 
+def _make_doc_of_blocks(*block_texts: str) -> LayoutDocument:
+    """A document whose every line is a block of its own.
+
+    What a page sets apart it sets in its own block, and a pass reading the
+    block cannot be given a document that holds one.
+    """
+    return LayoutDocument(pages=[LayoutPage(blocks=[
+        LayoutBlock(lines=[LayoutLine.for_text(text)])
+        for text in block_texts
+    ])])
+
+
 def _fv(text: str, field: str = JatsFieldNames.BODY_SECTION_TITLE, sub: Optional[str] = None):
     return JatsFieldValue(text=text, field_name=field, sub_field_name=sub)
 
@@ -536,8 +548,10 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             'for health system organizations to implement the living evidence model.'
         )
         abstract_text = page1 + ' ' + page2
-        # Doc reading order: page1, then sidebar, then page2 (three separate lines)
-        doc = _make_doc(page1, sidebar, page2)
+        # Doc reading order: page1, then sidebar, then page2.  The page sets
+        # the box beside the article rather than inside the abstract, so each
+        # is a block of its own, which is what the extraction gives.
+        doc = _make_doc_of_blocks(page1, sidebar, page2)
         fvs = [_fv(abstract_text, JatsFieldNames.ABSTRACT)]
         annotated = self._align(doc, fvs)
 
