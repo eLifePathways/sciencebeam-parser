@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,7 +9,8 @@ from lxml import etree
 import pytest
 
 
-HARNESS_FILE = Path(__file__).parent / 'get_article_view_model.mjs'
+VIEW_MODEL_HARNESS_FILE = Path(__file__).parent / 'get_article_view_model.mjs'
+RENDER_HARNESS_FILE = Path(__file__).parent / 'render_article.mjs'
 
 XLINK_NS = 'http://www.w3.org/1999/xlink'
 
@@ -45,16 +47,24 @@ def get_xml_node(element: etree.ElementBase) -> Dict[str, Any]:
     }
 
 
-def get_article_view_model(jats_xml: str) -> dict:
+def run_harness(harness_file: Path, jats_xml: str) -> str:
     root = etree.fromstring(jats_xml.encode('utf-8'))
     completed_process = subprocess.run(
-        ['node', str(HARNESS_FILE)],
+        ['node', str(harness_file)],
         input=json.dumps(get_xml_node(root)),
         capture_output=True,
         text=True,
         check=True
     )
-    return json.loads(completed_process.stdout)
+    return completed_process.stdout
+
+
+def get_article_view_model(jats_xml: str) -> dict:
+    return json.loads(run_harness(VIEW_MODEL_HARNESS_FILE, jats_xml))
+
+
+def get_rendered_article(jats_xml: str) -> str:
+    return run_harness(RENDER_HARNESS_FILE, jats_xml)
 
 
 def get_article_xml(front: str = '', body: str = '', back: str = '') -> str:
@@ -75,18 +85,18 @@ def get_paragraph_texts(paragraphs: List[dict]) -> List[str]:
 
 
 class TestTitle:
-    def test_should_read_the_article_title(self):
+    def test_should_read_the_article_title_and_the_element_it_came_from(self):
         view_model = get_article_view_model(get_article_xml(
             front='<title-group><article-title>The title</article-title></title-group>'
         ))
-        assert view_model['title'] == 'The title'
+        assert view_model['title'] == {'label': 'article-title', 'text': 'The title'}
 
-    def test_should_be_empty_without_a_title(self):
-        assert get_article_view_model(get_article_xml())['title'] == ''
+    def test_should_carry_no_title_where_the_document_states_none(self):
+        assert get_article_view_model(get_article_xml())['title'] is None
 
 
 class TestAuthors:
-    def test_should_read_the_name_in_reading_order(self):
+    def test_should_read_the_name_in_reading_order_naming_each_part(self):
         view_model = get_article_view_model(get_article_xml(
             front=(
                 '<contrib-group><contrib contrib-type="person"><name>'
@@ -94,7 +104,10 @@ class TestAuthors:
                 '</name></contrib></contrib-group>'
             )
         ))
-        assert [author['name'] for author in view_model['authors']] == ['Jane A Smith']
+        assert view_model['authors'][0]['nameParts'] == [
+            {'label': 'given-names', 'text': 'Jane A'},
+            {'label': 'surname', 'text': 'Smith'}
+        ]
 
     def test_should_read_the_email_and_the_affiliations_referenced(self):
         view_model = get_article_view_model(get_article_xml(
@@ -108,7 +121,7 @@ class TestAuthors:
             )
         ))
         author = view_model['authors'][0]
-        assert author['email'] == 'jane@example.org'
+        assert author['email'] == {'label': 'email', 'text': 'jane@example.org'}
         assert author['affiliationIds'] == ['aff1']
 
 
@@ -125,15 +138,24 @@ class TestAffiliations:
             )
         ))
         assert view_model['affiliations'] == [{
+            'label': 'aff',
             'id': 'aff1',
-            'text': 'A Laboratory, A Department, A University, A City, A Country'
+            'parts': [
+                {'label': 'orgdiv2', 'text': 'A Laboratory'},
+                {'label': 'orgdiv1', 'text': 'A Department'},
+                {'label': 'orgname', 'text': 'A University'},
+                {'label': 'city', 'text': 'A City'},
+                {'label': 'country', 'text': 'A Country'}
+            ]
         }]
 
     def test_should_leave_out_the_parts_the_document_does_not_carry(self):
         view_model = get_article_view_model(get_article_xml(
             front='<aff id="aff1"><country>A Country</country></aff>'
         ))
-        assert view_model['affiliations'][0]['text'] == 'A Country'
+        assert view_model['affiliations'][0]['parts'] == [
+            {'label': 'country', 'text': 'A Country'}
+        ]
 
 
 class TestAbstract:
@@ -148,7 +170,9 @@ class TestAbstract:
             get_paragraph_texts(abstract['paragraphs'])
             for abstract in view_model['abstracts']
         ] == [['First.', 'Second.'], ['Other.']]
-        assert view_model['abstracts'][1]['title'] == 'Summary'
+        assert view_model['abstracts'][1]['title'] == {
+            'label': 'title', 'text': 'Summary'
+        }
 
 
 class TestSections:
@@ -163,7 +187,7 @@ class TestSections:
             )
         ))
         section = view_model['sections'][0]
-        assert section['title'] == 'Methods'
+        assert section['title'] == {'label': 'title', 'text': 'Methods'}
         assert [block['type'] for block in section['blocks']] == [
             'paragraph', 'figure', 'paragraph'
         ]
@@ -173,7 +197,7 @@ class TestSections:
             body='<sec><title>Outer</title><sec><title>Inner</title></sec></sec>'
         ))
         outer = view_model['sections'][0]
-        assert [block['title'] for block in outer['blocks']] == ['Inner']
+        assert [block['title']['text'] for block in outer['blocks']] == ['Inner']
 
     def test_should_read_the_marked_up_runs_of_a_paragraph(self):
         view_model = get_article_view_model(get_article_xml(
@@ -199,7 +223,8 @@ class TestFiguresAndTables:
             )
         ))
         figure = view_model['sections'][0]['blocks'][0]
-        assert figure['label'] == 'Figure 1'
+        assert figure['label'] == 'fig'
+        assert figure['heading'] == {'label': 'label', 'text': 'Figure 1'}
         assert get_paragraph_texts(figure['paragraphs']) == ['What it shows.']
         assert figure['graphicHref'] == 'image1.png'
 
@@ -223,15 +248,17 @@ class TestBackMatter:
         view_model = get_article_view_model(get_article_xml(
             back='<ack><sec><title>Thanks</title><p>To everyone.</p></sec></ack>'
         ))
-        assert [block['title'] for block in view_model['acknowledgements']] == ['Thanks']
+        assert [
+            block['title']['text'] for block in view_model['acknowledgements']
+        ] == ['Thanks']
 
     def test_should_read_an_appendix(self):
         view_model = get_article_view_model(get_article_xml(
             back='<app-group><app><title>Appendix 1</title><p>More.</p></app></app-group>'
         ))
-        assert [appendix['title'] for appendix in view_model['appendices']] == [
-            'Appendix 1'
-        ]
+        assert [
+            appendix['title']['text'] for appendix in view_model['appendices']
+        ] == ['Appendix 1']
 
 
 class TestReferences:
@@ -252,16 +279,26 @@ class TestReferences:
             )
         ))
         assert view_model['references'] == [{
+            'label': 'ref',
             'id': 'b0',
-            'authors': ['J Smith', 'A Jones'],
-            'articleTitle': 'The cited title',
-            'source': 'A Journal',
-            'year': '2020',
-            'volume': '12',
-            'issue': '3',
-            'firstPage': '100',
-            'lastPage': '110',
-            'doi': '10.1000/xyz'
+            'authors': [
+                [
+                    {'label': 'given-names', 'text': 'J'},
+                    {'label': 'surname', 'text': 'Smith'}
+                ],
+                [
+                    {'label': 'given-names', 'text': 'A'},
+                    {'label': 'surname', 'text': 'Jones'}
+                ]
+            ],
+            'articleTitle': {'label': 'article-title', 'text': 'The cited title'},
+            'source': {'label': 'source', 'text': 'A Journal'},
+            'year': {'label': 'year', 'text': '2020'},
+            'volume': {'label': 'volume', 'text': '12'},
+            'issue': {'label': 'issue', 'text': '3'},
+            'firstPage': {'label': 'fpage', 'text': '100'},
+            'lastPage': {'label': 'lpage', 'text': '110'},
+            'doi': {'label': 'pub-id', 'text': '10.1000/xyz'}
         }]
 
     def test_should_read_a_citation_that_states_almost_nothing(self):
@@ -271,4 +308,134 @@ class TestReferences:
         reference = view_model['references'][0]
         assert reference['id'] == 'b0'
         assert reference['authors'] == []
-        assert reference['articleTitle'] == ''
+        assert reference['articleTitle'] is None
+
+
+FULL_ARTICLE_XML = get_article_xml(
+    front=(
+        '<title-group><article-title>The title</article-title></title-group>'
+        '<contrib-group><contrib><name><surname>Smith</surname>'
+        '<given-names>J</given-names></name><xref ref-type="aff" rid="aff1"/>'
+        '</contrib></contrib-group>'
+        '<aff id="aff1"><institution content-type="orgname">A University'
+        '</institution><country>A Country</country></aff>'
+        '<abstract><p>An abstract.</p></abstract>'
+    ),
+    body=(
+        '<sec><title>Methods</title><p>A paragraph.</p>'
+        '<fig id="fig_0"><label>Figure 1</label>'
+        '<caption><title>What it shows</title><p>A caption.</p></caption></fig>'
+        '<table-wrap id="tab_0"><label>Table 1</label>'
+        '<table><tbody><tr><td>a</td></tr></tbody></table></table-wrap>'
+        '</sec>'
+    ),
+    back=(
+        '<ack><sec><title>Thanks</title><p>To everyone.</p></sec></ack>'
+        '<ref-list><ref id="b0"><element-citation>'
+        '<source>A Journal</source></element-citation></ref></ref-list>'
+    )
+)
+
+
+def iter_labelled_values(value) -> List[dict]:
+    if isinstance(value, dict):
+        if set(value) == {'label', 'text'}:
+            return [value]
+        return [
+            found for item in value.values() for found in iter_labelled_values(item)
+        ]
+    if isinstance(value, list):
+        return [found for item in value for found in iter_labelled_values(item)]
+    return []
+
+
+class TestElementLabels:
+    def test_should_name_the_element_every_value_came_from(self):
+        values = iter_labelled_values(get_article_view_model(FULL_ARTICLE_XML))
+        assert values
+        assert all(value['label'] for value in values)
+
+    def test_should_name_the_element_of_each_kind_of_text(self):
+        values = iter_labelled_values(get_article_view_model(FULL_ARTICLE_XML))
+        label_by_text = {value['text']: value['label'] for value in values}
+        assert label_by_text['The title'] == 'article-title'
+        assert label_by_text['Smith'] == 'surname'
+        assert label_by_text['A University'] == 'orgname'
+        assert label_by_text['A Country'] == 'country'
+        assert label_by_text['Methods'] == 'title'
+        assert label_by_text['Figure 1'] == 'label'
+        assert label_by_text['What it shows'] == 'title'
+        assert label_by_text['A Journal'] == 'source'
+
+    def test_should_name_the_element_a_paragraph_came_from(self):
+        view_model = get_article_view_model(FULL_ARTICLE_XML)
+        section = view_model['sections'][0]
+        paragraph = next(
+            block for block in section['blocks'] if block['type'] == 'paragraph'
+        )
+        assert paragraph['label'] == 'p'
+        assert view_model['abstracts'][0]['paragraphs'][0]['label'] == 'p'
+
+    def test_should_name_the_element_a_table_cell_came_from(self):
+        view_model = get_article_view_model(FULL_ARTICLE_XML)
+        table = next(
+            block for block in view_model['sections'][0]['blocks']
+            if block['type'] == 'table'
+        )
+        assert table['label'] == 'table-wrap'
+        assert table['rows'][0][0]['label'] == 'td'
+
+
+class TestRenderedArticle:
+    def test_should_mark_each_value_with_the_element_it_came_from(self):
+        html = get_rendered_article(FULL_ARTICLE_XML)
+        for label in [
+            'article-title', 'surname', 'given-names', 'orgname', 'country',
+            'abstract', 'sec', 'title', 'p', 'fig', 'label', 'table-wrap',
+            'td', 'ack', 'ref', 'source'
+        ]:
+            assert f'data-jats="{label}"' in html
+
+    def test_should_name_the_element_beside_the_value_it_labels(self):
+        html = get_rendered_article(FULL_ARTICLE_XML)
+        assert (
+            '<h1 data-jats="article-title">'
+            '<span class="jats-tag">article-title</span>The title</h1>'
+        ) in html
+
+    def test_should_read_as_the_article_without_the_names_shown(self):
+        html = get_rendered_article(FULL_ARTICLE_XML)
+        text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
+        text_only = re.sub(r'<[^>]+>', '', text_only)
+        assert 'The title' in text_only
+        assert 'J Smith' in text_only
+        assert 'A University, A Country' in text_only
+        assert 'A paragraph.' in text_only
+
+    def test_should_keep_a_reference_reading_as_a_citation(self):
+        html = get_rendered_article(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><element-citation>'
+                '<article-title>The cited title</article-title>'
+                '<source>A Journal</source><year>2020</year>'
+                '<volume>12</volume><fpage>100</fpage><lpage>110</lpage>'
+                '<person-group><name><surname>Smith</surname>'
+                '<given-names>J</given-names></name></person-group>'
+                '</element-citation></ref></ref-list>'
+            )
+        ))
+        text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
+        text_only = re.sub(r'<[^>]+>', '', text_only)
+        assert 'J Smith. The cited title. A Journal, 12, 100-110, 2020' in text_only
+
+    def test_should_not_begin_a_citation_with_a_separator(self):
+        html = get_rendered_article(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><element-citation>'
+                '<source>A Journal</source></element-citation></ref></ref-list>'
+            )
+        ))
+        text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
+        text_only = re.sub(r'<[^>]+>', '', text_only)
+        assert 'References' in text_only
+        assert text_only.endswith('A Journal')

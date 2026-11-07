@@ -7,6 +7,7 @@ const PROFILE_DIGEST_HEADER = 'x-sciencebeam-profile-digest';
 const LLM_USAGE_HEADER = 'x-sciencebeam-llm-usage';
 const SLOW_REQUEST_SECONDS = 10;
 const PDF_MEDIA_TYPE = 'application/pdf';
+const LABELS_SETTING = 'sciencebeam-show-labels';
 
 const form = document.getElementById('convert-form');
 const sourceFileInput = document.getElementById('source-file');
@@ -29,6 +30,8 @@ const rawButton = document.getElementById('show-raw');
 const readingElement = document.getElementById('result-reading');
 const resultBody = document.getElementById('result-body');
 const resultNote = document.getElementById('result-note');
+const labelsControl = document.getElementById('labels-control');
+const labelsCheckbox = document.getElementById('show-labels');
 const sourceSection = document.getElementById('source');
 const sourceNote = document.getElementById('source-note');
 const sourceActions = document.getElementById('source-actions');
@@ -315,6 +318,28 @@ function showReading(isReading) {
   resultBody.hidden = isReading;
   readingButton.disabled = isReading;
   rawButton.disabled = !isReading;
+  labelsControl.hidden = !isReading;
+}
+
+function applyLabels() {
+  readingElement.classList.toggle('jats-labelled', labelsCheckbox.checked);
+}
+
+function setUpLabels() {
+  try {
+    labelsCheckbox.checked = window.localStorage.getItem(LABELS_SETTING) === 'true';
+  } catch (error) {
+    labelsCheckbox.checked = false;
+  }
+  applyLabels();
+  labelsCheckbox.addEventListener('change', () => {
+    applyLabels();
+    try {
+      window.localStorage.setItem(LABELS_SETTING, String(labelsCheckbox.checked));
+    } catch (error) {
+      // how one person reads is not worth failing a conversion over
+    }
+  });
 }
 
 function showReadableResult(xmlText) {
@@ -479,6 +504,7 @@ sourceFileInput.addEventListener('change', checkSelectedFile);
 readingButton.addEventListener('click', () => showReading(true));
 rawButton.addEventListener('click', () => showReading(false));
 
+setUpLabels();
 setUpSourceFileInput();
 setUpOutputSelect();
 setUpIncludes();

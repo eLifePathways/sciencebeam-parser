@@ -7,6 +7,8 @@
   --panel-line: #cbd5e1;
   --error: #b91c1c;
   --accent: #1d4ed8;
+  --tag-fg: #3730a3;
+  --tag-bg: #e0e7ff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -18,6 +20,8 @@
     --panel-line: #374151;
     --error: #fca5a5;
     --accent: #93c5fd;
+    --tag-fg: #c7d2fe;
+    --tag-bg: #312e81;
   }
 }
 
@@ -178,4 +182,42 @@ pre {
   border: 1px solid var(--panel-line);
   border-radius: 6px;
   background: var(--panel-bg);
+}
+
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.jats-tag { display: none; }
+
+.jats-labelled .jats-tag {
+  display: inline-block;
+  font: 600 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--tag-fg);
+  background: var(--tag-bg);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-right: 4px;
+  vertical-align: 1px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.jats-labelled [data-jats] {
+  outline: 1px dotted var(--panel-line);
+  outline-offset: 2px;
+}
+
+.jats-labelled .jats-authors [data-jats],
+.jats-labelled .jats-affiliations [data-jats],
+.jats-labelled .jats-references [data-jats] {
+  outline-offset: 1px;
+}
+
+.jats-labelled .jats-article p,
+.jats-labelled .jats-article li {
+  margin-bottom: 16px;
 }
