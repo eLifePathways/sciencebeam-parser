@@ -3,7 +3,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from lxml import etree
 import pytest
@@ -47,11 +47,10 @@ def get_xml_node(element: etree.ElementBase) -> Dict[str, Any]:
     }
 
 
-def run_harness(harness_file: Path, jats_xml: str) -> str:
-    root = etree.fromstring(jats_xml.encode('utf-8'))
+def run_harness(harness_file: Path, payload: Any) -> str:
     completed_process = subprocess.run(
         ['node', str(harness_file)],
-        input=json.dumps(get_xml_node(root)),
+        input=json.dumps(payload),
         capture_output=True,
         text=True,
         check=True
@@ -59,12 +58,23 @@ def run_harness(harness_file: Path, jats_xml: str) -> str:
     return completed_process.stdout
 
 
+def get_parsed_xml_node(jats_xml: str) -> Dict[str, Any]:
+    return get_xml_node(etree.fromstring(jats_xml.encode('utf-8')))
+
+
 def get_article_view_model(jats_xml: str) -> dict:
-    return json.loads(run_harness(VIEW_MODEL_HARNESS_FILE, jats_xml))
+    return json.loads(
+        run_harness(VIEW_MODEL_HARNESS_FILE, get_parsed_xml_node(jats_xml))
+    )
 
 
-def get_rendered_article(jats_xml: str) -> str:
-    return run_harness(RENDER_HARNESS_FILE, jats_xml)
+def get_rendered_article(
+    jats_xml: str, assets: Optional[Dict[str, str]] = None
+) -> str:
+    return run_harness(RENDER_HARNESS_FILE, {
+        'node': get_parsed_xml_node(jats_xml),
+        'assets': assets or {}
+    })
 
 
 def get_article_xml(front: str = '', body: str = '', back: str = '') -> str:
@@ -439,3 +449,41 @@ class TestRenderedArticle:
         text_only = re.sub(r'<[^>]+>', '', text_only)
         assert 'References' in text_only
         assert text_only.endswith('A Journal')
+
+
+FIGURE_ARTICLE_XML = get_article_xml(
+    body=(
+        '<sec><fig id="fig_0"><label>Figure 1</label>'
+        '<caption><title>A figure</title></caption>'
+        '<graphic xlink:href="image1.png"/></fig></sec>'
+    )
+)
+
+
+class TestFigureGraphic:
+    def test_should_show_the_image_where_it_travels_beside_the_xml(self):
+        html = get_rendered_article(
+            FIGURE_ARTICLE_XML, assets={'image1.png': 'blob:an-image'}
+        )
+        assert '<img' in html
+        assert 'src="blob:an-image"' in html
+        assert 'alt="image1.png"' in html
+        assert 'class="jats-graphic-image"' in html
+
+    def test_should_name_the_file_where_the_image_is_not_beside_the_xml(self):
+        html = get_rendered_article(FIGURE_ARTICLE_XML)
+        assert '<img' not in html
+        assert 'image1.png (in the zip output)' in html
+
+    def test_should_name_the_element_the_graphic_came_from(self):
+        html = get_rendered_article(
+            FIGURE_ARTICLE_XML, assets={'image1.png': 'blob:an-image'}
+        )
+        assert 'data-jats="graphic"' in html
+
+    def test_should_name_the_file_where_the_archive_carries_a_different_one(self):
+        html = get_rendered_article(
+            FIGURE_ARTICLE_XML, assets={'other.png': 'blob:another-image'}
+        )
+        assert '<img' not in html
+        assert 'image1.png (in the zip output)' in html

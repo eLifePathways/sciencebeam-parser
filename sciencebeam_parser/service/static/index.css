@@ -221,3 +221,20 @@ pre {
 .jats-labelled .jats-article li {
   margin-bottom: 16px;
 }
+
+.jats-graphic { margin-top: 8px; }
+
+.jats-graphic-image {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.jats-graphic-name {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}

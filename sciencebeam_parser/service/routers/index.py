@@ -6,6 +6,7 @@ from fastapi import APIRouter, Response
 
 from sciencebeam_parser.app.parser import (
     DOC_TO_PDF_SUPPORTED_MEDIA_TYPES,
+    ZIP_ENTRY_NAME_BY_MEDIA_TYPE,
     ScienceBeamParser
 )
 from sciencebeam_parser.processors.fulltext.config import RequestFieldNames
@@ -40,8 +41,8 @@ SOURCE_MEDIA_TYPE_ORDER: Sequence[str] = (
 OUTPUT_MEDIA_TYPE_LABELS = {
     MediaTypes.JATS_XML: 'JATS XML',
     MediaTypes.TEI_XML: 'TEI XML',
-    MediaTypes.JATS_ZIP: 'JATS XML with assets (zip)',
-    MediaTypes.TEI_ZIP: 'TEI XML with assets (zip)',
+    MediaTypes.JATS_ZIP: 'JATS XML with figures (zip)',
+    MediaTypes.TEI_ZIP: 'TEI XML with figures (zip)',
     MediaTypes.PDF: 'The PDF as parsed'
 }
 
@@ -49,7 +50,7 @@ OUTPUT_MEDIA_TYPE_LABELS = {
 TEXT_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.TEI_XML}
 
 
-READABLE_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML}
+READABLE_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.JATS_ZIP}
 
 
 INCLUDES_FIELD_NAMES: Sequence[str] = (
@@ -90,7 +91,8 @@ def get_deployment_props(sciencebeam_parser: ScienceBeamParser) -> dict:
                 'label': OUTPUT_MEDIA_TYPE_LABELS[media_type],
                 'extension': guess_extension_for_media_type(media_type),
                 'is_text': media_type in TEXT_OUTPUT_MEDIA_TYPES,
-                'is_readable': media_type in READABLE_OUTPUT_MEDIA_TYPES
+                'is_readable': media_type in READABLE_OUTPUT_MEDIA_TYPES,
+                'archive_xml_name': ZIP_ENTRY_NAME_BY_MEDIA_TYPE.get(media_type)
             }
             for media_type in CONVERT_RESPONSE_MEDIA_TYPES
         ],

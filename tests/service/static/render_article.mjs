@@ -67,8 +67,11 @@ function serialize(node) {
 let input = '';
 process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
-  const viewModel = getArticleViewModel(JSON.parse(input));
-  process.stdout.write(serialize(
-    renderArticleViewModel(viewModel, createDocument())
-  ));
+  const { node, assets } = JSON.parse(input);
+  const viewModel = getArticleViewModel(node);
+  process.stdout.write(serialize(renderArticleViewModel(
+    viewModel,
+    createDocument(),
+    { getAssetUrl: (href) => (assets || {})[href] || null }
+  )));
 });

@@ -1,4 +1,5 @@
 import { renderJatsXml } from '/static/jats-to-html.js';
+import { readZipEntries } from '/static/read-zip.js';
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
 
@@ -8,6 +9,16 @@ const LLM_USAGE_HEADER = 'x-sciencebeam-llm-usage';
 const SLOW_REQUEST_SECONDS = 10;
 const PDF_MEDIA_TYPE = 'application/pdf';
 const LABELS_SETTING = 'sciencebeam-show-labels';
+
+const IMAGE_MEDIA_TYPE_BY_EXTENSION = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp'
+};
 
 const form = document.getElementById('convert-form');
 const sourceFileInput = document.getElementById('source-file');
@@ -40,6 +51,7 @@ const sourceFrame = document.getElementById('source-frame');
 
 let downloadUrl = null;
 let sourceUrl = null;
+let assetUrls = [];
 let requestController = null;
 
 function describeAcceptedMediaTypes() {
@@ -107,13 +119,10 @@ function getSelectedOutput() {
 }
 
 function getOutputHint(output) {
-  if (!output) {
+  if (!output || output.is_readable) {
     return '';
   }
-  if (output.is_readable) {
-    return '';
-  }
-  if (output.is_text) {
+  if (output.is_text || output.archive_xml_name) {
     return 'Returned as the XML itself. The reading view is over JATS XML.';
   }
   return 'Returned as a file to download rather than as text to read here.';
@@ -231,6 +240,33 @@ function releaseDownloadUrl() {
   }
 }
 
+function releaseAssetUrls() {
+  assetUrls.forEach((url) => URL.revokeObjectURL(url));
+  assetUrls = [];
+}
+
+function getImageMediaType(name) {
+  const lowerName = name.toLowerCase();
+  const extension = Object.keys(IMAGE_MEDIA_TYPE_BY_EXTENSION).find(
+    (candidate) => lowerName.endsWith(candidate)
+  );
+  return extension ? IMAGE_MEDIA_TYPE_BY_EXTENSION[extension] : null;
+}
+
+function getAssetUrlByName(entries) {
+  const urlByName = {};
+  entries.forEach((entry) => {
+    const mediaType = getImageMediaType(entry.name);
+    if (!mediaType) {
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([entry.data], { type: mediaType }));
+    assetUrls.push(url);
+    urlByName[entry.name] = url;
+  });
+  return urlByName;
+}
+
 function releaseSourceUrl() {
   if (sourceUrl) {
     URL.revokeObjectURL(sourceUrl);
@@ -342,10 +378,12 @@ function setUpLabels() {
   });
 }
 
-function showReadableResult(xmlText) {
+function showReadableResult(xmlText, getAssetUrl) {
   readingElement.replaceChildren();
   try {
-    readingElement.appendChild(renderJatsXml(xmlText, document));
+    readingElement.appendChild(
+      renderJatsXml(xmlText, document, { getAssetUrl })
+    );
   } catch (error) {
     resultNote.textContent = 'It could not be read as JATS: ' + error.message;
     readingButton.hidden = true;
@@ -358,12 +396,39 @@ function showReadableResult(xmlText) {
   showReading(true);
 }
 
-function showUnreadableResult(output) {
+function showUnreadableResult(output, keepNote) {
   readingElement.replaceChildren();
   readingButton.hidden = true;
   rawButton.hidden = true;
-  resultNote.textContent = getOutputHint(output);
+  if (!keepNote) {
+    resultNote.textContent = getOutputHint(output);
+  }
   showReading(false);
+}
+
+async function getArchiveContentOrNote(blob, output) {
+  try {
+    return await getArchiveContent(blob, output);
+  } catch (error) {
+    resultNote.textContent = 'The archive could not be read: ' + error.message;
+    return null;
+  }
+}
+
+async function getArchiveContent(blob, output) {
+  const entries = await readZipEntries(await blob.arrayBuffer());
+  const xmlEntry = entries.find((entry) => entry.name === output.archive_xml_name);
+  if (!xmlEntry) {
+    throw new Error(
+      'the archive carries no ' + output.archive_xml_name
+    );
+  }
+  const assetUrlByName = getAssetUrlByName(entries);
+  return {
+    text: new TextDecoder().decode(xmlEntry.data),
+    entryCount: entries.length,
+    getAssetUrl: (href) => assetUrlByName[href] || null
+  };
 }
 
 async function showResult(response, blob, file, elapsedSeconds) {
@@ -377,14 +442,25 @@ async function showResult(response, blob, file, elapsedSeconds) {
   addMetaRow(metaElement, 'Took', elapsedSeconds + 's');
   const output = getSelectedOutput();
   resultNote.textContent = '';
-  const text = output && output.is_text ? await blob.text() : null;
-  resultBody.textContent = text === null
-    ? 'Not text. Download it to read it.'
-    : text;
-  if (output && output.is_readable && text !== null) {
-    showReadableResult(text);
+  let content = null;
+  if (output && output.is_text) {
+    content = { text: await blob.text() };
+  } else if (output && output.archive_xml_name) {
+    content = await getArchiveContentOrNote(blob, output);
+  }
+  resultBody.textContent = content
+    ? content.text
+    : 'Not text. Download it to read it.';
+  if (content && output.archive_xml_name) {
+    resultNote.textContent = (
+      'Showing ' + output.archive_xml_name + ' from the archive, which carries '
+      + content.entryCount + ' files. The download is the archive itself.'
+    );
+  }
+  if (content && output.is_readable) {
+    showReadableResult(content.text, content.getAssetUrl);
   } else {
-    showUnreadableResult(output);
+    showUnreadableResult(output, !!content);
   }
   document.getElementById('result-curl').textContent = getEquivalentCurlCommand(file);
   setUpDownload(blob, getDownloadFilename(file));
@@ -491,6 +567,7 @@ form.addEventListener('submit', (event) => {
   sourceSection.hidden = true;
   releaseDownloadUrl();
   releaseSourceUrl();
+  releaseAssetUrls();
   convert(file);
 });
 

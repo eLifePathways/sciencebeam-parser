@@ -107,14 +107,27 @@ class TestGetDeploymentProps:
         assert is_text_by_media_type[MediaTypes.JATS_ZIP] is False
         assert is_text_by_media_type[MediaTypes.PDF] is False
 
-    def test_should_say_that_only_jats_xml_has_a_reading_view(
+    def test_should_say_that_the_jats_shapes_have_a_reading_view(
         self, sciencebeam_parser_mock: MagicMock
     ):
         props = get_deployment_props(sciencebeam_parser_mock)
         assert [
             item['media_type'] for item in props['output_media_types']
             if item['is_readable']
-        ] == [MediaTypes.JATS_XML]
+        ] == [MediaTypes.JATS_XML, MediaTypes.JATS_ZIP]
+
+    def test_should_name_the_xml_each_archive_carries(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        props = get_deployment_props(sciencebeam_parser_mock)
+        archive_xml_name_by_media_type = {
+            item['media_type']: item['archive_xml_name']
+            for item in props['output_media_types']
+        }
+        assert archive_xml_name_by_media_type[MediaTypes.JATS_ZIP] == 'jats.xml'
+        assert archive_xml_name_by_media_type[MediaTypes.TEI_ZIP] == 'tei.xml'
+        assert archive_xml_name_by_media_type[MediaTypes.JATS_XML] is None
+        assert archive_xml_name_by_media_type[MediaTypes.PDF] is None
 
 
 class TestGetEmbeddedJson:

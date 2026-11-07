@@ -15,6 +15,11 @@
  * name as `data-jats`. Reading an extraction is most of the time asking
  * whether a value was labelled as the right thing, and a rendering that
  * answers only "what does it say" cannot be checked.
+ *
+ * `renderArticleViewModel` takes an optional `{getAssetUrl}`, which is asked
+ * for a figure's graphic by the name the document gives it. Where the figures
+ * travel beside the XML, as they do in the archive the service answers with,
+ * that is what puts them on the page.
  */
 
 const AFFILIATION_PARTS = [
@@ -361,12 +366,24 @@ function appendCaption(parent, block) {
   block.paragraphs.forEach((paragraph) => appendParagraph(caption, paragraph));
 }
 
-function appendFigure(parent, block) {
+function appendGraphic(parent, href, options) {
+  const graphic = appendElement(parent, 'div', 'jats-graphic', 'graphic');
+  const url = options.getAssetUrl ? options.getAssetUrl(href) : null;
+  if (!url) {
+    appendText(graphic, href + ' (in the zip output)');
+    return;
+  }
+  const image = appendElement(graphic, 'img', 'jats-graphic-image');
+  image.setAttribute('src', url);
+  image.setAttribute('alt', href);
+  appendElement(graphic, 'span', 'jats-graphic-name').textContent = href;
+}
+
+function appendFigure(parent, block, options) {
   const figure = appendElement(parent, 'figure', 'jats-figure', block.label);
   appendCaption(figure, block);
   if (block.graphicHref) {
-    const graphic = appendElement(figure, 'p', 'jats-graphic', 'graphic');
-    appendText(graphic, block.graphicHref + ' (in the zip output)');
+    appendGraphic(figure, block.graphicHref, options);
   }
 }
 
@@ -386,24 +403,24 @@ function appendTable(parent, block) {
   });
 }
 
-function appendBlocks(parent, blocks, level) {
+function appendBlocks(parent, blocks, level, options) {
   blocks.forEach((block) => {
     if (block.type === 'paragraph') {
       appendParagraph(parent, block);
     } else if (block.type === 'figure') {
-      appendFigure(parent, block);
+      appendFigure(parent, block, options);
     } else if (block.type === 'table') {
       appendTable(parent, block);
     } else if (block.type === 'section') {
-      appendSection(parent, block, level);
+      appendSection(parent, block, level, options);
     }
   });
 }
 
-function appendSection(parent, section, level) {
+function appendSection(parent, section, level, options) {
   const element = appendElement(parent, 'section', 'jats-section', section.label);
   appendValue(element, section.title, 'h' + Math.min(level, 6));
-  appendBlocks(element, section.blocks, level + 1);
+  appendBlocks(element, section.blocks, level + 1, options);
 }
 
 function appendAuthor(parent, author, affiliationNumberById) {
@@ -548,7 +565,8 @@ function appendReferences(parent, references) {
   references.forEach((reference) => appendReference(list, reference));
 }
 
-export function renderArticleViewModel(viewModel, document) {
+export function renderArticleViewModel(viewModel, document, options) {
+  const renderOptions = options || {};
   const article = document.createElement('article');
   article.className = 'jats-article';
   appendValue(article, viewModel.journal, 'p', 'jats-journal');
@@ -571,24 +589,25 @@ export function renderArticleViewModel(viewModel, document) {
       (paragraph) => appendParagraph(section, paragraph)
     );
   });
-  appendBlocks(article, viewModel.sections, 2);
+  appendBlocks(article, viewModel.sections, 2, renderOptions);
   if (viewModel.acknowledgements.length) {
     const section = appendElement(article, 'section', 'jats-ack', 'ack');
     appendElement(section, 'h2', '').textContent = 'Acknowledgements';
-    appendBlocks(section, viewModel.acknowledgements, 3);
+    appendBlocks(section, viewModel.acknowledgements, 3, renderOptions);
   }
-  appendBlocks(article, viewModel.appendices, 2);
+  appendBlocks(article, viewModel.appendices, 2, renderOptions);
   appendReferences(article, viewModel.references);
   return article;
 }
 
-export function renderJatsXml(xmlText, document) {
+export function renderJatsXml(xmlText, document, options) {
   const xmlDocument = new DOMParser().parseFromString(xmlText, 'application/xml');
   if (xmlDocument.getElementsByTagName('parsererror').length) {
     throw new Error('the response is not well-formed XML');
   }
   return renderArticleViewModel(
     getArticleViewModel(getXmlNode(xmlDocument.documentElement)),
-    document
+    document,
+    options
   );
 }

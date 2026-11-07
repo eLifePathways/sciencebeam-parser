@@ -73,6 +73,15 @@ JATS_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.JATS_ZIP}
 ASSET_ZIP_MEDIA_TYPES = {MediaTypes.TEI_ZIP, MediaTypes.JATS_ZIP}
 
 
+TEI_XML_ZIP_ENTRY_NAME = 'tei.xml'
+JATS_XML_ZIP_ENTRY_NAME = 'jats.xml'
+
+ZIP_ENTRY_NAME_BY_MEDIA_TYPE = {
+    MediaTypes.TEI_ZIP: TEI_XML_ZIP_ENTRY_NAME,
+    MediaTypes.JATS_ZIP: JATS_XML_ZIP_ENTRY_NAME
+}
+
+
 def normalize_and_tokenize_text(text: str) -> List[str]:
     return get_tokenized_tokens(
         normalize_text(text),
@@ -461,10 +470,10 @@ class ScienceBeamParserSessionParsedSemanticDocument(_ScienceBeamParserSessionDe
             attribution=self.session.document_attribution
         )
         xml_root = tei_document.root
-        relative_xml_filename = 'tei.xml'
+        relative_xml_filename = TEI_XML_ZIP_ENTRY_NAME
         if response_media_type in JATS_MEDIA_TYPES:
             xml_root = self._get_tei_to_jats_xml_root(xml_root)
-            relative_xml_filename = 'jats.xml'
+            relative_xml_filename = JATS_XML_ZIP_ENTRY_NAME
         local_xml_filename = os.path.join(self.temp_dir, relative_xml_filename)
         self._serialize_xml_to_file(xml_root, local_xml_filename)
         LOGGER.debug('local_xml_filename: %r', local_xml_filename)
