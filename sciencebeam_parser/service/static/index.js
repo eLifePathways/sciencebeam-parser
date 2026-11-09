@@ -233,28 +233,34 @@ function describeBytes(count) {
   return count + ' bytes';
 }
 
-/* What the body did, apart from what the status said.
+/* The body, collected here rather than by the browser's own blob machinery.
  *
- * A response arrives in two parts: the status and headers, then the body. A
- * body that stops part way leaves a request that the browser reports as
- * failed and the server's own log reports as 200 -- the server writes that
- * line when the response starts, not when it ends -- and "failed to fetch" by
- * itself sends the reader to the wrong half of that.
+ * `response.blob()` has the browser stream the body into blob storage itself,
+ * and that is the one step that fails for a large response where every part
+ * of it separately does not: the same bytes read as a stream arrive in full,
+ * and a blob built in the page holds far more than any response here. So the
+ * chunks are read and then made into a blob, which is those two steps and not
+ * the one in between.
  *
- * The bytes are counted as they pass rather than collected here, so that the
- * browser still builds the body its own way and how far it got is known
- * anyway. Where it stops is the thing worth knowing: the same place every
- * time is one kind of fault, a different place each time is another. */
+ * Counting them also says how far a body got when it does stop, which is what
+ * tells a response that ended early from a request that never arrived. */
 async function getResponseBlob(response) {
   const expected = Number(response.headers.get('content-length')) || 0;
   if (!response.body) {
     return response.blob();
   }
+  const reader = response.body.getReader();
+  const chunks = [];
   let received = 0;
   let reported = -1;
-  const counted = response.body.pipeThrough(new TransformStream({
-    transform(chunk, controller) {
-      received += chunk.byteLength;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      chunks.push(value);
+      received += value.byteLength;
       const megabytes = Math.floor(received / (1024 * 1024));
       if (megabytes !== reported) {
         reported = megabytes;
@@ -263,13 +269,7 @@ async function getResponseBlob(response) {
           + (expected ? ' of ' + describeBytes(expected) : '') + '.'
         );
       }
-      controller.enqueue(chunk);
     }
-  }));
-  try {
-    return await new Response(counted, {
-      headers: { 'content-type': response.headers.get('content-type') || '' }
-    }).blob();
   } catch (error) {
     throw new Error(
       'the body stopped after ' + describeBytes(received)
@@ -278,6 +278,9 @@ async function getResponseBlob(response) {
       + ' (' + error.message + ')'
     );
   }
+  return new Blob(chunks, {
+    type: response.headers.get('content-type') || ''
+  });
 }
 
 function addMetaRow(listElement, name, value) {
