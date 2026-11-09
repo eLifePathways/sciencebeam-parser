@@ -11,6 +11,12 @@ from sciencebeam_parser.document.layout_document import (
     LayoutToken,
 )
 from sciencebeam_parser.training.jats.aligner import (
+    _is_a_run_of,
+    _is_a_name_word,
+    _letters_of,
+    _is_bare_marker,
+    _name_words,
+    _is_printed_once_per_author,
     _may_answer_in_pieces,
     AlignmentConfig,
     LayoutDocumentJatsAligner,
@@ -35,6 +41,18 @@ from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames, JatsSub
 def _make_doc(*line_texts: str) -> LayoutDocument:
     lines = [LayoutLine.for_text(t) for t in line_texts]
     return LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=lines)])])
+
+
+def _make_doc_of_blocks(*block_texts: str) -> LayoutDocument:
+    """A document whose every line is a block of its own.
+
+    What a page sets apart it sets in its own block, and a pass reading the
+    block cannot be given a document that holds one.
+    """
+    return LayoutDocument(pages=[LayoutPage(blocks=[
+        LayoutBlock(lines=[LayoutLine.for_text(text)])
+        for text in block_texts
+    ])])
 
 
 def _fv(text: str, field: str = JatsFieldNames.BODY_SECTION_TITLE, sub: Optional[str] = None):
@@ -530,8 +548,10 @@ class TestLayoutDocumentJatsAligner:  # pylint: disable=too-many-public-methods
             'for health system organizations to implement the living evidence model.'
         )
         abstract_text = page1 + ' ' + page2
-        # Doc reading order: page1, then sidebar, then page2 (three separate lines)
-        doc = _make_doc(page1, sidebar, page2)
+        # Doc reading order: page1, then sidebar, then page2.  The page sets
+        # the box beside the article rather than inside the abstract, so each
+        # is a block of its own, which is what the extraction gives.
+        doc = _make_doc_of_blocks(page1, sidebar, page2)
         fvs = [_fv(abstract_text, JatsFieldNames.ABSTRACT)]
         annotated = self._align(doc, fvs)
 
@@ -3128,3 +3148,695 @@ class TestAKeywordLineThePageSetsPerLanguage:
             if annotated.get_token_field(token) == JatsFieldNames.KEYWORDS
         }
         assert 'Palavras-chave' not in labelled
+
+
+class TestWhetherEveryPrintingIsTheSameAffiliation:
+    """Whether the page's repeated institution is the affiliation declared.
+
+    A deposit declaring one affiliation for all of its authors says nothing
+    about which printing belongs to whom, because they all do, and separate
+    institutions say the same.  What it does say is which printing is which
+    where one affiliation is printed inside another, and the per-author
+    masking is then the only thing that sorts them out.
+    """
+
+    ONE = ('Example Institute, Exampleton',)
+    SEPARATE = ('Example Institute, Exampleton', 'Sample College, Sampleton')
+    NESTED = (
+        'Department of Examples, Example Institute, Exampleton',
+        'Example Institute, Exampleton',
+    )
+    ALIKE = (
+        'Doctoral candidate in Examples. Example Institute, Exampleton',
+        'Doctor of Examples. Example Institute, Exampleton',
+    )
+
+    @staticmethod
+    def _once(field: str, declared: Sequence[str], **kwargs) -> bool:
+        return _is_printed_once_per_author(
+            JatsFieldValue(text=declared[0], field_name=field, **kwargs),
+            declared,
+        )
+
+    def test_one_declared_affiliation_is_every_printing_of_it(self):
+        assert self._once(JatsFieldNames.AUTHOR_AFF, self.ONE)
+
+    def test_separate_declared_affiliations_are_too(self):
+        assert self._once(JatsFieldNames.AUTHOR_AFF, self.SEPARATE)
+
+    def test_an_affiliation_printed_inside_another_is_not(self):
+        assert not self._once(JatsFieldNames.AUTHOR_AFF, self.NESTED)
+
+    def test_two_that_name_the_same_place_are_not(self):
+        assert not self._once(JatsFieldNames.AUTHOR_AFF, self.ALIKE)
+
+    def test_a_sub_field_is_not(self):
+        assert not self._once(
+            JatsFieldNames.AUTHOR_AFF, self.ONE,
+            sub_field_name=JatsSubFieldNames.AUTHOR_AFF_ADDR,
+        )
+
+    def test_another_field_is_not(self):
+        assert not self._once(JatsFieldNames.AUTHOR, self.ONE)
+
+
+class TestOneInstitutionUnderEveryAuthor:
+    """A deposit may declare one affiliation for a byline of several authors.
+
+    The page then sets the institution again under each name, and the deposit
+    has one value to answer with, so only the first printing was labelled and
+    the rest were background under names that were labelled.
+    """
+
+    AFFILIATION = 'Example Institute, Exampleton, Exampleland'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _affiliation_runs(self) -> int:
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe. ' + self.AFFILIATION,
+            'John Alan Roe. ' + self.AFFILIATION,
+            'Ann Example Smith. ' + self.AFFILIATION,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe John Alan Roe Ann Example Smith', JatsFieldNames.AUTHOR),
+            _fv(self.AFFILIATION, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        indices = [
+            index for index, token in enumerate(doc.iter_all_tokens())
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR_AFF
+        ]
+        if not indices:
+            return 0
+        return 1 + sum(1 for a, b in zip(indices, indices[1:]) if b - a > 1)
+
+    def test_every_printing_is_labelled(self):
+        assert self._affiliation_runs() == 3
+
+
+class TestAnAccentThePageSetsApart:
+    """A font may carry an accent as a character of its own.
+
+    The word then arrives in two tokens -- the letters up to the vowel, and
+    the mark with the rest of the word behind it -- and the deposit writes it
+    as one.  Read without their marks the two say the same word, so the value
+    comes out whole rather than in the pieces the accents cut it into.
+    """
+
+    STATEMENT = (
+        'Each author took part in the conception of the study, in the'
+        ' collection of its data and in the revision of the article.'
+    )
+    PRINTED = (
+        'Each author took part in the conceptio \u0301n of the study, in the'
+        ' collection of its data and in the revisio \u0301n of the article.'
+    )
+
+    def _runs(self) -> List[str]:
+        doc = _make_doc('A survey of the herons of the northern marshes', self.PRINTED)
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.STATEMENT, JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token)
+            == JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH
+        ]
+
+    def test_the_statement_keeps_the_words_the_accents_fall_in(self):
+        labelled = self._runs()
+        assert 'conceptio' in labelled and 'revisio' in labelled
+
+    def test_nothing_inside_the_statement_is_left_out(self):
+        labelled = self._runs()
+        assert labelled[0] == 'Each' and labelled[-1] == '.'
+        assert len(labelled) == len(list(_make_doc(self.PRINTED).iter_all_tokens()))
+
+
+class TestTheMarkerBehindAByline:
+    """A page may tie a name to more than the deposit declares.
+
+    The affiliation markers are declared against each author and the letter
+    tying the name to a line of degrees is not, so the page prints a marker
+    the deposit has no value for.  It closes the byline, which is where
+    GROBID keeps it.
+    """
+
+    BYLINE = 'Mary Jane Doe 1,a'
+    AFFILIATION = 'Example Institute, Exampleton, Exampleland'
+
+    def _byline_tokens(self) -> List[str]:
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE + ' (https://orcid.org/0000-0001-0000-0000)',
+            '1 ' + self.AFFILIATION,
+            'a Example Degree',
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1', JatsFieldNames.AUTHOR),
+            _fv('1 ' + self.AFFILIATION, JatsFieldNames.AUTHOR_AFF),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR
+        ]
+
+    def test_the_marker_the_deposit_never_declared_closes_the_byline(self):
+        assert self._byline_tokens()[-2:] == [',', 'a']
+
+    def test_what_the_byline_is_printed_in_front_of_stays_outside(self):
+        assert '(' not in self._byline_tokens()
+
+
+class TestSeparateInstitutionsUnderEveryAuthor:
+    """A bilingual preprint prints its affiliations twice.
+
+    Behind their markers on the side it is deposited in, and again under each
+    name on the side it translates into.  The second list is the same
+    institutions in the same words, and the marker stays with the first.
+    """
+
+    FIRST = 'Example Institute, Exampleton, Exampleland'
+    SECOND = 'Sample College, Sampleton, Sampleland'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labelled(self) -> List[str]:
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe 1, John Alan Roe 2',
+            '1 ' + self.FIRST,
+            '2 ' + self.SECOND,
+            'Un levantamento das garcas dos pantanos do norte',
+            'Mary Jane Doe - ' + self.FIRST,
+            'John Alan Roe - ' + self.SECOND,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1 John Alan Roe 2', JatsFieldNames.AUTHOR),
+            _fv('1 ' + self.FIRST, JatsFieldNames.AUTHOR_AFF),
+            _fv('2 ' + self.SECOND, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.AUTHOR_AFF
+        ]
+
+    def test_each_institution_is_labelled_where_it_is_printed_again(self):
+        labelled = self._labelled()
+        assert labelled.count('Institute') == 2
+        assert labelled.count('College') == 2
+
+    def test_the_marker_stays_with_the_list_that_is_printed_behind_it(self):
+        assert self._labelled().count('1') == 1
+
+
+class TestTwoTitlesTheDepositWritesInTheOtherOrder:
+    """A deposit may declare its two titles in the order the page reverses.
+
+    Each one's opening words occur once on the page and the whole of it
+    matches there, so both are anchors -- and the two contradict each other,
+    which drops one of them.  What was dropped is still the place the value
+    matched, and nothing else finds it.
+    """
+
+    PRINTED_FIRST = 'Um levantamento das garcas dos pantanos do norte'
+    PRINTED_SECOND = 'A survey of the herons of the northern marshes'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _titles(self) -> List[str]:
+        doc = _make_doc(self.PRINTED_FIRST, self.PRINTED_SECOND, self.ABSTRACT)
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv(self.PRINTED_SECOND, JatsFieldNames.TITLE),
+            _fv(self.PRINTED_FIRST, JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.TITLE
+        ]
+
+    def test_both_printings_are_labelled(self):
+        labelled = self._titles()
+        assert 'levantamento' in labelled and 'herons' in labelled
+
+
+class TestAKeywordListThePageBracketsEachTermOf:
+    """A page may set every term of its keyword list in square brackets.
+
+    The deposit declares the terms and not the brackets, so the run matched
+    across the list carries the brackets printed between its terms and not
+    the two closing it in.
+    """
+
+    KEYWORDS = 'herons, marshes, estuaries'
+    PRINTED = 'Keywords: [herons], [marshes], [estuaries]'
+
+    def _labelled(self) -> List[str]:
+        doc = _make_doc('A survey of the herons of the northern marshes', self.PRINTED)
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.KEYWORDS, JatsFieldNames.KEYWORDS),
+        ])
+        return [
+            token.text for token in doc.iter_all_tokens()
+            if annotated.get_token_field(token) == JatsFieldNames.KEYWORDS
+        ]
+
+    def test_the_list_keeps_the_brackets_closing_it_in(self):
+        labelled = self._labelled()
+        assert labelled[0] == '[' and labelled[-1] == ']'
+
+    def test_the_word_introducing_it_stays_outside(self):
+        assert 'Keywords' not in self._labelled()
+
+
+class TestWhatCouldBePartOfAName:
+    """Which word a page may set inside a name the deposit declares without it.
+
+    A middle name or an initial standing for one.  The word joining two names
+    is not one, which is what keeps a byline's names apart.
+    """
+
+    def test_a_middle_name(self):
+        assert _is_a_name_word('Jane')
+
+    def test_a_name_the_page_accents(self):
+        assert _is_a_name_word('\u00c1ngel')
+
+    def test_an_initial_with_its_full_stop(self):
+        assert _is_a_name_word('J.')
+
+    def test_the_word_joining_two_names(self):
+        assert not _is_a_name_word('and')
+        assert not _is_a_name_word('y')
+
+    def test_punctuation_or_a_marker(self):
+        assert not _is_a_name_word(',')
+        assert not _is_a_name_word('1')
+
+
+class TestWhatCountsAsABareMarker:
+    """Only a marker tying a name to an affiliation, never a word."""
+
+    def test_a_digit_or_two(self):
+        assert _is_bare_marker('1') and _is_bare_marker('12')
+
+    def test_a_single_letter(self):
+        assert _is_bare_marker('a')
+
+    def test_the_symbols_a_page_uses_instead(self):
+        assert _is_bare_marker('*') and _is_bare_marker('†')
+
+    def test_a_raised_digit(self):
+        assert _is_bare_marker('\u00b3') and _is_bare_marker('\u2074')
+
+    def test_not_a_word(self):
+        assert not _is_bare_marker('and') and not _is_bare_marker('Universidad')
+
+    def test_not_a_longer_number(self):
+        assert not _is_bare_marker('2021')
+
+
+class TestTheMarkerAnAffiliationIsPrintedBehind:
+    """A page lists its affiliations behind the marker tying each to a name.
+
+    The deposit declares that marker against the name, so at the head of the
+    block it answers to nothing and is left as background, which breaks the
+    only link between a name and where that author works.  GROBID keeps it
+    inside the affiliation on 2,076 of its runs and outside one on 78.
+    """
+
+    FIRST = 'Example Institute, Exampleton, Exampleland'
+    SECOND = 'Second Example Institute, Exampleton, Exampleland'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe 1 , John Alan Roe 2',
+            '1 .- ' + self.FIRST + '. 2 .- ' + self.SECOND,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1 , John Alan Roe 2', JatsFieldNames.AUTHOR),
+            _fv(self.FIRST, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.SECOND, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def _affiliation_opening(self):
+        labels = self._labels()
+        starts = [
+            index for index, (_t, f) in enumerate(labels)
+            if f == JatsFieldNames.AUTHOR_AFF
+            and (index == 0 or labels[index - 1][1] != JatsFieldNames.AUTHOR_AFF)
+        ]
+        return [labels[index][0] for index in starts]
+
+    def test_each_affiliation_opens_with_its_marker(self):
+        assert self._affiliation_opening() == ['1', '2']
+
+    def test_the_stop_closing_the_one_above_is_left_to_it(self):
+        labels = self._labels()
+        for index, (text, field) in enumerate(labels):
+            if text == '2' and field == JatsFieldNames.AUTHOR_AFF:
+                assert labels[index - 1][0] == '.'
+                assert labels[index - 1][1] != JatsFieldNames.AUTHOR_AFF
+                return
+        raise AssertionError('the second marker was not labelled')
+
+
+class TestTheMarkerOnTheLineAboveAnAffiliation:
+    """A marker the line above ends with belongs to what that line says.
+
+    A page sets the corresponding author's asterisk after their name and the
+    affiliation block on the line under it, where that affiliation carries a
+    marker of its own.  Taken as well, the asterisk puts the author's own
+    marker inside the affiliation it does not belong to.
+    """
+
+    AFFILIATION = 'Example Institute, Exampleton, Exampleland'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            'Mary Jane Doe 1 *',
+            '1 . ' + self.AFFILIATION,
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Mary Jane Doe 1', JatsFieldNames.AUTHOR),
+            _fv(self.AFFILIATION, JatsFieldNames.AUTHOR_AFF),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_asterisk_is_not_the_affiliation(self):
+        assert ('*', JatsFieldNames.AUTHOR_AFF) not in self._labels()
+
+    def test_the_affiliation_still_opens_with_its_own_marker(self):
+        labels = self._labels()
+        starts = [
+            index for index, (_t, f) in enumerate(labels)
+            if f == JatsFieldNames.AUTHOR_AFF
+            and (index == 0 or labels[index - 1][1] != JatsFieldNames.AUTHOR_AFF)
+        ]
+        assert [labels[index][0] for index in starts] == ['1']
+
+
+class TestWhetherARunOpensOrClosesADeclaredName:
+    """A deposit writes some names surname first and some given first."""
+
+    @staticmethod
+    def _run(printed: str, declared: str) -> bool:
+        return _is_a_run_of(_name_words(printed), _name_words(declared))
+
+    def test_the_opening_of_a_name(self):
+        assert self._run('Doe-Smith', 'Doe-Smith Mary')
+
+    def test_the_close_of_a_name(self):
+        assert self._run('del Roe-Jones', 'John del Roe-Jones')
+
+    def test_the_whole_of_it(self):
+        assert self._run('Mary Doe', 'Mary Doe')
+
+    def test_not_a_run_out_of_the_middle(self):
+        assert not self._run('Example', 'Mary Example Doe Smith Jones')
+
+    def test_not_an_initial_on_its_own(self):
+        assert not self._run('J', 'John del Roe-Jones')
+
+    def test_not_a_word_the_name_does_not_have(self):
+        assert not self._run('Orcid', 'Mary Doe')
+
+
+class TestTheNameAPageSetsInFrontOfAnIdentifier:
+    """A page lists its ORCIDs as `Orcid: <name> <identifier>`.
+
+    The name it sets there is often only the surname, which the deposit never
+    declares on its own, so the identifier was labelled and the name in front
+    of it was background.  Looking for a bare surname across the front matter
+    is what does not work; the identifier is what says a name is in front of
+    it.
+    """
+
+    NAMES = ['Doe-Smith Mary', 'John del Roe-Jones']
+    BYLINE = 'Mary Doe-Smith 1 , John del Roe-Jones 2'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'Orcid: Doe-Smith https://orcid.org/0000-0002-1111-2222',
+            'Orcid: del Roe-Jones https://orcid.org/0000-0003-3333-4444',
+            self.ABSTRACT,
+        )
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+        ]
+        for name in self.NAMES:
+            field_values.append(JatsFieldValue(
+                text=name, field_name=JatsFieldNames.AUTHOR,
+                sub_field_name=JatsSubFieldNames.AUTHOR_NAME, fallback_text=name,
+            ))
+        field_values.append(_fv(self.BYLINE, JatsFieldNames.AUTHOR))
+        for orcid in (
+            'https://orcid.org/0000-0002-1111-2222',
+            'https://orcid.org/0000-0003-3333-4444',
+        ):
+            field_values.append(_fv(orcid, JatsFieldNames.ORCID))
+        field_values.append(_fv(self.ABSTRACT, JatsFieldNames.ABSTRACT))
+        annotated = LayoutDocumentJatsAligner().align(doc, field_values)
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_name_in_front_of_each_identifier_is_the_author(self):
+        labels = self._labels()
+        before = [
+            labels[index - 1][1] for index, (_t, field) in enumerate(labels)
+            if field == JatsFieldNames.ORCID and index
+            and labels[index - 1][1] != JatsFieldNames.ORCID
+        ]
+        assert before == [JatsFieldNames.AUTHOR, JatsFieldNames.AUTHOR]
+
+    def test_the_word_introducing_the_line_stays_outside_it(self):
+        authored = [
+            index for index, (t, f) in enumerate(self._labels())
+            if t == 'Orcid' and f == JatsFieldNames.AUTHOR
+        ]
+        assert not authored
+
+
+class TestANoteDoesNotTakeTheNameItIntroduces:
+    """A correspondence block names the person to write to.
+
+    The block is matched so the region reads its lines as front matter, and it
+    carries no header label of its own.  Labelled over the author's name it
+    takes that name off the person it names, and the link between an author
+    and their address is lost.  GROBID labels the name a correspondence
+    statement introduces on 10 of the 13 its corpus carries.
+    """
+
+    NAME = 'Jane Example Smith'
+    BYLINE = 'Jane Example Smith 1 , John Alan Roe 2'
+    NOTE = 'Correspondence to Jane Example Smith, j.smith@example.org'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.BYLINE,
+            'Correspondence to ' + self.NAME,
+            'j.smith@example.org',
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            JatsFieldValue(
+                text=self.NAME, field_name=JatsFieldNames.AUTHOR,
+                sub_field_name=JatsSubFieldNames.AUTHOR_NAME, fallback_text=self.NAME,
+            ),
+            _fv(self.BYLINE, JatsFieldNames.AUTHOR),
+            _fv(self.NOTE, JatsFieldNames.CORRESPONDENCE),
+            _fv('j.smith@example.org', JatsFieldNames.EMAIL),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_name_the_block_names_is_the_author(self):
+        labels = self._labels()
+        start = next(
+            index for index, (text, _f) in enumerate(labels)
+            if text == 'Correspondence'
+        )
+        named = [f for _t, f in labels[start:start + 6]]
+        assert JatsFieldNames.AUTHOR in named
+
+    def test_the_words_introducing_it_are_not(self):
+        labels = self._labels()
+        assert ('Correspondence', JatsFieldNames.AUTHOR) not in labels
+
+
+class TestAnIdentifierThatDiffersInOneCharacter:
+    """A repeat of the article's identifier is every character of it.
+
+    A preprint server prints the identifier of each version it has published
+    and they differ in their last character, which is why a repeat has to be
+    exact.  The check counted how much of the page the match covered instead,
+    and an alignment that steps over one character on each side covers as many
+    characters as the value has: a paper citing a protocol whose identifier
+    differs from its own in one digit had that protocol labelled as its own.
+    """
+
+    OWN = 'https://doi.org/10.12688/openreseurope.14041.2'
+    CITED = 'https://doi.org/10.12688/openreseurope.14044.2'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _identified(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.OWN,
+            'see the protocol ( Open Res Europe 2022 , 1:113 ( ' + self.CITED + ' ) )',
+            self.ABSTRACT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.OWN, JatsFieldNames.DOI),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+        ])
+        labels = [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+        runs: List[Tuple[str, bool]] = []
+        for text, field in labels:
+            if field == JatsFieldNames.DOI:
+                if runs and runs[-1][1]:
+                    runs[-1] = (runs[-1][0] + text, True)
+                else:
+                    runs.append((text, True))
+            elif runs and runs[-1][1]:
+                runs.append(('', False))
+        return [text for text, _ in runs if text]
+
+    def test_the_article_keeps_its_own(self):
+        assert any('14041' in run for run in self._identified())
+
+    def test_the_one_it_cites_is_not_taken_for_it(self):
+        assert not any('14044' in run for run in self._identified())
+
+
+class TestTheColonAStatementIsIntroducedBy:
+    """A page introduces a statement by name and the deposit declares neither.
+
+    "Author's contribution: WADS conceived ..." prints the words introducing
+    the statement and the colon with them, and the deposit holds only what
+    follows.  The match opens on the colon, which belongs to the introduction
+    rather than to the statement.
+    """
+
+    STATEMENT = 'WADS conceived and designed the analysis and collected the data'
+    ABSTRACT = (
+        'The marshes north of the estuary were surveyed over four summers to'
+        ' count the herons nesting along them.'
+    )
+
+    def _labels(self):
+        doc = _make_doc(
+            'A survey of the herons of the northern marshes',
+            self.ABSTRACT,
+            "Author's contribution: " + self.STATEMENT,
+        )
+        annotated = LayoutDocumentJatsAligner().align(doc, [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv(self.ABSTRACT, JatsFieldNames.ABSTRACT),
+            _fv(self.STATEMENT, JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH),
+        ])
+        return [
+            (token.text, annotated.get_token_field(token))
+            for token in doc.iter_all_tokens()
+        ]
+
+    def test_the_colon_is_not_the_statement(self):
+        assert (':', JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH) not in self._labels()
+
+    def test_the_statement_itself_is_kept(self):
+        labels = self._labels()
+        assert ('WADS', JatsFieldNames.CONTRIBUTION_SECTION_PARAGRAPH) in labels
+
+
+class TestWhetherARepeatIsTheSamePrinting:
+    """How a repeat of a name is told from a different one.
+
+    A deposit hyphenates a surname and the page sets it with a space, so the
+    repeat falls a character short of the value.  That is where a different
+    author and an ordinary word also sit: `Duarte CE` reaches `Duarte FC` one
+    short and `Ferreira C` reaches the Spanish `ferencias` two short.  No
+    length tells the first from the others; the letters do.
+    """
+
+    @staticmethod
+    def _same(printed: str, declared: str) -> bool:
+        return _letters_of(printed) == _letters_of(declared)
+
+    def test_the_same_name_without_its_hyphen(self):
+        assert self._same('Gómez Noronha', 'Gómez-Noronha')
+
+    def test_the_same_name_the_page_spaces_differently(self):
+        assert self._same('vera - pinto', 'Vera-Pinto')
+
+    def test_a_different_author_by_one_letter(self):
+        assert not self._same('Duarte FC', 'Duarte CE')
+
+    def test_a_word_that_is_not_a_name(self):
+        assert not self._same('ferencias', 'Ferreira C')
+
+    def test_a_name_missing_a_part(self):
+        assert not self._same('Alessandro Cavalcanti', 'Alessandro Leite Cavalcanti')
