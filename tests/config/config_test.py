@@ -11,7 +11,8 @@ from sciencebeam_parser.config.config import (
     UnknownProfileError,
     _deep_merge,
     _resolve_sequence_model_profile,
-    get_llm_response_cache_dir
+    get_llm_response_cache_dir,
+    parse_env_value
 )
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
@@ -457,6 +458,32 @@ class TestGetLlmResponseCacheDir:
         assert get_llm_response_cache_dir(
             AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
         ) is None
+
+
+class TestParseEnvValue:
+    def test_should_parse_a_list(self):
+        assert parse_env_value('[a, b]') == ['a', 'b']
+
+    def test_should_parse_a_list_of_urls_without_quoting(self):
+        assert parse_env_value('[https://a.example.org, http://localhost:4321]') == [
+            'https://a.example.org', 'http://localhost:4321'
+        ]
+
+    def test_should_parse_a_bool(self):
+        assert parse_env_value('false') is False
+
+    def test_should_parse_an_int(self):
+        assert parse_env_value('222') == 222
+
+    def test_should_use_an_asterisk_as_text(self):
+        """A bare `*` is a yaml alias indicator rather than a string."""
+        assert parse_env_value('*') == '*'
+
+    def test_should_use_a_quoted_asterisk_as_text(self):
+        assert parse_env_value("'*'") == '*'
+
+    def test_should_use_an_asterisk_in_a_list_as_text(self):
+        assert parse_env_value('["*"]') == ['*']
 
 
 class TestAppConfig:

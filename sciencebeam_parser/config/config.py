@@ -41,8 +41,13 @@ class InvalidProfileError(ValueError):
     """A profile the process must not serve, found before it serves anything."""
 
 
-def parse_env_value(value: str) -> Union[str, int]:
-    return yaml.safe_load(value)
+def parse_env_value(value: str) -> Any:
+    """The value as YAML, or as its own text where that is not YAML."""
+    try:
+        return yaml.safe_load(value)
+    except yaml.YAMLError:
+        LOGGER.info('not yaml, using the value as text: %r', value)
+        return value
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:

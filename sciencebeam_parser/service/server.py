@@ -10,6 +10,7 @@ import uvicorn
 from sciencebeam_parser.app.parser import ScienceBeamParser
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.service.api.app import create_api_app
+from sciencebeam_parser.service.cors import with_cross_origin_access
 from sciencebeam_parser.service.routers.index import create_index_router
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
@@ -26,7 +27,7 @@ def create_app_for_parser(
     app.include_router(index_router, include_in_schema=False)
 
     api_app = create_api_app(sciencebeam_parser)
-    app.mount('/api', api_app)
+    app.mount('/api', with_cross_origin_access(api_app, sciencebeam_parser.config))
 
     return app
 
