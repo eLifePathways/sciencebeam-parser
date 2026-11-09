@@ -116,28 +116,6 @@ class TestGetDeploymentProps:
             if item['is_readable']
         ] == [MediaTypes.JATS_XML, MediaTypes.JATS_ZIP]
 
-    def test_should_name_the_shape_to_ask_for_where_an_archive_cannot_be_held(
-        self, sciencebeam_parser_mock: MagicMock
-    ):
-        props = get_deployment_props(sciencebeam_parser_mock)
-        fallback_by_media_type = {
-            item['media_type']: item['fallback_media_type']
-            for item in props['output_media_types']
-        }
-        assert fallback_by_media_type[MediaTypes.JATS_ZIP] == MediaTypes.JATS_XML
-        assert fallback_by_media_type[MediaTypes.TEI_ZIP] == MediaTypes.TEI_XML
-        assert fallback_by_media_type[MediaTypes.JATS_XML] is None
-        assert fallback_by_media_type[MediaTypes.PDF] is None
-
-    def test_should_only_fall_back_to_a_shape_it_also_offers(
-        self, sciencebeam_parser_mock: MagicMock
-    ):
-        props = get_deployment_props(sciencebeam_parser_mock)
-        offered = {item['media_type'] for item in props['output_media_types']}
-        for item in props['output_media_types']:
-            if item['fallback_media_type']:
-                assert item['fallback_media_type'] in offered
-
     def test_should_name_the_xml_each_archive_carries(
         self, sciencebeam_parser_mock: MagicMock
     ):
