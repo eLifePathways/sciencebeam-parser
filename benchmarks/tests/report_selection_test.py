@@ -78,7 +78,7 @@ class TestFieldSelection:
             selection=Selection(fields=("title",), methods=("exact",)),
         )
         assert [row.split("|")[1].strip() for row in _rows(report)] == [
-            "title (exact)", "title (exact)", "title (exact)",
+            "title (exact, string)", "title (exact, string)", "title (exact, string)",
         ]
 
     def test_shows_only_the_selected_corpus(self):
@@ -218,13 +218,13 @@ class TestRowFilter:
     def test_keeps_only_the_named_method(self):
         rows = self._report({"title": (("exact", ""),)})
         assert [row.split("|")[1].strip() for row in rows] == [
-            "title (exact)", "title (exact)", "title (exact)",
+            "title (exact, string)", "title (exact, string)", "title (exact, string)",
         ]
 
     def test_an_empty_method_keeps_every_one(self):
         rows = self._report({"title": (("", ""),)})
         assert {row.split("|")[1].strip() for row in rows} == {
-            "title (exact)", "title (levenshtein)",
+            "title (exact, string)", "title (levenshtein, string)",
         }
 
     def test_fails_naming_a_scope_no_summary_has(self):
@@ -238,7 +238,7 @@ class TestExpectedTypes:
             [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
             selection=Selection(expected_types={"title": "string"}),
         )
-        assert "| title (exact)" in report
+        assert "| title (exact, string)" in report
 
     def test_fails_stating_both_types(self):
         with pytest.raises(SelectionError, match="'string'.*'partial_list'"):
@@ -270,7 +270,7 @@ class TestPrimaryColumn:
 
     def _header(self, report: str) -> list:
         line = next(
-            line for line in report.splitlines() if line.startswith("| Field (method)")
+            line for line in report.splitlines() if line.startswith("| Field (method, type)")
         )
         return [cell.strip() for cell in line.split("|")[1:-1]]
 
@@ -282,7 +282,7 @@ class TestPrimaryColumn:
         header = self._header(
             _render_comparison_report(self._labeled(), primary=0)
         )
-        assert header[3:6] == ["a", "b", "c"]
+        assert header[2:5] == ["a", "b", "c"]
 
     def test_gives_no_delta_column_to_the_primary(self):
         header = self._header(

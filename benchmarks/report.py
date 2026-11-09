@@ -295,9 +295,9 @@ def _render_field_table(
     ]
 
     col_labels = labels + [f"Δ {label}" for label in other_labels]
-    n_cols = 2 * len(other_labels) + 4
+    n_cols = 2 * len(other_labels) + 3
     lines = [
-        "| Field (method) | Type | Docs | " + " | ".join(col_labels) + " |",
+        "| Field (method, type) | Docs | " + " | ".join(col_labels) + " |",
         "|" + "|".join(["---"] * n_cols) + "|",
     ]
 
@@ -305,7 +305,7 @@ def _render_field_table(
         field_type = field_scoring_types.get(row.field, "string")
         cells = _score_cells(row.values, primary)
         lines.append(
-            f"| {row.field} ({row.method}) | {field_type} | {row.docs_label} | "
+            f"| {row.field} ({row.method}, {field_type}) | {row.docs_label} | "
             + " | ".join(cells) + " |"
         )
 
@@ -656,8 +656,8 @@ def _differently_scored_note(
     """Fields the runs did not measure the same way.
 
     A delta between two runs that scored a field differently is a difference between the
-    measures as much as between the runs, and nothing else in the table says so: the Type
-    column states the primary run's.
+    measures as much as between the runs, and nothing else in the table says so: the type in
+    the first column is the primary run's.
     """
     differing = []
     for field in field_names:

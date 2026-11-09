@@ -173,7 +173,7 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
         assert "## ScienceBeam Parser Evaluation" in report
 
     def _header_line(self, report: str) -> str:
-        return next(line for line in report.splitlines() if "Field (method)" in line)
+        return next(line for line in report.splitlines() if "Field (method, type)" in line)
 
     def test_includes_tool_labels_in_table_header(self):
         header = self._header_line(_render_comparison_report(self._two()))
@@ -203,11 +203,13 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
 
     def test_field_and_method_combined_in_row_key(self):
         report = _render_comparison_report(self._two())
-        assert "title (levenshtein)" in report
+        assert "title (levenshtein, string)" in report
 
     def test_type_shown_in_row(self):
         report = _render_comparison_report(self._two())
-        title_row = next(line for line in report.splitlines() if "title (levenshtein)" in line)
+        title_row = next(
+            line for line in report.splitlines() if "title (levenshtein, string)" in line
+        )
         assert "string" in title_row
 
     def test_renders_dash_when_other_f1_absent(self):
@@ -218,7 +220,9 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
             corpora=_corpus([_agg("string", "levenshtein", {})]),
         )
         report = _render_comparison_report([("GROBID", other), ("SB (PR)", _title_summary(0.85))])
-        title_row = next(line for line in report.splitlines() if "title (levenshtein)" in line)
+        title_row = next(
+            line for line in report.splitlines() if "title (levenshtein, string)" in line
+        )
         assert title_row.count("— |") == 2  # GROBID F1 and delta both "—"
 
     def test_renders_dash_when_primary_f1_absent(self):
@@ -229,7 +233,9 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
             corpora=_corpus([_agg("string", "levenshtein", {})]),
         )
         report = _render_comparison_report([("GROBID", _title_summary(0.82)), ("SB (PR)", primary)])
-        title_row = next(line for line in report.splitlines() if "title (levenshtein)" in line)
+        title_row = next(
+            line for line in report.splitlines() if "title (levenshtein, string)" in line
+        )
         assert title_row.count("— |") == 2  # primary F1 and delta both "—"
 
     def test_doc_counts_shown_for_each_tool(self):
@@ -244,13 +250,13 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
             ("SB (PR)", _title_summary(0.852)),
         ]
         report = _render_comparison_report(summaries)
-        header = next(line for line in report.splitlines() if "Field (method)" in line)
+        header = next(line for line in report.splitlines() if "Field (method, type)" in line)
         assert "Δ GROBID" in header
         assert "Δ SB 0.1.x" in header
 
     def test_single_summary_renders_without_delta_columns(self):
         report = _render_comparison_report([("SB (PR)", _title_summary(0.852))])
-        header = next(line for line in report.splitlines() if "Field (method)" in line)
+        header = next(line for line in report.splitlines() if "Field (method, type)" in line)
         assert "Δ" not in header
         assert "0.852" in report
 
@@ -602,11 +608,11 @@ class TestGoldSplitSection:
             ("current", _split_summary(0.429, 0.590, _presence(40, 5, 3, 3))),
         ])
         assert (
-            "| acknowledgement (edit_sim) | string | all 40 | 0.545 | 0.429 | -0.116 |"
+            "| acknowledgement (edit_sim, string) | all 40 | 0.545 | 0.429 | -0.116 |"
             in report
         )
         assert (
-            "| acknowledgement (edit_sim) | string | gold 5 | 0.750 | 0.590 | -0.160 |"
+            "| acknowledgement (edit_sim, string) | gold 5 | 0.750 | 0.590 | -0.160 |"
             in report
         )
 
@@ -615,7 +621,7 @@ class TestGoldSplitSection:
             ("wapiti", _split_summary(0.8, 0.8, _presence(40, 40))),
             ("current", _split_summary(0.9, 0.9, _presence(40, 40))),
         ])
-        assert "| acknowledgement (edit_sim) | string | 40 | 0.800 | 0.900 | +0.100 |" in report
+        assert "| acknowledgement (edit_sim, string) | 40 | 0.800 | 0.900 | +0.100 |" in report
 
     def test_counts_what_each_variant_produced_against_no_gold(self):
         report = _render_comparison_report([
@@ -631,7 +637,7 @@ class TestGoldSplitSection:
             ("wapiti", _split_summary(0.0, 0.0, _presence(40, 0, 13, 13))),
             ("current", _split_summary(0.0, 0.0, _presence(40, 0, 30, 30))),
         ])
-        assert "| acknowledgement (edit_sim) | string | 40 | — | — | — |" in report
+        assert "| acknowledgement (edit_sim, string) | 40 | — | — | — |" in report
         assert "gold 0" not in report
 
     def test_omits_the_section_where_the_gold_records_every_document(self):
@@ -655,7 +661,7 @@ class TestGoldSplitSection:
         new = _split_summary(0.9, 0.95, _presence(40, 5, 3, 3), field="title")
         new["corpora"]["biorxiv"] = new["corpora"].pop("scielo_br")
         report = _render_comparison_report([("wapiti", old), ("current", new)])
-        assert "| title (edit_sim) | string | gold 5 | — | 0.950 | — |" in report
+        assert "| title (edit_sim, string) | gold 5 | — | 0.950 | — |" in report
 
     def test_names_a_variant_summarised_before_the_split_as_unknown(self):
         old = _title_summary(0.80, method="edit_sim")
