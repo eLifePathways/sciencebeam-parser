@@ -382,13 +382,13 @@ class TestVariantsSection:
     def test_marks_the_column_the_deltas_measure_against(self):
         report = self._report(variants=self._DESCRIBED, primary=0)
         line = next(
-            line for line in report.splitlines() if line.startswith("| A | GROBID |")
+            line for line in report.splitlines() if line.startswith("| G | GROBID |")
         )
         assert "deltas are measured against this" in line
 
     def test_leaves_the_others_unmarked(self):
         report = self._report(variants=self._DESCRIBED, primary=0)
         line = next(
-            line for line in report.splitlines() if line.startswith("| B | ScienceBeam |")
+            line for line in report.splitlines() if line.startswith("| S | ScienceBeam |")
         )
         assert "deltas are measured against" not in line
