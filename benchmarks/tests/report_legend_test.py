@@ -39,10 +39,10 @@ class TestRenderLegend:
     def test_names_each_key_and_marks_the_reference(self):
         lines = render_legend(["grobid", "current"], primary=-1)
         assert "| G | grobid |  |" in lines
-        assert "| C | current | deltas are measured against this |" in lines
+        assert "| C | current | reference (Δ X = this − X) |" in lines
 
     def test_marks_nothing_for_a_single_column(self):
-        assert "deltas" not in "\n".join(render_legend(["current"], primary=-1))
+        assert "reference" not in "\n".join(render_legend(["current"], primary=-1))
 
     def test_says_what_each_is_where_described(self):
         lines = render_legend(["grobid"], primary=0, described=[("grobid", "`grobid` 0.9")])

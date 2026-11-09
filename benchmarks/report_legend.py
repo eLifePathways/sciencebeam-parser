@@ -91,7 +91,7 @@ def render_legend(
         if with_what:
             cells.append(what_by_label.get(label, ""))
         cells.append(
-            "deltas are measured against this"
+            "reference (Δ X = this − X)"
             if index == reference and len(labels) > 1 else ""
         )
         rows.append("| " + " | ".join(cells) + " |")

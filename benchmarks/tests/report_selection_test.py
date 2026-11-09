@@ -384,11 +384,11 @@ class TestVariantsSection:
         line = next(
             line for line in report.splitlines() if line.startswith("| G | GROBID |")
         )
-        assert "deltas are measured against this" in line
+        assert "reference (Δ X = this − X)" in line
 
     def test_leaves_the_others_unmarked(self):
         report = self._report(variants=self._DESCRIBED, primary=0)
         line = next(
             line for line in report.splitlines() if line.startswith("| S | ScienceBeam |")
         )
-        assert "deltas are measured against" not in line
+        assert "reference" not in line

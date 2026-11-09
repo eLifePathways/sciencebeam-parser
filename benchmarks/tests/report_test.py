@@ -183,7 +183,7 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
     def test_names_each_key_in_a_legend(self):
         report = _render_comparison_report(self._two())
         assert "| G | GROBID 0.9.0-crf |" in report
-        assert "| S | ScienceBeam (PR) | deltas are measured against this |" in report
+        assert "| S | ScienceBeam (PR) | reference (Δ X = this − X) |" in report
 
     def test_delta_column_for_non_primary_label(self):
         header = self._header_line(_render_comparison_report(self._two()))
