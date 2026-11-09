@@ -175,18 +175,23 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
     def _header_line(self, report: str) -> str:
         return next(line for line in report.splitlines() if "Field (method, type)" in line)
 
-    def test_includes_tool_labels_in_table_header(self):
+    def test_heads_the_columns_with_letters(self):
         header = self._header_line(_render_comparison_report(self._two()))
-        assert "GROBID 0.9.0-crf" in header
-        assert "ScienceBeam (PR)" in header
+        assert "| A | B |" in header
+        assert "GROBID 0.9.0-crf" not in header
+
+    def test_names_each_letter_in_a_legend(self):
+        report = _render_comparison_report(self._two())
+        assert "| A | GROBID 0.9.0-crf |" in report
+        assert "| B | ScienceBeam (PR) | deltas are measured against this |" in report
 
     def test_delta_column_for_non_primary_label(self):
         header = self._header_line(_render_comparison_report(self._two()))
-        assert "Δ GROBID 0.9.0-crf" in header
+        assert "Δ A" in header
 
     def test_no_delta_column_for_primary_label(self):
         header = self._header_line(_render_comparison_report(self._two()))
-        assert "Δ ScienceBeam (PR)" not in header
+        assert "Δ B" not in header
 
     def test_renders_positive_delta(self):
         report = _render_comparison_report(self._two(grobid_f1=0.820, sb_f1=0.852))
@@ -251,8 +256,8 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
         ]
         report = _render_comparison_report(summaries)
         header = next(line for line in report.splitlines() if "Field (method, type)" in line)
-        assert "Δ GROBID" in header
-        assert "Δ SB 0.1.x" in header
+        assert "Δ A" in header
+        assert "Δ B" in header
 
     def test_single_summary_renders_without_delta_columns(self):
         report = _render_comparison_report([("SB (PR)", _title_summary(0.852))])
@@ -568,7 +573,7 @@ class TestCoverageLines:
             ("llm_all", {"n_recovered": 0, "n_errors": 2}),
         ])
         assert "**llm_all**: 2 without a prediction" in result
-        assert "grobid_crf" not in result
+        assert "**grobid_crf**" not in result
 
     def test_should_render_without_run_records_at_all(self):
         summaries: List[Tuple[str, dict]] = [("llm_all", {"fields": [], "corpora": {}})]
@@ -676,7 +681,7 @@ class TestGoldSplitSection:
             ("wapiti", _split_summary(0.5, 0.600, _presence(20, 2, 2, 2))),
             ("current", _split_summary(0.6, 0.700, _presence(40, 5, 3, 3))),
         ])
-        assert "**Unequal gold document sets** (wapiti 2/20, current 5/40)" in report
+        assert "**Unequal gold document sets** (A 2/20, B 5/40)" in report
 
     def test_does_not_warn_where_the_variants_cover_the_same_documents(self):
         report = _render_comparison_report([

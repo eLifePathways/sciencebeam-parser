@@ -276,19 +276,22 @@ class TestPrimaryColumn:
 
     def test_defaults_to_the_last_column(self):
         header = self._header(_render_comparison_report(self._labeled()))
-        assert header[-2:] == ["Δ a", "Δ b"]
+        assert header[-2:] == ["Δ A", "Δ B"]
 
     def test_keeps_every_column_in_the_order_given(self):
-        header = self._header(
-            _render_comparison_report(self._labeled(), primary=0)
-        )
-        assert header[2:5] == ["a", "b", "c"]
+        report = _render_comparison_report(self._labeled(), primary=0)
+        assert self._header(report)[2:5] == ["A", "B", "C"]
+        legend = [
+            line for line in report.splitlines()
+            if line.startswith(("| A |", "| B |", "| C |"))
+        ]
+        assert [line.split("|")[2].strip() for line in legend] == ["a", "b", "c"]
 
     def test_gives_no_delta_column_to_the_primary(self):
         header = self._header(
             _render_comparison_report(self._labeled(), primary=0)
         )
-        assert "Δ a" not in header and ["Δ b", "Δ c"] == header[-2:]
+        assert "Δ A" not in header and ["Δ B", "Δ C"] == header[-2:]
 
     def test_measures_the_deltas_against_the_named_column(self):
         rows = _rows(_render_comparison_report(self._labeled(), primary=0))
@@ -364,27 +367,28 @@ class TestVariantsSection:
             **kwargs,
         )
 
-    def test_says_nothing_where_no_variant_was_described(self):
-        assert "What each column is" not in self._report()
+    def test_leaves_out_the_description_where_no_variant_was_described(self):
+        assert "What it is" not in self._report()
 
     def test_names_the_profile_behind_each_column(self):
         report = self._report(variants=self._DESCRIBED)
         assert "profile `grobid_crf`" in report
 
-    def test_collapses_it(self):
+    def test_keeps_it_visible(self):
         report = self._report(variants=self._DESCRIBED)
-        assert "<summary>What each column is (2 variants)</summary>" in report
+        assert "| Variant | What it is |" in report
+        assert "What each column is" not in report
 
     def test_marks_the_column_the_deltas_measure_against(self):
         report = self._report(variants=self._DESCRIBED, primary=0)
         line = next(
-            line for line in report.splitlines() if line.startswith("| GROBID |")
+            line for line in report.splitlines() if line.startswith("| A | GROBID |")
         )
         assert "deltas are measured against this" in line
 
     def test_leaves_the_others_unmarked(self):
         report = self._report(variants=self._DESCRIBED, primary=0)
         line = next(
-            line for line in report.splitlines() if line.startswith("| ScienceBeam |")
+            line for line in report.splitlines() if line.startswith("| B | ScienceBeam |")
         )
         assert "deltas are measured against" not in line
