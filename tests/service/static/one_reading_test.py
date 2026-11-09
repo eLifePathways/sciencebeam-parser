@@ -35,3 +35,34 @@ def get_hidden_selectors() -> Set[str]:
 class TestOneReading:
     def test_should_hide_nothing_the_document_carries(self):
         assert get_hidden_selectors() == EXPECTED_HIDDEN_SELECTORS
+
+
+LIST_ITEM_PATTERN = re.compile(
+    r'([^{}]*\.jats-(?:affiliations|references)[^{},]*)\{([^{}]*)\}'
+)
+
+
+def iter_list_rules():
+    with open(STYLESHEET_FILE, 'r', encoding='utf-8') as stylesheet_fp:
+        stylesheet = stylesheet_fp.read()
+    for selector, body in LIST_ITEM_PATTERN.findall(stylesheet):
+        yield selector.strip(), body
+
+
+class TestListNumbers:
+    def test_should_leave_an_entry_a_list_item(self):
+        """A reference reads as the number its entry is given.
+
+        An entry told to display as anything else is no longer numbered, and
+        the number the reference names then points at nothing.
+        """
+        for selector, body in iter_list_rules():
+            if 'display:' not in body:
+                continue
+            # a selector ending at the list, or at the entry, sets the entry
+            sets_the_entry = (
+                selector.endswith('li')
+                or selector.endswith('[data-jats]')
+                and ' li ' not in selector
+            )
+            assert not sets_the_entry, f'{selector} sets display on the entry'

@@ -367,7 +367,9 @@ details > summary > h3 {
 
 .jats-labelled .jats-affiliations > li { margin-bottom: 6px; }
 
-.jats-labelled .jats-affiliations [data-jats] {
+/* The parts of an affiliation, not the entry itself: an entry made to display
+   as anything but a list item loses the number the references point at. */
+.jats-labelled .jats-affiliations > li [data-jats] {
   display: inline-block;
   padding: 0 3px;
   background: var(--value-bg);
