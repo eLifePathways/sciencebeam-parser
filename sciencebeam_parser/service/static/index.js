@@ -5,6 +5,7 @@ import {
   renderArticleViewModel
 } from '/static/jats-to-html.js';
 import { getZipSourceForBlob, readZipEntries } from '/static/read-zip.js';
+import { addSvgViewBox } from '/static/svg-view-box.js';
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
 
@@ -54,9 +55,9 @@ const downloadXmlButton = document.getElementById('download-xml');
 const archiveSection = document.getElementById('archive');
 const archiveSummary = document.getElementById('archive-summary');
 const archiveFiles = document.getElementById('archive-files');
-const archiveView = document.getElementById('archive-view');
-const archiveViewName = document.getElementById('archive-view-name');
-const archiveViewImage = document.getElementById('archive-view-image');
+const archiveNote = document.getElementById('archive-note');
+const archiveShowAll = document.getElementById('archive-show-all');
+const archiveHideAll = document.getElementById('archive-hide-all');
 const labelsControl = document.getElementById('labels-control');
 const labelsCheckbox = document.getElementById('show-labels');
 const sourceSection = document.getElementById('source');
@@ -340,9 +341,7 @@ async function getAssetUrlByName(entries, wantedNames) {
       tooLarge.push(entry.name);
       return;
     }
-    const url = URL.createObjectURL(new Blob(
-      [await entry.read()], { type: getImageMediaType(entry.name) }
-    ));
+    const url = URL.createObjectURL(await getImageBlob(entry));
     assetUrls.push(url);
     urlByName[entry.name] = url;
   }));
@@ -554,22 +553,61 @@ function addCell(row, text, className) {
   return cell;
 }
 
-async function showArchiveFile(entry) {
-  const mediaType = getImageMediaType(entry.name);
-  archiveViewName.textContent = (
-    entry.name + ', ' + describeBytes(entry.size)
-    + (mediaType ? '' : ' — not an image this can show')
-  );
-  archiveViewImage.removeAttribute('src');
-  archiveView.hidden = false;
-  if (!mediaType) {
-    return;
+function appendTo(parent, tagName, className) {
+  const element = document.createElement(tagName);
+  if (className) {
+    element.className = className;
   }
-  const url = URL.createObjectURL(
-    new Blob([await entry.read()], { type: mediaType })
+  parent.appendChild(element);
+  return element;
+}
+
+const assetUrlByEntryName = {};
+
+async function getImageBlob(entry) {
+  const mediaType = getImageMediaType(entry.name);
+  const data = await entry.read();
+  if (mediaType !== 'image/svg+xml') {
+    return new Blob([data], { type: mediaType });
+  }
+  return new Blob(
+    [addSvgViewBox(new TextDecoder().decode(data))], { type: mediaType }
   );
-  assetUrls.push(url);
-  archiveViewImage.setAttribute('src', url);
+}
+
+async function getArchiveFileUrl(entry) {
+  if (!assetUrlByEntryName[entry.name]) {
+    const url = URL.createObjectURL(await getImageBlob(entry));
+    assetUrls.push(url);
+    assetUrlByEntryName[entry.name] = url;
+  }
+  return assetUrlByEntryName[entry.name];
+}
+
+async function openArchiveFile(entry, previewRow, button) {
+  const cell = previewRow.firstChild;
+  cell.replaceChildren();
+  previewRow.hidden = false;
+  button.textContent = 'Hide';
+  const caption = appendTo(cell, 'p', 'hint');
+  caption.textContent = 'Reading ' + describeBytes(entry.size) + '.';
+  const url = await getArchiveFileUrl(entry);
+  caption.replaceChildren();
+  const link = appendTo(caption, 'a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = entry.name + ', ' + describeBytes(entry.size)
+    + ' — open full size';
+  const image = appendTo(cell, 'img', 'archive-image');
+  image.src = url;
+  image.alt = entry.name;
+}
+
+function closeArchiveFile(previewRow, button) {
+  previewRow.hidden = true;
+  previewRow.firstChild.replaceChildren();
+  button.textContent = 'View';
 }
 
 function describeFigure(name) {
@@ -578,7 +616,7 @@ function describeFigure(name) {
 }
 
 function addArchiveFileRow(entry, figuresByHref) {
-  const row = document.createElement('tr');
+  const row = appendTo(archiveFiles, 'tr');
   addCell(row, entry.name, 'archive-name');
   addCell(row, describeBytes(entry.size), 'archive-size');
   const figures = figuresByHref[entry.name];
@@ -588,20 +626,53 @@ function addArchiveFileRow(entry, figuresByHref) {
     figures ? 'archive-used' : 'archive-unused'
   );
   const actionCell = addCell(row, '');
-  if (getImageMediaType(entry.name)) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = 'View';
-    button.onclick = () => showArchiveFile(entry);
-    actionCell.appendChild(button);
+  const previewRow = appendTo(archiveFiles, 'tr', 'archive-preview');
+  previewRow.hidden = true;
+  appendTo(previewRow, 'td').colSpan = 4;
+  if (!getImageMediaType(entry.name)) {
+    return null;
   }
-  archiveFiles.appendChild(row);
+  const button = appendTo(actionCell, 'button');
+  button.type = 'button';
+  button.textContent = 'View';
+  button.onclick = () => (
+    previewRow.hidden
+      ? openArchiveFile(entry, previewRow, button)
+      : closeArchiveFile(previewRow, button)
+  );
+  return { entry, previewRow, button };
+}
+
+/* Opening everything, without opening what would stop the page.
+ *
+ * One page of vector drawing extracted from a document can be tens of
+ * megabytes, while a document's figures together are rarely one. The large
+ * ones stay a deliberate click rather than something that happens because a
+ * reader asked to see the figures. */
+function setUpArchiveShowAll(viewable) {
+  const small = viewable.filter(({ entry }) => entry.size <= MAX_ASSET_BYTES);
+  const large = viewable.filter(({ entry }) => entry.size > MAX_ASSET_BYTES);
+  archiveShowAll.hidden = !small.length;
+  archiveHideAll.hidden = !viewable.length;
+  archiveNote.textContent = large.length
+    ? (
+      'Show all leaves out ' + large.map(({ entry }) => entry.name).join(', ')
+      + ', over ' + describeBytes(MAX_ASSET_BYTES) + ' each; View opens them.'
+    )
+    : '';
+  archiveShowAll.onclick = () => small.forEach(({ entry, previewRow, button }) => {
+    if (previewRow.hidden) {
+      openArchiveFile(entry, previewRow, button);
+    }
+  });
+  archiveHideAll.onclick = () => viewable.forEach(
+    ({ previewRow, button }) => closeArchiveFile(previewRow, button)
+  );
 }
 
 function showArchiveFiles(content, viewModel, output) {
   archiveFiles.replaceChildren();
-  archiveView.hidden = true;
-  archiveViewImage.removeAttribute('src');
+  archiveNote.textContent = '';
   if (!content || !content.entries) {
     archiveSection.hidden = true;
     return;
@@ -615,7 +686,11 @@ function showArchiveFiles(content, viewModel, output) {
   const assetEntries = content.entries.filter(
     (entry) => entry.name !== output.archive_xml_name
   );
-  assetEntries.forEach((entry) => addArchiveFileRow(entry, figuresByHref));
+  setUpArchiveShowAll(
+    assetEntries
+      .map((entry) => addArchiveFileRow(entry, figuresByHref))
+      .filter((viewable) => viewable)
+  );
   const unreferenced = assetEntries.filter(
     (entry) => !figuresByHref[entry.name]
   ).length;
@@ -629,10 +704,12 @@ function showArchiveFiles(content, viewModel, output) {
 function setUpXmlDownload(content, output, file) {
   if (!content || !content.entries) {
     downloadXmlButton.hidden = true;
+    downloadButton.textContent = 'Download';
     return;
   }
   downloadXmlButton.hidden = false;
   downloadXmlButton.textContent = 'Download ' + output.archive_xml_name;
+  downloadButton.textContent = 'Download the archive';
   downloadXmlButton.onclick = () => {
     const url = URL.createObjectURL(
       new Blob([content.text], { type: 'application/xml' })
@@ -790,6 +867,9 @@ form.addEventListener('submit', (event) => {
   releaseDownloadUrl();
   releaseSourceUrl();
   releaseAssetUrls();
+  Object.keys(assetUrlByEntryName).forEach(
+    (name) => delete assetUrlByEntryName[name]
+  );
   convert(file);
 });
 

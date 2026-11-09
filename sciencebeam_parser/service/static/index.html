@@ -81,19 +81,20 @@
       <input type="checkbox" id="show-labels">
       Show labels
     </label>
-    <button type="button" id="download">Download</button>
     <button type="button" id="download-xml" hidden></button>
+    <button type="button" id="download">Download</button>
   </div>
   <p class="hint" id="result-note"></p>
   <div id="result-reading"></div>
   <pre id="result-body"></pre>
   <details id="archive" hidden>
     <summary><h3 id="archive-summary">Files in the archive</h3></summary>
-    <table id="archive-files"></table>
-    <div id="archive-view" hidden>
-      <p class="hint" id="archive-view-name"></p>
-      <img id="archive-view-image" alt="">
+    <div class="actions">
+      <button type="button" id="archive-show-all">Show all</button>
+      <button type="button" id="archive-hide-all">Hide all</button>
+      <span class="hint" id="archive-note"></span>
     </div>
+    <table><tbody id="archive-files"></tbody></table>
   </details>
 
   <h3>The same request</h3>
