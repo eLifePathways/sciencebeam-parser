@@ -379,3 +379,36 @@ details > summary > h3 {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+.jats-tag-id {
+  margin-left: 4px;
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+/* Where a section sits inside another is the thing to see, so the labelled
+   reading indents each one and gives it a rule to follow down. */
+.jats-labelled .jats-section,
+.jats-labelled .jats-abstract,
+.jats-labelled .jats-ack {
+  border-left: 2px solid var(--panel-line);
+  padding-left: 12px;
+  margin-top: 16px;
+}
+
+.jats-labelled .jats-section > .jats-tag,
+.jats-labelled .jats-abstract > .jats-tag,
+.jats-labelled .jats-ack > .jats-tag,
+.jats-labelled .jats-figure > .jats-tag,
+.jats-labelled .jats-table > .jats-tag {
+  display: table;
+  margin-bottom: 2px;
+}
+
+.jats-labelled .jats-tag + h2,
+.jats-labelled .jats-tag + h3,
+.jats-labelled .jats-tag + h4,
+.jats-labelled .jats-tag + h5,
+.jats-labelled .jats-tag + h6,
+.jats-labelled .jats-tag + p,
+.jats-labelled .jats-tag + figcaption { margin-top: 0; }

@@ -636,3 +636,29 @@ class TestAffiliationReferences:
             )
         ))
         assert 'jats-separator' not in html
+
+
+class TestElementIds:
+    def test_should_say_which_one_an_element_with_an_id_is(self):
+        html = get_rendered_article(get_article_xml(
+            body=(
+                '<sec id="sec1"><title>Methods</title>'
+                '<fig id="fig_0"><label>Figure 1</label></fig>'
+                '<table-wrap id="tab_0"><label>Table 1</label></table-wrap></sec>'
+            ),
+            back='<ref-list><ref id="b0"><element-citation/></ref></ref-list>'
+        ))
+        for element_id in ['sec1', 'fig_0', 'tab_0', 'b0']:
+            assert f'<span class="jats-tag-id">#{element_id}</span>' in html
+
+    def test_should_say_nothing_extra_where_an_element_has_no_id(self):
+        html = get_rendered_article(get_article_xml(
+            body='<sec><title>Methods</title></sec>'
+        ))
+        assert '<span class="jats-tag">sec</span>' in html
+        assert 'jats-tag-id' not in html
+
+    def test_should_say_which_one_an_affiliation_is(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        assert '<span class="jats-tag-id">#aff1</span>' in html
+        assert '<span class="jats-tag-id">#aff2</span>' in html

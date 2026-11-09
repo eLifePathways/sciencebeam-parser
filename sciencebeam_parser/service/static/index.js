@@ -746,7 +746,7 @@ async function showResult(response, blob, file, elapsedSeconds) {
   if (content && content.entries) {
     resultNote.textContent = (
       'Showing ' + output.archive_xml_name + ' from the archive, which carries '
-      + content.entries.length + ' files. The download is the archive itself.'
+      + content.entries.length + ' files.'
     );
   }
   let viewModel = null;

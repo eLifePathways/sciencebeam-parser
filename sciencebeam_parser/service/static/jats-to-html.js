@@ -310,7 +310,7 @@ export function getXmlNode(element) {
   };
 }
 
-function appendElement(parent, tagName, className, label) {
+function appendElement(parent, tagName, className, label, id) {
   const element = parent.ownerDocument.createElement(tagName);
   if (className) {
     element.className = className;
@@ -320,6 +320,14 @@ function appendElement(parent, tagName, className, label) {
     const tag = parent.ownerDocument.createElement('span');
     tag.className = 'jats-tag';
     tag.textContent = label;
+    if (id) {
+      // The id is what a cross-reference points at, so the thing it points at
+      // says which one it is.
+      const tagId = parent.ownerDocument.createElement('span');
+      tagId.className = 'jats-tag-id';
+      tagId.textContent = '#' + id;
+      tag.appendChild(tagId);
+    }
     element.appendChild(tag);
   }
   parent.appendChild(element);
@@ -391,13 +399,17 @@ function appendGraphic(parent, graphic, options) {
 }
 
 function appendFigure(parent, block, options) {
-  const figure = appendElement(parent, 'figure', 'jats-figure', block.label);
+  const figure = appendElement(
+    parent, 'figure', 'jats-figure', block.label, block.id
+  );
   appendCaption(figure, block);
   block.graphics.forEach((graphic) => appendGraphic(figure, graphic, options));
 }
 
 function appendTable(parent, block) {
-  const figure = appendElement(parent, 'figure', 'jats-table', block.label);
+  const figure = appendElement(
+    parent, 'figure', 'jats-table', block.label, block.id
+  );
   appendCaption(figure, block);
   if (!block.rows.length) {
     return;
@@ -427,7 +439,9 @@ function appendBlocks(parent, blocks, level, options) {
 }
 
 function appendSection(parent, section, level, options) {
-  const element = appendElement(parent, 'section', 'jats-section', section.label);
+  const element = appendElement(
+    parent, 'section', 'jats-section', section.label, section.id
+  );
   appendValue(element, section.title, 'h' + Math.min(level, 6));
   appendBlocks(element, section.blocks, level + 1, options);
 }
@@ -511,7 +525,9 @@ function appendAuthors(parent, viewModel) {
   }
   const affiliations = appendElement(parent, 'ol', 'jats-affiliations');
   viewModel.affiliations.forEach((affiliation) => {
-    const item = appendElement(affiliations, 'li', '', affiliation.label);
+    const item = appendElement(
+      affiliations, 'li', '', affiliation.label, affiliation.id
+    );
     if (affiliation.id) {
       item.setAttribute('id', affiliation.id);
     }
@@ -587,7 +603,9 @@ function appendJoined(parent, parts, separator) {
 }
 
 function appendReference(parent, reference) {
-  const item = appendElement(parent, 'li', '', reference.label);
+  const item = appendElement(
+    parent, 'li', '', reference.label, reference.id
+  );
   const groups = [];
   if (reference.authors.length) {
     groups.push((target) => appendReferenceAuthors(target, reference.authors));
