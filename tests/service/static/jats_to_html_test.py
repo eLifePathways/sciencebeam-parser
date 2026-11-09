@@ -92,14 +92,10 @@ TAG_ID_PATTERN = r'<span class="jats-tag-id">[^<]*</span>'
 TAG_PATTERN = r'<span[^>]*class="jats-tag"[^>]*>[^<]*</span>'
 
 
-LABELLED_ONLY_PATTERN = r'<span class="jats-xref-rid">[^<]*</span>'
-
-
 def get_text_without_labels(html: str) -> str:
     """What the rendering reads as, with the element names taken out."""
     without_labels = re.sub(TAG_ID_PATTERN, '', html)
     without_labels = re.sub(TAG_PATTERN, '', without_labels)
-    without_labels = re.sub(LABELLED_ONLY_PATTERN, '', without_labels)
     return re.sub(r'<[^>]+>', '', without_labels)
 
 
@@ -668,7 +664,8 @@ class TestAffiliationReferences:
             )
         ))
         assert 'title="no affiliation with id aff9"' in html
-        assert '<span class="jats-xref-number">aff9</span>' in html
+        assert '<span class="jats-tag-id">#aff9</span>' in html
+        assert get_text_without_labels(html).endswith('aff9')
 
     def test_should_keep_an_affiliation_the_document_repeats(self):
         view_model = get_article_view_model(get_article_xml(
@@ -863,7 +860,11 @@ class TestContribGroup:
     def test_should_carry_no_group_where_the_document_has_none(self):
         assert get_article_view_model(get_article_xml())['authorGroup'] is None
 
-    def test_should_say_both_what_the_list_numbers_it_and_what_it_is_called(self):
+    def test_should_name_the_id_a_reference_points_at_beside_its_name(self):
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)
-        assert '<span class="jats-xref-number">1</span>' in html
-        assert '<span class="jats-xref-rid">aff1</span>' in html
+        assert '<span class="jats-tag-id">#aff1</span>' in html
+        assert '<span class="jats-tag-id">#aff2</span>' in html
+
+    def test_should_read_the_number_the_list_gives_it_either_way(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        assert 'J Smith 1 2, A Jones 2' in get_text_without_labels(html)

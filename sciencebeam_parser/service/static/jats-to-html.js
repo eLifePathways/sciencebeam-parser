@@ -514,24 +514,21 @@ function getAffiliationByRid(affiliations) {
  *
  * A number beside a name says there is a link without saying to what. The
  * reference is an element the document carries, so it is one here too: it
- * reads as the number the list gives that affiliation, it says which id it
- * points at, it carries the affiliation's own text to rest on, and following
- * it goes to the entry rather than leaving the reader to count.
+ * reads as the number the list gives that affiliation, its name says which id
+ * it points at the way any other id is said, it carries the affiliation's own
+ * text to rest on, and following it goes to the entry rather than leaving the
+ * reader to count.
  */
 function appendAffiliationRef(parent, ref, affiliationByRid) {
   const affiliation = affiliationByRid[ref.rid];
-  const anchor = appendElement(parent, 'a', 'jats-xref', ref);
+  const anchor = appendElement(
+    parent, 'a', 'jats-xref', { ...ref, id: ref.rid }
+  );
   anchor.setAttribute('href', '#' + ref.rid);
   anchor.setAttribute(
     'title', affiliation ? affiliation.text : 'no affiliation with id ' + ref.rid
   );
-  // The number is where the affiliation sits in the list, which is the page's
-  // ordering; the id is what the document wrote. Both are here, and which one
-  // shows follows whether the names are being shown.
-  appendElement(anchor, 'span', 'jats-xref-number').textContent = (
-    affiliation ? String(affiliation.number) : ref.rid
-  );
-  appendElement(anchor, 'span', 'jats-xref-rid').textContent = ref.rid;
+  appendText(anchor, affiliation ? String(affiliation.number) : ref.rid);
 }
 
 function appendAuthor(parent, author, affiliationByRid) {
