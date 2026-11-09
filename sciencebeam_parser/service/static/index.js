@@ -223,6 +223,38 @@ function getEquivalentCurlCommand(file) {
   ].join(' \\\n');
 }
 
+function describeBytes(count) {
+  if (count >= 1024 * 1024) {
+    return (count / (1024 * 1024)).toFixed(1) + 'MB';
+  }
+  if (count >= 1024) {
+    return Math.round(count / 1024) + 'KB';
+  }
+  return count + ' bytes';
+}
+
+/* What the body did, apart from what the status said.
+ *
+ * A response arrives in two parts: the status and headers, then the body. A
+ * body that stops part way leaves a request that the browser reports as
+ * failed and the server's own log reports as 200, and "failed to fetch" by
+ * itself sends the reader to the wrong half of that. */
+async function getResponseBlob(response) {
+  const expected = Number(response.headers.get('content-length')) || 0;
+  if (expected) {
+    statusElement.textContent = 'Receiving ' + describeBytes(expected) + '.';
+  }
+  try {
+    return await response.blob();
+  } catch (error) {
+    throw new Error(
+      (expected ? 'the ' + describeBytes(expected) + ' body' : 'the body')
+      + ' stopped arriving before it was complete, while the status was '
+      + response.status + ' (' + error.message + ')'
+    );
+  }
+}
+
 function addMetaRow(listElement, name, value) {
   if (!value) {
     return;
@@ -469,7 +501,7 @@ async function showResult(response, blob, file, elapsedSeconds) {
   addMetaRow(metaElement, 'Profile digest', response.headers.get(PROFILE_DIGEST_HEADER));
   addMetaRow(metaElement, 'LLM usage', response.headers.get(LLM_USAGE_HEADER));
   addMetaRow(metaElement, 'Content type', response.headers.get('content-type'));
-  addMetaRow(metaElement, 'Size', blob.size.toLocaleString() + ' bytes');
+  addMetaRow(metaElement, 'Size', describeBytes(blob.size));
   addMetaRow(metaElement, 'Took', elapsedSeconds + 's');
   const output = getSelectedOutput();
   resultNote.textContent = '';
@@ -561,13 +593,16 @@ async function convert(file) {
       body: formData,
       signal: requestController.signal
     });
-    const elapsedSeconds = elapsed.stop();
-    statusElement.textContent = '';
     if (!response.ok) {
+      elapsed.stop();
+      statusElement.textContent = '';
       await showFailure(response, file);
       return;
     }
-    await showResult(response, await response.blob(), file, elapsedSeconds);
+    const blob = await getResponseBlob(response);
+    const elapsedSeconds = elapsed.stop();
+    statusElement.textContent = '';
+    await showResult(response, blob, file, elapsedSeconds);
     showSource(file);
   } catch (error) {
     elapsed.stop();
