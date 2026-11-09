@@ -87,6 +87,56 @@ def get_article_xml(front: str = '', body: str = '', back: str = '') -> str:
     )
 
 
+TAG_ID_PATTERN = r'<span class="jats-tag-id">[^<]*</span>'
+
+TAG_PATTERN = r'<span[^>]*class="jats-tag"[^>]*>[^<]*</span>'
+
+
+def get_text_without_labels(html: str) -> str:
+    """What the rendering reads as, with the element names taken out."""
+    without_labels = re.sub(TAG_ID_PATTERN, '', html)
+    without_labels = re.sub(TAG_PATTERN, '', without_labels)
+    return re.sub(r'<[^>]+>', '', without_labels)
+
+
+def get_tag_for(html: str, label: str) -> str:
+    match = re.search(
+        r'<span[^>]*class="jats-tag"[^>]*>' + re.escape(label) + r'(?:<[^>]*>[^<]*</span>)?</span>',
+        html
+    )
+    return match.group(0) if match else ''
+
+
+def without_paths(value: Any) -> Any:
+    """The model with where each value came from taken out.
+
+    Most of what is asserted here is what a value says and what it is called;
+    the path has tests of its own.
+    """
+    if isinstance(value, dict):
+        return {
+            name: without_paths(item)
+            for name, item in value.items()
+            if name != 'path'
+        }
+    if isinstance(value, list):
+        return [without_paths(item) for item in value]
+    return value
+
+
+def iter_paths(value: Any) -> List[str]:
+    """Every place the model says a part of it came from."""
+    if isinstance(value, dict):
+        found = [value['path']] if value.get('path') else []
+        return found + [
+            item for name, child in value.items() if name != 'path'
+            for item in iter_paths(child)
+        ]
+    if isinstance(value, list):
+        return [item for child in value for item in iter_paths(child)]
+    return []
+
+
 def get_paragraph_texts(paragraphs: List[dict]) -> List[str]:
     return [
         ''.join(run['text'] for run in paragraph['runs'])
@@ -99,7 +149,9 @@ class TestTitle:
         view_model = get_article_view_model(get_article_xml(
             front='<title-group><article-title>The title</article-title></title-group>'
         ))
-        assert view_model['title'] == {'label': 'article-title', 'text': 'The title'}
+        assert without_paths(view_model['title']) == {
+            'label': 'article-title', 'text': 'The title'
+        }
 
     def test_should_carry_no_title_where_the_document_states_none(self):
         assert get_article_view_model(get_article_xml())['title'] is None
@@ -114,7 +166,7 @@ class TestAuthors:
                 '</name></contrib></contrib-group>'
             )
         ))
-        assert view_model['authors'][0]['nameParts'] == [
+        assert without_paths(view_model['authors'][0]['nameParts']) == [
             {'label': 'given-names', 'text': 'Jane A'},
             {'label': 'surname', 'text': 'Smith'}
         ]
@@ -131,8 +183,12 @@ class TestAuthors:
             )
         ))
         author = view_model['authors'][0]
-        assert author['email'] == {'label': 'email', 'text': 'jane@example.org'}
-        assert author['affiliationRefs'] == [{'label': 'xref', 'rid': 'aff1'}]
+        assert without_paths(author['email']) == {
+            'label': 'email', 'text': 'jane@example.org'
+        }
+        assert without_paths(author['affiliationRefs']) == [
+            {'label': 'xref', 'rid': 'aff1'}
+        ]
 
 
 class TestAffiliations:
@@ -147,7 +203,7 @@ class TestAffiliations:
                 '</aff>'
             )
         ))
-        assert view_model['affiliations'] == [{
+        assert without_paths(view_model['affiliations']) == [{
             'label': 'aff',
             'id': 'aff1',
             'parts': [
@@ -163,7 +219,7 @@ class TestAffiliations:
         view_model = get_article_view_model(get_article_xml(
             front='<aff id="aff1"><country>A Country</country></aff>'
         ))
-        assert view_model['affiliations'][0]['parts'] == [
+        assert without_paths(view_model['affiliations'][0]['parts']) == [
             {'label': 'country', 'text': 'A Country'}
         ]
 
@@ -180,7 +236,7 @@ class TestAbstract:
             get_paragraph_texts(abstract['paragraphs'])
             for abstract in view_model['abstracts']
         ] == [['First.', 'Second.'], ['Other.']]
-        assert view_model['abstracts'][1]['title'] == {
+        assert without_paths(view_model['abstracts'][1]['title']) == {
             'label': 'title', 'text': 'Summary'
         }
 
@@ -197,7 +253,9 @@ class TestSections:
             )
         ))
         section = view_model['sections'][0]
-        assert section['title'] == {'label': 'title', 'text': 'Methods'}
+        assert without_paths(section['title']) == {
+            'label': 'title', 'text': 'Methods'
+        }
         assert [block['type'] for block in section['blocks']] == [
             'paragraph', 'figure', 'paragraph'
         ]
@@ -234,9 +292,13 @@ class TestFiguresAndTables:
         ))
         figure = view_model['sections'][0]['blocks'][0]
         assert figure['label'] == 'fig'
-        assert figure['heading'] == {'label': 'label', 'text': 'Figure 1'}
+        assert without_paths(figure['heading']) == {
+            'label': 'label', 'text': 'Figure 1'
+        }
         assert get_paragraph_texts(figure['paragraphs']) == ['What it shows.']
-        assert figure['graphics'] == [{'label': 'graphic', 'href': 'image1.png'}]
+        assert without_paths(figure['graphics']) == [
+            {'label': 'graphic', 'href': 'image1.png'}
+        ]
 
     def test_should_read_a_table_row_by_row(self):
         view_model = get_article_view_model(get_article_xml(
@@ -288,7 +350,7 @@ class TestReferences:
                 '</element-citation></ref></ref-list>'
             )
         ))
-        assert view_model['references'] == [{
+        assert without_paths(view_model['references']) == [{
             'label': 'ref',
             'id': 'b0',
             'authors': [
@@ -349,7 +411,7 @@ FULL_ARTICLE_XML = get_article_xml(
 
 def iter_labelled_values(value) -> List[dict]:
     if isinstance(value, dict):
-        if set(value) == {'label', 'text'}:
+        if {'label', 'text'} <= set(value):
             return [value]
         return [
             found for item in value.values() for found in iter_labelled_values(item)
@@ -408,15 +470,15 @@ class TestRenderedArticle:
 
     def test_should_name_the_element_beside_the_value_it_labels(self):
         html = get_rendered_article(FULL_ARTICLE_XML)
-        assert (
-            '<h1 data-jats="article-title">'
-            '<span class="jats-tag">article-title</span>The title</h1>'
-        ) in html
+        assert re.search(
+            r'<h1 data-jats="article-title">'
+            r'<span[^>]*class="jats-tag"[^>]*>article-title</span>The title</h1>',
+            html
+        )
 
     def test_should_read_as_the_article_without_the_names_shown(self):
         html = get_rendered_article(FULL_ARTICLE_XML)
-        text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
-        text_only = re.sub(r'<[^>]+>', '', text_only)
+        text_only = get_text_without_labels(html)
         assert 'The title' in text_only
         assert 'J Smith' in text_only
         assert 'A University, A Country' in text_only
@@ -434,8 +496,7 @@ class TestRenderedArticle:
                 '</element-citation></ref></ref-list>'
             )
         ))
-        text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
-        text_only = re.sub(r'<[^>]+>', '', text_only)
+        text_only = get_text_without_labels(html)
         assert 'J Smith. The cited title. A Journal, 12, 100-110, 2020' in text_only
 
     def test_should_not_begin_a_citation_with_a_separator(self):
@@ -445,8 +506,7 @@ class TestRenderedArticle:
                 '<source>A Journal</source></element-citation></ref></ref-list>'
             )
         ))
-        text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
-        text_only = re.sub(r'<[^>]+>', '', text_only)
+        text_only = get_text_without_labels(html)
         assert 'References' in text_only
         assert text_only.endswith('A Journal')
 
@@ -583,8 +643,7 @@ class TestAffiliationReferences:
 
     def test_should_read_as_the_number_the_list_gives_the_affiliation(self):
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)
-        text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
-        text_only = re.sub(r'<[^>]+>', '', text_only)
+        text_only = get_text_without_labels(html)
         assert 'J Smith 1 2, A Jones 2' in text_only
 
     def test_should_carry_the_affiliation_text_to_rest_on(self):
@@ -655,10 +714,125 @@ class TestElementIds:
         html = get_rendered_article(get_article_xml(
             body='<sec><title>Methods</title></sec>'
         ))
-        assert '<span class="jats-tag">sec</span>' in html
+        assert get_tag_for(html, 'sec')
         assert 'jats-tag-id' not in html
 
     def test_should_say_which_one_an_affiliation_is(self):
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)
         assert '<span class="jats-tag-id">#aff1</span>' in html
         assert '<span class="jats-tag-id">#aff2</span>' in html
+
+
+PATHED_ARTICLE_XML = get_article_xml(
+    front=(
+        '<title-group><article-title>The title</article-title></title-group>'
+        '<contrib-group>'
+        '<contrib><name><surname>Smith</surname></name></contrib>'
+        '<contrib><name><surname>Jones</surname></name></contrib>'
+        '</contrib-group>'
+        '<abstract><title>Summary</title><p>An abstract.</p></abstract>'
+    ),
+    body=(
+        '<sec><title>Introduction</title></sec>'
+        '<sec><title>Methods</title><p>One.</p><p>Two.</p>'
+        '<sec><title>A nested one</title></sec></sec>'
+    )
+)
+
+
+class TestElementPaths:
+    def test_should_say_where_in_the_document_a_value_was_found(self):
+        view_model = get_article_view_model(PATHED_ARTICLE_XML)
+        assert view_model['title']['path'] == (
+            '/article/front/article-meta/title-group/article-title'
+        )
+
+    def test_should_number_an_element_among_its_like_named_siblings(self):
+        view_model = get_article_view_model(PATHED_ARTICLE_XML)
+        assert [
+            author['nameParts'][0]['path'] for author in view_model['authors']
+        ] == [
+            '/article/front/article-meta/contrib-group/contrib[1]/name/surname',
+            '/article/front/article-meta/contrib-group/contrib[2]/name/surname'
+        ]
+
+    def test_should_number_nothing_where_an_element_stands_alone(self):
+        view_model = get_article_view_model(PATHED_ARTICLE_XML)
+        assert view_model['abstracts'][0]['title']['path'] == (
+            '/article/front/article-meta/abstract/title'
+        )
+
+    def test_should_tell_two_like_named_elements_apart_by_where_they_are(self):
+        view_model = get_article_view_model(PATHED_ARTICLE_XML)
+        sections = view_model['sections']
+        assert sections[0]['title']['path'] == '/article/body/sec[1]/title'
+        assert sections[1]['title']['path'] == '/article/body/sec[2]/title'
+        nested = sections[1]['blocks'][-1]
+        assert nested['title']['path'] == '/article/body/sec[2]/sec/title'
+
+    def test_should_say_where_each_paragraph_of_a_section_is(self):
+        view_model = get_article_view_model(PATHED_ARTICLE_XML)
+        paragraphs = [
+            block for block in view_model['sections'][1]['blocks']
+            if block['type'] == 'paragraph'
+        ]
+        assert [block['path'] for block in paragraphs] == [
+            '/article/body/sec[2]/p[1]', '/article/body/sec[2]/p[2]'
+        ]
+
+    def test_should_rest_the_name_on_where_the_value_came_from(self):
+        html = get_rendered_article(PATHED_ARTICLE_XML)
+        assert (
+            'title="/article/front/article-meta/title-group/article-title"'
+        ) in html
+        assert 'title="/article/body/sec[2]/sec/title"' in html
+
+    def test_should_name_a_path_that_finds_the_one_element_it_came_from(self):
+        """Not a description of where a value was, but a way back to it."""
+        jats_xml = get_article_xml(
+            front=(
+                '<title-group><article-title>The title</article-title></title-group>'
+                '<contrib-group>'
+                '<contrib><name><surname>Smith</surname>'
+                '<given-names>J</given-names></name>'
+                '<xref ref-type="aff" rid="aff1"/></contrib>'
+                '<contrib><name><surname>Jones</surname></name></contrib>'
+                '</contrib-group>'
+                '<aff id="aff1"><institution content-type="orgname">A University'
+                '</institution><city>A City</city></aff>'
+                '<abstract><p>One.</p><p>Two.</p></abstract>'
+            ),
+            body=(
+                '<sec><title>Introduction</title><p>A paragraph.</p>'
+                '<fig id="fig_0"><label>1</label>'
+                '<caption><title>A figure</title><p>A caption.</p></caption>'
+                '<graphic xlink:href="image1.png"/></fig>'
+                '<sec><title>A nested one</title><p>Another.</p></sec></sec>'
+                '<sec><title>Results</title>'
+                '<table-wrap id="tab_0"><label>1</label>'
+                '<table><tbody><tr><td>a</td><td>b</td></tr></tbody></table>'
+                '</table-wrap></sec>'
+            ),
+            back=(
+                '<ack><sec><title>Thanks</title><p>To everyone.</p></sec></ack>'
+                '<ref-list><ref id="b0"><element-citation>'
+                '<article-title>A cited title</article-title>'
+                '<source>A Journal</source><year>2020</year>'
+                '<person-group><name><surname>Okoro</surname>'
+                '<given-names>N</given-names></name></person-group>'
+                '</element-citation></ref></ref-list>'
+            )
+        )
+        view_model = get_article_view_model(jats_xml)
+        paths = sorted(set(iter_paths(view_model)))
+        assert len(paths) > 30
+        tree = etree.ElementTree(etree.fromstring(jats_xml.encode('utf-8')))
+        found_by_path = {
+            element_path: len(tree.xpath(element_path))
+            for element_path in paths
+        }
+        assert {
+            element_path: count
+            for element_path, count in found_by_path.items()
+            if count != 1
+        } == {}

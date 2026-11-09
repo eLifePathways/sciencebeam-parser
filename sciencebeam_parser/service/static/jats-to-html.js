@@ -95,9 +95,35 @@ function getChildText(node, name) {
   return child ? getTextContent(child).trim() : '';
 }
 
+/* Where in the document a value was found.
+ *
+ * A name says what an element is and an id says which one it is, but a
+ * document carries many a title and most of them carry no id. The path is
+ * what separates them, and what finds the element again in the XML beside
+ * the reading. It is assigned once over the tree rather than carried down
+ * every function that reads one.
+ */
+function addPaths(node, parentPath) {
+  const children = getChildElements(node);
+  const totalByName = {};
+  const seenByName = {};
+  children.forEach((child) => {
+    totalByName[child.name] = (totalByName[child.name] || 0) + 1;
+  });
+  children.forEach((child) => {
+    seenByName[child.name] = (seenByName[child.name] || 0) + 1;
+    const step = totalByName[child.name] > 1
+      ? `${child.name}[${seenByName[child.name]}]`
+      : child.name;
+    child.path = `${parentPath}/${step}`;
+    addPaths(child, child.path);
+  });
+}
+
 function getValue(node, name, label) {
-  const text = getChildText(node, name);
-  return text ? { label: label || name, text } : null;
+  const child = getFirstChildElement(node, name);
+  const text = child ? getTextContent(child).trim() : '';
+  return text ? { label: label || name, text, path: child.path } : null;
 }
 
 function getInlineRuns(node, style) {
@@ -130,13 +156,14 @@ function getInlineRuns(node, style) {
 }
 
 function getParagraph(node) {
-  return { label: node.name, runs: getInlineRuns(node) };
+  return { label: node.name, path: node.path, runs: getInlineRuns(node) };
 }
 
 function getCaption(node) {
   const caption = getFirstChildElement(node, 'caption');
   return {
     label: node.name,
+    path: node.path,
     heading: getValue(node, 'label'),
     title: caption ? getValue(caption, 'title') : null,
     paragraphs: caption ? getChildElements(caption, 'p').map(getParagraph) : []
@@ -150,6 +177,7 @@ function getFigure(node) {
     ...getCaption(node),
     graphics: getChildElements(node, 'graphic').map((graphic) => ({
       label: graphic.name,
+      path: graphic.path,
       href: getAttribute(graphic, 'xlink:href')
     }))
   };
@@ -188,6 +216,7 @@ function getSection(node) {
   return {
     type: 'section',
     label: node.name,
+    path: node.path,
     id: getAttribute(node, 'id'),
     title: getValue(node, 'title'),
     blocks: getSectionBlocks(node)
@@ -198,7 +227,7 @@ function getPersonNameParts(node) {
   const name = getFirstChildElement(node, 'name');
   if (!name) {
     const text = getTextContent(node).trim();
-    return text ? [{ label: node.name, text }] : [];
+    return text ? [{ label: node.name, text, path: node.path }] : [];
   }
   return [
     getValue(name, 'given-names'),
@@ -210,11 +239,14 @@ function getAuthors(articleMeta) {
   const contribGroup = getFirstChildElement(articleMeta, 'contrib-group');
   return getChildElements(contribGroup, 'contrib').map((contrib) => ({
     label: contrib.name,
+    path: contrib.path,
     nameParts: getPersonNameParts(contrib),
     email: getValue(contrib, 'email'),
     affiliationRefs: getChildElements(contrib, 'xref')
       .filter((xref) => getAttribute(xref, 'ref-type') === 'aff')
-      .map((xref) => ({ label: xref.name, rid: getAttribute(xref, 'rid') }))
+      .map((xref) => ({
+        label: xref.name, path: xref.path, rid: getAttribute(xref, 'rid')
+      }))
       .filter((ref) => ref.rid)
   }));
 }
@@ -222,6 +254,7 @@ function getAuthors(articleMeta) {
 function getAffiliations(articleMeta) {
   return getChildElements(articleMeta, 'aff').map((aff) => ({
     label: aff.name,
+    path: aff.path,
     id: getAttribute(aff, 'id'),
     parts: AFFILIATION_PARTS.flatMap(([name, contentType]) => getChildElements(aff, name)
       .filter(
@@ -230,6 +263,7 @@ function getAffiliations(articleMeta) {
       )
       .map((child) => ({
         label: contentType || name,
+        path: child.path,
         text: getTextContent(child).trim()
       }))
       .filter((part) => part.text))
@@ -246,12 +280,15 @@ function getReference(node) {
   const doi = pubIds.find((pubId) => getAttribute(pubId, 'pub-id-type') === 'doi');
   const reference = {
     label: node.name,
+    path: node.path,
     id: getAttribute(node, 'id'),
     authors: getChildElements(personGroup, 'name').map((name) => [
       getValue(name, 'given-names'),
       getValue(name, 'surname')
     ].filter((part) => part)),
-    doi: doi ? { label: 'pub-id', text: getTextContent(doi).trim() } : null
+    doi: doi
+      ? { label: 'pub-id', path: doi.path, text: getTextContent(doi).trim() }
+      : null
   };
   REFERENCE_FIELDS.forEach(([key, name]) => {
     reference[key] = citation ? getValue(citation, name) : null;
@@ -260,6 +297,8 @@ function getReference(node) {
 }
 
 export function getArticleViewModel(article) {
+  article.path = `/${article.name}`;
+  addPaths(article, article.path);
   const front = getFirstChildElement(article, 'front');
   const articleMeta = getFirstChildElement(front, 'article-meta');
   const titleGroup = getFirstChildElement(articleMeta, 'title-group');
@@ -274,12 +313,17 @@ export function getArticleViewModel(article) {
   return {
     title: titleGroup ? getValue(titleGroup, 'article-title') : null,
     journal: journalTitle
-      ? { label: 'journal-title', text: getTextContent(journalTitle).trim() }
+      ? {
+        label: 'journal-title',
+        path: journalTitle.path,
+        text: getTextContent(journalTitle).trim()
+      }
       : null,
     authors: getAuthors(articleMeta),
     affiliations: getAffiliations(articleMeta),
     abstracts: getChildElements(articleMeta, 'abstract').map((abstract) => ({
       label: abstract.name,
+      path: abstract.path,
       title: getValue(abstract, 'title'),
       paragraphs: getDescendantElements(abstract, 'p').map(getParagraph)
     })),
@@ -310,25 +354,32 @@ export function getXmlNode(element) {
   };
 }
 
-function appendElement(parent, tagName, className, label, id) {
+function appendTag(element, marked) {
+  const tag = element.ownerDocument.createElement('span');
+  tag.className = 'jats-tag';
+  tag.textContent = marked.label;
+  if (marked.path) {
+    tag.setAttribute('title', marked.path);
+  }
+  if (marked.id) {
+    // The id is what a cross-reference points at, so the thing it points at
+    // says which one it is.
+    const tagId = element.ownerDocument.createElement('span');
+    tagId.className = 'jats-tag-id';
+    tagId.textContent = '#' + marked.id;
+    tag.appendChild(tagId);
+  }
+  element.appendChild(tag);
+}
+
+function appendElement(parent, tagName, className, marked) {
   const element = parent.ownerDocument.createElement(tagName);
   if (className) {
     element.className = className;
   }
-  if (label) {
-    element.setAttribute('data-jats', label);
-    const tag = parent.ownerDocument.createElement('span');
-    tag.className = 'jats-tag';
-    tag.textContent = label;
-    if (id) {
-      // The id is what a cross-reference points at, so the thing it points at
-      // says which one it is.
-      const tagId = parent.ownerDocument.createElement('span');
-      tagId.className = 'jats-tag-id';
-      tagId.textContent = '#' + id;
-      tag.appendChild(tagId);
-    }
-    element.appendChild(tag);
+  if (marked && marked.label) {
+    element.setAttribute('data-jats', marked.label);
+    appendTag(element, marked);
   }
   parent.appendChild(element);
   return element;
@@ -343,7 +394,7 @@ function appendValue(parent, value, tagName, className) {
     return null;
   }
   const element = appendElement(
-    parent, tagName || 'span', className || '', value.label
+    parent, tagName || 'span', className || '', value
   );
   appendText(element, value.text);
   return element;
@@ -364,7 +415,7 @@ function appendRuns(parent, runs) {
 
 function appendParagraph(parent, paragraph, className) {
   appendRuns(
-    appendElement(parent, 'p', className || '', paragraph.label),
+    appendElement(parent, 'p', className || '', paragraph),
     paragraph.runs
   );
 }
@@ -380,7 +431,7 @@ function appendCaption(parent, block) {
 }
 
 function appendGraphic(parent, graphic, options) {
-  const element = appendElement(parent, 'div', 'jats-graphic', graphic.label);
+  const element = appendElement(parent, 'div', 'jats-graphic', graphic);
   if (!graphic.href) {
     appendElement(element, 'span', 'jats-graphic-name').textContent = (
       'no file named for this graphic'
@@ -399,17 +450,13 @@ function appendGraphic(parent, graphic, options) {
 }
 
 function appendFigure(parent, block, options) {
-  const figure = appendElement(
-    parent, 'figure', 'jats-figure', block.label, block.id
-  );
+  const figure = appendElement(parent, 'figure', 'jats-figure', block);
   appendCaption(figure, block);
   block.graphics.forEach((graphic) => appendGraphic(figure, graphic, options));
 }
 
 function appendTable(parent, block) {
-  const figure = appendElement(
-    parent, 'figure', 'jats-table', block.label, block.id
-  );
+  const figure = appendElement(parent, 'figure', 'jats-table', block);
   appendCaption(figure, block);
   if (!block.rows.length) {
     return;
@@ -419,7 +466,7 @@ function appendTable(parent, block) {
   block.rows.forEach((row) => {
     const tableRow = appendElement(tbody, 'tr', '');
     row.forEach((cell) => appendRuns(
-      appendElement(tableRow, 'td', '', cell.label), cell.runs
+      appendElement(tableRow, 'td', '', cell), cell.runs
     ));
   });
 }
@@ -439,9 +486,7 @@ function appendBlocks(parent, blocks, level, options) {
 }
 
 function appendSection(parent, section, level, options) {
-  const element = appendElement(
-    parent, 'section', 'jats-section', section.label, section.id
-  );
+  const element = appendElement(parent, 'section', 'jats-section', section);
   appendValue(element, section.title, 'h' + Math.min(level, 6));
   appendBlocks(element, section.blocks, level + 1, options);
 }
@@ -467,7 +512,7 @@ function getAffiliationByRid(affiliations) {
  */
 function appendAffiliationRef(parent, ref, affiliationByRid) {
   const affiliation = affiliationByRid[ref.rid];
-  const anchor = appendElement(parent, 'a', 'jats-xref', ref.label);
+  const anchor = appendElement(parent, 'a', 'jats-xref', ref);
   anchor.setAttribute('href', '#' + ref.rid);
   anchor.setAttribute(
     'title', affiliation ? affiliation.text : 'no affiliation with id ' + ref.rid
@@ -476,7 +521,7 @@ function appendAffiliationRef(parent, ref, affiliationByRid) {
 }
 
 function appendAuthor(parent, author, affiliationByRid) {
-  const element = appendElement(parent, 'span', 'jats-author', author.label);
+  const element = appendElement(parent, 'span', 'jats-author', author);
   appendAuthorContent(element, author, affiliationByRid);
   return element;
 }
@@ -525,9 +570,7 @@ function appendAuthors(parent, viewModel) {
   }
   const affiliations = appendElement(parent, 'ol', 'jats-affiliations');
   viewModel.affiliations.forEach((affiliation) => {
-    const item = appendElement(
-      affiliations, 'li', '', affiliation.label, affiliation.id
-    );
+    const item = appendElement(affiliations, 'li', '', affiliation);
     if (affiliation.id) {
       item.setAttribute('id', affiliation.id);
     }
@@ -603,9 +646,7 @@ function appendJoined(parent, parts, separator) {
 }
 
 function appendReference(parent, reference) {
-  const item = appendElement(
-    parent, 'li', '', reference.label, reference.id
-  );
+  const item = appendElement(parent, 'li', '', reference);
   const groups = [];
   if (reference.authors.length) {
     groups.push((target) => appendReferenceAuthors(target, reference.authors));
@@ -646,7 +687,7 @@ export function renderArticleViewModel(viewModel, document, options) {
   appendAuthors(article, viewModel);
   viewModel.abstracts.forEach((abstract) => {
     const section = appendElement(
-      article, 'section', 'jats-abstract', abstract.label
+      article, 'section', 'jats-abstract', abstract
     );
     if (abstract.title) {
       appendValue(section, abstract.title, 'h2');
@@ -659,7 +700,9 @@ export function renderArticleViewModel(viewModel, document, options) {
   });
   appendBlocks(article, viewModel.sections, 2, renderOptions);
   if (viewModel.acknowledgements.length) {
-    const section = appendElement(article, 'section', 'jats-ack', 'ack');
+    const section = appendElement(
+      article, 'section', 'jats-ack', { label: 'ack' }
+    );
     appendElement(section, 'h2', '').textContent = 'Acknowledgements';
     appendBlocks(section, viewModel.acknowledgements, 3, renderOptions);
   }
