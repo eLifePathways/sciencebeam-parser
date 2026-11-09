@@ -1,5 +1,6 @@
 import {
   getGraphicHrefs,
+  getGraphicReferences,
   parseJatsViewModel,
   renderArticleViewModel
 } from '/static/jats-to-html.js';
@@ -49,6 +50,13 @@ const rawButton = document.getElementById('show-raw');
 const readingElement = document.getElementById('result-reading');
 const resultBody = document.getElementById('result-body');
 const resultNote = document.getElementById('result-note');
+const downloadXmlButton = document.getElementById('download-xml');
+const archiveSection = document.getElementById('archive');
+const archiveSummary = document.getElementById('archive-summary');
+const archiveFiles = document.getElementById('archive-files');
+const archiveView = document.getElementById('archive-view');
+const archiveViewName = document.getElementById('archive-view-name');
+const archiveViewImage = document.getElementById('archive-view-image');
 const labelsControl = document.getElementById('labels-control');
 const labelsCheckbox = document.getElementById('show-labels');
 const sourceSection = document.getElementById('source');
@@ -348,11 +356,24 @@ function releaseSourceUrl() {
   }
 }
 
+/* The viewer loads when the pane is opened, not before.
+ *
+ * Handing a PDF to the browser's viewer costs something, and the pane starts
+ * closed because most of the time the result is what is being looked at. */
+function loadSourceFrame() {
+  if (!sourceUrl || sourceFrame.getAttribute('src') === sourceUrl) {
+    return;
+  }
+  sourceFrame.src = sourceUrl;
+}
+
 function showSourceBlob(blob) {
   releaseSourceUrl();
   sourceUrl = URL.createObjectURL(blob);
-  sourceFrame.src = sourceUrl;
   sourceFrame.hidden = false;
+  if (sourceSection.open) {
+    loadSourceFrame();
+  }
 }
 
 function isPdfFile(file) {
@@ -478,7 +499,7 @@ async function showReadableResult(content) {
     readingButton.hidden = true;
     rawButton.hidden = true;
     showReading(false);
-    return;
+    return null;
   }
   const urlByName = await getArchiveAssets(content, viewModel);
   readingElement.appendChild(renderArticleViewModel(viewModel, document, {
@@ -487,6 +508,7 @@ async function showReadableResult(content) {
   readingButton.hidden = false;
   rawButton.hidden = false;
   showReading(true);
+  return viewModel;
 }
 
 function showUnreadableResult(output, keepNote) {
@@ -522,6 +544,109 @@ async function getArchiveContent(blob, output) {
   };
 }
 
+function addCell(row, text, className) {
+  const cell = document.createElement('td');
+  if (className) {
+    cell.className = className;
+  }
+  cell.textContent = text;
+  row.appendChild(cell);
+  return cell;
+}
+
+async function showArchiveFile(entry) {
+  const mediaType = getImageMediaType(entry.name);
+  archiveViewName.textContent = (
+    entry.name + ', ' + describeBytes(entry.size)
+    + (mediaType ? '' : ' — not an image this can show')
+  );
+  archiveViewImage.removeAttribute('src');
+  archiveView.hidden = false;
+  if (!mediaType) {
+    return;
+  }
+  const url = URL.createObjectURL(
+    new Blob([await entry.read()], { type: mediaType })
+  );
+  assetUrls.push(url);
+  archiveViewImage.setAttribute('src', url);
+}
+
+function describeFigure(name) {
+  // A figure's own label is usually just its number.
+  return /^\d+$/.test(name) ? 'figure ' + name : name;
+}
+
+function addArchiveFileRow(entry, figuresByHref) {
+  const row = document.createElement('tr');
+  addCell(row, entry.name, 'archive-name');
+  addCell(row, describeBytes(entry.size), 'archive-size');
+  const figures = figuresByHref[entry.name];
+  addCell(
+    row,
+    figures ? 'used by ' + figures.map(describeFigure).join(', ') : 'not referenced',
+    figures ? 'archive-used' : 'archive-unused'
+  );
+  const actionCell = addCell(row, '');
+  if (getImageMediaType(entry.name)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'View';
+    button.onclick = () => showArchiveFile(entry);
+    actionCell.appendChild(button);
+  }
+  archiveFiles.appendChild(row);
+}
+
+function showArchiveFiles(content, viewModel, output) {
+  archiveFiles.replaceChildren();
+  archiveView.hidden = true;
+  archiveViewImage.removeAttribute('src');
+  if (!content || !content.entries) {
+    archiveSection.hidden = true;
+    return;
+  }
+  const figuresByHref = {};
+  if (viewModel) {
+    getGraphicReferences(viewModel).forEach(({ href, figure }) => {
+      figuresByHref[href] = (figuresByHref[href] || []).concat(figure);
+    });
+  }
+  const assetEntries = content.entries.filter(
+    (entry) => entry.name !== output.archive_xml_name
+  );
+  assetEntries.forEach((entry) => addArchiveFileRow(entry, figuresByHref));
+  const unreferenced = assetEntries.filter(
+    (entry) => !figuresByHref[entry.name]
+  ).length;
+  archiveSummary.textContent = (
+    assetEntries.length + ' files beside ' + output.archive_xml_name
+    + (unreferenced ? ', ' + unreferenced + ' of them not referenced' : '')
+  );
+  archiveSection.hidden = !assetEntries.length;
+}
+
+function setUpXmlDownload(content, output, file) {
+  if (!content || !content.entries) {
+    downloadXmlButton.hidden = true;
+    return;
+  }
+  downloadXmlButton.hidden = false;
+  downloadXmlButton.textContent = 'Download ' + output.archive_xml_name;
+  downloadXmlButton.onclick = () => {
+    const url = URL.createObjectURL(
+      new Blob([content.text], { type: 'application/xml' })
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = (
+      file.name.replace(/\.[^.]+$/, '') + '.' + output.archive_xml_name
+    );
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+}
+
 async function showResult(response, blob, file, elapsedSeconds) {
   const metaElement = document.getElementById('result-meta');
   metaElement.replaceChildren();
@@ -548,11 +673,14 @@ async function showResult(response, blob, file, elapsedSeconds) {
       + content.entries.length + ' files. The download is the archive itself.'
     );
   }
+  let viewModel = null;
   if (content && output.is_readable) {
-    await showReadableResult(content);
+    viewModel = await showReadableResult(content);
   } else {
     showUnreadableResult(output, !!content);
   }
+  showArchiveFiles(content, viewModel, output);
+  setUpXmlDownload(content, output, file);
   document.getElementById('result-curl').textContent = getEquivalentCurlCommand(file);
   setUpDownload(blob, getDownloadFilename(file));
   resultSection.hidden = false;
@@ -672,6 +800,11 @@ stopButton.addEventListener('click', () => {
 });
 
 sourceFileInput.addEventListener('change', checkSelectedFile);
+sourceSection.addEventListener('toggle', () => {
+  if (sourceSection.open) {
+    loadSourceFrame();
+  }
+});
 readingButton.addEventListener('click', () => showReading(true));
 rawButton.addEventListener('click', () => showReading(false));
 

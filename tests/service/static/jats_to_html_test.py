@@ -533,3 +533,27 @@ class TestFigureGraphic:
             body='<sec><fig><graphic/></fig></sec>'
         ))
         assert view_model['graphicHrefs'] == []
+
+    def test_should_say_which_figure_asks_for_each_graphic(self):
+        view_model = get_article_view_model(get_article_xml(
+            body=(
+                '<sec><fig id="fig_0"><label>Figure 1</label>'
+                '<graphic xlink:href="image1.png"/>'
+                '<graphic xlink:href="image2.png"/></fig>'
+                '<fig id="fig_1"><caption><title>An unlabelled figure</title></caption>'
+                '<graphic xlink:href="image3.png"/></fig></sec>'
+            )
+        ))
+        assert view_model['graphicReferences'] == [
+            {'href': 'image1.png', 'figure': 'Figure 1'},
+            {'href': 'image2.png', 'figure': 'Figure 1'},
+            {'href': 'image3.png', 'figure': 'An unlabelled figure'}
+        ]
+
+    def test_should_fall_back_to_the_figure_id_where_it_has_no_name(self):
+        view_model = get_article_view_model(get_article_xml(
+            body='<sec><fig id="fig_7"><graphic xlink:href="image1.png"/></fig></sec>'
+        ))
+        assert view_model['graphicReferences'] == [
+            {'href': 'image1.png', 'figure': 'fig_7'}
+        ]

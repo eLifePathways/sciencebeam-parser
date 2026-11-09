@@ -62,14 +62,14 @@
 </form>
 
 <div class="panes">
-<section id="source" hidden>
-  <h2>Source</h2>
+<details id="source" hidden>
+  <summary><h2>Source</h2></summary>
   <p class="hint" id="source-note"></p>
   <p id="source-actions" hidden>
     <button type="button" id="show-source">Show the PDF the parser read</button>
   </p>
   <iframe id="source-frame" title="The document as the parser read it" hidden></iframe>
-</section>
+</details>
 
 <section id="result" hidden>
   <h2>Result</h2>
@@ -82,10 +82,20 @@
       Show labels
     </label>
     <button type="button" id="download">Download</button>
+    <button type="button" id="download-xml" hidden></button>
   </div>
   <p class="hint" id="result-note"></p>
   <div id="result-reading"></div>
   <pre id="result-body"></pre>
+  <details id="archive" hidden>
+    <summary><h3 id="archive-summary">Files in the archive</h3></summary>
+    <table id="archive-files"></table>
+    <div id="archive-view" hidden>
+      <p class="hint" id="archive-view-name"></p>
+      <img id="archive-view-image" alt="">
+    </div>
+  </details>
+
   <h3>The same request</h3>
   <pre id="result-curl"></pre>
 </section>

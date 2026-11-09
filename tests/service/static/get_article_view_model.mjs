@@ -6,7 +6,8 @@
  */
 import {
   getArticleViewModel,
-  getGraphicHrefs
+  getGraphicHrefs,
+  getGraphicReferences
 } from '../../../sciencebeam_parser/service/static/jats-to-html.js';
 
 let input = '';
@@ -15,6 +16,7 @@ process.stdin.on('end', () => {
   const viewModel = getArticleViewModel(JSON.parse(input));
   process.stdout.write(JSON.stringify({
     ...viewModel,
-    graphicHrefs: getGraphicHrefs(viewModel)
+    graphicHrefs: getGraphicHrefs(viewModel),
+    graphicReferences: getGraphicReferences(viewModel)
   }));
 });

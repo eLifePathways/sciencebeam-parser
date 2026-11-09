@@ -238,3 +238,45 @@ pre {
   color: var(--muted);
   font-size: 12px;
 }
+
+details > summary {
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+details > summary > h2,
+details > summary > h3 {
+  display: inline;
+  margin: 0;
+}
+
+#source[open] > summary { margin-bottom: 8px; }
+
+#archive { margin-top: 24px; }
+
+#archive-files {
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 13px;
+  width: 100%;
+}
+
+#archive-files td {
+  border-bottom: 1px solid var(--panel-line);
+  padding: 4px 8px 4px 0;
+  vertical-align: baseline;
+}
+
+.archive-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.archive-size { color: var(--muted); white-space: nowrap; }
+.archive-used { color: var(--muted); }
+.archive-unused { color: var(--error); }
+
+#archive-view { margin-top: 12px; }
+
+#archive-view-image {
+  max-width: 100%;
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+  background: #fff;
+}

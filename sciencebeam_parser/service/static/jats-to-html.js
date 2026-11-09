@@ -19,9 +19,10 @@
  * `renderArticleViewModel` takes an optional `{getAssetUrl}`, which is asked
  * for a figure's graphic by the name the document gives it. Where the figures
  * travel beside the XML, as they do in the archive the service answers with,
- * that is what puts them on the page. `getGraphicHrefs` names what a reading
- * will ask for, so a caller holding an archive can fetch those and leave the
- * rest of it alone.
+ * that is what puts them on the page. `getGraphicReferences` names what a
+ * reading will ask for and which figure asks for it, so a caller holding an
+ * archive can fetch those, leave the rest of it alone, and say what the rest
+ * of it was for.
  */
 
 const AFFILIATION_PARTS = [
@@ -616,26 +617,42 @@ export function parseJatsViewModel(xmlText) {
   return getArticleViewModel(getXmlNode(xmlDocument.documentElement));
 }
 
-function addGraphicHrefs(hrefs, blocks) {
+function getFigureName(figure) {
+  if (figure.heading && figure.heading.text) {
+    return figure.heading.text;
+  }
+  if (figure.title && figure.title.text) {
+    return figure.title.text;
+  }
+  return figure.id || 'a figure';
+}
+
+function addGraphicReferences(references, blocks) {
   blocks.forEach((block) => {
     if (block.type === 'figure') {
       block.graphics.forEach((graphic) => {
         if (graphic.href) {
-          hrefs.add(graphic.href);
+          references.push({ href: graphic.href, figure: getFigureName(block) });
         }
       });
     } else if (block.type === 'section') {
-      addGraphicHrefs(hrefs, block.blocks);
+      addGraphicReferences(references, block.blocks);
     }
   });
 }
 
+export function getGraphicReferences(viewModel) {
+  const references = [];
+  addGraphicReferences(references, viewModel.sections);
+  addGraphicReferences(references, viewModel.acknowledgements);
+  addGraphicReferences(references, viewModel.appendices);
+  return references;
+}
+
 export function getGraphicHrefs(viewModel) {
-  const hrefs = new Set();
-  addGraphicHrefs(hrefs, viewModel.sections);
-  addGraphicHrefs(hrefs, viewModel.acknowledgements);
-  addGraphicHrefs(hrefs, viewModel.appendices);
-  return Array.from(hrefs);
+  return Array.from(new Set(
+    getGraphicReferences(viewModel).map((reference) => reference.href)
+  ));
 }
 
 export function renderJatsXml(xmlText, document, options) {
