@@ -111,6 +111,16 @@ class TestMakeLabel:
         assert _make_label("sciencebeam-parser", "main", "grobid_crf", meta) == \
                "sciencebeam-parser:main-abc123 (grobid_crf)"
 
+    def test_names_the_version_an_image_tag_does_not(self):
+        meta = {"image": "sciencebeam-parser:manual-9d0a62fa-20261109.0959"}
+        assert _make_label("sciencebeam-parser", "main", "delft_hub", meta) == \
+               "sciencebeam-parser:manual-9d0a62fa-20261109.0959 on main (delft_hub)"
+
+    def test_does_not_take_a_version_inside_a_word_for_the_tag_naming_it(self):
+        meta = {"image": "sciencebeam-parser:mainline-abc123"}
+        assert _make_label("sciencebeam-parser", "main", "grobid_crf", meta) == \
+               "sciencebeam-parser:mainline-abc123 on main (grobid_crf)"
+
     def test_no_metadata_image_falls_back(self):
         assert _make_label("sciencebeam-parser", "main", "grobid_crf", {"mode": "medium"}) == \
                "main (grobid_crf)"

@@ -148,7 +148,9 @@ jobs:
           PR="${{ github.event.pull_request.number }}"
           if [ -n "$PR" ]; then
             echo "value=sciencebeam-parser:pr-${PR}-${SHORT_SHA}-${TIMESTAMP}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "push" ]; then
+          # By branch rather than event: a dispatch on main is stored as main too, and
+          # its tag is what names that column in every report that reads it.
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
             echo "value=sciencebeam-parser:main-${SHORT_SHA}-${TIMESTAMP}" >> $GITHUB_OUTPUT
           else
             echo "value=sciencebeam-parser:manual-${SHORT_SHA}-${TIMESTAMP}" >> $GITHUB_OUTPUT

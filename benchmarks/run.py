@@ -102,7 +102,12 @@ def _coverage(expected_ids: set, done_ids: set) -> dict:
 
 def _make_label(tool: str, version: str, profile: str, metadata: Optional[dict]) -> str:
     if metadata and metadata.get("image"):
-        base = metadata["image"]
+        image = metadata["image"]
+        # The tag is the run's own name, the version the name it is stored under: a
+        # dispatch on main was tagged `manual-`, which left its column saying main
+        # only through a commit a reader had to recognise.
+        tag = image.rsplit(":", 1)[-1]
+        base = image if tag.startswith(f"{version}-") else f"{image} on {version}"
     elif tool == "sciencebeam-parser":
         base = version
     else:
