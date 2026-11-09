@@ -1,5 +1,9 @@
-import { renderJatsXml } from '/static/jats-to-html.js';
-import { readZipEntries } from '/static/read-zip.js';
+import {
+  getGraphicHrefs,
+  parseJatsViewModel,
+  renderArticleViewModel
+} from '/static/jats-to-html.js';
+import { getZipSourceForBlob, readZipEntries } from '/static/read-zip.js';
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
 
@@ -257,11 +261,13 @@ function getImageMediaType(name) {
   return extension ? IMAGE_MEDIA_TYPE_BY_EXTENSION[extension] : null;
 }
 
-async function getAssetUrlByName(entries) {
+async function getAssetUrlByName(entries, wantedNames) {
   const urlByName = {};
   const tooLarge = [];
-  const imageEntries = entries.filter((entry) => getImageMediaType(entry.name));
-  await Promise.all(imageEntries.map(async (entry) => {
+  const wantedEntries = entries.filter(
+    (entry) => wantedNames.includes(entry.name) && getImageMediaType(entry.name)
+  );
+  await Promise.all(wantedEntries.map(async (entry) => {
     if (entry.size > MAX_ASSET_BYTES) {
       tooLarge.push(entry.name);
       return;
@@ -386,12 +392,27 @@ function setUpLabels() {
   });
 }
 
-function showReadableResult(xmlText, getAssetUrl) {
-  readingElement.replaceChildren();
-  try {
-    readingElement.appendChild(
-      renderJatsXml(xmlText, document, { getAssetUrl })
+async function getArchiveAssets(content, viewModel) {
+  if (!content.entries) {
+    return {};
+  }
+  const { urlByName, tooLarge } = await getAssetUrlByName(
+    content.entries, getGraphicHrefs(viewModel)
+  );
+  if (tooLarge.length) {
+    resultNote.textContent += (
+      ' Not shown, over ' + Math.round(MAX_ASSET_BYTES / (1024 * 1024))
+      + 'MB each: ' + tooLarge.join(', ') + '.'
     );
+  }
+  return urlByName;
+}
+
+async function showReadableResult(content) {
+  readingElement.replaceChildren();
+  let viewModel;
+  try {
+    viewModel = parseJatsViewModel(content.text);
   } catch (error) {
     resultNote.textContent = 'It could not be read as JATS: ' + error.message;
     readingButton.hidden = true;
@@ -399,6 +420,10 @@ function showReadableResult(xmlText, getAssetUrl) {
     showReading(false);
     return;
   }
+  const urlByName = await getArchiveAssets(content, viewModel);
+  readingElement.appendChild(renderArticleViewModel(viewModel, document, {
+    getAssetUrl: (href) => urlByName[href] || null
+  }));
   readingButton.hidden = false;
   rawButton.hidden = false;
   showReading(true);
@@ -424,19 +449,16 @@ async function getArchiveContentOrNote(blob, output) {
 }
 
 async function getArchiveContent(blob, output) {
-  const entries = readZipEntries(await blob.arrayBuffer());
+  const entries = await readZipEntries(getZipSourceForBlob(blob));
   const xmlEntry = entries.find((entry) => entry.name === output.archive_xml_name);
   if (!xmlEntry) {
     throw new Error(
       'the archive carries no ' + output.archive_xml_name
     );
   }
-  const { urlByName, tooLarge } = await getAssetUrlByName(entries);
   return {
     text: new TextDecoder().decode(await xmlEntry.read()),
-    entryCount: entries.length,
-    tooLarge,
-    getAssetUrl: (href) => urlByName[href] || null
+    entries
   };
 }
 
@@ -453,25 +475,21 @@ async function showResult(response, blob, file, elapsedSeconds) {
   resultNote.textContent = '';
   let content = null;
   if (output && output.is_text) {
-    content = { text: await blob.text() };
+    content = { text: await blob.text(), entries: null };
   } else if (output && output.archive_xml_name) {
     content = await getArchiveContentOrNote(blob, output);
   }
   resultBody.textContent = content
     ? content.text
     : 'Not text. Download it to read it.';
-  if (content && output.archive_xml_name) {
+  if (content && content.entries) {
     resultNote.textContent = (
       'Showing ' + output.archive_xml_name + ' from the archive, which carries '
-      + content.entryCount + ' files. The download is the archive itself.'
-      + (content.tooLarge.length
-        ? ' Not shown, over ' + Math.round(MAX_ASSET_BYTES / (1024 * 1024))
-          + 'MB each: ' + content.tooLarge.join(', ') + '.'
-        : '')
+      + content.entries.length + ' files. The download is the archive itself.'
     );
   }
   if (content && output.is_readable) {
-    showReadableResult(content.text, content.getAssetUrl);
+    await showReadableResult(content);
   } else {
     showUnreadableResult(output, !!content);
   }

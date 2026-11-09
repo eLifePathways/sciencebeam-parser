@@ -514,3 +514,22 @@ class TestFigureGraphic:
         assert '<img' not in html
         assert 'no file named for this graphic' in html
         assert 'data-jats="graphic"' in html
+
+    def test_should_name_only_the_graphics_a_reading_will_ask_for(self):
+        view_model = get_article_view_model(get_article_xml(
+            body=(
+                '<sec><fig><graphic xlink:href="image1.png"/>'
+                '<graphic xlink:href="image2.png"/><graphic/></fig>'
+                '<sec><fig><graphic xlink:href="image3.png"/></fig></sec></sec>'
+            ),
+            back='<app-group><app><fig><graphic xlink:href="image4.png"/></fig></app></app-group>'
+        ))
+        assert view_model['graphicHrefs'] == [
+            'image1.png', 'image2.png', 'image3.png', 'image4.png'
+        ]
+
+    def test_should_name_no_graphic_where_the_figures_name_no_file(self):
+        view_model = get_article_view_model(get_article_xml(
+            body='<sec><fig><graphic/></fig></sec>'
+        ))
+        assert view_model['graphicHrefs'] == []

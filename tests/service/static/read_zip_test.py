@@ -33,10 +33,15 @@ def get_zip_bytes(
     return buffer.getvalue()
 
 
-def read_zip_entries(zip_bytes: bytes) -> dict:
+def read_zip_entries(
+    zip_bytes: bytes, read: Optional[list] = None
+) -> dict:
     completed_process = subprocess.run(
         ['node', str(HARNESS_FILE)],
-        input=base64.b64encode(zip_bytes).decode('ascii'),
+        input=json.dumps({
+            'zip': base64.b64encode(zip_bytes).decode('ascii'),
+            'read': read
+        }),
         capture_output=True,
         text=True,
         check=True
@@ -110,3 +115,17 @@ class TestReadZipEntries:
             get_zip_bytes({'jats.xml': content}, compression=zipfile.ZIP_DEFLATED)
         )
         assert [entry['size'] for entry in result['entries']] == [len(content)]
+
+    def test_should_leave_an_entry_it_was_not_asked_for_unread(self):
+        zip_bytes = get_zip_bytes({
+            'jats.xml': '<article/>',
+            'image-30.svg': 'x' * 2_000_000
+        })
+        result = read_zip_entries(zip_bytes, read=['jats.xml'])
+        assert 'error' not in result, result.get('error')
+        text_by_name = {entry['name']: entry['text'] for entry in result['entries']}
+        assert text_by_name['jats.xml'] == '<article/>'
+        assert text_by_name['image-30.svg'] is None
+        size_by_name = {entry['name']: entry['size'] for entry in result['entries']}
+        assert size_by_name['image-30.svg'] == 2_000_000
+        assert result['bytesRead'] < 100_000

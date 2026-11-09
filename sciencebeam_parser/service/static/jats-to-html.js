@@ -19,7 +19,9 @@
  * `renderArticleViewModel` takes an optional `{getAssetUrl}`, which is asked
  * for a figure's graphic by the name the document gives it. Where the figures
  * travel beside the XML, as they do in the archive the service answers with,
- * that is what puts them on the page.
+ * that is what puts them on the page. `getGraphicHrefs` names what a reading
+ * will ask for, so a caller holding an archive can fetch those and leave the
+ * rest of it alone.
  */
 
 const AFFILIATION_PARTS = [
@@ -606,14 +608,38 @@ export function renderArticleViewModel(viewModel, document, options) {
   return article;
 }
 
-export function renderJatsXml(xmlText, document, options) {
+export function parseJatsViewModel(xmlText) {
   const xmlDocument = new DOMParser().parseFromString(xmlText, 'application/xml');
   if (xmlDocument.getElementsByTagName('parsererror').length) {
     throw new Error('the response is not well-formed XML');
   }
+  return getArticleViewModel(getXmlNode(xmlDocument.documentElement));
+}
+
+function addGraphicHrefs(hrefs, blocks) {
+  blocks.forEach((block) => {
+    if (block.type === 'figure') {
+      block.graphics.forEach((graphic) => {
+        if (graphic.href) {
+          hrefs.add(graphic.href);
+        }
+      });
+    } else if (block.type === 'section') {
+      addGraphicHrefs(hrefs, block.blocks);
+    }
+  });
+}
+
+export function getGraphicHrefs(viewModel) {
+  const hrefs = new Set();
+  addGraphicHrefs(hrefs, viewModel.sections);
+  addGraphicHrefs(hrefs, viewModel.acknowledgements);
+  addGraphicHrefs(hrefs, viewModel.appendices);
+  return Array.from(hrefs);
+}
+
+export function renderJatsXml(xmlText, document, options) {
   return renderArticleViewModel(
-    getArticleViewModel(getXmlNode(xmlDocument.documentElement)),
-    document,
-    options
+    parseJatsViewModel(xmlText), document, options
   );
 }
