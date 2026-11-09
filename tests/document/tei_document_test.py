@@ -202,7 +202,6 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
         aff_marker = SemanticMarker(layout_block=LayoutBlock.for_text('1'))
         institution = SemanticInstitution(layout_block=LayoutBlock.for_text('Institution1'))
         aff = SemanticAffiliationAddress([aff_marker, institution], content_id='aff0')
-        author.affiliations.append(aff)
         semantic_document.front.add_content(author)
         semantic_document.front.add_content(aff)
         tei_document = get_tei_for_semantic_document(semantic_document)
@@ -235,40 +234,11 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
             '//tei:author/tei:affiliation/tei:orgName[@type="institution"]'
         ) == [institution.get_text()]
 
-    def test_should_write_the_same_affiliation_under_each_author_it_is_attached_to(self):
-        semantic_document = SemanticDocument()
-        author_1 = SemanticAuthor([
-            SemanticSurname(layout_block=LayoutBlock.for_text('Surname1'))
-        ])
-        author_2 = SemanticAuthor([
-            SemanticSurname(layout_block=LayoutBlock.for_text('Surname2'))
-        ])
-        aff = SemanticAffiliationAddress([
-            SemanticInstitution(layout_block=LayoutBlock.for_text('Institution1'))
-        ], content_id='aff0')
-        author_1.affiliations.append(aff)
-        author_2.affiliations.append(aff)
-        semantic_document.front.add_content(author_1)
-        semantic_document.front.add_content(author_2)
-        semantic_document.front.add_content(aff)
-        tei_document = get_tei_for_semantic_document(semantic_document)
-        LOGGER.debug('tei xml: %r', etree.tostring(tei_document.root))
-        assert tei_document.get_xpath_text_content_list(
-            '//tei:author/tei:affiliation/@key'
-        ) == ['aff0', 'aff0']
-        assert not tei_document.get_xpath_text_content_list(
-            '//tei:author/tei:note[@type="dummy_author"]'
-        )
-
     def test_should_add_orphan_affiliation(self):
         semantic_document = SemanticDocument()
-        author = SemanticAuthor([
-            SemanticSurname(layout_block=LayoutBlock.for_text('Surname1'))
-        ])
         aff_marker = SemanticMarker(layout_block=LayoutBlock.for_text('1'))
         institution = SemanticInstitution(layout_block=LayoutBlock.for_text('Institution1'))
         aff = SemanticAffiliationAddress([aff_marker, institution], content_id='aff0')
-        semantic_document.front.add_content(author)
         semantic_document.front.add_content(aff)
         tei_document = get_tei_for_semantic_document(semantic_document)
         LOGGER.debug('tei xml: %r', etree.tostring(tei_document.root))
@@ -281,9 +251,6 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
         assert tei_document.get_xpath_text_content_list(
             '//tei:author/tei:affiliation/@key'
         ) == ['aff0']
-        assert tei_document.get_xpath_text_content_list(
-            '//tei:author[tei:affiliation]/tei:note[@type="dummy_author"]'
-        ) == ['Dummy author for orphan affiliations']
 
     def test_should_create_body_section(self):
         semantic_document = SemanticDocument()

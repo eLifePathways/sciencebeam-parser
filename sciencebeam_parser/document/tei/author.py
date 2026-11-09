@@ -1,7 +1,11 @@
 import logging
 from typing import (
+    Dict,
     List,
+    Mapping,
+    Optional,
     Sequence,
+    Set,
     Union
 )
 
@@ -92,11 +96,11 @@ def get_tei_affiliation_for_semantic_affiliation_address_element(
 
 def get_tei_author_for_semantic_author_element(
     semantic_author: SemanticAuthor,
-    context: TeiElementFactoryContext
+    context: TeiElementFactoryContext,
+    affiliations_by_marker: Optional[Mapping[str, Sequence[SemanticAffiliationAddress]]] = None
 ) -> etree.ElementBase:
-    """The author with the affiliations attached to it (see
-    sciencebeam_parser.processors.fulltext.attach_affiliations), each written out
-    in full under the author as GROBID does, under its key."""
+    if affiliations_by_marker is None:
+        affiliations_by_marker = {}
     LOGGER.debug('semantic_author: %s', semantic_author)
     pers_name_children = []
     for semantic_content in semantic_author:
@@ -110,13 +114,18 @@ def get_tei_author_for_semantic_author_element(
             *pers_name_children
         )
     ]
-    children.extend([
-        get_tei_affiliation_for_semantic_affiliation_address_element(
-            semantic_affiliation,
-            context=context
-        )
-        for semantic_affiliation in semantic_author.affiliations
-    ])
+    affiliations = []
+    for marker_text in semantic_author.view_by_type(SemanticMarker).get_text_list():
+        semantic_affiliations = affiliations_by_marker.get(marker_text)
+        if not semantic_affiliations:
+            LOGGER.warning('affiliation not found for marker: %r', marker_text)
+            continue
+        for semantic_affiliation in semantic_affiliations:
+            affiliations.append(get_tei_affiliation_for_semantic_affiliation_address_element(
+                semantic_affiliation,
+                context=context
+            ))
+    children.extend(affiliations)
     return TEI_E('author', *children)
 
 
@@ -137,19 +146,22 @@ def get_dummy_tei_author_for_semantic_affiliations_element(
     return TEI_E('author', *children)
 
 
-def get_orphan_affiliations(
-    affiliations: Sequence[SemanticAffiliationAddress],
-    authors: Sequence[SemanticAuthor]
-) -> List[SemanticAffiliationAddress]:
-    """The affiliations attached to no author, which GROBID writes out under an
-    author of their own ("better than nothing")."""
-    attached_affiliation_ids = {
-        id(affiliation)
+def get_authors_affiliation_markers(authors: List[SemanticAuthor]) -> Set[str]:
+    return {
+        marker
         for author in authors
-        for affiliation in author.affiliations
+        for marker in author.view_by_type(SemanticMarker).get_text_list()
     }
+
+
+def get_orphan_affiliations(
+    affiliations_by_marker: Dict[str, List[SemanticAffiliationAddress]],
+    authors: List[SemanticAuthor]
+) -> List[SemanticAffiliationAddress]:
+    used_affiliation_markers = get_authors_affiliation_markers(authors)
     return [
         affiliation
+        for marker, affiliations in affiliations_by_marker.items()
+        if marker not in used_affiliation_markers
         for affiliation in affiliations
-        if id(affiliation) not in attached_affiliation_ids
     ]

@@ -1,5 +1,6 @@
 import logging
 from typing import (
+    Dict,
     List,
     Optional,
 )
@@ -11,6 +12,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticAuthor,
     SemanticDocument,
     SemanticFigure,
+    SemanticMarker,
     SemanticNote,
     SemanticReferenceList,
     SemanticSection,
@@ -73,16 +75,21 @@ def get_tei_for_semantic_document(  # noqa pylint: disable=too-many-branches, to
                 language=semantic_abstract.language
             )
 
-    semantic_affiliations: List[SemanticAffiliationAddress] = list(
-        semantic_document.front.iter_by_type(SemanticAffiliationAddress)
-    )
+    affiliations_by_marker: Dict[str, List[SemanticAffiliationAddress]] = {}
+    for semantic_content in semantic_document.front:
+        if isinstance(semantic_content, SemanticAffiliationAddress):
+            marker_text = semantic_content.get_text_by_type(SemanticMarker)
+            affiliations_by_marker.setdefault(marker_text, []).append(semantic_content)
+    LOGGER.debug('affiliations_by_marker: %r', affiliations_by_marker)
+
     semantic_authors: List[SemanticAuthor] = []
     for semantic_content in semantic_document.front:
         if isinstance(semantic_content, SemanticAuthor):
             semantic_authors.append(semantic_content)
             tei_author_element = get_tei_author_for_semantic_author_element(
                 semantic_content,
-                context=context
+                context=context,
+                affiliations_by_marker=affiliations_by_marker
             )
             tei_document.get_or_create_element_at(
                 ['teiHeader', 'fileDesc', 'sourceDesc', 'biblStruct', 'analytic']
@@ -100,7 +107,7 @@ def get_tei_for_semantic_document(  # noqa pylint: disable=too-many-branches, to
             semantic_content
         ))
     orphan_affiliations = get_orphan_affiliations(
-        affiliations=semantic_affiliations,
+        affiliations_by_marker=affiliations_by_marker,
         authors=semantic_authors
     )
     if orphan_affiliations:

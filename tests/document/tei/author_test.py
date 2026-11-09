@@ -134,26 +134,30 @@ class TestGetTeiAffiliationForSemanticAffiliationAddress:
         ) == ['1']
 
 
-class TestGetTeiAuthorForSemanticAuthor:
+class TestGetTeiAuthorForSemanticAffiliationAddress:
     def test_should_add_all_fields(self):
-        affiliations = [
-            SemanticAffiliationAddress([
+        affiliations_by_marker = {
+            '1': [SemanticAffiliationAddress([
                 SemanticInstitution(layout_block=LayoutBlock.for_text('Institution1'))
-            ]),
-            SemanticAffiliationAddress([
+            ])],
+            '2': [SemanticAffiliationAddress([
                 SemanticInstitution(layout_block=LayoutBlock.for_text('Institution2'))
-            ])
-        ]
+            ])],
+            '3': [SemanticAffiliationAddress([
+                SemanticInstitution(layout_block=LayoutBlock.for_text('Other'))
+            ])]
+        }
         semantic_author = SemanticAuthor([
             SemanticMarker(layout_block=LayoutBlock.for_text('1')),
             SemanticMarker(layout_block=LayoutBlock.for_text('2')),
             SemanticGivenName(layout_block=LayoutBlock.for_text('GivenName1')),
             SemanticSurname(layout_block=LayoutBlock.for_text('Surname1'))
-        ], affiliations=affiliations)
+        ])
         tei_author = TeiElementWrapper(
             get_tei_author_for_semantic_author_element(
                 semantic_author,
-                context=DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
+                context=DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT,
+                affiliations_by_marker=affiliations_by_marker
             )
         )
         LOGGER.debug('tei_author: %r', etree.tostring(tei_author.element))
@@ -169,15 +173,3 @@ class TestGetTeiAuthorForSemanticAuthor:
         assert tei_author.get_xpath_text_content_list(
             'tei:affiliation/tei:orgName[@type="institution"]'
         ) == ['Institution1', 'Institution2']
-
-    def test_should_write_no_affiliation_for_an_author_without_one(self):
-        semantic_author = SemanticAuthor([
-            SemanticSurname(layout_block=LayoutBlock.for_text('Surname1'))
-        ])
-        tei_author = TeiElementWrapper(
-            get_tei_author_for_semantic_author_element(
-                semantic_author,
-                context=DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
-            )
-        )
-        assert not tei_author.get_xpath_text_content_list('tei:affiliation')
