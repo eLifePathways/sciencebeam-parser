@@ -25,6 +25,8 @@ from benchmarks.comparison_config import (
 )
 from benchmarks.report_grid import SelectionError
 from benchmarks.score import run_score
+from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 LOGGER = logging.getLogger(__name__)
 
@@ -490,29 +492,38 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
 
 def check_llm_profile_corpora(
-    config: dict, profile: Optional[str], include: Optional[Sequence[str]]
+    parser_config: AppConfig, profile: Optional[str], include: Optional[Sequence[str]]
 ) -> None:
-    if not profile:
-        return
-    sequence_model_profiles = config.get("sequence_model_profiles")
-    if not isinstance(sequence_model_profiles, dict):
-        return
-    profile_models = sequence_model_profiles.get(profile)
-    if not isinstance(profile_models, dict):
-        return
-    uses_llm = any(
-        isinstance(model_config, dict) and model_config.get("engine") == "llm"
-        for model_config in profile_models.values()
-    )
-    if not uses_llm:
-        return
+    """Refuses to send a restricted corpus to a profile that serves a model by llm.
+
+    Read from the parser's own configuration, the one its image is built with, and
+    resolved the way the parser resolves it -- through `profile_aliases`, the
+    profile's `sequence_models` and their `extends` -- since `eval.yml` says nothing
+    about which engine a profile uses. No profile is the parser's default one.
+    """
     restricted = sorted(RESTRICTED_CORPORA_FOR_LLM.intersection(include or ()))
-    if restricted:
+    if not restricted:
+        return
+    try:
+        models = parser_config.resolve_profile(profile).props.get("models") or {}
+    except ValueError as error:
+        # Fails closed: a profile this cannot read is one it cannot vouch for.
         raise SystemExit(
-            f"refusing to run profile {profile!r}, which uses the llm engine, over "
-            f"{', '.join(restricted)}: those manuscripts are not redistributable and "
-            "provider zero-retention does not cover the intermediary. Drop the corpus "
-            "or point the engine at a self-hosted endpoint."
+            f"refusing to run profile {profile!r} over {', '.join(restricted)}: it"
+            f" does not resolve against the parser config, so whether it sends"
+            f" documents to an llm is unknown ({error})"
+        ) from error
+    llm_models = sorted(
+        name for name, model_config in models.items()
+        if isinstance(model_config, dict) and model_config.get("engine") == "llm"
+    )
+    if llm_models:
+        raise SystemExit(
+            f"refusing to run profile {profile!r}, which serves"
+            f" {', '.join(llm_models)} with the llm engine, over"
+            f" {', '.join(restricted)}: those manuscripts are not redistributable and"
+            " provider zero-retention does not cover the intermediary. Drop the corpus"
+            " or point the engine at a self-hosted endpoint."
         )
 
 
@@ -594,7 +605,9 @@ def main(argv=None) -> None:
     with open(args.config, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    check_llm_profile_corpora(config, args.profile, args.include_corpus)
+    check_llm_profile_corpora(
+        AppConfig.load_yaml(DEFAULT_CONFIG_FILE), args.profile, args.include_corpus,
+    )
 
     if args.comparison_only and not args.comparison:
         parser.error("--comparison-only needs --comparison")

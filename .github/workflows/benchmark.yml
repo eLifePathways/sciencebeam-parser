@@ -15,7 +15,7 @@ on:
         default: ''
         type: string
       include_plos:
-        description: 'Also run the private PLOS corpus (not redistributable; already on for main)'
+        description: 'Also run the private PLOS corpus (not redistributable; already on for a push to main; refused for an llm profile)'
         required: false
         default: false
         type: boolean
@@ -76,9 +76,11 @@ jobs:
       # has no PLOS predictions, so a labelled PR can compare PLOS against GROBID but
       # never against main. Opt-in everywhere else -- the manuscripts are private and
       # not redistributable, so a PR or a laptop reaches for them only when asked.
+      # A push, not a dispatch: a dispatch on main stores main under the profile it
+      # names, which for an llm profile the run refuses to send PLOS to.
       BENCHMARK_CORPORA: >-
         ${{
-          (github.ref == 'refs/heads/main' ||
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
            contains(github.event.pull_request.labels.*.name, 'benchmark:plos') ||
            inputs.include_plos) && '--include-corpus plos-manuscripts' || ''
         }}
