@@ -659,7 +659,6 @@ function setUpArchiveShowAll(viewable) {
 
 function showArchiveFiles(content, viewModel, output) {
   archiveFiles.replaceChildren();
-  archiveNote.textContent = '';
   if (!content || !content.entries) {
     archiveSection.hidden = true;
     return;

@@ -254,7 +254,7 @@ pre {
 
 details > summary {
   cursor: pointer;
-  list-style-position: outside;
+  list-style-position: inside;
 }
 
 details > summary > h2,
