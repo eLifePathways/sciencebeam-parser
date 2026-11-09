@@ -12,17 +12,16 @@ from sciencebeam_parser.app.parser import (
 from sciencebeam_parser.processors.fulltext.config import RequestFieldNames
 from sciencebeam_parser.service.api.app import API_PATH
 from sciencebeam_parser.service.api.routers.convert import CONVERT_RESPONSE_MEDIA_TYPES
+from sciencebeam_parser.service.assets import (
+    PAGE_CACHE_CONTROL,
+    STATIC_DIRECTORY,
+    get_versioned_html
+)
 from sciencebeam_parser.utils.media_types import (
     MediaTypes,
     guess_extension_for_media_type
 )
 
-
-STATIC_PATH = '/static'
-
-SERVICE_DIRECTORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-STATIC_DIRECTORY = os.path.join(SERVICE_DIRECTORY, 'static')
 
 INDEX_HTML_FILE = os.path.join(STATIC_DIRECTORY, 'index.html')
 
@@ -116,7 +115,9 @@ def get_index_html(props: dict) -> str:
         html = html_fp.read()
     assert DEPLOYMENT_PLACEHOLDER in html, \
         f'{INDEX_HTML_FILE} has no {DEPLOYMENT_PLACEHOLDER}'
-    return html.replace(DEPLOYMENT_PLACEHOLDER, get_embedded_json(props))
+    return get_versioned_html(
+        html.replace(DEPLOYMENT_PLACEHOLDER, get_embedded_json(props))
+    )
 
 
 def create_index_router(sciencebeam_parser: ScienceBeamParser) -> APIRouter:
@@ -129,17 +130,14 @@ def create_index_router(sciencebeam_parser: ScienceBeamParser) -> APIRouter:
     """
     router = APIRouter()
 
-    index_html = get_index_html(get_deployment_props(sciencebeam_parser))
+    deployment_props = get_deployment_props(sciencebeam_parser)
 
     @router.get('/')
     def index() -> Response:
         return Response(
-            index_html,
+            get_index_html(deployment_props),
             media_type='text/html',
-            # The page and the assets it names have to be of one version, and a
-            # held copy of the page is the half that goes stale silently: the
-            # assets beside it are revalidated by what serves them.
-            headers={'Cache-Control': 'no-store'}
+            headers={'Cache-Control': PAGE_CACHE_CONTROL}
         )
 
     return router

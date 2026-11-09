@@ -5,17 +5,17 @@ from logging.config import dictConfig
 from typing import Optional, Sequence
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from sciencebeam_parser.app.parser import ScienceBeamParser
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.service.api.app import API_PATH, create_api_app
-from sciencebeam_parser.service.routers.index import (
+from sciencebeam_parser.service.assets import (
     STATIC_DIRECTORY,
     STATIC_PATH,
-    create_index_router
+    StaticAssets
 )
+from sciencebeam_parser.service.routers.index import create_index_router
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 
@@ -31,7 +31,7 @@ def create_app_for_parser(
     app.include_router(index_router, include_in_schema=False)
     app.mount(
         STATIC_PATH,
-        StaticFiles(directory=STATIC_DIRECTORY),
+        StaticAssets(directory=STATIC_DIRECTORY),
         name='static'
     )
 

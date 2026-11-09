@@ -13,11 +13,11 @@ from sciencebeam_parser.processors.fulltext.config import (
     RequestFieldNames
 )
 from sciencebeam_parser.service.api.routers.convert import CONVERT_RESPONSE_MEDIA_TYPES
+from sciencebeam_parser.service.assets import STATIC_DIRECTORY
 from sciencebeam_parser.service.routers.index import (
     DEPLOYMENT_PLACEHOLDER,
     INCLUDES_GROUPS,
     INDEX_HTML_FILE,
-    STATIC_DIRECTORY,
     create_index_router,
     get_accepted_source_media_types,
     get_deployment_props,

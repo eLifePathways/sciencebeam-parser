@@ -25,6 +25,7 @@ from sciencebeam_parser.models.llm.usage import (
 from sciencebeam_parser.service.api.dependencies import (
     add_profile_names_to_openapi_schema
 )
+from sciencebeam_parser.service.assets import get_versioned_static_url
 from sciencebeam_parser.service.api.routers.convert import create_convert_router
 from sciencebeam_parser.service.api.routers.grobid import create_grobid_router
 from sciencebeam_parser.service.api.routers.low_level import create_low_level_router
@@ -40,7 +41,7 @@ API_PATH = '/api'
 
 DOCS_PATH = '/docs'
 
-SWAGGER_UI_PATH = '/static/swagger-ui'
+SWAGGER_UI_DIRECTORY = 'swagger-ui'
 
 
 def add_swagger_ui_route(app: FastAPI):
@@ -56,9 +57,15 @@ def add_swagger_ui_route(app: FastAPI):
         return get_swagger_ui_html(
             openapi_url=root_path + str(app.openapi_url),
             title='ScienceBeam Parser API',
-            swagger_js_url=f'{SWAGGER_UI_PATH}/swagger-ui-bundle.js',
-            swagger_css_url=f'{SWAGGER_UI_PATH}/swagger-ui.css',
-            swagger_favicon_url=f'{SWAGGER_UI_PATH}/favicon-32x32.png'
+            swagger_js_url=get_versioned_static_url(
+                f'{SWAGGER_UI_DIRECTORY}/swagger-ui-bundle.js'
+            ),
+            swagger_css_url=get_versioned_static_url(
+                f'{SWAGGER_UI_DIRECTORY}/swagger-ui.css'
+            ),
+            swagger_favicon_url=get_versioned_static_url(
+                f'{SWAGGER_UI_DIRECTORY}/favicon-32x32.png'
+            )
         )
 
 

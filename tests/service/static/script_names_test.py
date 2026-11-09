@@ -10,7 +10,7 @@ from typing import Set
 
 import pytest
 
-from sciencebeam_parser.service.routers.index import STATIC_DIRECTORY
+from sciencebeam_parser.service.assets import STATIC_DIRECTORY
 
 
 SCRIPT_FILES = sorted(Path(STATIC_DIRECTORY).glob('*.js'))
