@@ -212,10 +212,10 @@ function getAuthors(articleMeta) {
     label: contrib.name,
     nameParts: getPersonNameParts(contrib),
     email: getValue(contrib, 'email'),
-    affiliationIds: getChildElements(contrib, 'xref')
+    affiliationRefs: getChildElements(contrib, 'xref')
       .filter((xref) => getAttribute(xref, 'ref-type') === 'aff')
-      .map((xref) => getAttribute(xref, 'rid'))
-      .filter((rid) => rid)
+      .map((xref) => ({ label: xref.name, rid: getAttribute(xref, 'rid') }))
+      .filter((ref) => ref.rid)
   }));
 }
 
@@ -432,7 +432,36 @@ function appendSection(parent, section, level, options) {
   appendBlocks(element, section.blocks, level + 1, options);
 }
 
-function appendAuthor(parent, author, affiliationNumberById) {
+function getAffiliationByRid(affiliations) {
+  const byRid = {};
+  affiliations.forEach((affiliation, index) => {
+    byRid[affiliation.id] = {
+      number: index + 1,
+      text: affiliation.parts.map((part) => part.text).join(', ')
+    };
+  });
+  return byRid;
+}
+
+/* The reference an author makes to an affiliation, as itself.
+ *
+ * A number beside a name says there is a link without saying to what. The
+ * reference is an element the document carries, so it is one here too: it
+ * reads as the number the list gives that affiliation, it says which id it
+ * points at, it carries the affiliation's own text to rest on, and following
+ * it goes to the entry rather than leaving the reader to count.
+ */
+function appendAffiliationRef(parent, ref, affiliationByRid) {
+  const affiliation = affiliationByRid[ref.rid];
+  const anchor = appendElement(parent, 'a', 'jats-xref', ref.label);
+  anchor.setAttribute('href', '#' + ref.rid);
+  anchor.setAttribute(
+    'title', affiliation ? affiliation.text : 'no affiliation with id ' + ref.rid
+  );
+  appendText(anchor, affiliation ? String(affiliation.number) : ref.rid);
+}
+
+function appendAuthor(parent, author, affiliationByRid) {
   const element = appendElement(parent, 'span', 'jats-author', author.label);
   author.nameParts.forEach((part, index) => {
     if (index) {
@@ -444,29 +473,23 @@ function appendAuthor(parent, author, affiliationNumberById) {
     appendText(element, ' ');
     appendValue(element, author.email);
   }
-  const marks = author.affiliationIds
-    .map((id) => affiliationNumberById[id])
-    .filter((number) => number)
-    .join(',');
-  if (marks) {
-    appendText(element, ' [' + marks + ']');
-  }
+  author.affiliationRefs.forEach((ref) => {
+    appendText(element, ' ');
+    appendAffiliationRef(element, ref, affiliationByRid);
+  });
 }
 
 function appendAuthors(parent, viewModel) {
   if (!viewModel.authors.length) {
     return;
   }
-  const affiliationNumberById = {};
-  viewModel.affiliations.forEach((affiliation, index) => {
-    affiliationNumberById[affiliation.id] = index + 1;
-  });
+  const affiliationByRid = getAffiliationByRid(viewModel.affiliations);
   const list = appendElement(parent, 'p', 'jats-authors');
   viewModel.authors.forEach((author, index) => {
     if (index) {
       appendText(list, '; ');
     }
-    appendAuthor(list, author, affiliationNumberById);
+    appendAuthor(list, author, affiliationByRid);
   });
   if (!viewModel.affiliations.length) {
     return;
@@ -474,6 +497,9 @@ function appendAuthors(parent, viewModel) {
   const affiliations = appendElement(parent, 'ol', 'jats-affiliations');
   viewModel.affiliations.forEach((affiliation) => {
     const item = appendElement(affiliations, 'li', '', affiliation.label);
+    if (affiliation.id) {
+      item.setAttribute('id', affiliation.id);
+    }
     affiliation.parts.forEach((part, index) => {
       if (index) {
         appendText(item, ', ');

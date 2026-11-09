@@ -84,8 +84,10 @@
     <dl id="result-meta"></dl>
   </details>
   <div class="actions">
-    <button type="button" id="show-reading">Reading</button>
-    <button type="button" id="show-raw">Raw</button>
+    <div class="segmented">
+      <button type="button" id="show-reading" aria-pressed="true">Reading</button>
+      <button type="button" id="show-raw" aria-pressed="false">Raw</button>
+    </div>
     <label class="inline-check" id="labels-control">
       <input type="checkbox" id="show-labels">
       Show labels

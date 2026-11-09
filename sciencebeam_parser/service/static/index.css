@@ -9,6 +9,9 @@
   --accent: #1d4ed8;
   --tag-fg: #3730a3;
   --tag-bg: #e0e7ff;
+  --value-bg: #eef2ff;
+  --selected-bg: #1d4ed8;
+  --selected-fg: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -22,6 +25,9 @@
     --accent: #93c5fd;
     --tag-fg: #c7d2fe;
     --tag-bg: #312e81;
+    --value-bg: #1e2240;
+    --selected-bg: #3b82f6;
+    --selected-fg: #0b1220;
   }
 }
 
@@ -308,3 +314,66 @@ details > summary > h3 {
 }
 
 #result-details[open] > summary { margin-bottom: 12px; }
+
+.segmented { display: flex; }
+
+.segmented > button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.segmented > button:first-child {
+  border-radius: 4px 0 0 4px;
+  margin-left: 0;
+}
+
+.segmented > button:last-child { border-radius: 0 4px 4px 0; }
+
+.segmented > button.selected {
+  background: var(--selected-bg);
+  border-color: var(--selected-bg);
+  color: var(--selected-fg);
+  font-weight: 600;
+  position: relative;
+}
+
+/* The labelled reading: one author to a line, each value its own box, and the
+   reference to an affiliation reading as the entry it points at. */
+.jats-labelled .jats-authors { margin-bottom: 8px; }
+
+.jats-labelled .jats-author {
+  display: block;
+  margin: 0 0 6px 16px;
+  padding-left: 8px;
+  border-left: 2px solid var(--panel-line);
+}
+
+.jats-labelled .jats-author [data-jats] {
+  display: inline-block;
+  padding: 0 3px;
+  background: var(--value-bg);
+  outline-offset: 0;
+}
+
+.jats-labelled .jats-affiliations > li { margin-bottom: 6px; }
+
+.jats-labelled .jats-affiliations [data-jats] {
+  display: inline-block;
+  padding: 0 3px;
+  background: var(--value-bg);
+  outline-offset: 0;
+}
+
+.jats-xref {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.jats-xref::before { content: '['; }
+.jats-xref::after { content: ']'; }
+
+.jats-affiliations > li:target {
+  background: var(--value-bg);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

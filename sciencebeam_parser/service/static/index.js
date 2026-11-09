@@ -447,8 +447,12 @@ function setUpDownload(blob, filename) {
 function showReading(isReading) {
   readingElement.hidden = !isReading;
   resultBody.hidden = isReading;
-  readingButton.disabled = isReading;
-  rawButton.disabled = !isReading;
+  // Which one is showing, rather than which one cannot be pressed: a disabled
+  // button reads as unavailable, not as chosen.
+  readingButton.classList.toggle('selected', isReading);
+  rawButton.classList.toggle('selected', !isReading);
+  readingButton.setAttribute('aria-pressed', String(isReading));
+  rawButton.setAttribute('aria-pressed', String(!isReading));
   labelsControl.hidden = !isReading;
 }
 

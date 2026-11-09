@@ -132,7 +132,7 @@ class TestAuthors:
         ))
         author = view_model['authors'][0]
         assert author['email'] == {'label': 'email', 'text': 'jane@example.org'}
-        assert author['affiliationIds'] == ['aff1']
+        assert author['affiliationRefs'] == [{'label': 'xref', 'rid': 'aff1'}]
 
 
 class TestAffiliations:
@@ -557,3 +557,65 @@ class TestFigureGraphic:
         assert view_model['graphicReferences'] == [
             {'href': 'image1.png', 'figure': 'fig_7'}
         ]
+
+
+AFFILIATED_ARTICLE_XML = get_article_xml(
+    front=(
+        '<contrib-group>'
+        '<contrib><name><surname>Smith</surname><given-names>J</given-names></name>'
+        '<xref ref-type="aff" rid="aff1"/><xref ref-type="aff" rid="aff2"/></contrib>'
+        '<contrib><name><surname>Jones</surname><given-names>A</given-names></name>'
+        '<xref ref-type="aff" rid="aff2"/></contrib>'
+        '</contrib-group>'
+        '<aff id="aff1"><institution content-type="orgname">A University</institution></aff>'
+        '<aff id="aff2"><institution content-type="orgname">An Institute</institution></aff>'
+    )
+)
+
+
+class TestAffiliationReferences:
+    def test_should_point_each_reference_at_the_affiliation_it_names(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        assert 'href="#aff1"' in html
+        assert 'href="#aff2"' in html
+        assert 'id="aff1"' in html
+        assert 'id="aff2"' in html
+
+    def test_should_read_as_the_number_the_list_gives_the_affiliation(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
+        text_only = re.sub(r'<[^>]+>', '', text_only)
+        assert 'J Smith 1 2; A Jones 2' in text_only
+
+    def test_should_carry_the_affiliation_text_to_rest_on(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        assert 'title="A University"' in html
+        assert 'title="An Institute"' in html
+
+    def test_should_name_the_element_a_reference_came_from(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        assert 'data-jats="xref"' in html
+
+    def test_should_say_where_a_reference_points_at_nothing(self):
+        html = get_rendered_article(get_article_xml(
+            front=(
+                '<contrib-group><contrib>'
+                '<name><surname>Smith</surname></name>'
+                '<xref ref-type="aff" rid="aff9"/></contrib></contrib-group>'
+            )
+        ))
+        assert 'title="no affiliation with id aff9"' in html
+        assert '>aff9</a>' in html
+
+    def test_should_keep_an_affiliation_the_document_repeats(self):
+        view_model = get_article_view_model(get_article_xml(
+            front=(
+                '<aff id="aff1"><institution content-type="orgname">A University'
+                '</institution></aff>'
+                '<aff id="aff2"><institution content-type="orgname">A University'
+                '</institution></aff>'
+            )
+        ))
+        assert [
+            affiliation['id'] for affiliation in view_model['affiliations']
+        ] == ['aff1', 'aff2']
