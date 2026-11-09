@@ -145,6 +145,17 @@ class TestGetIndexHtml:
 
 
 class TestIndexHtmlFile:
+    def test_should_name_only_elements_the_page_carries(self):
+        with open(INDEX_HTML_FILE, 'r', encoding='utf-8') as html_fp:
+            html = html_fp.read()
+        script_file = os.path.join(STATIC_DIRECTORY, 'index.js')
+        with open(script_file, 'r', encoding='utf-8') as script_fp:
+            script = script_fp.read()
+        element_ids = set(re.findall(r'id="([^"]+)"', html))
+        looked_up = set(re.findall(r"getElementById\('([^']+)'\)", script))
+        assert looked_up
+        assert looked_up - element_ids == set()
+
     def test_should_reference_assets_that_are_shipped(self):
         with open(INDEX_HTML_FILE, 'r', encoding='utf-8') as html_fp:
             html = html_fp.read()
@@ -184,6 +195,12 @@ class TestIndexRouter:
         assert [
             item['media_type'] for item in props['accepted_source_media_types']
         ] == [MediaTypes.PDF]
+
+    def test_should_not_let_the_page_be_held_while_its_assets_change(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        response = get_test_client(sciencebeam_parser_mock).get('/')
+        assert response.headers['cache-control'] == 'no-store'
 
     def test_should_carry_no_elife_or_pathways_mark(
         self, sciencebeam_parser_mock: MagicMock

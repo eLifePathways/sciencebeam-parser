@@ -126,6 +126,13 @@ def create_index_router(sciencebeam_parser: ScienceBeamParser) -> APIRouter:
 
     @router.get('/')
     def index() -> Response:
-        return Response(index_html, media_type='text/html')
+        return Response(
+            index_html,
+            media_type='text/html',
+            # The page and the assets it names have to be of one version, and a
+            # held copy of the page is the half that goes stale silently: the
+            # assets beside it are revalidated by what serves them.
+            headers={'Cache-Control': 'no-store'}
+        )
 
     return router
