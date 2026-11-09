@@ -92,10 +92,14 @@ TAG_ID_PATTERN = r'<span class="jats-tag-id">[^<]*</span>'
 TAG_PATTERN = r'<span[^>]*class="jats-tag"[^>]*>[^<]*</span>'
 
 
+LABELLED_ONLY_PATTERN = r'<span class="jats-xref-rid">[^<]*</span>'
+
+
 def get_text_without_labels(html: str) -> str:
     """What the rendering reads as, with the element names taken out."""
     without_labels = re.sub(TAG_ID_PATTERN, '', html)
     without_labels = re.sub(TAG_PATTERN, '', without_labels)
+    without_labels = re.sub(LABELLED_ONLY_PATTERN, '', without_labels)
     return re.sub(r'<[^>]+>', '', without_labels)
 
 
@@ -664,7 +668,7 @@ class TestAffiliationReferences:
             )
         ))
         assert 'title="no affiliation with id aff9"' in html
-        assert '>aff9</a>' in html
+        assert '<span class="jats-xref-number">aff9</span>' in html
 
     def test_should_keep_an_affiliation_the_document_repeats(self):
         view_model = get_article_view_model(get_article_xml(
@@ -681,10 +685,15 @@ class TestAffiliationReferences:
 
     def test_should_keep_what_separates_two_authors_inside_the_first(self):
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)
-        authors = re.search(r'<p class="jats-authors">.*?</p>', html, re.DOTALL)
+        authors = re.search(
+            r'<p[^>]*class="jats-authors"[^>]*>.*?</p>', html, re.DOTALL
+        )
         assert authors
-        # nothing between one author and the next, so a line each strands nothing
-        assert '</span><span data-jats="contrib"' in authors.group(0)
+        # it closes the first author, so a line each strands nothing between them
+        assert (
+            '<span class="jats-separator">, </span>'
+            '</span><span data-jats="contrib"'
+        ) in authors.group(0)
         assert authors.group(0).count('class="jats-separator"') == 1
 
     def test_should_separate_no_author_where_there_is_only_one(self):
@@ -836,3 +845,25 @@ class TestElementPaths:
             for element_path, count in found_by_path.items()
             if count != 1
         } == {}
+
+
+class TestContribGroup:
+    def test_should_show_the_group_the_authors_sit_in(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        assert 'data-jats="contrib-group"' in html
+        assert get_tag_for(html, 'contrib-group')
+
+    def test_should_say_where_the_group_is(self):
+        view_model = get_article_view_model(AFFILIATED_ARTICLE_XML)
+        assert view_model['authorGroup'] == {
+            'label': 'contrib-group',
+            'path': '/article/front/article-meta/contrib-group'
+        }
+
+    def test_should_carry_no_group_where_the_document_has_none(self):
+        assert get_article_view_model(get_article_xml())['authorGroup'] is None
+
+    def test_should_say_both_what_the_list_numbers_it_and_what_it_is_called(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        assert '<span class="jats-xref-number">1</span>' in html
+        assert '<span class="jats-xref-rid">aff1</span>' in html

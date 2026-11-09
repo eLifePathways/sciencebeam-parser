@@ -235,6 +235,13 @@ function getPersonNameParts(node) {
   ].filter((part) => part);
 }
 
+function getContribGroup(articleMeta) {
+  const contribGroup = getFirstChildElement(articleMeta, 'contrib-group');
+  return contribGroup
+    ? { label: contribGroup.name, path: contribGroup.path }
+    : null;
+}
+
 function getAuthors(articleMeta) {
   const contribGroup = getFirstChildElement(articleMeta, 'contrib-group');
   return getChildElements(contribGroup, 'contrib').map((contrib) => ({
@@ -319,6 +326,7 @@ export function getArticleViewModel(article) {
         text: getTextContent(journalTitle).trim()
       }
       : null,
+    authorGroup: getContribGroup(articleMeta),
     authors: getAuthors(articleMeta),
     affiliations: getAffiliations(articleMeta),
     abstracts: getChildElements(articleMeta, 'abstract').map((abstract) => ({
@@ -517,7 +525,13 @@ function appendAffiliationRef(parent, ref, affiliationByRid) {
   anchor.setAttribute(
     'title', affiliation ? affiliation.text : 'no affiliation with id ' + ref.rid
   );
-  appendText(anchor, affiliation ? String(affiliation.number) : ref.rid);
+  // The number is where the affiliation sits in the list, which is the page's
+  // ordering; the id is what the document wrote. Both are here, and which one
+  // shows follows whether the names are being shown.
+  appendElement(anchor, 'span', 'jats-xref-number').textContent = (
+    affiliation ? String(affiliation.number) : ref.rid
+  );
+  appendElement(anchor, 'span', 'jats-xref-rid').textContent = ref.rid;
 }
 
 function appendAuthor(parent, author, affiliationByRid) {
@@ -558,7 +572,9 @@ function appendAuthors(parent, viewModel) {
     return;
   }
   const affiliationByRid = getAffiliationByRid(viewModel.affiliations);
-  const list = appendElement(parent, 'p', 'jats-authors');
+  const list = appendElement(
+    parent, 'p', 'jats-authors', viewModel.authorGroup
+  );
   viewModel.authors.forEach((author, index) => {
     const element = appendAuthor(list, author, affiliationByRid);
     if (index < viewModel.authors.length - 1) {

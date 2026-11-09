@@ -339,7 +339,22 @@ details > summary > h3 {
 
 /* The labelled reading: one author to a line, each value its own box, and the
    reference to an affiliation reading as the entry it points at. */
-.jats-labelled .jats-authors { margin-bottom: 8px; }
+/* An author is indented because it sits inside the group the page now shows;
+   an affiliation sits under article-meta and is indented by nothing. */
+.jats-labelled .jats-authors {
+  margin-bottom: 8px;
+  border-left: 2px solid var(--panel-line);
+  padding-left: 12px;
+}
+
+.jats-labelled .jats-affiliations {
+  list-style: none;
+  padding-left: 0;
+}
+
+.jats-xref-rid { display: none; }
+.jats-labelled .jats-xref-number { display: none; }
+.jats-labelled .jats-xref-rid { display: inline; }
 
 .jats-labelled .jats-author {
   display: block;
