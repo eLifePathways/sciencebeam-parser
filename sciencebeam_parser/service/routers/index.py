@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Sequence
+from typing import List, Sequence, Tuple
 
 from fastapi import APIRouter, Response
 
@@ -53,12 +53,16 @@ TEXT_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.TEI_XML}
 READABLE_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.JATS_ZIP}
 
 
-INCLUDES_FIELD_NAMES: Sequence[str] = (
+FRONT_MATTER_FIELD_NAMES: Sequence[str] = (
     RequestFieldNames.TITLE,
     RequestFieldNames.ABSTRACT,
     RequestFieldNames.AUTHORS,
-    RequestFieldNames.AFFILIATIONS,
-    RequestFieldNames.REFERENCES
+    RequestFieldNames.AFFILIATIONS
+)
+
+INCLUDES_GROUPS: Sequence[Tuple[str, Sequence[str]]] = (
+    ('Front matter', FRONT_MATTER_FIELD_NAMES),
+    ('References', (RequestFieldNames.REFERENCES,))
 )
 
 
@@ -96,7 +100,10 @@ def get_deployment_props(sciencebeam_parser: ScienceBeamParser) -> dict:
             }
             for media_type in CONVERT_RESPONSE_MEDIA_TYPES
         ],
-        'includes_field_names': list(INCLUDES_FIELD_NAMES)
+        'includes_groups': [
+            {'label': label, 'field_names': list(field_names)}
+            for label, field_names in INCLUDES_GROUPS
+        ]
     }
 
 

@@ -15,7 +15,7 @@ from sciencebeam_parser.processors.fulltext.config import (
 from sciencebeam_parser.service.api.routers.convert import CONVERT_RESPONSE_MEDIA_TYPES
 from sciencebeam_parser.service.routers.index import (
     DEPLOYMENT_PLACEHOLDER,
-    INCLUDES_FIELD_NAMES,
+    INCLUDES_GROUPS,
     INDEX_HTML_FILE,
     STATIC_DIRECTORY,
     create_index_router,
@@ -68,11 +68,27 @@ class TestGetAcceptedSourceMediaTypes:
         )[0] == MediaTypes.PDF
 
 
-class TestIncludesFieldNames:
+class TestIncludesGroups:
     def test_should_offer_every_field_a_request_may_ask_for(self):
-        assert set(INCLUDES_FIELD_NAMES) == (
-            FRONT_FIELDS | {RequestFieldNames.REFERENCES}
-        )
+        grouped = {
+            field_name
+            for _, field_names in INCLUDES_GROUPS
+            for field_name in field_names
+        }
+        assert grouped == FRONT_FIELDS | {RequestFieldNames.REFERENCES}
+
+    def test_should_group_the_front_fields_together(self):
+        groups = dict(INCLUDES_GROUPS)
+        assert set(groups['Front matter']) == FRONT_FIELDS
+        assert set(groups['References']) == {RequestFieldNames.REFERENCES}
+
+    def test_should_name_each_field_in_one_group_only(self):
+        field_names = [
+            field_name
+            for _, names in INCLUDES_GROUPS
+            for field_name in names
+        ]
+        assert len(field_names) == len(set(field_names))
 
 
 class TestGetDeploymentProps:

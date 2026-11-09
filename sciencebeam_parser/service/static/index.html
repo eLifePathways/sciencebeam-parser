@@ -35,24 +35,30 @@
       <p class="hint" id="output-hint"></p>
     </section>
 
-    <section class="field">
-      <label for="first-page">Pages</label>
-      <div class="row">
-        <input type="number" id="first-page" min="1" placeholder="first"
-          aria-label="First page">
-        <span class="inline">to</span>
-        <input type="number" id="last-page" min="1" placeholder="last"
-          aria-label="Last page">
-      </div>
-      <p class="hint">Leave both empty for every page.</p>
-    </section>
-
-    <fieldset class="field">
-      <legend>Fields</legend>
-      <div id="includes" class="checkboxes"></div>
-      <p class="hint">Leave all unchecked for the whole document.</p>
-    </fieldset>
   </div>
+
+  <details id="more-options">
+    <summary>Pages and fields</summary>
+    <div class="options">
+      <section class="field">
+        <label for="first-page">Pages</label>
+        <div class="row">
+          <input type="number" id="first-page" min="1" placeholder="first"
+            aria-label="First page">
+          <span class="inline">to</span>
+          <input type="number" id="last-page" min="1" placeholder="last"
+            aria-label="Last page">
+        </div>
+        <p class="hint">Leave both empty for every page.</p>
+      </section>
+
+      <fieldset class="field">
+        <legend>Fields</legend>
+        <div id="includes" class="checkboxes"></div>
+        <p class="hint">Leave both unchecked for the whole document.</p>
+      </fieldset>
+    </div>
+  </details>
 
   <div class="actions">
     <button type="submit" id="convert">Convert</button>
@@ -73,7 +79,10 @@
 
 <section id="result" hidden>
   <h2>Result</h2>
-  <dl id="result-meta"></dl>
+  <details id="result-details">
+    <summary id="result-summary"></summary>
+    <dl id="result-meta"></dl>
+  </details>
   <div class="actions">
     <button type="button" id="show-reading">Reading</button>
     <button type="button" id="show-raw">Raw</button>
@@ -92,7 +101,6 @@
     <div class="actions">
       <button type="button" id="archive-show-all">Show all</button>
       <button type="button" id="archive-hide-all">Hide all</button>
-      <span class="hint" id="archive-note"></span>
     </div>
     <table><tbody id="archive-files"></tbody></table>
   </details>

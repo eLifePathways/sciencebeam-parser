@@ -297,3 +297,14 @@ details > summary > h3 {
   border-radius: 4px;
   background: #fff;
 }
+
+#more-options { margin-top: 16px; }
+#more-options > summary { color: var(--muted); }
+#more-options .options { margin-top: 12px; }
+
+#result-details > summary {
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+#result-details[open] > summary { margin-bottom: 12px; }

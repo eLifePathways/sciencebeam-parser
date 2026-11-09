@@ -16,8 +16,8 @@ const SLOW_REQUEST_SECONDS = 10;
 const PDF_MEDIA_TYPE = 'application/pdf';
 const LABELS_SETTING = 'sciencebeam-show-labels';
 
-// One page of vector drawing extracted as SVG can be tens of megabytes, and
-// handing that to an img tag stops the tab rather than showing a figure.
+// What a reading draws without being asked. One page of vector drawing can be
+// tens of megabytes; opening one from the file list is a click of its own.
 const MAX_ASSET_BYTES = 8 * 1024 * 1024;
 
 const IMAGE_MEDIA_TYPE_BY_EXTENSION = {
@@ -55,7 +55,7 @@ const downloadXmlButton = document.getElementById('download-xml');
 const archiveSection = document.getElementById('archive');
 const archiveSummary = document.getElementById('archive-summary');
 const archiveFiles = document.getElementById('archive-files');
-const archiveNote = document.getElementById('archive-note');
+const resultSummary = document.getElementById('result-summary');
 const archiveShowAll = document.getElementById('archive-show-all');
 const archiveHideAll = document.getElementById('archive-hide-all');
 const labelsControl = document.getElementById('labels-control');
@@ -150,20 +150,21 @@ function showSelectedOutputHint() {
 }
 
 function setUpIncludes() {
-  deployment.includes_field_names.forEach((fieldName) => {
+  deployment.includes_groups.forEach((group) => {
     const label = document.createElement('label');
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
-    checkbox.value = fieldName;
+    checkbox.value = group.field_names.join(',');
+    checkbox.title = group.field_names.join(', ');
     label.appendChild(checkbox);
-    label.appendChild(document.createTextNode(' ' + fieldName));
+    label.appendChild(document.createTextNode(' ' + group.label));
     includesElement.appendChild(label);
   });
 }
 
 function getSelectedIncludes() {
   return Array.from(includesElement.querySelectorAll('input:checked'))
-    .map((checkbox) => checkbox.value);
+    .flatMap((checkbox) => checkbox.value.split(','));
 }
 
 function showProfileDescription(profiles) {
@@ -643,24 +644,10 @@ function addArchiveFileRow(entry, figuresByHref) {
   return { entry, previewRow, button };
 }
 
-/* Opening everything, without opening what would stop the page.
- *
- * One page of vector drawing extracted from a document can be tens of
- * megabytes, while a document's figures together are rarely one. The large
- * ones stay a deliberate click rather than something that happens because a
- * reader asked to see the figures. */
 function setUpArchiveShowAll(viewable) {
-  const small = viewable.filter(({ entry }) => entry.size <= MAX_ASSET_BYTES);
-  const large = viewable.filter(({ entry }) => entry.size > MAX_ASSET_BYTES);
-  archiveShowAll.hidden = !small.length;
+  archiveShowAll.hidden = !viewable.length;
   archiveHideAll.hidden = !viewable.length;
-  archiveNote.textContent = large.length
-    ? (
-      'Show all leaves out ' + large.map(({ entry }) => entry.name).join(', ')
-      + ', over ' + describeBytes(MAX_ASSET_BYTES) + ' each; View opens them.'
-    )
-    : '';
-  archiveShowAll.onclick = () => small.forEach(({ entry, previewRow, button }) => {
+  archiveShowAll.onclick = () => viewable.forEach(({ entry, previewRow, button }) => {
     if (previewRow.hidden) {
       openArchiveFile(entry, previewRow, button);
     }
@@ -724,7 +711,16 @@ function setUpXmlDownload(content, output, file) {
   };
 }
 
+function showResultSummary(response, blob, elapsedSeconds) {
+  resultSummary.textContent = [
+    response.headers.get(PROFILE_HEADER) || 'the default profile',
+    describeBytes(blob.size),
+    elapsedSeconds + 's'
+  ].join(' · ');
+}
+
 async function showResult(response, blob, file, elapsedSeconds) {
+  showResultSummary(response, blob, elapsedSeconds);
   const metaElement = document.getElementById('result-meta');
   metaElement.replaceChildren();
   addMetaRow(metaElement, 'Served by profile', response.headers.get(PROFILE_HEADER));
