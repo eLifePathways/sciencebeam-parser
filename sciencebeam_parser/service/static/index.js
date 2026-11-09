@@ -237,20 +237,45 @@ function describeBytes(count) {
  *
  * A response arrives in two parts: the status and headers, then the body. A
  * body that stops part way leaves a request that the browser reports as
- * failed and the server's own log reports as 200, and "failed to fetch" by
- * itself sends the reader to the wrong half of that. */
+ * failed and the server's own log reports as 200 -- the server writes that
+ * line when the response starts, not when it ends -- and "failed to fetch" by
+ * itself sends the reader to the wrong half of that.
+ *
+ * The bytes are counted as they pass rather than collected here, so that the
+ * browser still builds the body its own way and how far it got is known
+ * anyway. Where it stops is the thing worth knowing: the same place every
+ * time is one kind of fault, a different place each time is another. */
 async function getResponseBlob(response) {
   const expected = Number(response.headers.get('content-length')) || 0;
-  if (expected) {
-    statusElement.textContent = 'Receiving ' + describeBytes(expected) + '.';
+  if (!response.body) {
+    return response.blob();
   }
+  let received = 0;
+  let reported = -1;
+  const counted = response.body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      received += chunk.byteLength;
+      const megabytes = Math.floor(received / (1024 * 1024));
+      if (megabytes !== reported) {
+        reported = megabytes;
+        statusElement.textContent = (
+          'Receiving ' + describeBytes(received)
+          + (expected ? ' of ' + describeBytes(expected) : '') + '.'
+        );
+      }
+      controller.enqueue(chunk);
+    }
+  }));
   try {
-    return await response.blob();
+    return await new Response(counted, {
+      headers: { 'content-type': response.headers.get('content-type') || '' }
+    }).blob();
   } catch (error) {
     throw new Error(
-      (expected ? 'the ' + describeBytes(expected) + ' body' : 'the body')
-      + ' stopped arriving before it was complete, while the status was '
-      + response.status + ' (' + error.message + ')'
+      'the body stopped after ' + describeBytes(received)
+      + (expected ? ' of ' + describeBytes(expected) : '')
+      + ', while the status was ' + response.status
+      + ' (' + error.message + ')'
     );
   }
 }
