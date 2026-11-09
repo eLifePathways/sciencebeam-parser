@@ -574,29 +574,11 @@ async function showFailure(response, file) {
   failureSection.hidden = false;
 }
 
-function getFailureHint(output) {
-  if (!output || !output.archive_xml_name) {
-    return '';
-  }
-  const plain = deployment.output_media_types.find(
-    (candidate) => candidate.is_text && candidate.is_readable
-  );
-  return (
-    '\n\nThe bytes of an archive this size arrive, but holding all of them in '
-    + 'the page at once is what fails. The same request outside the browser, '
-    + 'as the command below, saves it to a file instead.'
-    + (plain ? ' ' + plain.label + ' returns the same document without its '
-      + 'figures, which the page can hold.' : '')
-  );
-}
-
 function showRequestError(message, file) {
   const metaElement = document.getElementById('failure-meta');
   metaElement.replaceChildren();
   addMetaRow(metaElement, 'Status', 'no response');
-  document.getElementById('failure-body').textContent = (
-    message + getFailureHint(getSelectedOutput())
-  );
+  document.getElementById('failure-body').textContent = message;
   document.getElementById('failure-curl').textContent = getEquivalentCurlCommand(file);
   failureSection.hidden = false;
 }
