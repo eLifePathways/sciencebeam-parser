@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 from __future__ import annotations
 
 import json
@@ -575,6 +576,40 @@ class TestAttributionIsNotScored:
             for score in without
             if score["scoring_method"] == "exact"
         )
+
+
+class TestATitleScoredWithAndWithoutItsCase:
+    """A publisher's capitals are not a different title, and are scored apart."""
+
+    def test_should_score_a_title_set_in_capitals_both_ways(self):
+        predicted_tei = PREDICTED_TEI_1.format(encoding_desc="").replace(
+            '<title level="a" type="main">The title</title>',
+            '<title level="a" type="main">THE TITLE</title>',
+        ).encode("utf-8")
+        scores = _score_pair(
+            GOLD_JATS_1, predicted_tei,
+            ["title", "title_any_case"], ["exact"], prepare_judge(),
+            field_sources={"title_any_case": ("title", "title")},
+            lower_case_fields={"title_any_case"},
+        )
+        by_field = {score["field_name"]: score["match_score"] for score in scores}
+        assert by_field["title"]["true_positive"] == 0
+        assert by_field["title_any_case"]["true_positive"] == 1
+
+    def test_should_score_a_title_that_differs_in_more_than_case_as_wrong_both_ways(self):
+        predicted_tei = PREDICTED_TEI_1.format(encoding_desc="").replace(
+            '<title level="a" type="main">The title</title>',
+            '<title level="a" type="main">A DIFFERENT TITLE ENTIRELY</title>',
+        ).encode("utf-8")
+        scores = _score_pair(
+            GOLD_JATS_1, predicted_tei,
+            ["title", "title_any_case"], ["exact"], prepare_judge(),
+            field_sources={"title_any_case": ("title", "title")},
+            lower_case_fields={"title_any_case"},
+        )
+        by_field = {score["field_name"]: score["match_score"] for score in scores}
+        assert by_field["title"]["true_positive"] == 0
+        assert by_field["title_any_case"]["true_positive"] == 0
 
 
 class TestFurtherAbstractIsNotScored:

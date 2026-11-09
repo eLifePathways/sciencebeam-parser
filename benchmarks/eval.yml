@@ -172,6 +172,7 @@ seeds:
 
 fields:
   - title
+  - title_any_case
   - abstract
   - abstract_anywhere
   - abstract_any_language
@@ -250,6 +251,22 @@ scoring:
   per_field:
     title:
       methods: [exact, levenshtein, edit_sim]
+    # The same comparison with the case taken off both sides, beside the one
+    # that keeps it, because a publisher setting its title in capitals where
+    # the JATS declares title case is describing its own typography.  Every
+    # letter after the first of each word then differs, which reads as a
+    # different title: 0.347 and 0.297 on the two titles of one SciELO
+    # Preprints document, against the 0.8 `levenshtein` asks for and 1.000
+    # once the case is gone.  Of the 83 SciELO Preprints documents in this
+    # revision, 74 declare a title in mixed or title case.
+    #
+    # Two result items rather than one, so a model's reading of a title can
+    # be told from the publisher's capitals.
+    title_any_case:
+      expected: title
+      actual: title
+      methods: [exact, levenshtein, edit_sim]
+      lower: true
     abstract:
       methods: [levenshtein, edit_sim]
     abstract_anywhere:

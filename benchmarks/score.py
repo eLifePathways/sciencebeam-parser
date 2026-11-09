@@ -5,7 +5,7 @@ import json
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 import yaml
 
@@ -45,7 +45,7 @@ from benchmarks.variant_match import (
 LOGGER = logging.getLogger(__name__)
 
 
-def _score_pair(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def _score_pair(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     gold_xml: bytes,
     pred_xml: bytes,
     field_names: List[str],
@@ -53,6 +53,7 @@ def _score_pair(  # pylint: disable=too-many-arguments,too-many-positional-argum
     xml_mapping: dict,
     scoring_types_by_field_map: Optional[Dict[str, List[str]]] = None,
     field_sources: Optional[Dict[str, Tuple[str, str]]] = None,
+    lower_case_fields: Optional[Set[str]] = None,
 ) -> List[dict]:
     # A link between two values is not something the judge's mapping can select, so the
     # field is scored apart from the ones it reads.
@@ -73,6 +74,9 @@ def _score_pair(  # pylint: disable=too-many-arguments,too-many-positional-argum
         for field in judge_field_names
         if sources.get(field, (field, field))[1] in predicted_values
     }
+    if lower_case_fields:
+        expected = _lower_case_values(expected, lower_case_fields)
+        actual = _lower_case_values(actual, lower_case_fields)
     doc_scores = list(
         iter_score_document_fields(
             expected, actual,
@@ -123,6 +127,40 @@ def _build_field_sources(
             per_field.get(field, {}).get("actual", field),
         )
         for field in field_names
+    }
+
+
+def _build_lower_case_fields(
+    field_names: List[str],
+    per_field: Dict[str, dict],
+) -> Set[str]:
+    """The fields whose case says nothing about whether the value is right.
+
+    A publisher that sets a title in capitals and declares it in title case is
+    describing its own typography, not a different title, and a string distance
+    reads the two as almost entirely different: 0.347 on one SciELO Preprints
+    title, against the 0.8 the `levenshtein` method asks for.
+    """
+    return {
+        field for field in field_names
+        if per_field.get(field, {}).get("lower")
+    }
+
+
+def _lower_case_values(values: dict, fields: Set[str]) -> dict:
+    """The same values with the case taken off the fields that declared it says nothing."""
+    def lowered(value: Any) -> Any:
+        if isinstance(value, str):
+            return value.lower()
+        if isinstance(value, list):
+            return [lowered(item) for item in value]
+        if isinstance(value, dict):
+            return {key: lowered(item) for key, item in value.items()}
+        return value
+
+    return {
+        field: lowered(value) if field in fields else value
+        for field, value in values.items()
     }
 
 
@@ -241,6 +279,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
     field_measures: Dict[str, List[str]],
     field_scoring_types: Dict[str, str],
     field_sources: Dict[str, Tuple[str, str]],
+    lower_case_fields: Set[str],
     xml_mapping: dict,
 ) -> Dict[str, Any]:
     pred_dir = run_dir / "predictions" / corpus
@@ -268,6 +307,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
                 field_names, all_measures, xml_mapping,
                 scoring_types_by_field_map=scoring_types_by_field_map,
                 field_sources=field_sources,
+                lower_case_fields=lower_case_fields,
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             LOGGER.warning("Scoring failed for %s/%s: %s", corpus, record_id, exc)
@@ -460,6 +500,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     field_measures = _build_field_measures(field_names, default_methods, per_field_cfg)
     field_scoring_types = _build_field_scoring_types(field_names, default_type, per_field_cfg)
     field_sources = _build_field_sources(field_names, per_field_cfg)
+    lower_case_fields = _build_lower_case_fields(field_names, per_field_cfg)
     all_measures = list(dict.fromkeys(m for methods in field_measures.values() for m in methods))
 
     run_record = None
@@ -497,7 +538,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         LOGGER.info("Scoring corpus %r (split=%s)...", corpus, split)
         corpus_results[corpus] = _score_corpus(
             corpus, data_dir / split, run_dir, field_names, all_measures, field_measures,
-            field_scoring_types, field_sources, xml_mapping
+            field_scoring_types, field_sources, lower_case_fields, xml_mapping
         )
 
     manifest_entries = read_manifest_entries(run_dir)
