@@ -120,10 +120,14 @@ function setUpOutputSelect() {
   showSelectedOutputHint();
 }
 
-function getSelectedOutput() {
+function getOutputByMediaType(mediaType) {
   return deployment.output_media_types.find(
-    (output) => output.media_type === outputSelect.value
+    (output) => output.media_type === mediaType
   );
+}
+
+function getSelectedOutput() {
+  return getOutputByMediaType(outputSelect.value);
 }
 
 function getOutputHint(output) {
@@ -214,11 +218,11 @@ function quoteForShell(value) {
   return "'" + value.replace(/'/g, `'\\''`) + "'";
 }
 
-function getEquivalentCurlCommand(file) {
+function getEquivalentCurlCommand(file, mediaType) {
   return [
     'curl --fail-with-body -X POST',
     '  ' + quoteForShell(new URL(getRequestUrl(), window.location.href).href),
-    '  -H ' + quoteForShell('Accept: ' + outputSelect.value),
+    '  -H ' + quoteForShell('Accept: ' + (mediaType || outputSelect.value)),
     '  -F ' + quoteForShell('input=@' + file.name)
   ].join(' \\\n');
 }
@@ -271,12 +275,16 @@ async function getResponseBlob(response) {
       headers: { 'content-type': response.headers.get('content-type') || '' }
     }).blob();
   } catch (error) {
-    throw new Error(
+    const failure = new Error(
       'the body stopped after ' + describeBytes(received)
       + (expected ? ' of ' + describeBytes(expected) : '')
       + ', while the status was ' + response.status
       + ' (' + error.message + ')'
     );
+    // Which half failed decides whether asking again differently is worth
+    // anything: a request that never arrived will not arrive the second time.
+    failure.bodyIncomplete = true;
+    throw failure;
   }
 }
 
@@ -292,8 +300,7 @@ function addMetaRow(listElement, name, value) {
   listElement.appendChild(description);
 }
 
-function getDownloadFilename(file) {
-  const output = getSelectedOutput();
+function getDownloadFilename(file, output) {
   const baseName = file.name.replace(/\.[^.]+$/, '');
   return baseName + (output ? output.extension : '');
 }
@@ -465,7 +472,7 @@ async function getArchiveAssets(content, viewModel) {
   return urlByName;
 }
 
-async function showReadableResult(content) {
+async function showReadableResult(content, output) {
   readingElement.replaceChildren();
   let viewModel;
   try {
@@ -519,7 +526,7 @@ async function getArchiveContent(blob, output) {
   };
 }
 
-async function showResult(response, blob, file, elapsedSeconds) {
+async function showResult(response, blob, file, elapsedSeconds, output, note) {
   const metaElement = document.getElementById('result-meta');
   metaElement.replaceChildren();
   addMetaRow(metaElement, 'Served by profile', response.headers.get(PROFILE_HEADER));
@@ -528,30 +535,31 @@ async function showResult(response, blob, file, elapsedSeconds) {
   addMetaRow(metaElement, 'Content type', response.headers.get('content-type'));
   addMetaRow(metaElement, 'Size', describeBytes(blob.size));
   addMetaRow(metaElement, 'Took', elapsedSeconds + 's');
-  const output = getSelectedOutput();
-  resultNote.textContent = '';
+  resultNote.textContent = note || '';
   let content = null;
-  if (output && output.is_text) {
+  if (output.is_text) {
     content = { text: await blob.text(), entries: null };
-  } else if (output && output.archive_xml_name) {
+  } else if (output.archive_xml_name) {
     content = await getArchiveContentOrNote(blob, output);
   }
   resultBody.textContent = content
     ? content.text
     : 'Not text. Download it to read it.';
   if (content && content.entries) {
-    resultNote.textContent = (
+    resultNote.textContent += (
       'Showing ' + output.archive_xml_name + ' from the archive, which carries '
       + content.entries.length + ' files. The download is the archive itself.'
     );
   }
   if (content && output.is_readable) {
-    await showReadableResult(content);
+    await showReadableResult(content, output);
   } else {
-    showUnreadableResult(output, !!content);
+    showUnreadableResult(output, !!content || !!note);
   }
-  document.getElementById('result-curl').textContent = getEquivalentCurlCommand(file);
-  setUpDownload(blob, getDownloadFilename(file));
+  document.getElementById('result-curl').textContent = getEquivalentCurlCommand(
+    file, output.media_type
+  );
+  setUpDownload(blob, getDownloadFilename(file, output));
   resultSection.hidden = false;
 }
 
@@ -604,30 +612,75 @@ function startElapsedStatus() {
   };
 }
 
-async function convert(file) {
+async function requestConversion(file, mediaType) {
   const formData = new FormData();
   formData.append('input', file);
+  const response = await fetch(getRequestUrl(), {
+    method: 'POST',
+    headers: { Accept: mediaType },
+    body: formData,
+    signal: requestController.signal
+  });
+  if (!response.ok) {
+    return { response };
+  }
+  return { response, blob: await getResponseBlob(response) };
+}
+
+/* An archive the browser cannot hold is still a document it can read.
+ *
+ * The bytes arrive; what fails is keeping tens of megabytes of them in the
+ * page at once. Asking again for the shape that carries no assets costs a
+ * second conversion, which is why it is not what the page does first, and it
+ * gets the article onto the screen rather than an apology. The figures are
+ * what is lost, and the note says so. */
+async function requestConversionWithFallback(file, output) {
+  try {
+    return {
+      ...await requestConversion(file, output.media_type),
+      output
+    };
+  } catch (error) {
+    const fallback = output.fallback_media_type
+      ? getOutputByMediaType(output.fallback_media_type)
+      : null;
+    if (!fallback || !error.bodyIncomplete) {
+      throw error;
+    }
+    statusElement.textContent = 'Asking again without the figures.';
+    return {
+      ...await requestConversion(file, fallback.media_type),
+      output: fallback,
+      note: (
+        'The archive could not be held in the browser (' + error.message
+        + '), so this is the same document as ' + fallback.label
+        + ', without its figures. '
+      )
+    };
+  }
+}
+
+async function convert(file) {
   requestController = new AbortController();
   const elapsed = startElapsedStatus();
   convertButton.disabled = true;
   stopButton.hidden = false;
   try {
-    const response = await fetch(getRequestUrl(), {
-      method: 'POST',
-      headers: { Accept: outputSelect.value },
-      body: formData,
-      signal: requestController.signal
-    });
-    if (!response.ok) {
+    const attempt = await requestConversionWithFallback(
+      file, getSelectedOutput()
+    );
+    if (!attempt.response.ok) {
       elapsed.stop();
       statusElement.textContent = '';
-      await showFailure(response, file);
+      await showFailure(attempt.response, file);
       return;
     }
-    const blob = await getResponseBlob(response);
     const elapsedSeconds = elapsed.stop();
     statusElement.textContent = '';
-    await showResult(response, blob, file, elapsedSeconds);
+    await showResult(
+      attempt.response, attempt.blob, file, elapsedSeconds,
+      attempt.output, attempt.note
+    );
     showSource(file);
   } catch (error) {
     elapsed.stop();

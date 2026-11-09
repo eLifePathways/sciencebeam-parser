@@ -53,6 +53,14 @@ TEXT_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.TEI_XML}
 READABLE_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.JATS_ZIP}
 
 
+# The same document in the shape that carries no assets. A browser that
+# cannot hold an archive can still be shown the article it contains.
+FALLBACK_MEDIA_TYPE_BY_MEDIA_TYPE = {
+    MediaTypes.JATS_ZIP: MediaTypes.JATS_XML,
+    MediaTypes.TEI_ZIP: MediaTypes.TEI_XML
+}
+
+
 INCLUDES_FIELD_NAMES: Sequence[str] = (
     RequestFieldNames.TITLE,
     RequestFieldNames.ABSTRACT,
@@ -92,7 +100,10 @@ def get_deployment_props(sciencebeam_parser: ScienceBeamParser) -> dict:
                 'extension': guess_extension_for_media_type(media_type),
                 'is_text': media_type in TEXT_OUTPUT_MEDIA_TYPES,
                 'is_readable': media_type in READABLE_OUTPUT_MEDIA_TYPES,
-                'archive_xml_name': ZIP_ENTRY_NAME_BY_MEDIA_TYPE.get(media_type)
+                'archive_xml_name': ZIP_ENTRY_NAME_BY_MEDIA_TYPE.get(media_type),
+                'fallback_media_type': FALLBACK_MEDIA_TYPE_BY_MEDIA_TYPE.get(
+                    media_type
+                )
             }
             for media_type in CONVERT_RESPONSE_MEDIA_TYPES
         ],
