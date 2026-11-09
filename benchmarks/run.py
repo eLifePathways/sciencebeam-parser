@@ -25,6 +25,8 @@ from benchmarks.comparison_config import (
 )
 from benchmarks.report_grid import SelectionError
 from benchmarks.score import run_score
+from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 LOGGER = logging.getLogger(__name__)
 
@@ -100,7 +102,12 @@ def _coverage(expected_ids: set, done_ids: set) -> dict:
 
 def _make_label(tool: str, version: str, profile: str, metadata: Optional[dict]) -> str:
     if metadata and metadata.get("image"):
-        base = metadata["image"]
+        image = metadata["image"]
+        # The tag is the run's own name, the version the name it is stored under: a
+        # dispatch on main was tagged `manual-`, which left its column saying main
+        # only through a commit a reader had to recognise.
+        tag = image.rsplit(":", 1)[-1]
+        base = image if tag.startswith(f"{version}-") else f"{image} on {version}"
     elif tool == "sciencebeam-parser":
         base = version
     else:
@@ -224,13 +231,87 @@ def _run_baseline(  # pylint: disable=too-many-locals
     return (label, summary_path) if summary_path.exists() else None
 
 
-def _comparison_only_variants(config: dict, comparison_config) -> list:
-    """A comparison's named variants that `eval.yml` does not already run."""
+MAIN_TOOL = "sciencebeam-parser"
+MAIN_VERSION = "main"
+
+
+def _same_profile_main_baseline(config: dict, parser_profile: Optional[str]) -> Optional[dict]:
+    """`main` under the profile the run under test uses, where `eval.yml` declares
+    `main` under another one only.
+
+    `eval.yml` declares `main` once, under the shipped profile, so a run under any
+    other profile was compared with `main` across a profile change as well as a code
+    change. Store-only, like the declared one: `main` pushes under whichever profile
+    it was run with, and a profile it was never run with has nothing to compare. The
+    name is matched as the store files it, so an alias finds nothing under its target.
+    """
+    if not parser_profile or parser_profile == "default":
+        return None
+    declared = {
+        (baseline["tool"], baseline["version"], baseline.get("profile", "default"))
+        for baseline in config.get("baselines", [])
+    }
+    if (MAIN_TOOL, MAIN_VERSION, parser_profile) in declared:
+        return None
+    return {
+        "tool": MAIN_TOOL, "version": MAIN_VERSION, "profile": parser_profile,
+        "generate": False,
+    }
+
+
+def _missing_main_note(profile: str) -> str:
+    return (
+        f"> `{MAIN_TOOL} {MAIN_VERSION}` has no stored predictions under profile"
+        f" `{profile}`, so this run is compared with `{MAIN_VERSION}` only under the"
+        f" profile `eval.yml` declares it with. They are stored by running the"
+        f" Benchmark workflow on `{MAIN_VERSION}` with that profile:\n"
+        f">\n"
+        f"> `gh workflow run benchmark.yml --ref {MAIN_VERSION} -f profile={profile}"
+        f" -f mode=medium`\n"
+    )
+
+
+def _append_note(path: Path, note: str) -> None:
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    separator = "" if not text or text.endswith("\n\n") else (
+        "\n" if text.endswith("\n") else "\n\n"
+    )
+    path.write_text(text + separator + note, encoding="utf-8")
+
+
+def _write_posted_report(
+    labeled_paths: List[Tuple[str, Path]],
+    primary_run_dir: Path,
+    missing_main_profile: Optional[str],
+) -> None:
+    """The report CI posts: `comparison.md` where there is anything to compare with,
+    else the run's own `report.md`."""
+    if len(labeled_paths) >= 2:
+        # No charts: this is the report CI has always posted, and a comparison file is
+        # how a run asks for one of its own.
+        run_compare(labeled_paths, primary_run_dir / "comparison.md")
+        posted_report = primary_run_dir / "comparison.md"
+    else:
+        LOGGER.info("Only one summary available; skipping comparison report")
+        posted_report = primary_run_dir / "report.md"
+
+    # In the report itself, since a log line on a finished runner is read by no one.
+    if missing_main_profile is not None:
+        _append_note(posted_report, _missing_main_note(missing_main_profile))
+
+
+def _comparison_only_variants(
+    config: dict, comparison_config, extra_baselines: Sequence[dict] = (),
+) -> list:
+    """A comparison's named variants that `eval.yml` does not already run, nor the run
+    adds beside it."""
     if comparison_config is None:
         return []
     declared = {
         (baseline["tool"], baseline["version"], baseline.get("profile", "default"))
-        for baseline in config.get("baselines", [])
+        for baseline in [*config.get("baselines", []), *extra_baselines]
     }
     return [
         variant for variant in store_variants(comparison_config)
@@ -338,10 +419,30 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         if entry:
             labeled_paths.append(entry)
 
+    # Beside the declared `main`, never instead of it: the declared one is the
+    # reference every report shares, this one the delta the run's own change makes.
+    same_profile_main = (
+        None if baseline_only else _same_profile_main_baseline(config, parser_profile)
+    )
+    missing_main_profile: Optional[str] = None
+    if same_profile_main is not None:
+        entry = _run_baseline(
+            config, mode, split, data_dir, runs_dir,
+            same_profile_main["tool"], same_profile_main["version"],
+            same_profile_main["profile"], False,
+            expected_ids, corpus_variants, store, concurrency, include, None,
+        )
+        if entry:
+            labeled_paths.append(entry)
+        else:
+            missing_main_profile = same_profile_main["profile"]
+
     # A comparison names runs of its own, which are rarely all of `eval.yml`'s baselines.
     # They are scored here so the comparison has something to read, and deliberately not
     # added to `labeled_paths`: the report CI always posts keeps the columns it has.
-    for variant in _comparison_only_variants(config, comparison_config):
+    for variant in _comparison_only_variants(
+        config, comparison_config, [same_profile_main] if same_profile_main else [],
+    ):
         _run_baseline(
             config, mode, split, data_dir, runs_dir,
             str(variant.tool), str(variant.version), variant.profile,
@@ -378,12 +479,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     current_label = _make_label("sciencebeam-parser", parser_image or "local", profile, None)
     labeled_paths.append((current_label, primary_run_dir / "summary.json"))
 
-    if len(labeled_paths) >= 2:
-        # No charts: this is the report CI has always posted, and a comparison file is
-        # how a run asks for one of its own.
-        run_compare(labeled_paths, primary_run_dir / "comparison.md")
-    else:
-        LOGGER.info("Only one summary available; skipping comparison report")
+    _write_posted_report(labeled_paths, primary_run_dir, missing_main_profile)
 
     # Beside the report CI always posts, never instead of it: a named comparison answers
     # a question of its own, and the regression check stays what it was.
@@ -401,29 +497,38 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
 
 def check_llm_profile_corpora(
-    config: dict, profile: Optional[str], include: Optional[Sequence[str]]
+    parser_config: AppConfig, profile: Optional[str], include: Optional[Sequence[str]]
 ) -> None:
-    if not profile:
-        return
-    sequence_model_profiles = config.get("sequence_model_profiles")
-    if not isinstance(sequence_model_profiles, dict):
-        return
-    profile_models = sequence_model_profiles.get(profile)
-    if not isinstance(profile_models, dict):
-        return
-    uses_llm = any(
-        isinstance(model_config, dict) and model_config.get("engine") == "llm"
-        for model_config in profile_models.values()
-    )
-    if not uses_llm:
-        return
+    """Refuses to send a restricted corpus to a profile that serves a model by llm.
+
+    Read from the parser's own configuration, the one its image is built with, and
+    resolved the way the parser resolves it -- through `profile_aliases`, the
+    profile's `sequence_models` and their `extends` -- since `eval.yml` says nothing
+    about which engine a profile uses. No profile is the parser's default one.
+    """
     restricted = sorted(RESTRICTED_CORPORA_FOR_LLM.intersection(include or ()))
-    if restricted:
+    if not restricted:
+        return
+    try:
+        models = parser_config.resolve_profile(profile).props.get("models") or {}
+    except ValueError as error:
+        # Fails closed: a profile this cannot read is one it cannot vouch for.
         raise SystemExit(
-            f"refusing to run profile {profile!r}, which uses the llm engine, over "
-            f"{', '.join(restricted)}: those manuscripts are not redistributable and "
-            "provider zero-retention does not cover the intermediary. Drop the corpus "
-            "or point the engine at a self-hosted endpoint."
+            f"refusing to run profile {profile!r} over {', '.join(restricted)}: it"
+            f" does not resolve against the parser config, so whether it sends"
+            f" documents to an llm is unknown ({error})"
+        ) from error
+    llm_models = sorted(
+        name for name, model_config in models.items()
+        if isinstance(model_config, dict) and model_config.get("engine") == "llm"
+    )
+    if llm_models:
+        raise SystemExit(
+            f"refusing to run profile {profile!r}, which serves"
+            f" {', '.join(llm_models)} with the llm engine, over"
+            f" {', '.join(restricted)}: those manuscripts are not redistributable and"
+            " provider zero-retention does not cover the intermediary. Drop the corpus"
+            " or point the engine at a self-hosted endpoint."
         )
 
 
@@ -505,7 +610,9 @@ def main(argv=None) -> None:
     with open(args.config, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    check_llm_profile_corpora(config, args.profile, args.include_corpus)
+    check_llm_profile_corpora(
+        AppConfig.load_yaml(DEFAULT_CONFIG_FILE), args.profile, args.include_corpus,
+    )
 
     if args.comparison_only and not args.comparison:
         parser.error("--comparison-only needs --comparison")

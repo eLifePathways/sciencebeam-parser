@@ -15,6 +15,7 @@ from sciencebeam_parser.service.assets import (
     STATIC_PATH,
     StaticAssets
 )
+from sciencebeam_parser.service.cors import with_cross_origin_access
 from sciencebeam_parser.service.routers.index import create_index_router
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
@@ -36,7 +37,10 @@ def create_app_for_parser(
     )
 
     api_app = create_api_app(sciencebeam_parser)
-    app.mount(API_PATH, api_app)
+    app.mount(
+        API_PATH,
+        with_cross_origin_access(api_app, sciencebeam_parser.config)
+    )
 
     return app
 

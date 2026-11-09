@@ -55,6 +55,8 @@ Models will be loaded "eagerly" at startup, by setting the configuration option 
 
 Which models are used is decided by the `profile`, and a request may name another one — see [Profiles](doc/profiles.md).
 
+No browser page on another origin may call the API as shipped; a deployment names the origins it answers — see [Cross-origin requests](doc/cors.md).
+
 #### Sequence models from the Hugging Face Hub
 
 The `delft` engine takes a model directly from the Hugging Face Hub, as well as from an archive

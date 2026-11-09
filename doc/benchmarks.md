@@ -299,6 +299,16 @@ Those extra variants stay out of the report CI always posts: its columns are sti
 `baselines:` entries plus the one profile the run under test uses, which `profile:<name>`
 chooses.
 
+The one exception is `main` under that same profile. `eval.yml` declares `main` under
+`grobid_crf` only, so a run under any other profile would be compared with `main` across
+a profile change as well as a code change. Where the run's profile is not one `main` is
+declared under, the report adds a `main (<profile>)` column beside `main (grobid_crf)`,
+read from the store and never generated. If `main` has never been run under that profile
+the column is left out, and a note at the end of the report gives the dispatch that
+stores it (`gh workflow run benchmark.yml --ref main -f profile=<profile> -f
+mode=medium`). The profile is matched by the name the store files it under, so an alias
+such as `grobid_crf_0_9_0` does not find predictions pushed as `grobid_crf`.
+
 ## Where the gold does not record a field
 
 Whether a publisher records an acknowledgement or marks its body sections is a

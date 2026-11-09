@@ -16,6 +16,7 @@ from benchmarks.run import (
     _coverage,
     _run_baseline,
     _make_label,
+    _same_profile_main_baseline,
     _tool_docker_config,
     run_benchmark,
     run_stored_comparison,
@@ -109,6 +110,16 @@ class TestMakeLabel:
         meta = {"image": "sciencebeam-parser:main-abc123"}
         assert _make_label("sciencebeam-parser", "main", "grobid_crf", meta) == \
                "sciencebeam-parser:main-abc123 (grobid_crf)"
+
+    def test_names_the_version_an_image_tag_does_not(self):
+        meta = {"image": "sciencebeam-parser:manual-9d0a62fa-20261109.0959"}
+        assert _make_label("sciencebeam-parser", "main", "delft_hub", meta) == \
+               "sciencebeam-parser:manual-9d0a62fa-20261109.0959 on main (delft_hub)"
+
+    def test_does_not_take_a_version_inside_a_word_for_the_tag_naming_it(self):
+        meta = {"image": "sciencebeam-parser:mainline-abc123"}
+        assert _make_label("sciencebeam-parser", "main", "grobid_crf", meta) == \
+               "sciencebeam-parser:mainline-abc123 on main (grobid_crf)"
 
     def test_no_metadata_image_falls_back(self):
         assert _make_label("sciencebeam-parser", "main", "grobid_crf", {"mode": "medium"}) == \
@@ -481,6 +492,105 @@ class TestRunBenchmark:
         assert not any("`current: true`" in r.message for r in caplog.records), (
             [r.message for r in caplog.records]
         )
+
+    _MAIN_CRF_CONFIG = {
+        **_CONFIG,
+        "baselines": [
+            *_CONFIG["baselines"],
+            {"tool": "sciencebeam-parser", "version": "main",
+             "profile": "grobid_crf", "generate": False},
+        ],
+    }
+
+    def _run_under_profile(self, store, runs_dir: Path, tmp_path: Path, profile: str):
+        """Runs the benchmark under `profile`, returning the labels the CI report was
+        given and that report's path."""
+        compared: list = []
+
+        def fake_compare(labeled_paths, out_path, *_a, **_kw):
+            compared.extend(label for label, _ in labeled_paths)
+            out_path.write_text("| report |\n")
+
+        with patch("benchmarks.run.run_score") as mock_score, \
+             patch("benchmarks.run.run_predict"), \
+             patch("benchmarks.run.run_compare", side_effect=fake_compare), \
+             patch("benchmarks.run._wait_healthy"), \
+             patch("benchmarks.run._docker_start"), \
+             patch("benchmarks.run._docker_stop"), \
+             patch("benchmarks.run.fetch_gold", return_value=self.gold_records()):
+            mock_score.side_effect = lambda _c, run_dir, *_a, **_kw: self.make_summary(run_dir)
+            run_benchmark(
+                self._MAIN_CRF_CONFIG, "smoke", "train", tmp_path / "data", runs_dir,
+                store, parser_url="http://parser", parser_image="pr-image",
+                parser_profile=profile,
+            )
+        return compared, runs_dir / "train" / "comparison.md"
+
+    def test_adds_main_under_the_run_profile_beside_grobid_crf(self, tmp_path: Path):
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        self.seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+        self.seed_store(store, "sciencebeam-parser", "main", "llm_x")
+
+        labels, report = self._run_under_profile(store, runs_dir, tmp_path, "llm_x")
+
+        assert labels[-3:] == ["main (grobid_crf)", "main (llm_x)", "pr-image (llm_x)"]
+        assert "no stored predictions" not in report.read_text()
+
+    def test_does_not_duplicate_main_when_the_run_profile_is_declared(
+        self, tmp_path: Path,
+    ):
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        self.seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+
+        labels, _ = self._run_under_profile(store, runs_dir, tmp_path, "grobid_crf")
+
+        assert labels.count("main (grobid_crf)") == 1
+
+    def test_notes_when_main_has_nothing_under_the_run_profile(self, tmp_path: Path):
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+        self.seed_store(store, "sciencebeam-parser", "main", "grobid_crf")
+
+        labels, report = self._run_under_profile(store, runs_dir, tmp_path, "llm_x")
+
+        assert "main (llm_x)" not in labels
+        assert "main (grobid_crf)" in labels
+        text = report.read_text()
+        assert text.startswith("| report |\n")
+        assert "no stored predictions under profile `llm_x`" in text
+        assert "-f profile=llm_x" in text
+
+
+class TestSameProfileMainBaseline:
+    _CONFIG = {"baselines": [
+        {"tool": "grobid", "version": "0.9.1-crf", "profile": "default"},
+        {"tool": "sciencebeam-parser", "version": "main", "profile": "grobid_crf"},
+    ]}
+
+    def test_should_be_none_without_a_profile(self):
+        assert _same_profile_main_baseline(self._CONFIG, None) is None
+
+    def test_should_be_none_for_the_default_profile(self):
+        assert _same_profile_main_baseline(self._CONFIG, "default") is None
+
+    def test_should_be_none_for_the_profile_main_is_declared_under(self):
+        assert _same_profile_main_baseline(self._CONFIG, "grobid_crf") is None
+
+    def test_should_name_main_under_another_profile_without_generating(self):
+        assert _same_profile_main_baseline(self._CONFIG, "llm_x") == {
+            "tool": "sciencebeam-parser", "version": "main", "profile": "llm_x",
+            "generate": False,
+        }
+
+    def test_should_match_a_profile_name_literally(self):
+        """The store files a run under the name it was given, so an alias of the
+        declared profile is a different set of predictions."""
+        assert _same_profile_main_baseline(self._CONFIG, "grobid_crf_0_9_0") == {
+            "tool": "sciencebeam-parser", "version": "main",
+            "profile": "grobid_crf_0_9_0", "generate": False,
+        }
 
 
 class TestCoverage:
