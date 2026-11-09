@@ -78,7 +78,7 @@ class TestFieldSelection:
             selection=Selection(fields=("title",), methods=("exact",)),
         )
         assert [row.split("|")[1].strip() for row in _rows(report)] == [
-            "title (exact)", "title (exact)", "title (exact)",
+            "title (exact, string)", "title (exact, string)", "title (exact, string)",
         ]
 
     def test_shows_only_the_selected_corpus(self):
@@ -218,13 +218,13 @@ class TestRowFilter:
     def test_keeps_only_the_named_method(self):
         rows = self._report({"title": (("exact", ""),)})
         assert [row.split("|")[1].strip() for row in rows] == [
-            "title (exact)", "title (exact)", "title (exact)",
+            "title (exact, string)", "title (exact, string)", "title (exact, string)",
         ]
 
     def test_an_empty_method_keeps_every_one(self):
         rows = self._report({"title": (("", ""),)})
         assert {row.split("|")[1].strip() for row in rows} == {
-            "title (exact)", "title (levenshtein)",
+            "title (exact, string)", "title (levenshtein, string)",
         }
 
     def test_fails_naming_a_scope_no_summary_has(self):
@@ -238,7 +238,7 @@ class TestExpectedTypes:
             [("base", _two_field_summary()), ("head", _two_field_summary(0.05))],
             selection=Selection(expected_types={"title": "string"}),
         )
-        assert "| title (exact)" in report
+        assert "| title (exact, string)" in report
 
     def test_fails_stating_both_types(self):
         with pytest.raises(SelectionError, match="'string'.*'partial_list'"):
@@ -270,25 +270,28 @@ class TestPrimaryColumn:
 
     def _header(self, report: str) -> list:
         line = next(
-            line for line in report.splitlines() if line.startswith("| Field (method)")
+            line for line in report.splitlines() if line.startswith("| Field (method, type)")
         )
         return [cell.strip() for cell in line.split("|")[1:-1]]
 
     def test_defaults_to_the_last_column(self):
         header = self._header(_render_comparison_report(self._labeled()))
-        assert header[-2:] == ["Δ a", "Δ b"]
+        assert header[-2:] == ["Δ A", "Δ B"]
 
     def test_keeps_every_column_in_the_order_given(self):
-        header = self._header(
-            _render_comparison_report(self._labeled(), primary=0)
-        )
-        assert header[3:6] == ["a", "b", "c"]
+        report = _render_comparison_report(self._labeled(), primary=0)
+        assert self._header(report)[2:5] == ["A", "B", "C"]
+        legend = [
+            line for line in report.splitlines()
+            if line.startswith(("| A |", "| B |", "| C |"))
+        ]
+        assert [line.split("|")[2].strip() for line in legend] == ["a", "b", "c"]
 
     def test_gives_no_delta_column_to_the_primary(self):
         header = self._header(
             _render_comparison_report(self._labeled(), primary=0)
         )
-        assert "Δ a" not in header and ["Δ b", "Δ c"] == header[-2:]
+        assert "Δ A" not in header and ["Δ B", "Δ C"] == header[-2:]
 
     def test_measures_the_deltas_against_the_named_column(self):
         rows = _rows(_render_comparison_report(self._labeled(), primary=0))
@@ -364,27 +367,28 @@ class TestVariantsSection:
             **kwargs,
         )
 
-    def test_says_nothing_where_no_variant_was_described(self):
-        assert "What each column is" not in self._report()
+    def test_leaves_out_the_description_where_no_variant_was_described(self):
+        assert "What it is" not in self._report()
 
     def test_names_the_profile_behind_each_column(self):
         report = self._report(variants=self._DESCRIBED)
         assert "profile `grobid_crf`" in report
 
-    def test_collapses_it(self):
+    def test_keeps_it_visible(self):
         report = self._report(variants=self._DESCRIBED)
-        assert "<summary>What each column is (2 variants)</summary>" in report
+        assert "| Variant | What it is |" in report
+        assert "What each column is" not in report
 
     def test_marks_the_column_the_deltas_measure_against(self):
         report = self._report(variants=self._DESCRIBED, primary=0)
         line = next(
-            line for line in report.splitlines() if line.startswith("| GROBID |")
+            line for line in report.splitlines() if line.startswith("| G | GROBID |")
         )
-        assert "deltas are measured against this" in line
+        assert "reference (Δ X = this − X)" in line
 
     def test_leaves_the_others_unmarked(self):
         report = self._report(variants=self._DESCRIBED, primary=0)
         line = next(
-            line for line in report.splitlines() if line.startswith("| ScienceBeam |")
+            line for line in report.splitlines() if line.startswith("| S | ScienceBeam |")
         )
-        assert "deltas are measured against" not in line
+        assert "reference" not in line

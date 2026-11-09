@@ -42,6 +42,7 @@ from benchmarks.gold_presence import (
 )
 from benchmarks.llm_usage import usage_for_corpora
 from benchmarks.report_cost import render_cost_section
+from benchmarks.report_legend import keyed, render_legend
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
     concatenation_row,
@@ -295,9 +296,9 @@ def _render_field_table(
     ]
 
     col_labels = labels + [f"Δ {label}" for label in other_labels]
-    n_cols = 2 * len(other_labels) + 4
+    n_cols = 2 * len(other_labels) + 3
     lines = [
-        "| Field (method) | Type | Docs | " + " | ".join(col_labels) + " |",
+        "| Field (method, type) | Docs | " + " | ".join(col_labels) + " |",
         "|" + "|".join(["---"] * n_cols) + "|",
     ]
 
@@ -305,7 +306,7 @@ def _render_field_table(
         field_type = field_scoring_types.get(row.field, "string")
         cells = _score_cells(row.values, primary)
         lines.append(
-            f"| {row.field} ({row.method}) | {field_type} | {row.docs_label} | "
+            f"| {row.field} ({row.method}, {field_type}) | {row.docs_label} | "
             + " | ".join(cells) + " |"
         )
 
@@ -656,8 +657,8 @@ def _differently_scored_note(
     """Fields the runs did not measure the same way.
 
     A delta between two runs that scored a field differently is a difference between the
-    measures as much as between the runs, and nothing else in the table says so: the Type
-    column states the primary run's.
+    measures as much as between the runs, and nothing else in the table says so: the type in
+    the first column is the primary run's.
     """
     differing = []
     for field in field_names:
@@ -678,35 +679,6 @@ def _differently_scored_note(
     return [
         "> ⚠️ **Scored differently between runs** (" + ", ".join(f"`{f}`" for f in differing)
         + "). Their deltas compare the measures as well as the runs.",
-        "",
-    ]
-
-
-def _render_variants_section(
-    described: Sequence[Tuple[str, str]], primary: int
-) -> List[str]:
-    """What each column is, collapsed: needed to read the report, not while reading it.
-
-    A label says what distinguishes a column, which is not the same as saying which
-    profile produced it, and the file that knows is somewhere the reader is not.
-    """
-    if not described:
-        return []
-    reference = primary % len(described)
-    rows = [
-        f"| {label} | {what} |"
-        f" {'deltas are measured against this' if index == reference else ''} |"
-        for index, (label, what) in enumerate(described)
-    ]
-    return [
-        "<details>",
-        f"<summary>What each column is ({len(described)} variants)</summary>",
-        "",
-        "| Column | Variant | |",
-        "|---|---|---|",
-        *rows,
-        "",
-        "</details>",
         "",
     ]
 
@@ -745,14 +717,16 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
         for corpus, rows in corpus_grids.items()
     }
 
+    labels = [label for label, _ in labeled_summaries]
+    keyed_summaries = keyed(labeled_summaries)
     lines = ["## ScienceBeam Parser Evaluation", ""]
-    lines += _render_variants_section(variants, primary)
+    lines += render_legend(labels, primary, variants)
     lines += _coverage_lines(labeled_run_records or [])
     lines += _differently_scored_note(labeled_summaries, field_names)
 
     if len(corpora) > 1:
         lines.extend(_render_overall_section(
-            labeled_summaries, field_names, overall_rows, field_scoring_types,
+            keyed_summaries, field_names, overall_rows, field_scoring_types,
             corpora, common, primary,
         ))
         lines.append("")
@@ -760,7 +734,6 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     # A single corpus puts one group of bars on the axis, which says nothing the table
     # does not.
     chart_lines: List[str] = []
-    labels = [label for label, _ in labeled_summaries]
     for declared in selection.declared_charts:
         chart_lines += render_declared_chart(
             declared, labels, labeled_summaries, corpus_grids, overall_rows,
@@ -807,7 +780,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     for corpus in corpora:
         n_primary = primary_summary.get("corpora", {}).get(corpus, {}).get("n", 0)
         corpus_lines = _render_corpus_section(
-            corpus, labeled_summaries, field_names, corpus_grids[corpus],
+            corpus, keyed_summaries, field_names, corpus_grids[corpus],
             field_scoring_types, primary,
         )
         lines += [
