@@ -463,6 +463,11 @@ function appendAffiliationRef(parent, ref, affiliationByRid) {
 
 function appendAuthor(parent, author, affiliationByRid) {
   const element = appendElement(parent, 'span', 'jats-author', author.label);
+  appendAuthorContent(element, author, affiliationByRid);
+  return element;
+}
+
+function appendAuthorContent(element, author, affiliationByRid) {
   author.nameParts.forEach((part, index) => {
     if (index) {
       appendText(element, ' ');
@@ -479,6 +484,16 @@ function appendAuthor(parent, author, affiliationByRid) {
   });
 }
 
+/* What separates one author from the next is the page's, not the document's.
+ *
+ * A contrib ends where the element ends; the comma is there so a line of
+ * names reads as one. It sits inside the author it follows rather than
+ * between two of them, so that showing each author on its own line does not
+ * leave it stranded on a line of its own. */
+function appendAuthorSeparator(element) {
+  appendElement(element, 'span', 'jats-separator').textContent = ', ';
+}
+
 function appendAuthors(parent, viewModel) {
   if (!viewModel.authors.length) {
     return;
@@ -486,10 +501,10 @@ function appendAuthors(parent, viewModel) {
   const affiliationByRid = getAffiliationByRid(viewModel.affiliations);
   const list = appendElement(parent, 'p', 'jats-authors');
   viewModel.authors.forEach((author, index) => {
-    if (index) {
-      appendText(list, '; ');
+    const element = appendAuthor(list, author, affiliationByRid);
+    if (index < viewModel.authors.length - 1) {
+      appendAuthorSeparator(element);
     }
-    appendAuthor(list, author, affiliationByRid);
   });
   if (!viewModel.affiliations.length) {
     return;

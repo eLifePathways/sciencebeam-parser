@@ -585,7 +585,7 @@ class TestAffiliationReferences:
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)
         text_only = re.sub(r'<span class="jats-tag">[^<]*</span>', '', html)
         text_only = re.sub(r'<[^>]+>', '', text_only)
-        assert 'J Smith 1 2; A Jones 2' in text_only
+        assert 'J Smith 1 2, A Jones 2' in text_only
 
     def test_should_carry_the_affiliation_text_to_rest_on(self):
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)
@@ -619,3 +619,20 @@ class TestAffiliationReferences:
         assert [
             affiliation['id'] for affiliation in view_model['affiliations']
         ] == ['aff1', 'aff2']
+
+    def test_should_keep_what_separates_two_authors_inside_the_first(self):
+        html = get_rendered_article(AFFILIATED_ARTICLE_XML)
+        authors = re.search(r'<p class="jats-authors">.*?</p>', html, re.DOTALL)
+        assert authors
+        # nothing between one author and the next, so a line each strands nothing
+        assert '</span><span data-jats="contrib"' in authors.group(0)
+        assert authors.group(0).count('class="jats-separator"') == 1
+
+    def test_should_separate_no_author_where_there_is_only_one(self):
+        html = get_rendered_article(get_article_xml(
+            front=(
+                '<contrib-group><contrib><name><surname>Smith</surname>'
+                '</name></contrib></contrib-group>'
+            )
+        ))
+        assert 'jats-separator' not in html

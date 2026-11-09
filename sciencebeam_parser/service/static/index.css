@@ -348,6 +348,8 @@ details > summary > h3 {
   border-left: 2px solid var(--panel-line);
 }
 
+.jats-labelled .jats-separator { display: none; }
+
 .jats-labelled .jats-author [data-jats] {
   display: inline-block;
   padding: 0 3px;
