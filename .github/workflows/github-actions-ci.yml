@@ -81,7 +81,7 @@ jobs:
         uses: docker/bake-action@v6
         with:
           files: docker-bake.hcl
-          targets: builder,builder-cv,sciencebeam-parser-dev,python-dist,lint-flake8,lint-pylint,lint-mypy,pytest,end-to-end-tests,sciencebeam-parser,sciencebeam-parser-cv
+          targets: builder,sciencebeam-parser-dev,python-dist,lint-flake8,lint-pylint,lint-mypy,pytest,end-to-end-tests,sciencebeam-parser,sciencebeam-parser-cv
           set: |
             ${{ steps.set_tags.outputs.tag_lines }}
             python-dist.args.python_package_version=${{ steps.set_tags.outputs.python_package_version }}
@@ -89,12 +89,10 @@ jobs:
             ${{ github.event_name != 'pull_request' && 'sciencebeam-parser.output=type=registry' || '' }}
             ${{ github.event_name != 'pull_request' && 'sciencebeam-parser-cv.output=type=registry' || '' }}
             *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder
-            *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder-cv
             *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-dev
             *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime
             *.cache-from+=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime-cv
             builder.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder,mode=max
-            builder-cv.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-builder-cv,mode=max
             sciencebeam-parser-dev.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-dev,mode=max
             sciencebeam-parser-cv.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime,mode=max
             sciencebeam-parser.cache-to=type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime-cv,mode=max

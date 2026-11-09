@@ -118,6 +118,34 @@ class TestAbstractsModeProfiles:
         } == set(ABSTRACTS_MODES) - {default_mode}
 
 
+CV_PROFILE_PAIRS = [
+    ('grobid_crf_cv', None),
+    ('delft_all_scielo_preprints_ore_cv', 'delft_all_scielo_preprints_ore')
+]
+
+
+class TestCvProfiles:
+    """Each exists to be compared with the profile it varies, so one setting may differ."""
+
+    @pytest.mark.parametrize('profile_name,base_profile_name', CV_PROFILE_PAIRS)
+    def test_should_differ_from_its_base_profile_in_use_cv_model_only(
+        self, profile_name: str, base_profile_name: Optional[str]
+    ):
+        base_config = get_fulltext_processor_config(base_profile_name)
+        variant_config = get_fulltext_processor_config(profile_name)
+        assert variant_config.use_cv_model
+        assert not base_config.use_cv_model
+        assert variant_config._replace(  # pylint: disable=protected-access
+            use_cv_model=base_config.use_cv_model
+        ) == base_config
+
+    @pytest.mark.parametrize('profile_name,base_profile_name', CV_PROFILE_PAIRS)
+    def test_should_serve_the_models_its_base_profile_serves(
+        self, profile_name: str, base_profile_name: Optional[str]
+    ):
+        assert get_resolved_models(profile_name) == get_resolved_models(base_profile_name)
+
+
 class TestShippedCombinedProfiles:
     def test_should_cover_every_profile_that_composes_others(self):
         composing_profile_names = {

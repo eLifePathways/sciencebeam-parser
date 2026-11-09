@@ -364,15 +364,16 @@ docker run --rm \
     ghcr.io/elifepathways/sciencebeam-parser
 ```
 
-Note: Docker images with the tag suffix `-cv` include the dependencies required for the CV (Computer Vision) models (disabled by default).
+The CV (Computer Vision) model finds figures and tables on the rendered page. It is disabled by default, and runs in this image when enabled -- it needs no separate image, and downloads its weights on first use:
 
 ```bash
 docker run --rm \
     -p 8070:8070 \
     --env SCIENCEBEAM_PARSER__PROCESSORS__FULLTEXT__USE_CV_MODEL=true \
-    --env SCIENCEBEAM_PARSER__PROCESSORS__FULLTEXT__USE_OCR_MODEL=true \
-    ghcr.io/elifepathways/sciencebeam-parser:latest-cv
+    ghcr.io/elifepathways/sciencebeam-parser
 ```
+
+Note: images with the tag suffix `-cv` are still published, and are this image plus the tesseract system libraries.
 
 Non-release builds are available with the `_unstable` image suffix, e.g. `ghcr.io/elifepathways/sciencebeam-parser_unstable`.
 
