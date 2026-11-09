@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'linux'",
@@ -666,7 +666,7 @@ wheels = [
 
 [[package]]
 name = "delft"
-version = "1.2.0"
+version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -686,9 +686,9 @@ dependencies = [
     { name = "truecase" },
     { name = "unidecode" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/03/eb741fff1ce98596b03e4bdebcda407d661d1aca8b2862f9d37b609bb808/delft-1.2.0.tar.gz", hash = "sha256:a56d02399ac85aa1b3220bfe675a0eb61ec10174619b332a44e3f9b4bc83f503", size = 207577, upload-time = "2026-10-20T16:53:29.698Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/d5/9c988ed20a7f832adb61542007fa2ba8e922e55e5cdf10ec338b865e32fd/delft-1.2.1.tar.gz", hash = "sha256:83656d194233ca64a220499ad0f495766ee0fb5cb2f0708d69104dbe392800d7", size = 208182, upload-time = "2026-11-06T17:23:25.639Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/b5/f093c7e2df872927c622b04d325bac5ca5adc90d06fb9ddeec32ca771610/delft-1.2.0-py3-none-any.whl", hash = "sha256:8a06fa4fd5782b64ff20d56811bb05f99af3c7d301b96ded6eca90c703bf4b09", size = 236739, upload-time = "2026-10-20T16:53:28.181Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/47/e2b5f5d2db250e6b32250c0df876a12c25f92747113813a6066f5c106430/delft-1.2.1-py3-none-any.whl", hash = "sha256:ec9220c6267255ce91899c51c07f83b7f20aaff94bfe861296e95d0d2b0696fa", size = 237294, upload-time = "2026-11-06T17:23:24.031Z" },
 ]
 
 [[package]]
@@ -2914,11 +2914,11 @@ wheels = [
 
 [[package]]
 name = "oauthlib"
-version = "4.0.0"
+version = "4.0.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/7a/d8/a1bcc8ba112a627f8ffbdc212a78ce18d3ac07e91a5ca65d27918eee25a1/oauthlib-4.0.0.tar.gz", hash = "sha256:efb274799819440f95b4ab3b818869f1ce9ae26c5beacba0201d1a1b76b54f86", size = 187232, upload-time = "2026-09-28T06:01:18.77Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/17/2bb072de0b990303c985f26869fd47bb179024a051f47e7f9d208eb92f8e/oauthlib-4.0.1.tar.gz", hash = "sha256:3d73febdb6faa00f277c81fb04be7b7586fb96fc3b7f0b9c772dada69a25ede7", size = 191219, upload-time = "2026-10-31T09:52:58.008Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/f4/78229a1066068ca14fc60fb26cf7381cabe4382261392b90e5f9552722d4/oauthlib-4.0.0-py3-none-any.whl", hash = "sha256:624c28c13a0a59cabf9747dfa52af63be3e512a7f2714df16e91b5b3a145e6cd", size = 159715, upload-time = "2026-09-28T06:01:17.008Z" },
+    { url = "https://files.pythonhosted.org/packages/df/ef/3b8adde1b32a6f540758bff734d3442c621734c83708e5f02b0ba2f43b84/oauthlib-4.0.1-py3-none-any.whl", hash = "sha256:498a298876e996301950a5b053d12c31628bb7b895db03666430c69ce182eb61", size = 161934, upload-time = "2026-10-31T09:52:56.206Z" },
 ]
 
 [[package]]
@@ -4366,7 +4366,7 @@ ocr = [
 
 [package.metadata]
 requires-dist = [
-    { name = "delft", marker = "extra == 'delft'", specifier = ">=1.2.0" },
+    { name = "delft", marker = "extra == 'delft'", specifier = ">=1.2.1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.124.0" },
     { name = "fsspec", specifier = ">=2022.1.0" },
     { name = "gcsfs", specifier = ">=2022.1.0" },
@@ -4409,7 +4409,7 @@ ocr = [{ name = "tesserocr", specifier = "==2.5.2" }]
 [[package]]
 name = "sciencebeam-trainer-delft"
 version = "0.0.0"
-source = { git = "https://github.com/eLifePathways/sciencebeam-trainer-delft?branch=feature%2Fhub-models#2d6c5c0336bf26aa87149fd19d8d65549c010bac" }
+source = { git = "https://github.com/eLifePathways/sciencebeam-trainer-delft?branch=feature%2Fhub-models#712360bd00bc12f43ef213b04b98069c91c53c46" }
 dependencies = [
     { name = "fsspec" },
     { name = "joblib" },
@@ -4978,7 +4978,7 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "5.18.0"
+version = "5.20.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -4991,9 +4991,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/6e/5a50ca8aff5fdd4ff21271198d2fb9e1f11bcd0ea279576199c0caa34cba/transformers-5.18.0.tar.gz", hash = "sha256:d89c206e42e841af7cd314b3d2b21c03e977d819cdb4aef65ada048769a644df", size = 10028745, upload-time = "2026-09-30T16:46:00.575Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/4e/3cd6f08cc84ee612d40f3cdb1649475e7c997f2d5cbd95ade8780708af62/transformers-5.20.2.tar.gz", hash = "sha256:080871e061546d720be57f5846fce426f46b44d61574907cc7404c2cba49d180", size = 10225379, upload-time = "2026-10-19T17:46:03.092Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/3b/f84d7d12886147c5267216ed6c57d1163e68d24a89b2ad29d835a7089463/transformers-5.18.0-py3-none-any.whl", hash = "sha256:d79e5a515a572ee3deb33eb0d578be47d91e70c75d54cf21bf6eede6edef14a9", size = 12579646, upload-time = "2026-09-30T16:45:57.51Z" },
+    { url = "https://files.pythonhosted.org/packages/96/b6/724faefed06913dd3e42e0476fe2c42448675c42f687a12bf810aa098005/transformers-5.20.2-py3-none-any.whl", hash = "sha256:7ae75dbc1fb3922aff1b6c97b9e5479d6cf26fd86a8866bfb71324190479f807", size = 12844921, upload-time = "2026-10-19T17:45:59.293Z" },
 ]
 
 [[package]]
