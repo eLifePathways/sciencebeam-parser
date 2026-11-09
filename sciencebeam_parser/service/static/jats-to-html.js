@@ -141,12 +141,14 @@ function getCaption(node) {
 }
 
 function getFigure(node) {
-  const graphic = getFirstChildElement(node, 'graphic');
   return {
     type: 'figure',
     id: getAttribute(node, 'id'),
     ...getCaption(node),
-    graphicHref: graphic ? getAttribute(graphic, 'xlink:href') : ''
+    graphics: getChildElements(node, 'graphic').map((graphic) => ({
+      label: graphic.name,
+      href: getAttribute(graphic, 'xlink:href')
+    }))
   };
 }
 
@@ -366,25 +368,29 @@ function appendCaption(parent, block) {
   block.paragraphs.forEach((paragraph) => appendParagraph(caption, paragraph));
 }
 
-function appendGraphic(parent, href, options) {
-  const graphic = appendElement(parent, 'div', 'jats-graphic', 'graphic');
-  const url = options.getAssetUrl ? options.getAssetUrl(href) : null;
-  if (!url) {
-    appendText(graphic, href + ' (in the zip output)');
+function appendGraphic(parent, graphic, options) {
+  const element = appendElement(parent, 'div', 'jats-graphic', graphic.label);
+  if (!graphic.href) {
+    appendElement(element, 'span', 'jats-graphic-name').textContent = (
+      'no file named for this graphic'
+    );
     return;
   }
-  const image = appendElement(graphic, 'img', 'jats-graphic-image');
+  const url = options.getAssetUrl ? options.getAssetUrl(graphic.href) : null;
+  if (!url) {
+    appendText(element, graphic.href + ' (in the zip output)');
+    return;
+  }
+  const image = appendElement(element, 'img', 'jats-graphic-image');
   image.setAttribute('src', url);
-  image.setAttribute('alt', href);
-  appendElement(graphic, 'span', 'jats-graphic-name').textContent = href;
+  image.setAttribute('alt', graphic.href);
+  appendElement(element, 'span', 'jats-graphic-name').textContent = graphic.href;
 }
 
 function appendFigure(parent, block, options) {
   const figure = appendElement(parent, 'figure', 'jats-figure', block.label);
   appendCaption(figure, block);
-  if (block.graphicHref) {
-    appendGraphic(figure, block.graphicHref, options);
-  }
+  block.graphics.forEach((graphic) => appendGraphic(figure, graphic, options));
 }
 
 function appendTable(parent, block) {

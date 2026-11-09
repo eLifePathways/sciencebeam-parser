@@ -10,6 +10,10 @@
  * rather than read wrongly. It takes an `ArrayBuffer` or any view of one,
  * because a view onto a larger buffer is what most ways of getting bytes hand
  * back, and reading it as though it started at zero finds no archive at all.
+ *
+ * Each entry states its size and is read when asked rather than up front. One
+ * page of vector drawing can be tens of megabytes on its own, and a caller
+ * that is going to leave an entry alone should not pay to decompress it.
  */
 
 const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
@@ -84,13 +88,19 @@ function getCentralDirectoryEntries(view, decoder, start, count) {
       throw new Error(`${name} is encrypted`);
     }
     const compressedSize = view.getUint32(offset + 20, true);
+    const size = view.getUint32(offset + 24, true);
     const localOffset = view.getUint32(offset + 42, true);
-    if (compressedSize === ZIP64_MARKER_32 || localOffset === ZIP64_MARKER_32) {
+    if (
+      compressedSize === ZIP64_MARKER_32
+      || size === ZIP64_MARKER_32
+      || localOffset === ZIP64_MARKER_32
+    ) {
       throw new Error(`${name} needs zip64, which this does not read`);
     }
     if (!name.endsWith('/')) {
       entries.push({
         name,
+        size,
         method: view.getUint16(offset + 10, true),
         compressedSize,
         localOffset
@@ -106,7 +116,7 @@ function getCentralDirectoryEntries(view, decoder, start, count) {
   return entries;
 }
 
-export async function readZipEntries(buffer) {
+export function readZipEntries(buffer) {
   const bytes = ArrayBuffer.isView(buffer)
     ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
     : new Uint8Array(buffer);
@@ -120,11 +130,11 @@ export async function readZipEntries(buffer) {
     throw new Error('the archive needs zip64, which this does not read');
   }
   const decoder = new TextDecoder();
-  const entries = getCentralDirectoryEntries(
-    view, decoder, directoryOffset, count
+  return getCentralDirectoryEntries(view, decoder, directoryOffset, count).map(
+    (entry) => ({
+      name: entry.name,
+      size: entry.size,
+      read: () => getEntryData(bytes, view, entry)
+    })
   );
-  return Promise.all(entries.map(async (entry) => ({
-    name: entry.name,
-    data: await getEntryData(bytes, view, entry)
-  })));
 }

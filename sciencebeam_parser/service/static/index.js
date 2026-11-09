@@ -10,6 +10,10 @@ const SLOW_REQUEST_SECONDS = 10;
 const PDF_MEDIA_TYPE = 'application/pdf';
 const LABELS_SETTING = 'sciencebeam-show-labels';
 
+// One page of vector drawing extracted as SVG can be tens of megabytes, and
+// handing that to an img tag stops the tab rather than showing a figure.
+const MAX_ASSET_BYTES = 8 * 1024 * 1024;
+
 const IMAGE_MEDIA_TYPE_BY_EXTENSION = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -253,18 +257,22 @@ function getImageMediaType(name) {
   return extension ? IMAGE_MEDIA_TYPE_BY_EXTENSION[extension] : null;
 }
 
-function getAssetUrlByName(entries) {
+async function getAssetUrlByName(entries) {
   const urlByName = {};
-  entries.forEach((entry) => {
-    const mediaType = getImageMediaType(entry.name);
-    if (!mediaType) {
+  const tooLarge = [];
+  const imageEntries = entries.filter((entry) => getImageMediaType(entry.name));
+  await Promise.all(imageEntries.map(async (entry) => {
+    if (entry.size > MAX_ASSET_BYTES) {
+      tooLarge.push(entry.name);
       return;
     }
-    const url = URL.createObjectURL(new Blob([entry.data], { type: mediaType }));
+    const url = URL.createObjectURL(new Blob(
+      [await entry.read()], { type: getImageMediaType(entry.name) }
+    ));
     assetUrls.push(url);
     urlByName[entry.name] = url;
-  });
-  return urlByName;
+  }));
+  return { urlByName, tooLarge };
 }
 
 function releaseSourceUrl() {
@@ -416,18 +424,19 @@ async function getArchiveContentOrNote(blob, output) {
 }
 
 async function getArchiveContent(blob, output) {
-  const entries = await readZipEntries(await blob.arrayBuffer());
+  const entries = readZipEntries(await blob.arrayBuffer());
   const xmlEntry = entries.find((entry) => entry.name === output.archive_xml_name);
   if (!xmlEntry) {
     throw new Error(
       'the archive carries no ' + output.archive_xml_name
     );
   }
-  const assetUrlByName = getAssetUrlByName(entries);
+  const { urlByName, tooLarge } = await getAssetUrlByName(entries);
   return {
-    text: new TextDecoder().decode(xmlEntry.data),
+    text: new TextDecoder().decode(await xmlEntry.read()),
     entryCount: entries.length,
-    getAssetUrl: (href) => assetUrlByName[href] || null
+    tooLarge,
+    getAssetUrl: (href) => urlByName[href] || null
   };
 }
 
@@ -455,6 +464,10 @@ async function showResult(response, blob, file, elapsedSeconds) {
     resultNote.textContent = (
       'Showing ' + output.archive_xml_name + ' from the archive, which carries '
       + content.entryCount + ' files. The download is the archive itself.'
+      + (content.tooLarge.length
+        ? ' Not shown, over ' + Math.round(MAX_ASSET_BYTES / (1024 * 1024))
+          + 'MB each: ' + content.tooLarge.join(', ') + '.'
+        : '')
     );
   }
   if (content && output.is_readable) {

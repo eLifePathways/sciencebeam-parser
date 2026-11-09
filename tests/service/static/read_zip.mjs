@@ -10,12 +10,13 @@ let input = '';
 process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', async () => {
   try {
-    const entries = await readZipEntries(Buffer.from(input.trim(), 'base64'));
+    const entries = readZipEntries(Buffer.from(input.trim(), 'base64'));
     process.stdout.write(JSON.stringify({
-      entries: entries.map((entry) => ({
+      entries: await Promise.all(entries.map(async (entry) => ({
         name: entry.name,
-        text: new TextDecoder().decode(entry.data)
-      }))
+        size: entry.size,
+        text: new TextDecoder().decode(await entry.read())
+      })))
     }));
   } catch (error) {
     process.stdout.write(JSON.stringify({ error: error.message }));

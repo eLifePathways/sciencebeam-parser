@@ -103,3 +103,10 @@ class TestReadZipEntries:
         zip_bytes[central_directory + 8] |= 1
         result = read_zip_entries(bytes(zip_bytes))
         assert result.get('error') == 'jats.xml is encrypted'
+
+    def test_should_state_the_size_of_each_entry_before_it_is_read(self):
+        content = 'a' * 5000
+        result = read_zip_entries(
+            get_zip_bytes({'jats.xml': content}, compression=zipfile.ZIP_DEFLATED)
+        )
+        assert [entry['size'] for entry in result['entries']] == [len(content)]

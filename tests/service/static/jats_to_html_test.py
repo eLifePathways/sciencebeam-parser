@@ -236,7 +236,7 @@ class TestFiguresAndTables:
         assert figure['label'] == 'fig'
         assert figure['heading'] == {'label': 'label', 'text': 'Figure 1'}
         assert get_paragraph_texts(figure['paragraphs']) == ['What it shows.']
-        assert figure['graphicHref'] == 'image1.png'
+        assert figure['graphics'] == [{'label': 'graphic', 'href': 'image1.png'}]
 
     def test_should_read_a_table_row_by_row(self):
         view_model = get_article_view_model(get_article_xml(
@@ -487,3 +487,30 @@ class TestFigureGraphic:
         )
         assert '<img' not in html
         assert 'image1.png (in the zip output)' in html
+
+    def test_should_show_every_panel_a_figure_carries(self):
+        html = get_rendered_article(
+            get_article_xml(body=(
+                '<sec><fig id="fig_0"><label>Figure 1</label>'
+                '<graphic xlink:href="image1.png"/>'
+                '<graphic xlink:href="image2.png"/>'
+                '<graphic xlink:href="image3.png"/>'
+                '</fig></sec>'
+            )),
+            assets={
+                'image1.png': 'blob:one',
+                'image2.png': 'blob:two',
+                'image3.png': 'blob:three'
+            }
+        )
+        assert html.count('<img') == 3
+        for url in ['blob:one', 'blob:two', 'blob:three']:
+            assert f'src="{url}"' in html
+
+    def test_should_say_where_a_figure_names_no_file_for_its_graphic(self):
+        html = get_rendered_article(get_article_xml(
+            body='<sec><fig id="fig_0"><label>Figure 1</label><graphic/></fig></sec>'
+        ))
+        assert '<img' not in html
+        assert 'no file named for this graphic' in html
+        assert 'data-jats="graphic"' in html
