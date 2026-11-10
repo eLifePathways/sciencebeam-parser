@@ -2,6 +2,8 @@ import logging
 from pathlib import Path
 from typing import Sequence
 
+import PIL.Image
+
 from sciencebeam_parser.document.layout_document import (
     LayoutDocument,
     LayoutGraphic,
@@ -216,6 +218,62 @@ class TestGetLayoutDocumentWithGraphicRegions:
         ]
         result = _get_graphics(get_layout_document_with_graphic_regions(
             _get_layout_document(graphics), config=CONFIG
+        ))
+        assert not result
+
+    def test_should_compose_a_merged_region_when_a_file_is_required(self, tmp_path: Path):
+        graphics = []
+        for index in range(2):
+            image_path = tmp_path / ('tile%d.png' % index)
+            PIL.Image.new('RGB', (100, 50), 'white').save(str(image_path))
+            graphics.append(LayoutGraphic(
+                local_file_path=str(image_path),
+                coordinates=_get_coordinates(100, 100 + index * 50, 100, 50),
+                graphic_type='image', page_meta=PAGE_META_1
+            ))
+        result = _get_graphics(get_layout_document_with_graphic_regions(
+            _get_layout_document(graphics), config=CONFIG,
+            temp_dir=str(tmp_path), require_file=True
+        ))
+        assert len(result) == 1
+        assert result[0].local_file_path
+        with PIL.Image.open(result[0].local_file_path) as composed_image:
+            assert (composed_image.width, composed_image.height) == (100, 100)
+
+    def test_should_not_merge_when_a_member_has_no_file_and_a_file_is_required(
+        self, tmp_path: Path
+    ):
+        image_path = tmp_path / 'tile.png'
+        PIL.Image.new('RGB', (100, 50), 'white').save(str(image_path))
+        graphics = [
+            LayoutGraphic(
+                local_file_path=str(image_path),
+                coordinates=_get_coordinates(100, 100, 100, 50),
+                graphic_type='image', page_meta=PAGE_META_1
+            ),
+            LayoutGraphic(
+                coordinates=_get_coordinates(100, 150, 100, 50),
+                graphic_type='image', page_meta=PAGE_META_1
+            )
+        ]
+        result = _get_graphics(get_layout_document_with_graphic_regions(
+            _get_layout_document(graphics), config=CONFIG,
+            temp_dir=str(tmp_path), require_file=True
+        ))
+        assert len(result) == 2
+
+    def test_should_not_derive_a_vector_region_when_a_file_is_required(self, tmp_path: Path):
+        svg_path = _write_svg(tmp_path / 'page.svg', _get_shape_paths(20))
+        graphics = [
+            LayoutGraphic(
+                local_file_path=svg_path,
+                coordinates=_get_coordinates(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                graphic_type='svg', page_meta=PAGE_META_1
+            )
+        ]
+        result = _get_graphics(get_layout_document_with_graphic_regions(
+            _get_layout_document(graphics), config=CONFIG,
+            temp_dir=str(tmp_path), require_file=True
         ))
         assert not result
 

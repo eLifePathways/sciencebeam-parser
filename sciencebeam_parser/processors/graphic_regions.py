@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import List, NamedTuple, Optional, Sequence
 
+import PIL.Image
 from lxml import etree
 
 from sciencebeam_parser.document.layout_document import (
@@ -186,12 +187,64 @@ def iter_vector_region_graphics(
     return region_graphics
 
 
+def _get_scale(layout_graphics: Sequence[LayoutGraphic]) -> Optional[float]:
+    scales = []
+    for layout_graphic in layout_graphics:
+        assert layout_graphic.coordinates
+        if not layout_graphic.local_file_path or not layout_graphic.coordinates.width:
+            return None
+        try:
+            with PIL.Image.open(layout_graphic.local_file_path) as image:
+                scales.append(image.width / layout_graphic.coordinates.width)
+        except OSError:
+            LOGGER.warning('unable to read image: %r', layout_graphic.local_file_path)
+            return None
+    if not scales:
+        return None
+    return max(scales)
+
+
+def _get_composed_image_path(
+    layout_graphics: Sequence[LayoutGraphic],
+    box: _Box,
+    temp_dir: str,
+    name: str
+) -> Optional[str]:
+    scale = _get_scale(layout_graphics)
+    if not scale:
+        return None
+    width = max(1, round(box.width * scale))
+    height = max(1, round(box.height * scale))
+    composed_image = PIL.Image.new('RGB', (width, height), 'white')
+    for layout_graphic in layout_graphics:
+        coordinates = layout_graphic.coordinates
+        assert coordinates and layout_graphic.local_file_path
+        try:
+            with PIL.Image.open(layout_graphic.local_file_path) as image:
+                resized_image = image.convert('RGB').resize((
+                    max(1, round(coordinates.width * scale)),
+                    max(1, round(coordinates.height * scale))
+                ))
+        except OSError:
+            LOGGER.warning('unable to read image: %r', layout_graphic.local_file_path)
+            return None
+        composed_image.paste(resized_image, (
+            round((coordinates.x - box.x1) * scale),
+            round((coordinates.y - box.y1) * scale)
+        ))
+    composed_image_path = os.path.join(temp_dir, name)
+    composed_image.save(composed_image_path)
+    return composed_image_path
+
+
 def _get_merged_graphic(
     layout_graphics: Sequence[LayoutGraphic],
-    page_number: int
-) -> LayoutGraphic:
+    page_number: int,
+    temp_dir: Optional[str],
+    require_file: bool
+) -> Optional[Sequence[LayoutGraphic]]:
     if len(layout_graphics) == 1:
-        return layout_graphics[0]
+        return layout_graphics
     assert layout_graphics[0].coordinates
     box = _get_box_for_coordinates(layout_graphics[0].coordinates)
     for layout_graphic in layout_graphics[1:]:
@@ -199,17 +252,30 @@ def _get_merged_graphic(
         box = box.union(_get_box_for_coordinates(layout_graphic.coordinates))
     graphic_types = {layout_graphic.graphic_type for layout_graphic in layout_graphics}
     graphic_type = graphic_types.pop() if len(graphic_types) == 1 else 'mixed'
-    return LayoutGraphic(
+    local_file_path: Optional[str] = None
+    if require_file:
+        if not temp_dir:
+            return layout_graphics
+        local_file_path = _get_composed_image_path(
+            layout_graphics, box, temp_dir,
+            name='region-%d-%d-%d.png' % (page_number, round(box.x1), round(box.y1))
+        )
+        if not local_file_path:
+            return layout_graphics
+    return [LayoutGraphic(
+        local_file_path=local_file_path,
         coordinates=_get_coordinates_for_box(box, page_number=page_number),
         graphic_type=(graphic_type or 'graphic') + MERGED_GRAPHIC_TYPE_SUFFIX,
         page_meta=layout_graphics[0].page_meta
-    )
+    )]
 
 
 def get_merged_layout_graphics(
     layout_graphics: Sequence[LayoutGraphic],
     page_coordinates: Optional[LayoutPageCoordinates],
-    config: GraphicRegionConfig
+    config: GraphicRegionConfig,
+    temp_dir: Optional[str] = None,
+    require_file: bool = False
 ) -> List[LayoutGraphic]:
     with_coordinates = [
         layout_graphic
@@ -226,13 +292,15 @@ def get_merged_layout_graphics(
         page_coordinates.height if page_coordinates else 842.0
     )
     page_number = with_coordinates[0].coordinates.page_number  # type: ignore[union-attr]
-    return [
-        _get_merged_graphic(
+    merged: List[LayoutGraphic] = []
+    for indices in _get_clusters(boxes, gap=gap):
+        merged.extend(_get_merged_graphic(
             [with_coordinates[index] for index in indices],
-            page_number=page_number
-        )
-        for indices in _get_clusters(boxes, gap=gap)
-    ]
+            page_number=page_number,
+            temp_dir=temp_dir,
+            require_file=require_file
+        ) or [])
+    return merged
 
 
 def _get_clipped_graphic(
@@ -268,7 +336,9 @@ def _is_large_enough(
 
 def get_layout_page_with_graphic_regions(
     layout_page: LayoutPage,
-    config: GraphicRegionConfig
+    config: GraphicRegionConfig,
+    temp_dir: Optional[str] = None,
+    require_file: bool = False
 ) -> LayoutPage:
     page_coordinates = layout_page.meta.coordinates if layout_page.meta else None
     page_box = _get_box_for_coordinates(page_coordinates) if page_coordinates else None
@@ -277,9 +347,10 @@ def get_layout_page_with_graphic_regions(
         if not layout_graphic.coordinates:
             continue
         if layout_graphic.graphic_type == SVG_GRAPHIC_TYPE:
-            expanded.extend(iter_vector_region_graphics(
-                layout_graphic, page_coordinates=page_coordinates, config=config
-            ))
+            if not require_file:
+                expanded.extend(iter_vector_region_graphics(
+                    layout_graphic, page_coordinates=page_coordinates, config=config
+                ))
             continue
         expanded.append(layout_graphic)
     clipped = [
@@ -291,7 +362,8 @@ def get_layout_page_with_graphic_regions(
         if clipped_graphic is not None
     ]
     merged = get_merged_layout_graphics(
-        clipped, page_coordinates=page_coordinates, config=config
+        clipped, page_coordinates=page_coordinates, config=config,
+        temp_dir=temp_dir, require_file=require_file
     )
     return layout_page.replace(graphics=[
         layout_graphic
@@ -302,11 +374,15 @@ def get_layout_page_with_graphic_regions(
 
 def get_layout_document_with_graphic_regions(
     layout_document: LayoutDocument,
-    config: GraphicRegionConfig
+    config: GraphicRegionConfig,
+    temp_dir: Optional[str] = None,
+    require_file: bool = False
 ) -> LayoutDocument:
     if not config.enabled:
         return layout_document
     return layout_document.replace(pages=[
-        get_layout_page_with_graphic_regions(page, config=config)
+        get_layout_page_with_graphic_regions(
+            page, config=config, temp_dir=temp_dir, require_file=require_file
+        )
         for page in layout_document.pages
     ])

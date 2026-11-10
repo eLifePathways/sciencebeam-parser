@@ -431,15 +431,12 @@ class FullTextProcessor:
         context: FullTextProcessorDocumentContext
     ):
         unmatched_graphics_container = SemanticMixedNote(note_type='unmatched_graphics')
-        if self.config.extract_graphic_assets:
-            LOGGER.info(
-                'not deriving graphic regions: every extracted asset needs a file of its own'
-            )
-        else:
-            layout_document = get_layout_document_with_graphic_regions(
-                layout_document,
-                config=self.config.graphic_regions
-            )
+        layout_document = get_layout_document_with_graphic_regions(
+            layout_document,
+            config=self.config.graphic_regions,
+            temp_dir=context.temp_dir,
+            require_file=self.config.extract_graphic_assets
+        )
         candidate_semantic_content_list = list(
             document.iter_by_types_recursively((SemanticFigure, SemanticTable,))
         )
