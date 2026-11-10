@@ -175,6 +175,7 @@ class BoundingBoxRef(NamedTuple):
     bounding_box_list: Sequence[LayoutPageCoordinates]
     semantic_content: SemanticContentWrapper
     text_bounding_box_list: Sequence[LayoutPageCoordinates] = ()
+    has_graphic: bool = False
 
     def __repr__(self) -> str:
         return '%s(key=%r, bounding_box_list=%r, semantic_content=%s)' % (
@@ -195,7 +196,8 @@ class BoundingBoxRef(NamedTuple):
         bounding_box_list: Sequence[LayoutPageCoordinates]
     ) -> 'BoundingBoxRef':
         return self._replace(  # pylint: disable=no-member
-            bounding_box_list=list(self.bounding_box_list) + list(bounding_box_list)
+            bounding_box_list=list(self.bounding_box_list) + list(bounding_box_list),
+            has_graphic=True
         )
 
 
@@ -464,6 +466,22 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
             if not self.is_enclosing_candidate_text(distance_between)
         ]
 
+    def get_best_distance_between(
+        self,
+        sorted_distances_between: Sequence[BoundingBoxDistanceBetween]
+    ) -> Optional[BoundingBoxDistanceBetween]:
+        accepted = [
+            distance_between
+            for distance_between in sorted_distances_between
+            if self.is_accept_distance(distance_between)
+        ]
+        if not accepted:
+            return None
+        for distance_between in accepted:
+            if not distance_between.bounding_box_ref_2.has_graphic:
+                return distance_between
+        return accepted[0]
+
     def get_best_distance_between_batch(self) -> Sequence[BoundingBoxDistanceBetween]:
         best_distance_between_by_candidate_key: Dict[int, BoundingBoxDistanceBetween] = {}
         for graphic_bounding_box_ref in self.graphic_bounding_box_ref_list:
@@ -474,9 +492,9 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
             )
             if not sorted_distances_between:
                 continue
-            best_distance_between = sorted_distances_between[0]
-            if not self.is_accept_distance(best_distance_between):
-                LOGGER.debug('not accepting distance: %r', best_distance_between)
+            best_distance_between = self.get_best_distance_between(sorted_distances_between)
+            if best_distance_between is None:
+                LOGGER.debug('no accepted distance for: %r', graphic_bounding_box_ref)
                 continue
             LOGGER.debug('sorted_distances_between: %r', sorted_distances_between)
             candidate_key = best_distance_between.bounding_box_ref_2.key
@@ -506,9 +524,17 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
         self,
         best_distance_between_batch: Iterable[BoundingBoxDistanceBetween]
     ) -> Iterable[BoundingBoxRef]:
-        for best_distance_between in best_distance_between_batch:
-            yield best_distance_between.bounding_box_ref_2.with_extended_bounding_box_list(
-                best_distance_between.bounding_box_ref_1.bounding_box_list
+        extended_by_candidate_key = {
+            best_distance_between.bounding_box_ref_2.key: (
+                best_distance_between.bounding_box_ref_2.with_extended_bounding_box_list(
+                    best_distance_between.bounding_box_ref_1.bounding_box_list
+                )
+            )
+            for best_distance_between in best_distance_between_batch
+        }
+        for candidate_bounding_box_ref in self.candidate_bounding_box_ref_list:
+            yield extended_by_candidate_key.get(
+                candidate_bounding_box_ref.key, candidate_bounding_box_ref
             )
 
     def iter_graphic_matches(self) -> Iterable[GraphicMatch]:
