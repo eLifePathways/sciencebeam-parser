@@ -5,9 +5,11 @@
  * not, and this is what lets the Python tests cover it.
  */
 import {
-  getArticleViewModel,
   getGraphicHrefs,
   getGraphicReferences
+} from '../../../sciencebeam_parser/service/static/article-view.js';
+import {
+  getArticleViewModel
 } from '../../../sciencebeam_parser/service/static/jats-to-html.js';
 
 let input = '';

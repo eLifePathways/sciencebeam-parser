@@ -6,8 +6,10 @@
  * view model knows reaches the markup, not a stand-in for a browser.
  */
 import {
-  getArticleViewModel,
   renderArticleViewModel
+} from '../../../sciencebeam_parser/service/static/article-view.js';
+import {
+  getArticleViewModel
 } from '../../../sciencebeam_parser/service/static/jats-to-html.js';
 
 function createTextNode(text) {

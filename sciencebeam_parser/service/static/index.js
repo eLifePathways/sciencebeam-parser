@@ -1,11 +1,11 @@
 import {
   getGraphicHrefs,
   getGraphicReferences,
-  parseJatsViewModel,
   renderArticleViewModel
-} from '/static/jats-to-html.js';
-import { getZipSourceForBlob, readZipEntries } from '/static/read-zip.js';
-import { addSvgViewBox } from '/static/svg-view-box.js';
+} from './article-view.js';
+import { parseJatsViewModel } from './jats-to-html.js';
+import { getZipSourceForBlob, readZipEntries } from './read-zip.js';
+import { addSvgViewBox } from './svg-view-box.js';
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
 
