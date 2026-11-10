@@ -1,11 +1,12 @@
 import {
   getGraphicHrefs,
   getGraphicReferences,
-  parseJatsViewModel,
   renderArticleViewModel
-} from '/static/jats-to-html.js';
-import { getZipSourceForBlob, readZipEntries } from '/static/read-zip.js';
-import { addSvgViewBox } from '/static/svg-view-box.js';
+} from './article-view.js';
+import { parseJatsViewModel } from './jats-to-html.js';
+import { parseTeiViewModel } from './tei-to-html.js';
+import { getZipSourceForBlob, readZipEntries } from './read-zip.js';
+import { addSvgViewBox } from './svg-view-box.js';
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
 
@@ -15,6 +16,11 @@ const LLM_USAGE_HEADER = 'x-sciencebeam-llm-usage';
 const SLOW_REQUEST_SECONDS = 10;
 const PDF_MEDIA_TYPE = 'application/pdf';
 const LABELS_SETTING = 'sciencebeam-show-labels';
+
+const PARSE_BY_READING = {
+  jats: parseJatsViewModel,
+  tei: parseTeiViewModel
+};
 
 // What a reading draws without being asked. One page of vector drawing can be
 // tens of megabytes; opening one from the file list is a click of its own.
@@ -136,11 +142,8 @@ function getSelectedOutput() {
 }
 
 function getOutputHint(output) {
-  if (!output || output.is_readable) {
+  if (!output || output.reading) {
     return '';
-  }
-  if (output.is_text || output.archive_xml_name) {
-    return 'Returned as the XML itself. The reading view is over JATS XML.';
   }
   return 'Returned as a file to download rather than as text to read here.';
 }
@@ -493,13 +496,16 @@ async function getArchiveAssets(content, viewModel) {
   return urlByName;
 }
 
-async function showReadableResult(content) {
+async function showReadableResult(content, output) {
   readingElement.replaceChildren();
   let viewModel;
   try {
-    viewModel = parseJatsViewModel(content.text);
+    viewModel = PARSE_BY_READING[output.reading](content.text);
   } catch (error) {
-    resultNote.textContent = 'It could not be read as JATS: ' + error.message;
+    resultNote.textContent = (
+      'It could not be read as ' + output.reading.toUpperCase() + ': '
+      + error.message
+    );
     readingButton.hidden = true;
     rawButton.hidden = true;
     showReading(false);
@@ -750,8 +756,8 @@ async function showResult(response, blob, file, elapsedSeconds) {
     );
   }
   let viewModel = null;
-  if (content && output.is_readable) {
-    viewModel = await showReadableResult(content);
+  if (content && output.reading) {
+    viewModel = await showReadableResult(content, output);
   } else {
     showUnreadableResult(output, !!content);
   }

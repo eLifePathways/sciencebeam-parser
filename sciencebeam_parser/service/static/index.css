@@ -315,6 +315,10 @@ details > summary > h3 {
 
 #result-details[open] > summary { margin-bottom: 12px; }
 
+#result-details h3 { margin-top: 16px; }
+
+#result-details pre { margin-bottom: 4px; }
+
 .segmented { display: flex; }
 
 .segmented > button {

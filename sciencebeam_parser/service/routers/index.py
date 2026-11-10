@@ -49,7 +49,14 @@ OUTPUT_MEDIA_TYPE_LABELS = {
 TEXT_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.TEI_XML}
 
 
-READABLE_OUTPUT_MEDIA_TYPES = {MediaTypes.JATS_XML, MediaTypes.JATS_ZIP}
+# Which reading an output has, where the page has one. Two vocabularies say
+# the same article differently, so each has a reader of its own.
+READING_BY_MEDIA_TYPE = {
+    MediaTypes.JATS_XML: 'jats',
+    MediaTypes.JATS_ZIP: 'jats',
+    MediaTypes.TEI_XML: 'tei',
+    MediaTypes.TEI_ZIP: 'tei'
+}
 
 
 FRONT_MATTER_FIELD_NAMES: Sequence[str] = (
@@ -94,7 +101,7 @@ def get_deployment_props(sciencebeam_parser: ScienceBeamParser) -> dict:
                 'label': OUTPUT_MEDIA_TYPE_LABELS[media_type],
                 'extension': guess_extension_for_media_type(media_type),
                 'is_text': media_type in TEXT_OUTPUT_MEDIA_TYPES,
-                'is_readable': media_type in READABLE_OUTPUT_MEDIA_TYPES,
+                'reading': READING_BY_MEDIA_TYPE.get(media_type),
                 'archive_xml_name': ZIP_ENTRY_NAME_BY_MEDIA_TYPE.get(media_type)
             }
             for media_type in CONVERT_RESPONSE_MEDIA_TYPES

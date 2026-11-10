@@ -123,14 +123,38 @@ class TestGetDeploymentProps:
         assert is_text_by_media_type[MediaTypes.JATS_ZIP] is False
         assert is_text_by_media_type[MediaTypes.PDF] is False
 
-    def test_should_say_that_the_jats_shapes_have_a_reading_view(
+    def test_should_say_which_reading_each_shape_has(
         self, sciencebeam_parser_mock: MagicMock
     ):
         props = get_deployment_props(sciencebeam_parser_mock)
-        assert [
-            item['media_type'] for item in props['output_media_types']
-            if item['is_readable']
-        ] == [MediaTypes.JATS_XML, MediaTypes.JATS_ZIP]
+        assert {
+            item['media_type']: item['reading']
+            for item in props['output_media_types']
+        } == {
+            MediaTypes.JATS_XML: 'jats',
+            MediaTypes.JATS_ZIP: 'jats',
+            MediaTypes.TEI_XML: 'tei',
+            MediaTypes.TEI_ZIP: 'tei',
+            MediaTypes.PDF: None
+        }
+
+    def test_should_name_a_reading_the_page_has_a_reader_for(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        script_file = os.path.join(STATIC_DIRECTORY, 'index.js')
+        with open(script_file, 'r', encoding='utf-8') as script_fp:
+            script = script_fp.read()
+        readers = re.search(
+            r'PARSE_BY_READING = \{([^}]*)\}', script
+        )
+        assert readers
+        named = set(re.findall(r'(\w+):', readers.group(1)))
+        props = get_deployment_props(sciencebeam_parser_mock)
+        offered = {
+            item['reading'] for item in props['output_media_types']
+            if item['reading']
+        }
+        assert offered <= named
 
     def test_should_name_the_xml_each_archive_carries(
         self, sciencebeam_parser_mock: MagicMock
