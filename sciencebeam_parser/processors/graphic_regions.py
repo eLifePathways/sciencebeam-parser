@@ -33,6 +33,7 @@ class GraphicRegionConfig:
     vector_cluster_gap_ratio: float = 0.02
     min_vector_path_count: int = 8
     min_vector_shape_path_count: int = 2
+    max_vector_path_count: int = 10000
 
 
 class _Box(NamedTuple):
@@ -168,8 +169,15 @@ def iter_vector_region_graphics(
     gap = config.vector_cluster_gap_ratio * (
         page_coordinates.height if page_coordinates else 842.0
     )
+    if len(boxes) > config.max_vector_path_count:
+        LOGGER.info(
+            'reading %d paths as one region: %r', len(boxes), local_file_path
+        )
+        clusters: List[List[int]] = [list(range(len(boxes)))]
+    else:
+        clusters = _get_clusters(boxes, gap=gap)
     region_graphics: List[LayoutGraphic] = []
-    for indices in _get_clusters(boxes, gap=gap):
+    for indices in clusters:
         cluster_boxes = [boxes[index] for index in indices]
         if len(cluster_boxes) < config.min_vector_path_count:
             continue
@@ -343,11 +351,14 @@ def get_layout_page_with_graphic_regions(
     page_coordinates = layout_page.meta.coordinates if layout_page.meta else None
     page_box = _get_box_for_coordinates(page_coordinates) if page_coordinates else None
     expanded: List[LayoutGraphic] = []
+    unchanged: List[LayoutGraphic] = []
     for layout_graphic in layout_page.graphics:
         if not layout_graphic.coordinates:
             continue
         if layout_graphic.graphic_type == SVG_GRAPHIC_TYPE:
-            if not require_file:
+            if require_file:
+                unchanged.append(layout_graphic)
+            else:
                 expanded.extend(iter_vector_region_graphics(
                     layout_graphic, page_coordinates=page_coordinates, config=config
                 ))
@@ -369,7 +380,7 @@ def get_layout_page_with_graphic_regions(
         layout_graphic
         for layout_graphic in merged
         if _is_large_enough(layout_graphic, page_coordinates, config)
-    ])
+    ] + unchanged)
 
 
 def get_layout_document_with_graphic_regions(

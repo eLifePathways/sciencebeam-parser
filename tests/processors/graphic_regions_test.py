@@ -262,7 +262,7 @@ class TestGetLayoutDocumentWithGraphicRegions:
         ))
         assert len(result) == 2
 
-    def test_should_not_derive_a_vector_region_when_a_file_is_required(self, tmp_path: Path):
+    def test_should_keep_the_page_svg_when_a_file_is_required(self, tmp_path: Path):
         svg_path = _write_svg(tmp_path / 'page.svg', _get_shape_paths(20))
         graphics = [
             LayoutGraphic(
@@ -275,7 +275,25 @@ class TestGetLayoutDocumentWithGraphicRegions:
             _get_layout_document(graphics), config=CONFIG,
             temp_dir=str(tmp_path), require_file=True
         ))
-        assert not result
+        assert len(result) == 1
+        assert result[0].graphic_type == 'svg'
+        assert result[0].local_file_path == svg_path
+
+    def test_should_read_a_dense_page_svg_as_one_region(self, tmp_path: Path):
+        svg_path = _write_svg(tmp_path / 'dense.svg', _get_shape_paths(20))
+        graphics = [
+            LayoutGraphic(
+                local_file_path=svg_path,
+                coordinates=_get_coordinates(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                graphic_type='svg', page_meta=PAGE_META_1
+            )
+        ]
+        result = _get_graphics(get_layout_document_with_graphic_regions(
+            _get_layout_document(graphics),
+            config=GraphicRegionConfig(max_vector_path_count=5)
+        ))
+        assert len(result) == 1
+        assert result[0].graphic_type == VECTOR_REGION_GRAPHIC_TYPE
 
     def test_should_leave_the_document_unchanged_when_disabled(self):
         graphics = [
