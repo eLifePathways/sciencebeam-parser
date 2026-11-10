@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -12,7 +13,9 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPageMeta
 )
 from sciencebeam_parser.processors.graphic_regions import (
+    _Box,
     GraphicRegionConfig,
+    PageRegionRenderer,
     VECTOR_REGION_GRAPHIC_TYPE,
     get_layout_document_with_graphic_regions
 )
@@ -30,6 +33,10 @@ PAGE_COORDINATES_1 = LayoutPageCoordinates(
 PAGE_META_1 = LayoutPageMeta(page_number=1, coordinates=PAGE_COORDINATES_1)
 
 CONFIG = GraphicRegionConfig()
+
+MINIMAL_EXAMPLE_PDF_PATH = 'test-data/minimal-example.pdf'
+
+_BOX_FOR_RENDER = _Box(10, 10, 110, 60)
 
 
 def _get_coordinates(x: float, y: float, width: float, height: float):
@@ -295,6 +302,25 @@ class TestGetLayoutDocumentWithGraphicRegions:
         assert len(result) == 1
         assert result[0].graphic_type == VECTOR_REGION_GRAPHIC_TYPE
 
+    def test_should_render_a_vector_region_when_a_file_is_required(self, tmp_path: Path):
+        svg_path = _write_svg(tmp_path / 'page.svg', _get_shape_paths(20))
+        graphics = [
+            LayoutGraphic(
+                local_file_path=svg_path,
+                coordinates=_get_coordinates(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                graphic_type='svg', page_meta=PAGE_META_1
+            )
+        ]
+        result = _get_graphics(get_layout_document_with_graphic_regions(
+            _get_layout_document(graphics), config=CONFIG,
+            temp_dir=str(tmp_path), require_file=True,
+            pdf_path=MINIMAL_EXAMPLE_PDF_PATH
+        ))
+        assert len(result) == 1
+        assert result[0].graphic_type == VECTOR_REGION_GRAPHIC_TYPE
+        assert result[0].local_file_path
+        assert os.path.exists(result[0].local_file_path)
+
     def test_should_leave_the_document_unchanged_when_disabled(self):
         graphics = [
             LayoutGraphic(
@@ -307,3 +333,16 @@ class TestGetLayoutDocumentWithGraphicRegions:
             layout_document, config=GraphicRegionConfig(enabled=False)
         )
         assert result is layout_document
+
+
+class TestPageRegionRenderer:
+    def test_should_render_a_region_of_a_page(self, tmp_path: Path):
+        renderer = PageRegionRenderer(MINIMAL_EXAMPLE_PDF_PATH, dpi=72.0)
+        image_path = renderer.render(1, _BOX_FOR_RENDER, str(tmp_path / 'region.png'))
+        assert image_path
+        with PIL.Image.open(image_path) as rendered_image:
+            assert (rendered_image.width, rendered_image.height) == (100, 50)
+
+    def test_should_return_none_for_a_page_that_is_not_there(self, tmp_path: Path):
+        renderer = PageRegionRenderer(MINIMAL_EXAMPLE_PDF_PATH, dpi=72.0)
+        assert renderer.render(99, _BOX_FOR_RENDER, str(tmp_path / 'region.png')) is None

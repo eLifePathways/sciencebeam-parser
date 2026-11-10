@@ -435,7 +435,8 @@ class FullTextProcessor:
             layout_document,
             config=self.config.graphic_regions,
             temp_dir=context.temp_dir,
-            require_file=self.config.extract_graphic_assets
+            require_file=self.config.extract_graphic_assets,
+            pdf_path=context.pdf_path
         )
         candidate_semantic_content_list = list(
             document.iter_by_types_recursively((SemanticFigure, SemanticTable,))

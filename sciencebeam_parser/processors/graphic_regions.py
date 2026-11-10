@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import List, NamedTuple, Optional, Sequence
 
 import PIL.Image
+import pypdfium2
 from lxml import etree
 
 from sciencebeam_parser.document.layout_document import (
@@ -34,6 +35,8 @@ class GraphicRegionConfig:
     min_vector_path_count: int = 8
     min_vector_shape_path_count: int = 2
     max_vector_path_count: int = 10000
+    render_dpi: float = 150.0
+    min_text_over_graphic_ratio: float = 0.5
 
 
 class _Box(NamedTuple):
@@ -77,6 +80,47 @@ class _Box(NamedTuple):
             self.x1 - gap > other.x2 or other.x1 - gap > self.x2
             or self.y1 - gap > other.y2 or other.y1 - gap > self.y2
         )
+
+
+class PageRegionRenderer:
+    def __init__(self, pdf_path: str, dpi: float):
+        self.pdf_path = pdf_path
+        self.scale = dpi / 72.0
+        self._pdf_document: Optional[pypdfium2.PdfDocument] = None
+        self._page_number: Optional[int] = None
+        self._page_image: Optional[PIL.Image.Image] = None
+
+    def _get_page_image(self, page_number: int) -> PIL.Image.Image:
+        if self._page_number != page_number or self._page_image is None:
+            if self._pdf_document is None:
+                self._pdf_document = pypdfium2.PdfDocument(self.pdf_path)
+            self._page_image = (
+                self._pdf_document[page_number - 1]
+                .render(scale=self.scale)
+                .to_pil()
+                .convert('RGB')
+            )
+            self._page_number = page_number
+        return self._page_image
+
+    def render(self, page_number: int, box: '_Box', image_path: str) -> Optional[str]:
+        try:
+            page_image = self._get_page_image(page_number)
+            cropped_image = page_image.crop((
+                max(0, round(box.x1 * self.scale)),
+                max(0, round(box.y1 * self.scale)),
+                min(page_image.width, round(box.x2 * self.scale)),
+                min(page_image.height, round(box.y2 * self.scale))
+            ))
+            if not cropped_image.width or not cropped_image.height:
+                return None
+            cropped_image.save(image_path)
+            return image_path
+        except Exception:  # pylint: disable=broad-except
+            LOGGER.warning(
+                'unable to render page %d of %r', page_number, self.pdf_path, exc_info=True
+            )
+            return None
 
 
 def _get_box_for_coordinates(coordinates: LayoutPageCoordinates) -> _Box:
@@ -326,6 +370,39 @@ def _get_clipped_graphic(
     ))
 
 
+def _iter_text_boxes(layout_page: LayoutPage) -> List[_Box]:
+    text_boxes: List[_Box] = []
+    for block in layout_page.blocks:
+        for line in block.lines:
+            coordinates_list = [
+                token.coordinates for token in line.tokens if token.coordinates
+            ]
+            if not coordinates_list:
+                continue
+            box = _get_box_for_coordinates(coordinates_list[0])
+            for coordinates in coordinates_list[1:]:
+                box = box.union(_get_box_for_coordinates(coordinates))
+            text_boxes.append(box)
+    return text_boxes
+
+
+def _is_text_drawn_over(
+    box: _Box,
+    text_boxes: Sequence[_Box],
+    min_ratio: float
+) -> bool:
+    for text_box in text_boxes:
+        text_area = text_box.area
+        if not text_area:
+            continue
+        intersection = box.intersection(text_box)
+        if intersection.width <= 0 or intersection.height <= 0:
+            continue
+        if intersection.area / text_area >= min_ratio:
+            return True
+    return False
+
+
 def _is_large_enough(
     layout_graphic: LayoutGraphic,
     page_coordinates: Optional[LayoutPageCoordinates],
@@ -342,11 +419,39 @@ def _is_large_enough(
     return area_ratio >= config.min_area_ratio
 
 
+def _get_graphic_with_rendered_file(
+    layout_graphic: LayoutGraphic,
+    renderer: PageRegionRenderer,
+    temp_dir: str,
+    text_boxes: Sequence[_Box],
+    config: GraphicRegionConfig
+) -> Optional[LayoutGraphic]:
+    assert layout_graphic.coordinates
+    box = _get_box_for_coordinates(layout_graphic.coordinates)
+    is_rendered_needed = (
+        not layout_graphic.local_file_path
+        or layout_graphic.graphic_type == VECTOR_REGION_GRAPHIC_TYPE
+        or _is_text_drawn_over(box, text_boxes, config.min_text_over_graphic_ratio)
+    )
+    if not is_rendered_needed:
+        return layout_graphic
+    page_number = layout_graphic.coordinates.page_number
+    rendered_file_path = renderer.render(page_number, box, os.path.join(
+        temp_dir, 'region-%d-%d-%d.png' % (page_number, round(box.x1), round(box.y1))
+    ))
+    if rendered_file_path:
+        return layout_graphic._replace(local_file_path=rendered_file_path)
+    if layout_graphic.local_file_path:
+        return layout_graphic
+    return None
+
+
 def get_layout_page_with_graphic_regions(
     layout_page: LayoutPage,
     config: GraphicRegionConfig,
     temp_dir: Optional[str] = None,
-    require_file: bool = False
+    require_file: bool = False,
+    renderer: Optional[PageRegionRenderer] = None
 ) -> LayoutPage:
     page_coordinates = layout_page.meta.coordinates if layout_page.meta else None
     page_box = _get_box_for_coordinates(page_coordinates) if page_coordinates else None
@@ -356,7 +461,7 @@ def get_layout_page_with_graphic_regions(
         if not layout_graphic.coordinates:
             continue
         if layout_graphic.graphic_type == SVG_GRAPHIC_TYPE:
-            if require_file:
+            if require_file and renderer is None:
                 unchanged.append(layout_graphic)
             else:
                 expanded.extend(iter_vector_region_graphics(
@@ -374,26 +479,46 @@ def get_layout_page_with_graphic_regions(
     ]
     merged = get_merged_layout_graphics(
         clipped, page_coordinates=page_coordinates, config=config,
-        temp_dir=temp_dir, require_file=require_file
+        temp_dir=temp_dir, require_file=require_file and renderer is None
     )
-    return layout_page.replace(graphics=[
+    graphics = [
         layout_graphic
         for layout_graphic in merged
         if _is_large_enough(layout_graphic, page_coordinates, config)
-    ] + unchanged)
+    ]
+    if require_file and renderer is not None and temp_dir:
+        text_boxes = _iter_text_boxes(layout_page)
+        graphics = [
+            rendered_graphic
+            for rendered_graphic in (
+                _get_graphic_with_rendered_file(
+                    layout_graphic, renderer, temp_dir, text_boxes, config
+                )
+                for layout_graphic in graphics
+            )
+            if rendered_graphic is not None
+        ]
+    return layout_page.replace(graphics=graphics + unchanged)
 
 
 def get_layout_document_with_graphic_regions(
     layout_document: LayoutDocument,
     config: GraphicRegionConfig,
     temp_dir: Optional[str] = None,
-    require_file: bool = False
+    require_file: bool = False,
+    pdf_path: Optional[str] = None
 ) -> LayoutDocument:
     if not config.enabled:
         return layout_document
+    renderer = (
+        PageRegionRenderer(pdf_path, config.render_dpi)
+        if require_file and pdf_path and os.path.exists(pdf_path)
+        else None
+    )
     return layout_document.replace(pages=[
         get_layout_page_with_graphic_regions(
-            page, config=config, temp_dir=temp_dir, require_file=require_file
+            page, config=config, temp_dir=temp_dir,
+            require_file=require_file, renderer=renderer
         )
         for page in layout_document.pages
     ])

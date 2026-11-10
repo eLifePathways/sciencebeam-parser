@@ -131,6 +131,9 @@ processors:
       min_vector_path_count: 8
       min_vector_shape_path_count: 2
       max_vector_path_count: 10000
+      # An asset is rendered from the page where text is drawn over the region.
+      render_dpi: 150
+      min_text_over_graphic_ratio: 0.5
 models:
   segmentation:
     path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-segmentation-biorxiv-10k-auto-v0.0.23-train-1966-e133.tar.gz'
