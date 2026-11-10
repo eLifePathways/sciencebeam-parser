@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 from abc import ABC, abstractmethod
 from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, cast
 
@@ -29,6 +30,16 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_MAX_GRAPHIC_DISTANCE = 0.3
 
 DEFAULT_MAX_ENCLOSED_TEXT_RATIO = 0.5
+
+FIGURE_REFERENCE_PATTERN = re.compile(
+    r'^\s*(?:figure|fig\.?|table)\s*([0-9]+|[ivxlc]+)\s*[.:]?\s*$',
+    re.IGNORECASE
+)
+
+
+def get_referenced_label(text_line: str) -> Optional[str]:
+    match = FIGURE_REFERENCE_PATTERN.match(text_line)
+    return match.group(1) if match else None
 
 
 class GraphicMatch(NamedTuple):
@@ -643,14 +654,27 @@ class AbstractGraphicTextGraphicMatcher(GraphicMatcher):
 
 
 class GraphicRelatedBlockTextGraphicMatcher(AbstractGraphicTextGraphicMatcher):
+    """Matches on a label the graphic itself names, such as a figure page's own heading.
+
+    Only a line naming a label counts: a page's remaining text is axis ticks and
+    legend entries, which match a label of their own by accident.
+    """
+
     def get_text_for_semantic_graphic(self, semantic_graphic: SemanticGraphic) -> str:
         assert semantic_graphic.layout_graphic
-        if semantic_graphic.layout_graphic.related_block:
-            return '\n'.join([
-                line.text.strip()
-                for line in semantic_graphic.layout_graphic.related_block.lines
-            ])
-        return ''
+        related_block = semantic_graphic.layout_graphic.related_block
+        if not related_block:
+            return ''
+        text_lines: List[str] = []
+        for line in related_block.lines:
+            for text_line in line.text.splitlines():
+                text_line = text_line.strip()
+                referenced_label = get_referenced_label(text_line)
+                if not referenced_label:
+                    continue
+                text_lines.append(text_line)
+                text_lines.append(referenced_label)
+        return '\n'.join(text_lines)
 
 
 DEFAULT_OCR_MAX_RESOLUTION = 1024

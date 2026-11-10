@@ -487,11 +487,11 @@ class FullTextProcessor:
         unmatched_graphics_container: SemanticMixedContentWrapper
     ):
         _graphic_matchers: List[GraphicMatcher] = [
+            GraphicRelatedBlockTextGraphicMatcher(),
             BoundingBoxDistanceGraphicMatcher(
                 max_distance=self.config.max_graphic_distance,
                 max_enclosed_text_ratio=self.config.max_enclosed_text_ratio
-            ),
-            GraphicRelatedBlockTextGraphicMatcher()
+            )
         ]
         if self.config.use_ocr_model:
             assert self.fulltext_models.ocr_model

@@ -9,6 +9,7 @@ import pypdfium2
 from lxml import etree
 
 from sciencebeam_parser.document.layout_document import (
+    LayoutBlock,
     LayoutDocument,
     LayoutGraphic,
     LayoutPage,
@@ -531,6 +532,7 @@ def get_layout_page_as_one_region(
         local_file_path=local_file_path,
         coordinates=page_coordinates,
         graphic_type=PAGE_REGION_GRAPHIC_TYPE,
+        related_block=LayoutBlock.for_tokens(list(layout_page.iter_all_tokens())),
         page_meta=layout_page.meta
     )])
 
