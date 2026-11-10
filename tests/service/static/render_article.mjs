@@ -12,59 +12,7 @@ import {
   getArticleViewModel
 } from '../../../sciencebeam_parser/service/static/jats-to-html.js';
 
-function createTextNode(text) {
-  return { nodeType: 3, text };
-}
-
-function createElement(ownerDocument, tagName) {
-  return {
-    nodeType: 1,
-    tagName,
-    ownerDocument,
-    className: '',
-    attributes: {},
-    childNodes: [],
-    setAttribute(name, value) {
-      this.attributes[name] = value;
-    },
-    appendChild(child) {
-      this.childNodes.push(child);
-      return child;
-    },
-    set textContent(value) {
-      this.childNodes = [createTextNode(value)];
-    }
-  };
-}
-
-function createDocument() {
-  const document = {};
-  document.createElement = (tagName) => createElement(document, tagName);
-  document.createTextNode = createTextNode;
-  return document;
-}
-
-function escapeText(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function serialize(node) {
-  if (node.nodeType === 3) {
-    return escapeText(node.text);
-  }
-  const attributes = { ...node.attributes };
-  if (node.className) {
-    attributes.class = node.className;
-  }
-  const attributeText = Object.entries(attributes)
-    .map(([name, value]) => ` ${name}="${escapeText(value)}"`)
-    .join('');
-  return (
-    `<${node.tagName}${attributeText}>`
-    + node.childNodes.map(serialize).join('')
-    + `</${node.tagName}>`
-  );
-}
+import { createDocument, serialize } from './stand_in_document.mjs';
 
 let input = '';
 process.stdin.on('data', (chunk) => { input += chunk; });

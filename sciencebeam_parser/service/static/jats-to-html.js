@@ -42,8 +42,22 @@ const REFERENCE_FIELDS = [
   ['lastPage', 'lpage']
 ];
 
+const JATS_RUN_STYLES = { b: { bold: true }, i: { italic: true } };
+
+function getJatsInline(node) {
+  if (JATS_RUN_STYLES[node.name]) {
+    return { style: JATS_RUN_STYLES[node.name] };
+  }
+  if (node.name === 'xref') {
+    return { leaf: { reference: getAttribute(node, 'rid') } };
+  }
+  return null;
+}
+
 function getParagraph(node) {
-  return { label: node.name, path: node.path, runs: getInlineRuns(node) };
+  return {
+    label: node.name, path: node.path, runs: getInlineRuns(node, getJatsInline)
+  };
 }
 
 function getCaption(node) {

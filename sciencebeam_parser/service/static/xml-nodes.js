@@ -89,7 +89,15 @@ export function getValue(node, name, label) {
   return text ? { label: label || name, text, path: child.path } : null;
 }
 
-export function getInlineRuns(node, style) {
+/* The runs of text a passage is made of, as the caller's vocabulary has them.
+ *
+ * Which element means bold and which points at a reference is the one thing
+ * about a passage that is not the same in two formats, so the caller says.
+ * `getInline` is given an element and answers `{style}` to go on inside it
+ * with that added, `{leaf}` to take the whole of it as one run, or nothing to
+ * go on inside it unchanged.
+ */
+export function getInlineRuns(node, getInline, style) {
   const currentStyle = style || {};
   const runs = [];
   (isElement(node) ? node.children || [] : []).forEach((child) => {
@@ -97,23 +105,16 @@ export function getInlineRuns(node, style) {
       runs.push({ ...currentStyle, text: child });
       return;
     }
-    if (child.name === 'b') {
-      runs.push(...getInlineRuns(child, { ...currentStyle, bold: true }));
-      return;
-    }
-    if (child.name === 'i') {
-      runs.push(...getInlineRuns(child, { ...currentStyle, italic: true }));
-      return;
-    }
-    if (child.name === 'xref') {
+    const inline = getInline(child) || {};
+    if (inline.leaf) {
       runs.push({
-        ...currentStyle,
-        text: getTextContent(child),
-        reference: getAttribute(child, 'rid')
+        ...currentStyle, ...inline.leaf, text: getTextContent(child)
       });
       return;
     }
-    runs.push(...getInlineRuns(child, currentStyle));
+    runs.push(...getInlineRuns(
+      child, getInline, { ...currentStyle, ...(inline.style || {}) }
+    ));
   });
   return runs.filter((run) => run.text !== '');
 }
