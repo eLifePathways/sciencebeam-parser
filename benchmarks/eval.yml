@@ -154,6 +154,8 @@ seeds:
 fields:
   - title
   - title_any_case
+  - title_any_language
+  - title_all_languages
   - abstract
   - abstract_anywhere
   - abstract_any_language
@@ -186,6 +188,18 @@ scoring:
       expected: title
       actual: title
       methods: [exact, levenshtein, edit_sim]
+      lower: true
+    title_any_language:
+      expected: titles
+      actual: titles
+      methods: [exact, levenshtein, edit_sim]
+      type: best_match
+      lower: true
+    title_all_languages:
+      expected: titles
+      actual: titles
+      methods: [exact, levenshtein, edit_sim]
+      type: partial_ulist
       lower: true
     abstract:
       methods: [levenshtein, edit_sim]
