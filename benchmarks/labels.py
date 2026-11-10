@@ -29,6 +29,8 @@ def corpus_label(corpus: str) -> str:
 FIELD_LABELS: Dict[str, str] = {
     "title": "Title",
     "title_any_case": "Title (any case)",
+    "title_any_language": "Title (any language)",
+    "title_all_languages": "Title (all languages)",
     "abstract": "Abstract",
     "abstract_anywhere": "Abstract (anywhere)",
     "abstract_any_language": "Abstract (any language)",
