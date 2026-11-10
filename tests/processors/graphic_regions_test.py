@@ -15,6 +15,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.processors.graphic_regions import (
     _Box,
     GraphicRegionConfig,
+    PAGE_REGION_GRAPHIC_TYPE,
     PageRegionRenderer,
     VECTOR_REGION_GRAPHIC_TYPE,
     get_layout_document_with_graphic_regions
@@ -320,6 +321,41 @@ class TestGetLayoutDocumentWithGraphicRegions:
         assert result[0].graphic_type == VECTOR_REGION_GRAPHIC_TYPE
         assert result[0].local_file_path
         assert os.path.exists(result[0].local_file_path)
+
+    def test_should_read_a_page_of_its_own_size_as_one_region(self):
+        other_page_meta = LayoutPageMeta(
+            page_number=2,
+            coordinates=LayoutPageCoordinates(
+                x=0, y=0, width=300, height=400, page_number=2
+            )
+        )
+        figure_page = LayoutPage(blocks=[], graphics=[
+            LayoutGraphic(
+                coordinates=LayoutPageCoordinates(
+                    x=10, y=10, width=100, height=100, page_number=2
+                ),
+                graphic_type='image', page_meta=other_page_meta
+            ),
+            LayoutGraphic(
+                coordinates=LayoutPageCoordinates(
+                    x=180, y=10, width=100, height=100, page_number=2
+                ),
+                graphic_type='image', page_meta=other_page_meta
+            )
+        ], meta=other_page_meta)
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(blocks=[], graphics=[], meta=PAGE_META_1),
+            figure_page,
+            LayoutPage(blocks=[], graphics=[], meta=PAGE_META_1._replace(page_number=3))
+        ])
+        result = _get_graphics(get_layout_document_with_graphic_regions(
+            layout_document, config=CONFIG
+        ))
+        assert len(result) == 1
+        assert result[0].graphic_type == PAGE_REGION_GRAPHIC_TYPE
+        coordinates = result[0].coordinates
+        assert coordinates is not None
+        assert (coordinates.width, coordinates.height) == (300, 400)
 
     def test_should_leave_the_document_unchanged_when_disabled(self):
         graphics = [

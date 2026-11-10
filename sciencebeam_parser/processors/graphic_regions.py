@@ -14,12 +14,16 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPage,
     LayoutPageCoordinates
 )
+from sciencebeam_parser.processors.graphic_provider import (
+    get_page_numbers_with_uncommon_page_dimension
+)
 
 
 LOGGER = logging.getLogger(__name__)
 
 SVG_GRAPHIC_TYPE = 'svg'
 VECTOR_REGION_GRAPHIC_TYPE = 'vector-region'
+PAGE_REGION_GRAPHIC_TYPE = 'page-region'
 MERGED_GRAPHIC_TYPE_SUFFIX = '-region'
 
 SVG_NS = 'http://www.w3.org/2000/svg'
@@ -37,6 +41,7 @@ class GraphicRegionConfig:
     max_vector_path_count: int = 10000
     render_dpi: float = 150.0
     min_text_over_graphic_ratio: float = 0.5
+    uncommon_page_as_one_region: bool = True
 
 
 class _Box(NamedTuple):
@@ -501,6 +506,35 @@ def get_layout_page_with_graphic_regions(
     return layout_page.replace(graphics=graphics + unchanged)
 
 
+def get_layout_page_as_one_region(
+    layout_page: LayoutPage,
+    temp_dir: Optional[str],
+    require_file: bool,
+    renderer: Optional[PageRegionRenderer]
+) -> LayoutPage:
+    page_coordinates = layout_page.meta.coordinates if layout_page.meta else None
+    if not page_coordinates or not layout_page.graphics:
+        return layout_page
+    page_number = layout_page.meta.page_number
+    local_file_path: Optional[str] = None
+    if require_file:
+        if renderer is None or not temp_dir:
+            return layout_page
+        local_file_path = renderer.render(
+            page_number,
+            _get_box_for_coordinates(page_coordinates),
+            os.path.join(temp_dir, 'page-region-%d.png' % page_number)
+        )
+        if not local_file_path:
+            return layout_page
+    return layout_page.replace(graphics=[LayoutGraphic(
+        local_file_path=local_file_path,
+        coordinates=page_coordinates,
+        graphic_type=PAGE_REGION_GRAPHIC_TYPE,
+        page_meta=layout_page.meta
+    )])
+
+
 def get_layout_document_with_graphic_regions(
     layout_document: LayoutDocument,
     config: GraphicRegionConfig,
@@ -515,10 +549,21 @@ def get_layout_document_with_graphic_regions(
         if require_file and pdf_path and os.path.exists(pdf_path)
         else None
     )
+    uncommon_page_numbers = (
+        set(get_page_numbers_with_uncommon_page_dimension(layout_document))
+        if config.uncommon_page_as_one_region
+        else set()
+    )
     return layout_document.replace(pages=[
-        get_layout_page_with_graphic_regions(
-            page, config=config, temp_dir=temp_dir,
-            require_file=require_file, renderer=renderer
+        (
+            get_layout_page_as_one_region(
+                page, temp_dir=temp_dir, require_file=require_file, renderer=renderer
+            )
+            if page.meta and page.meta.page_number in uncommon_page_numbers
+            else get_layout_page_with_graphic_regions(
+                page, config=config, temp_dir=temp_dir,
+                require_file=require_file, renderer=renderer
+            )
         )
         for page in layout_document.pages
     ])
