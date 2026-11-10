@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Iterator, Optional
+from typing import Annotated, Iterator, Optional, Sequence
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 
@@ -30,6 +30,15 @@ from sciencebeam_parser.utils.text import parse_comma_separated_value
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+CONVERT_RESPONSE_MEDIA_TYPES: Sequence[str] = (
+    MediaTypes.JATS_XML,
+    MediaTypes.TEI_XML,
+    MediaTypes.JATS_ZIP,
+    MediaTypes.TEI_ZIP,
+    MediaTypes.PDF
+)
 
 
 def get_convert_sciencebeam_parser_session_dependency_factory(
@@ -109,11 +118,7 @@ def create_convert_router() -> APIRouter:
             str,
             Depends(
                 assert_and_get_first_accept_matching_media_type_factory(
-                    [
-                        MediaTypes.JATS_XML, MediaTypes.TEI_XML,
-                        MediaTypes.JATS_ZIP, MediaTypes.TEI_ZIP,
-                        MediaTypes.PDF
-                    ]
+                    list(CONVERT_RESPONSE_MEDIA_TYPES)
                 )
             )
         ],

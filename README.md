@@ -128,7 +128,13 @@ Run the server with auto reload but no debug logging:
 make dev-start-no-debug-logging-auto-reload
 ```
 
-By default the server will start on port 8080 and you can find the API docs under `/api/docs`, e.g.:
+By default the server will start on port 8080. Opening it serves a page that converts a document
+without writing a request, with the profile, page range, requested fields and output format
+choosable on it:
+
+[http://localhost:8080/](http://localhost:8080/)
+
+The API docs are under `/api/docs`, e.g.:
 
 [http://localhost:8080/api/docs](http://localhost:8080/api/docs)
 

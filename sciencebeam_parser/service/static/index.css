@@ -1,0 +1,424 @@
+:root {
+  color-scheme: light dark;
+  --fg: #111827;
+  --bg: #f8fafc;
+  --muted: #6b7280;
+  --panel-bg: #ffffff;
+  --panel-line: #cbd5e1;
+  --error: #b91c1c;
+  --accent: #1d4ed8;
+  --tag-fg: #3730a3;
+  --tag-bg: #e0e7ff;
+  --value-bg: #eef2ff;
+  --selected-bg: #1d4ed8;
+  --selected-fg: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e5e7eb;
+    --bg: #111827;
+    --muted: #9ca3af;
+    --panel-bg: #1f2937;
+    --panel-line: #374151;
+    --error: #fca5a5;
+    --accent: #93c5fd;
+    --tag-fg: #c7d2fe;
+    --tag-bg: #312e81;
+    --value-bg: #1e2240;
+    --selected-bg: #3b82f6;
+    --selected-fg: #0b1220;
+  }
+}
+
+body {
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  max-width: 1200px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, sans-serif;
+}
+
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 32px 0 8px; }
+h3 { font-size: 15px; margin: 24px 0 8px; }
+
+a { color: var(--accent); }
+
+.subtitle { margin: 0 0 24px; color: var(--muted); }
+
+form {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.field { margin: 0; border: 0; padding: 0; }
+
+.field > label, legend {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.row { display: flex; align-items: center; gap: 8px; }
+.row input { width: 6em; }
+.inline { color: var(--muted); }
+
+.checkboxes { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.checkboxes label { font-weight: normal; }
+
+input, select, button {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+  padding: 4px 8px;
+  max-width: 100%;
+}
+
+button { background: var(--panel-bg); cursor: pointer; }
+button:disabled { cursor: default; color: var(--muted); }
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.error { margin: 4px 0 0; color: var(--error); font-size: 13px; }
+
+#status { color: var(--muted); }
+
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0 0 16px;
+}
+
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; }
+
+pre {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 0;
+  overflow: auto;
+  max-height: 60vh;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.jats-article {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  padding: 24px 28px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.jats-article h1 { font-size: 20px; margin: 0 0 12px; }
+.jats-article h2 { font-size: 16px; margin: 24px 0 8px; }
+.jats-article h3 { font-size: 15px; margin: 20px 0 8px; }
+.jats-article h4, .jats-article h5, .jats-article h6 {
+  font-size: 14px;
+  margin: 16px 0 8px;
+}
+
+.jats-article p { margin: 0 0 12px; }
+
+.jats-journal { color: var(--muted); font-size: 13px; }
+.jats-authors { font-size: 14px; }
+
+.jats-affiliations {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.jats-abstract { margin-bottom: 8px; }
+
+.jats-figure, .jats-table {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+}
+
+.jats-caption { font-size: 14px; }
+.jats-label { font-weight: 600; }
+.jats-graphic { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+
+.jats-table table { border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.jats-table td { border: 1px solid var(--panel-line); padding: 4px 8px; }
+
+.jats-references { padding-left: 20px; font-size: 14px; }
+.jats-references li { margin-bottom: 8px; }
+.jats-doi { color: var(--muted); }
+
+/* The source takes a column only once it is opened; closed, it is one line
+   above a result that has the width to itself. */
+.panes {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 24px;
+  align-items: start;
+  margin-top: 32px;
+}
+
+@media (min-width: 1000px) {
+  .panes:has(#source[open]) { grid-template-columns: 1fr 1fr; }
+}
+
+.panes > section > h2:first-child,
+.panes > details > summary > h2 { margin-top: 0; }
+
+#source { margin-bottom: 24px; }
+#source[open] { margin-bottom: 0; }
+
+#source-frame {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  background: var(--panel-bg);
+}
+
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.jats-tag { display: none; }
+
+.jats-labelled .jats-tag {
+  display: inline-block;
+  font: 600 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--tag-fg);
+  background: var(--tag-bg);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-right: 4px;
+  vertical-align: 1px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.jats-labelled [data-jats] {
+  outline: 1px dotted var(--panel-line);
+  outline-offset: 2px;
+}
+
+.jats-labelled .jats-authors [data-jats],
+.jats-labelled .jats-affiliations [data-jats],
+.jats-labelled .jats-references [data-jats] {
+  outline-offset: 1px;
+}
+
+.jats-labelled .jats-article p,
+.jats-labelled .jats-article li {
+  margin-bottom: 16px;
+}
+
+.jats-graphic { margin-top: 8px; }
+
+.jats-graphic-image {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.jats-graphic-name {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+details > summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+details > summary > h2,
+details > summary > h3 {
+  display: inline;
+  margin: 0;
+}
+
+#source[open] > summary { margin-bottom: 8px; }
+
+#archive { margin-top: 24px; }
+
+#archive-files {
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 13px;
+  width: 100%;
+}
+
+#archive-files td {
+  border-bottom: 1px solid var(--panel-line);
+  padding: 4px 8px 4px 0;
+  vertical-align: baseline;
+}
+
+.archive-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.archive-size { color: var(--muted); white-space: nowrap; }
+.archive-used { color: var(--muted); }
+.archive-unused { color: var(--error); }
+
+.archive-preview > td { padding-bottom: 16px; }
+
+.archive-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+  background: #fff;
+}
+
+#more-options { margin-top: 16px; }
+#more-options > summary { color: var(--muted); }
+#more-options .options { margin-top: 12px; }
+
+#result-details > summary {
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+#result-details[open] > summary { margin-bottom: 12px; }
+
+.segmented { display: flex; }
+
+.segmented > button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.segmented > button:first-child {
+  border-radius: 4px 0 0 4px;
+  margin-left: 0;
+}
+
+.segmented > button:last-child { border-radius: 0 4px 4px 0; }
+
+.segmented > button.selected {
+  background: var(--selected-bg);
+  border-color: var(--selected-bg);
+  color: var(--selected-fg);
+  font-weight: 600;
+  position: relative;
+}
+
+/* The labelled reading: one author to a line, each value its own box, and the
+   reference to an affiliation reading as the entry it points at. */
+/* An author is indented because it sits inside the group the page now shows;
+   an affiliation is indented by the list marker its number needs. */
+.jats-labelled .jats-authors {
+  margin-bottom: 8px;
+  border-left: 2px solid var(--panel-line);
+  padding-left: 12px;
+}
+
+.jats-labelled .jats-affiliations { padding-left: 24px; }
+
+.jats-labelled .jats-author {
+  display: block;
+  margin: 0 0 6px 16px;
+  padding-left: 8px;
+  border-left: 2px solid var(--panel-line);
+}
+
+.jats-labelled .jats-separator { display: none; }
+
+.jats-labelled .jats-author [data-jats] {
+  display: inline-block;
+  padding: 0 3px;
+  background: var(--value-bg);
+  outline-offset: 0;
+}
+
+.jats-labelled .jats-affiliations > li { margin-bottom: 6px; }
+
+/* The parts of an affiliation, not the entry itself: an entry made to display
+   as anything but a list item loses the number the references point at. */
+.jats-labelled .jats-affiliations > li [data-jats] {
+  display: inline-block;
+  padding: 0 3px;
+  background: var(--value-bg);
+  outline-offset: 0;
+}
+
+.jats-xref {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.jats-xref::before { content: '['; }
+.jats-xref::after { content: ']'; }
+
+.jats-affiliations > li:target {
+  background: var(--value-bg);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.jats-tag-id {
+  margin-left: 4px;
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+/* Where a section sits inside another is the thing to see, so the labelled
+   reading indents each one and gives it a rule to follow down. */
+.jats-labelled .jats-section,
+.jats-labelled .jats-abstract,
+.jats-labelled .jats-ack {
+  border-left: 2px solid var(--panel-line);
+  padding-left: 12px;
+  margin-top: 16px;
+}
+
+.jats-labelled .jats-section > .jats-tag,
+.jats-labelled .jats-abstract > .jats-tag,
+.jats-labelled .jats-ack > .jats-tag,
+.jats-labelled .jats-figure > .jats-tag,
+.jats-labelled .jats-table > .jats-tag {
+  display: table;
+  margin-bottom: 2px;
+}
+
+.jats-labelled .jats-tag + h2,
+.jats-labelled .jats-tag + h3,
+.jats-labelled .jats-tag + h4,
+.jats-labelled .jats-tag + h5,
+.jats-labelled .jats-tag + h6,
+.jats-labelled .jats-tag + p,
+.jats-labelled .jats-tag + figcaption { margin-top: 0; }

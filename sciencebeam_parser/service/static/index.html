@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScienceBeam Parser</title>
+<link rel="stylesheet" href="/static/index.css">
+</head>
+<body>
+<header>
+  <h1>ScienceBeam Parser</h1>
+  <p class="subtitle">Convert a document and read what this service returns.
+    <a href="/api/docs">API documentation</a></p>
+</header>
+
+<main>
+<form id="convert-form">
+  <section class="field">
+    <label for="source-file">Document</label>
+    <input type="file" id="source-file" required>
+    <p class="hint" id="accepted-hint"></p>
+    <p class="error" id="file-error" hidden></p>
+  </section>
+
+  <div class="options">
+    <section class="field">
+      <label for="profile">Profile</label>
+      <select id="profile"></select>
+      <p class="hint" id="profile-hint"></p>
+    </section>
+
+    <section class="field">
+      <label for="output">Output</label>
+      <select id="output"></select>
+      <p class="hint" id="output-hint"></p>
+    </section>
+
+  </div>
+
+  <details id="more-options">
+    <summary>Pages and what to include</summary>
+    <div class="options">
+      <section class="field">
+        <label for="first-page">Pages</label>
+        <div class="row">
+          <input type="number" id="first-page" min="1" placeholder="first"
+            aria-label="First page">
+          <span class="inline">to</span>
+          <input type="number" id="last-page" min="1" placeholder="last"
+            aria-label="Last page">
+        </div>
+        <p class="hint">Leave both empty for every page.</p>
+      </section>
+
+      <fieldset class="field">
+        <legend>Include</legend>
+        <div id="includes" class="checkboxes"></div>
+        <p class="hint">Leave both unchecked for the whole document.</p>
+      </fieldset>
+    </div>
+  </details>
+
+  <div class="actions">
+    <button type="submit" id="convert">Convert</button>
+    <button type="button" id="stop" hidden>Stop waiting</button>
+    <span id="status" role="status"></span>
+  </div>
+</form>
+
+<div class="panes">
+<details id="source" hidden>
+  <summary><h2>Source</h2></summary>
+  <p class="hint" id="source-note"></p>
+  <p id="source-actions" hidden>
+    <button type="button" id="show-source">Show the PDF the parser read</button>
+  </p>
+  <iframe id="source-frame" title="The document as the parser read it" hidden></iframe>
+</details>
+
+<section id="result" hidden>
+  <h2>Result</h2>
+  <details id="result-details">
+    <summary id="result-summary"></summary>
+    <dl id="result-meta"></dl>
+  </details>
+  <div class="actions">
+    <div class="segmented">
+      <button type="button" id="show-reading" aria-pressed="true">Reading</button>
+      <button type="button" id="show-raw" aria-pressed="false">Raw</button>
+    </div>
+    <label class="inline-check" id="labels-control">
+      <input type="checkbox" id="show-labels">
+      Show labels
+    </label>
+    <button type="button" id="download-xml" hidden></button>
+    <button type="button" id="download">Download</button>
+  </div>
+  <p class="hint" id="result-note"></p>
+  <div id="result-reading"></div>
+  <pre id="result-body"></pre>
+  <details id="archive" hidden>
+    <summary><h3 id="archive-summary">Files in the archive</h3></summary>
+    <div class="actions">
+      <button type="button" id="archive-show-all">Show all</button>
+      <button type="button" id="archive-hide-all">Hide all</button>
+    </div>
+    <table><tbody id="archive-files"></tbody></table>
+  </details>
+
+  <h3>The same request</h3>
+  <pre id="result-curl"></pre>
+</section>
+
+</div>
+
+<section id="failure" hidden>
+  <h2>Failed</h2>
+  <dl id="failure-meta"></dl>
+  <pre id="failure-body"></pre>
+  <h3>The same request</h3>
+  <pre id="failure-curl"></pre>
+</section>
+</main>
+
+<script type="application/json" id="deployment">__DEPLOYMENT_JSON__</script>
+<script type="module" src="/static/index.js"></script>
+</body>
+</html>

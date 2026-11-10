@@ -5,7 +5,8 @@ from fastapi import (
     Request,
     Response
 )
-from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse
 
 
 from sciencebeam_parser.app.parser import (
@@ -24,6 +25,7 @@ from sciencebeam_parser.models.llm.usage import (
 from sciencebeam_parser.service.api.dependencies import (
     add_profile_names_to_openapi_schema
 )
+from sciencebeam_parser.service.assets import get_versioned_static_url
 from sciencebeam_parser.service.api.routers.convert import create_convert_router
 from sciencebeam_parser.service.api.routers.grobid import create_grobid_router
 from sciencebeam_parser.service.api.routers.low_level import create_low_level_router
@@ -35,11 +37,44 @@ from sciencebeam_parser.service.api.routers.status import create_status_router
 LOGGER = logging.getLogger(__name__)
 
 
+API_PATH = '/api'
+
+DOCS_PATH = '/docs'
+
+SWAGGER_UI_DIRECTORY = 'swagger-ui'
+
+
+def add_swagger_ui_route(app: FastAPI):
+    """Swagger UI from this service rather than from a CDN.
+
+    FastAPI's own route points its script, stylesheet and icon at jsdelivr, so
+    the documentation page is blank wherever the host has no network -- which
+    is an ordinary way to run an image.
+    """
+    @app.get(DOCS_PATH, include_in_schema=False)
+    def swagger_ui_html(request: Request) -> HTMLResponse:
+        root_path = request.scope.get('root_path', '').rstrip('/')
+        return get_swagger_ui_html(
+            openapi_url=root_path + str(app.openapi_url),
+            title='ScienceBeam Parser API',
+            swagger_js_url=get_versioned_static_url(
+                f'{SWAGGER_UI_DIRECTORY}/swagger-ui-bundle.js'
+            ),
+            swagger_css_url=get_versioned_static_url(
+                f'{SWAGGER_UI_DIRECTORY}/swagger-ui.css'
+            ),
+            swagger_favicon_url=get_versioned_static_url(
+                f'{SWAGGER_UI_DIRECTORY}/favicon-32x32.png'
+            )
+        )
+
+
 def create_api_app(
     sciencebeam_parser: ScienceBeamParser
 ) -> FastAPI:
-    app = FastAPI()
+    app = FastAPI(docs_url=None)
     app.state.sciencebeam_parser = sciencebeam_parser
+    add_swagger_ui_route(app)
 
     app.include_router(create_status_router())
     app.include_router(create_profiles_router(

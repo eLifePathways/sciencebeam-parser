@@ -1,0 +1,226 @@
+import json
+import os
+import re
+from unittest.mock import MagicMock
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+import pytest
+
+from sciencebeam_parser.app.parser import DOC_TO_PDF_SUPPORTED_MEDIA_TYPES
+from sciencebeam_parser.processors.fulltext.config import (
+    FRONT_FIELDS,
+    RequestFieldNames
+)
+from sciencebeam_parser.service.api.routers.convert import CONVERT_RESPONSE_MEDIA_TYPES
+from sciencebeam_parser.service.assets import STATIC_DIRECTORY
+from sciencebeam_parser.service.routers.index import (
+    DEPLOYMENT_PLACEHOLDER,
+    INCLUDES_GROUPS,
+    INDEX_HTML_FILE,
+    create_index_router,
+    get_accepted_source_media_types,
+    get_deployment_props,
+    get_embedded_json,
+    get_index_html
+)
+from sciencebeam_parser.utils.media_types import MediaTypes
+
+
+@pytest.fixture(name='sciencebeam_parser_mock')
+def _sciencebeam_parser_mock() -> MagicMock:
+    sciencebeam_parser = MagicMock(name='sciencebeam_parser')
+    sciencebeam_parser.doc_to_pdf_enabled = True
+    return sciencebeam_parser
+
+
+def get_embedded_deployment_props(html: str) -> dict:
+    match = re.search(
+        r'<script type="application/json" id="deployment">(.*?)</script>',
+        html,
+        re.DOTALL
+    )
+    assert match
+    return json.loads(match.group(1))
+
+
+def get_test_client(sciencebeam_parser: MagicMock) -> TestClient:
+    app = FastAPI()
+    app.include_router(create_index_router(sciencebeam_parser))
+    return TestClient(app)
+
+
+class TestGetAcceptedSourceMediaTypes:
+    def test_should_accept_pdf_and_every_doc_to_pdf_media_type(self):
+        accepted_media_types = get_accepted_source_media_types(doc_to_pdf_enabled=True)
+        assert set(accepted_media_types) == (
+            {MediaTypes.PDF} | DOC_TO_PDF_SUPPORTED_MEDIA_TYPES
+        )
+
+    def test_should_accept_pdf_only_without_doc_to_pdf(self):
+        assert get_accepted_source_media_types(doc_to_pdf_enabled=False) == [
+            MediaTypes.PDF
+        ]
+
+    def test_should_offer_pdf_first(self):
+        assert get_accepted_source_media_types(
+            doc_to_pdf_enabled=True
+        )[0] == MediaTypes.PDF
+
+
+class TestIncludesGroups:
+    def test_should_offer_every_field_a_request_may_ask_for(self):
+        grouped = {
+            field_name
+            for _, field_names in INCLUDES_GROUPS
+            for field_name in field_names
+        }
+        assert grouped == FRONT_FIELDS | {RequestFieldNames.REFERENCES}
+
+    def test_should_group_the_front_fields_together(self):
+        groups = dict(INCLUDES_GROUPS)
+        assert set(groups['Front matter']) == FRONT_FIELDS
+        assert set(groups['References']) == {RequestFieldNames.REFERENCES}
+
+    def test_should_name_each_field_in_one_group_only(self):
+        field_names = [
+            field_name
+            for _, names in INCLUDES_GROUPS
+            for field_name in names
+        ]
+        assert len(field_names) == len(set(field_names))
+
+
+class TestGetDeploymentProps:
+    def test_should_describe_every_accepted_media_type_with_an_extension(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        props = get_deployment_props(sciencebeam_parser_mock)
+        accepted = props['accepted_source_media_types']
+        assert [item['media_type'] for item in accepted] == (
+            get_accepted_source_media_types(doc_to_pdf_enabled=True)
+        )
+        assert all(item['extension'] for item in accepted)
+
+    def test_should_offer_the_output_media_types_convert_responds_with(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        props = get_deployment_props(sciencebeam_parser_mock)
+        assert [
+            item['media_type'] for item in props['output_media_types']
+        ] == list(CONVERT_RESPONSE_MEDIA_TYPES)
+
+    def test_should_say_which_output_media_types_are_readable_as_text(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        props = get_deployment_props(sciencebeam_parser_mock)
+        is_text_by_media_type = {
+            item['media_type']: item['is_text']
+            for item in props['output_media_types']
+        }
+        assert is_text_by_media_type[MediaTypes.JATS_XML] is True
+        assert is_text_by_media_type[MediaTypes.TEI_XML] is True
+        assert is_text_by_media_type[MediaTypes.JATS_ZIP] is False
+        assert is_text_by_media_type[MediaTypes.PDF] is False
+
+    def test_should_say_that_the_jats_shapes_have_a_reading_view(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        props = get_deployment_props(sciencebeam_parser_mock)
+        assert [
+            item['media_type'] for item in props['output_media_types']
+            if item['is_readable']
+        ] == [MediaTypes.JATS_XML, MediaTypes.JATS_ZIP]
+
+    def test_should_name_the_xml_each_archive_carries(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        props = get_deployment_props(sciencebeam_parser_mock)
+        archive_xml_name_by_media_type = {
+            item['media_type']: item['archive_xml_name']
+            for item in props['output_media_types']
+        }
+        assert archive_xml_name_by_media_type[MediaTypes.JATS_ZIP] == 'jats.xml'
+        assert archive_xml_name_by_media_type[MediaTypes.TEI_ZIP] == 'tei.xml'
+        assert archive_xml_name_by_media_type[MediaTypes.JATS_XML] is None
+        assert archive_xml_name_by_media_type[MediaTypes.PDF] is None
+
+
+class TestGetEmbeddedJson:
+    def test_should_escape_angle_brackets_that_would_end_the_script(self):
+        embedded_json = get_embedded_json({'key': '</script>'})
+        assert '</script>' not in embedded_json
+        assert json.loads(embedded_json) == {'key': '</script>'}
+
+
+class TestGetIndexHtml:
+    def test_should_replace_the_placeholder_with_the_deployment_props(self):
+        html = get_index_html({'key': 'value'})
+        assert DEPLOYMENT_PLACEHOLDER not in html
+        assert get_embedded_deployment_props(html) == {'key': 'value'}
+
+
+class TestIndexHtmlFile:
+    def test_should_name_only_elements_the_page_carries(self):
+        with open(INDEX_HTML_FILE, 'r', encoding='utf-8') as html_fp:
+            html = html_fp.read()
+        script_file = os.path.join(STATIC_DIRECTORY, 'index.js')
+        with open(script_file, 'r', encoding='utf-8') as script_fp:
+            script = script_fp.read()
+        element_ids = set(re.findall(r'id="([^"]+)"', html))
+        looked_up = set(re.findall(r"getElementById\('([^']+)'\)", script))
+        assert looked_up
+        assert looked_up - element_ids == set()
+
+    def test_should_reference_assets_that_are_shipped(self):
+        with open(INDEX_HTML_FILE, 'r', encoding='utf-8') as html_fp:
+            html = html_fp.read()
+        referenced_paths = re.findall(r'(?:href|src)="/static/([^"]+)"', html)
+        assert referenced_paths
+        for referenced_path in referenced_paths:
+            assert os.path.exists(os.path.join(STATIC_DIRECTORY, referenced_path))
+
+    def test_should_reference_nothing_outside_the_service(self):
+        with open(INDEX_HTML_FILE, 'r', encoding='utf-8') as html_fp:
+            html = html_fp.read()
+        assert not re.search(r'(?:href|src)="(?:https?:)?//', html)
+
+
+class TestSwaggerUiAssets:
+    def test_should_ship_what_the_docs_page_references(self):
+        for filename in [
+            'swagger-ui-bundle.js', 'swagger-ui.css', 'favicon-32x32.png'
+        ]:
+            assert os.path.exists(
+                os.path.join(STATIC_DIRECTORY, 'swagger-ui', filename)
+            )
+
+
+class TestIndexRouter:
+    def test_should_respond_with_html(self, sciencebeam_parser_mock: MagicMock):
+        response = get_test_client(sciencebeam_parser_mock).get('/')
+        assert response.status_code == 200
+        assert response.headers['content-type'].startswith('text/html')
+
+    def test_should_carry_what_the_deployment_accepts(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        sciencebeam_parser_mock.doc_to_pdf_enabled = False
+        response = get_test_client(sciencebeam_parser_mock).get('/')
+        props = get_embedded_deployment_props(response.text)
+        assert [
+            item['media_type'] for item in props['accepted_source_media_types']
+        ] == [MediaTypes.PDF]
+
+    def test_should_not_let_the_page_be_held_while_its_assets_change(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        response = get_test_client(sciencebeam_parser_mock).get('/')
+        assert response.headers['cache-control'] == 'no-store'
+
+    def test_should_carry_no_elife_or_pathways_mark(
+        self, sciencebeam_parser_mock: MagicMock
+    ):
+        response = get_test_client(sciencebeam_parser_mock).get('/')
+        assert 'elife' not in response.text.lower()
+        assert 'pathways' not in response.text.lower()
