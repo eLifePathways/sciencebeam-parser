@@ -184,6 +184,9 @@ fields:
   - affiliation_linked
   - keywords
   - body_section_titles
+  - figure_labels
+  - figure_captions
+  - figure_label_captions
   - acknowledgement
   - first_reference_text
   - reference_title
@@ -297,6 +300,12 @@ scoring:
       type: partial_ulist
     body_section_titles:
       type: partial_list
+    figure_labels:
+      type: partial_ulist
+    figure_captions:
+      type: partial_ulist
+    figure_label_captions:
+      type: partial_ulist
     reference_title:
       type: partial_list
     reference_doi:
