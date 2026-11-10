@@ -43,6 +43,11 @@ export function getAttribute(node, name) {
   return (isElement(node) && (node.attributes || {})[name]) || '';
 }
 
+/* The language an element declares, which `xml:lang` carries in both formats. */
+export function getLanguage(node) {
+  return getAttribute(node, 'xml:lang') || null;
+}
+
 export function getTextContent(node) {
   if (typeof node === 'string') {
     return node;
@@ -82,6 +87,7 @@ export function addPaths(node, parentPath) {
     addPaths(child, child.path);
   });
 }
+
 
 export function getValue(node, name, label) {
   const child = getFirstChildElement(node, name);

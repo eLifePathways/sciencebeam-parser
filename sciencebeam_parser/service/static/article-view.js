@@ -345,7 +345,14 @@ export function renderArticleViewModel(viewModel, document, options) {
   article.className = 'jats-article';
   appendValue(article, viewModel.journal, 'p', 'jats-journal');
   if (viewModel.title) {
-    appendValue(article, viewModel.title, 'h1');
+    const title = appendValue(article, viewModel.title, 'h1');
+    if (title && viewModel.title.language) {
+      // On the element as well as beside it, so a reader hears the right voice
+      // and a reader of the page can see which title they were given.
+      title.setAttribute('lang', viewModel.title.language);
+      const language = appendElement(title, 'span', 'jats-language');
+      language.textContent = viewModel.title.language;
+    }
   } else {
     appendElement(article, 'h1', '').textContent = 'Untitled';
   }

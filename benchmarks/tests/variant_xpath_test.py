@@ -4,7 +4,8 @@ from typing import List
 
 from lxml import etree
 
-from benchmarks.variant_xpath import abstract_variants
+from benchmarks.matched_property_scoring import PROPERTY_SEPARATOR
+from benchmarks.variant_xpath import abstract_variants, title_language_pairs
 
 
 def _article_meta(inner: str) -> etree.ElementBase:
@@ -92,3 +93,40 @@ class TestAbstractVariants:
             '<trans-abstract xml:lang="es">es</trans-abstract>'
         )
         assert _texts(abstract_variants(article_meta)) == ["en", "es"]
+
+
+def _pair(language: str, text: str) -> str:
+    return language + PROPERTY_SEPARATOR + text
+
+
+def _article(inner: str, language: str = "pt") -> etree.ElementBase:
+    return etree.fromstring(
+        f'<article xml:lang="{language}"><front><article-meta><title-group>'
+        f'{inner}</title-group></article-meta></front></article>'
+    )
+
+
+class TestTitleLanguagePairs:
+    def test_should_give_the_article_its_own_language(self):
+        article = _article("<article-title>O titulo</article-title>")
+        assert title_language_pairs(article) == [_pair("pt", "O titulo")]
+
+    def test_should_read_a_translation_language_from_its_group(self):
+        article = _article(
+            "<article-title>O titulo</article-title>"
+            '<trans-title-group xml:lang="en"><trans-title>The title</trans-title>'
+            "</trans-title-group>"
+        )
+        assert title_language_pairs(article) == [_pair("pt", "O titulo"), _pair("en", "The title")]
+
+    def test_should_prefer_a_language_on_the_translation_itself(self):
+        article = _article(
+            "<article-title>O titulo</article-title>"
+            '<trans-title-group xml:lang="en"><trans-title xml:lang="es">El titulo'
+            "</trans-title></trans-title-group>"
+        )
+        assert title_language_pairs(article) == [_pair("pt", "O titulo"), _pair("es", "El titulo")]
+
+    def test_should_give_nothing_where_there_is_no_title_group(self):
+        article = etree.fromstring('<article xml:lang="pt"><front/></article>')
+        assert title_language_pairs(article) == []

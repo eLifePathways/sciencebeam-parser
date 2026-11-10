@@ -156,6 +156,7 @@ fields:
   - title_any_case
   - title_any_language
   - title_all_languages
+  - title_language
   - abstract
   - abstract_anywhere
   - abstract_any_language
@@ -201,6 +202,9 @@ scoring:
       methods: [exact, levenshtein, edit_sim]
       type: partial_ulist
       lower: true
+    title_language:
+      methods: [exact]
+      type: matched_property
     abstract:
       methods: [levenshtein, edit_sim]
     abstract_anywhere:

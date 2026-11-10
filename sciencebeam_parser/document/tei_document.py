@@ -65,7 +65,8 @@ def get_tei_for_semantic_document(  # noqa pylint: disable=too-many-branches, to
     if semantic_title is not None and semantic_title.merged_block:
         tei_document.set_title_layout_block(
             semantic_title.merged_block,
-            trailing_text=semantic_title.trailing_text
+            trailing_text=semantic_title.trailing_text,
+            language=semantic_title.language
         )
 
     for semantic_abstract in semantic_document.front.iter_by_type(SemanticAbstract):
