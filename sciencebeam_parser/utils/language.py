@@ -34,12 +34,17 @@ MIN_LANGUAGE_DETECTION_WORD_COUNT = 20
 MIN_LANGUAGE_DETECTION_RATIO = 1.25
 MIN_LANGUAGE_DETECTION_MARGIN = 5
 
-# A title is a tenth the length of an abstract: 81% of the titles in these corpora are
-# under the word count above, so the abstract's thresholds answer for one in twenty and
-# say nothing about the rest. At these, over 475 titles whose JATS declares a language,
-# it answers for 337 and is right on 335.
+# A title is a tenth the length of an abstract: 90% of the titles in these corpora are
+# under the word count above, so the abstract's thresholds say nothing about them. At
+# these, over 252 titles whose deposit declares a language, it answers for 220 and names
+# a different language for 3, each of them a title the deposit declares Portuguese and
+# writes in Spanish.
+#
+# The ratio above carries the weight here and the margin only breaks a tie: an English
+# title of ten words leads Italian by one, because `in` and `a` are function words in
+# both, and a margin of 2 would leave it with no language at all.
 MIN_TITLE_LANGUAGE_DETECTION_WORD_COUNT = 6
-MIN_TITLE_LANGUAGE_DETECTION_MARGIN = 2
+MIN_TITLE_LANGUAGE_DETECTION_MARGIN = 1
 
 WORD_PATTERN = re.compile(r'[^\W\d_]+', re.UNICODE)
 

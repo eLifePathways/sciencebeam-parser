@@ -65,6 +65,18 @@ class TestTeiDocument:
         ) == ['italic1']
         assert document.get_title() == 'rend italic1 test'
 
+    def test_should_write_every_title_it_is_given(self):
+        document = TeiDocument()
+        document.set_title_layout_block(LayoutBlock.for_text('The title'), language='en')
+        document.set_title_layout_block(LayoutBlock.for_text('O titulo'), language='pt')
+        nodes = document.root.xpath(
+            '//tei:fileDesc/tei:titleStmt/tei:title[@level="a"][@type="main"]',
+            namespaces=TEI_NS_MAP
+        )
+        assert [node.text for node in nodes] == ['The title', 'O titulo']
+        # The first is what a caller asking for "the title" means.
+        assert document.get_title() == 'The title'
+
     def test_should_set_the_language_of_the_title(self):
         document = TeiDocument()
         document.set_title_layout_block(LayoutBlock.for_text('The title'), language='en')

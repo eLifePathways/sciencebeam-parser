@@ -339,20 +339,27 @@ function appendReferences(parent, references) {
   references.forEach((reference) => appendReference(list, reference));
 }
 
+function appendTitle(parent, value, tagName) {
+  const title = appendValue(parent, value, tagName, 'jats-title');
+  if (title && value.language) {
+    // On the element as well as beside it, so a reader hears the right voice
+    // and a reader of the page can see which title they were given.
+    title.setAttribute('lang', value.language);
+    const language = appendElement(title, 'span', 'jats-language');
+    language.textContent = value.language;
+  }
+}
+
+
 export function renderArticleViewModel(viewModel, document, options) {
   const renderOptions = options || {};
   const article = document.createElement('article');
   article.className = 'jats-article';
   appendValue(article, viewModel.journal, 'p', 'jats-journal');
-  if (viewModel.title) {
-    const title = appendValue(article, viewModel.title, 'h1');
-    if (title && viewModel.title.language) {
-      // On the element as well as beside it, so a reader hears the right voice
-      // and a reader of the page can see which title they were given.
-      title.setAttribute('lang', viewModel.title.language);
-      const language = appendElement(title, 'span', 'jats-language');
-      language.textContent = viewModel.title.language;
-    }
+  if (viewModel.titles.length) {
+    viewModel.titles.forEach(
+      (value, index) => appendTitle(article, value, index === 0 ? 'h1' : 'h2')
+    );
   } else {
     appendElement(article, 'h1', '').textContent = 'Untitled';
   }

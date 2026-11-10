@@ -439,6 +439,22 @@ class TestTeiToJatsXslt:
                 jats, 'front/article-meta/title-group/article-title'
             ) == VALUE_1
 
+        def test_should_translate_a_further_title_as_a_translation(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(titleStmt=TEI_E.titleStmt(
+                    TEI_E.title(VALUE_1, **{XML_LANG: 'pt'}),
+                    TEI_E.title(VALUE_2, **{XML_LANG: 'en'})
+                ))
+            ))
+            assert _get_text(
+                jats, 'front/article-meta/title-group/article-title'
+            ) == VALUE_1
+            trans_group = jats.find(
+                'front/article-meta/title-group/trans-title-group'
+            )
+            assert trans_group.attrib[XML_LANG] == 'en'
+            assert _get_text(trans_group, 'trans-title') == VALUE_2
+
         def test_should_translate_the_language_of_the_title(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
                 _tei(titleStmt=TEI_E.titleStmt(

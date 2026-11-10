@@ -57,9 +57,17 @@
     <article-meta>
       <title-group>
         <article-title>
-          <xsl:copy-of select="tei:fileDesc/tei:titleStmt/tei:title/@xml:lang"/>
-          <xsl:apply-templates select="tei:fileDesc/tei:titleStmt/tei:title"/>
+          <xsl:copy-of select="tei:fileDesc/tei:titleStmt/tei:title[1]/@xml:lang"/>
+          <xsl:apply-templates select="tei:fileDesc/tei:titleStmt/tei:title[1]"/>
         </article-title>
+        <xsl:for-each select="tei:fileDesc/tei:titleStmt/tei:title[position() &gt; 1]">
+          <trans-title-group>
+            <xsl:copy-of select="@xml:lang"/>
+            <trans-title>
+              <xsl:apply-templates select="."/>
+            </trans-title>
+          </trans-title-group>
+        </xsl:for-each>
       </title-group>
 
       <xsl:if test="tei:fileDesc/tei:sourceDesc/tei:biblStruct/tei:analytic/tei:author">
