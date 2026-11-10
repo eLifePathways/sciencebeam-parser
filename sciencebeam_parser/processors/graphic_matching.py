@@ -16,7 +16,8 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticContentWrapper,
     SemanticGraphic,
     SemanticLabel,
-    SemanticMixedContentWrapper
+    SemanticMixedContentWrapper,
+    SemanticTable
 )
 from sciencebeam_parser.ocr_models.ocr_model import OpticalCharacterRecognitionModel
 from sciencebeam_parser.processors.ref_matching import SimpleContentIdMatcher
@@ -388,6 +389,10 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
         self,
         distance_between: BoundingBoxDistanceBetween
     ) -> bool:
+        if not isinstance(
+            distance_between.bounding_box_ref_2.semantic_content, SemanticTable
+        ):
+            return False
         enclosed_text_ratio = get_enclosed_text_ratio(
             distance_between.bounding_box_ref_1.bounding_box_list,
             distance_between.bounding_box_ref_2.text_bounding_box_list
