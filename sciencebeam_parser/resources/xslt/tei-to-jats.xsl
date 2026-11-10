@@ -57,6 +57,7 @@
     <article-meta>
       <title-group>
         <article-title>
+          <xsl:copy-of select="tei:fileDesc/tei:titleStmt/tei:title/@xml:lang"/>
           <xsl:apply-templates select="tei:fileDesc/tei:titleStmt/tei:title"/>
         </article-title>
       </title-group>

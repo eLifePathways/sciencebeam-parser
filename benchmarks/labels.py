@@ -31,6 +31,7 @@ FIELD_LABELS: Dict[str, str] = {
     "title_any_case": "Title (any case)",
     "title_any_language": "Title (any language)",
     "title_all_languages": "Title (all languages)",
+    "title_language": "Title language",
     "abstract": "Abstract",
     "abstract_anywhere": "Abstract (anywhere)",
     "abstract_any_language": "Abstract (any language)",

@@ -166,6 +166,17 @@ pre {
 
 .jats-caption { font-size: 14px; }
 .jats-label { font-weight: 600; }
+.jats-language {
+  margin-left: 8px;
+  padding: 1px 5px;
+  border: 1px solid var(--muted);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
 .jats-graphic { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
 
 .jats-table table { border-collapse: collapse; margin-top: 8px; font-size: 13px; }

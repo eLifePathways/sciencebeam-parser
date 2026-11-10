@@ -96,12 +96,19 @@ class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
             TEI_E('title', title, level="a", type="main")
         )
 
-    def set_title_layout_block(self, title_block: LayoutBlock, trailing_text: str = ''):
+    def set_title_layout_block(
+        self,
+        title_block: LayoutBlock,
+        trailing_text: str = '',
+        language: Optional[str] = None
+    ):
         title_elem = TEI_E(
             'title',
             {'level': 'a', 'type': 'main'},
             *iter_layout_block_tei_children(title_block)
         )
+        if language:
+            title_elem.attrib[XML_NS_PREFIX + 'lang'] = language
         if trailing_text:
             title_elem.tail = trailing_text
         self.set_child_element_at(

@@ -17,6 +17,7 @@ import {
   getInlineRuns,
   getTextContent,
   getValue,
+  getLanguage,
   parseXmlNode
 } from './xml-nodes.js';
 import { renderArticleViewModel } from './article-view.js';
@@ -240,6 +241,14 @@ export function getTeiArticleViewModel(article) {
     addPaths(article, article.path);
   }
   const header = getFirstChildElement(article, 'teiHeader');
+  function withLanguage(parent, name) {
+    const value = parent ? getValue(parent, name) : null;
+    if (!value) {
+      return null;
+    }
+    const language = getLanguage(getFirstChildElement(parent, name));
+    return language ? { ...value, language } : value;
+  }
   const titleStmt = header
     ? getFirstDescendantElement(header, 'titleStmt')
     : null;
@@ -265,7 +274,7 @@ export function getTeiArticleViewModel(article) {
     ? getFirstDescendantElement(references, 'listBibl')
     : null;
   return {
-    title: titleStmt ? getValue(titleStmt, 'title') : null,
+    title: withLanguage(titleStmt, 'title'),
     journal: getNodeValue(journalTitle, 'title'),
     authorGroup: analytic
       ? { label: analytic.name, path: analytic.path }

@@ -285,6 +285,7 @@ class SemanticCaption(SemanticSimpleContentWrapper):
 @dataclass
 class SemanticTitle(SemanticSimpleContentWrapper):
     trailing_text: str = ''
+    language: Optional[str] = None
 
 
 class SemanticJournal(SemanticSimpleContentWrapper):

@@ -74,6 +74,8 @@ AFFILIATION_2 = {
     'country': 'Country 2'
 }
 
+XML_LANG = '{http://www.w3.org/XML/1998/namespace}lang'
+
 ARTICLE_TITLE_1 = 'Article title 1'
 COLLECTION_TITLE_1 = 'Collection title 1'
 
@@ -436,6 +438,24 @@ class TestTeiToJatsXslt:
             assert _get_text(
                 jats, 'front/article-meta/title-group/article-title'
             ) == VALUE_1
+
+        def test_should_translate_the_language_of_the_title(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(titleStmt=TEI_E.titleStmt(
+                    TEI_E.title(VALUE_1, **{XML_LANG: 'pt'})
+                ))
+            ))
+            title = jats.find('front/article-meta/title-group/article-title')
+            assert title.attrib[XML_LANG] == 'pt'
+
+        def test_should_leave_the_language_off_a_title_without_one(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(titleStmt=TEI_E.titleStmt(
+                    TEI_E.title(VALUE_1)
+                ))
+            ))
+            title = jats.find('front/article-meta/title-group/article-title')
+            assert XML_LANG not in title.attrib
 
         def test_should_not_include_title_attributes_in_transformed_title_value(
                 self, tei_to_jats_xslt_fn):

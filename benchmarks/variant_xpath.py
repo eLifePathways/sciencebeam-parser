@@ -98,6 +98,37 @@ def fn_tei_abstract_language_pairs(_, nodes):
     return [_language_pair(node) for node in nodes]
 
 
+def title_language_pairs(article: ET.ElementBase) -> List[str]:
+    """Each title of an article with the language it is written in.
+
+    `article-title` carries no language of its own and takes the article's, which is why
+    this reads the article rather than `article-meta`; a `trans-title` carries its own.
+    """
+    language = article.get(XML_LANG) or ""
+    title_group = article.find("front/article-meta/title-group")
+    if title_group is None:
+        return []
+    pairs = [
+        language + PROPERTY_SEPARATOR + get_text_content(node)
+        for node in title_group.findall("article-title")
+    ]
+    for node in title_group.iter("trans-title"):
+        parent = node.getparent()
+        pairs.append(
+            (node.get(XML_LANG) or parent.get(XML_LANG) or "")
+            + PROPERTY_SEPARATOR + get_text_content(node)
+        )
+    return pairs
+
+
+def fn_jats_title_language_pairs(_, nodes):
+    return [pair for node in nodes for pair in title_language_pairs(node)]
+
+
+def fn_tei_title_language_pairs(_, nodes):
+    return [_language_pair(node) for node in nodes]
+
+
 def register_variant_functions(ns: Optional[ET.FunctionNamespace] = None) -> None:
     if ns is None:
         ns = ET.FunctionNamespace(None)
@@ -105,3 +136,5 @@ def register_variant_functions(ns: Optional[ET.FunctionNamespace] = None) -> Non
     ns["jats-abstract-variants"] = fn_jats_abstract_variants
     ns["jats-abstract-language-pairs"] = fn_jats_abstract_language_pairs
     ns["tei-abstract-language-pairs"] = fn_tei_abstract_language_pairs
+    ns["jats-title-language-pairs"] = fn_jats_title_language_pairs
+    ns["tei-title-language-pairs"] = fn_tei_title_language_pairs

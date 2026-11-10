@@ -65,6 +65,24 @@ class TestTeiDocument:
         ) == ['italic1']
         assert document.get_title() == 'rend italic1 test'
 
+    def test_should_set_the_language_of_the_title(self):
+        document = TeiDocument()
+        document.set_title_layout_block(LayoutBlock.for_text('The title'), language='en')
+        nodes = document.root.xpath(
+            '//tei:fileDesc/tei:titleStmt/tei:title[@level="a"][@type="main"]',
+            namespaces=TEI_NS_MAP
+        )
+        assert nodes[0].attrib['{http://www.w3.org/XML/1998/namespace}lang'] == 'en'
+
+    def test_should_leave_the_language_off_a_title_it_could_not_be_told_for(self):
+        document = TeiDocument()
+        document.set_title_layout_block(LayoutBlock.for_text('The title'))
+        nodes = document.root.xpath(
+            '//tei:fileDesc/tei:titleStmt/tei:title[@level="a"][@type="main"]',
+            namespaces=TEI_NS_MAP
+        )
+        assert '{http://www.w3.org/XML/1998/namespace}lang' not in nodes[0].attrib
+
     def test_should_place_trailing_text_outside_title_element(self):
         title_block = LayoutBlock.for_text('The title')
         document = TeiDocument()
