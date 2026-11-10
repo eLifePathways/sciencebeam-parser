@@ -35,9 +35,6 @@ delft = [
     # and the commit it resolves to is in uv.lock.
     "delft>=1.2.1",
 ]
-cv = [
-    "layoutparser==0.3.2",
-]
 # Tracing for the llm engine. Optional: without it, and without a collector
 # endpoint, the engine emits nothing and behaves identically.
 telemetry = [
@@ -93,7 +90,11 @@ include = ["sciencebeam_parser*"]
   "py.typed",
   "resources/*.yml",
   "resources/default_config/*.yml",
-  "resources/xslt/*.xsl"
+  "resources/xslt/*.xsl",
+  "service/static/*.html",
+  "service/static/*.css",
+  "service/static/*.js",
+  "service/static/swagger-ui/*"
 ]
 
 [tool.mypy]

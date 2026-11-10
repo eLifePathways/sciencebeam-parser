@@ -1,4 +1,4 @@
-from sciencebeam_parser.utils.language import detect_language
+from sciencebeam_parser.utils.language import detect_language, detect_title_language
 
 
 ENGLISH_1 = (
@@ -49,3 +49,16 @@ class TestDetectLanguage:
 
     def test_should_return_none_for_empty_text(self):
         assert detect_language('') is None
+
+
+class TestDetectTitleLanguage:
+    def test_should_tell_a_title_apart_at_a_length_an_abstract_would_be_silent_on(self):
+        title = 'Os efeitos da pandemia sobre a saude dos profissionais de uma unidade'
+        assert detect_language(title) is None
+        assert detect_title_language(title) == 'pt'
+
+    def test_should_say_nothing_where_a_title_is_mostly_names(self):
+        assert detect_title_language('Pereira Santos Oliveira Costa Rodrigues Almeida') is None
+
+    def test_should_say_nothing_where_a_title_is_shorter_than_it_can_read(self):
+        assert detect_title_language('Os efeitos') is None

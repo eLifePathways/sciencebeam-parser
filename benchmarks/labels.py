@@ -28,6 +28,10 @@ def corpus_label(corpus: str) -> str:
 
 FIELD_LABELS: Dict[str, str] = {
     "title": "Title",
+    "title_any_case": "Title (any case)",
+    "title_any_language": "Title (any language)",
+    "title_all_languages": "Title (all languages)",
+    "title_language": "Title language",
     "abstract": "Abstract",
     "abstract_anywhere": "Abstract (anywhere)",
     "abstract_any_language": "Abstract (any language)",
@@ -39,6 +43,9 @@ FIELD_LABELS: Dict[str, str] = {
     "affiliation_linked": "Affiliations (linked)",
     "keywords": "Keywords",
     "body_section_titles": "Section titles",
+    "figure_labels": "Figure labels",
+    "figure_captions": "Figure captions",
+    "figure_label_captions": "Figure labels and captions",
     "acknowledgement": "Acknowledgement",
     "first_reference_text": "First reference",
     "reference_title": "Reference titles",

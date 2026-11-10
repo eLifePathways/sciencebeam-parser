@@ -12,6 +12,11 @@ services:
       dockerfile: Dockerfile
       target: runtime-cv
     image: ${IMAGE_NAME}:${IMAGE_TAG}-cv
+    # What `make docker-end-to-end-cv` is for: without this the service is the
+    # same run as the plain one, which is why it never caught the cv model
+    # being unloadable.
+    environment:
+      - SCIENCEBEAM_PARSER__PROCESSORS__FULLTEXT__USE_CV_MODEL=true
 
   sciencebeam-parser-dev:
     build:

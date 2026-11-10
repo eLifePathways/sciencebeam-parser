@@ -55,6 +55,8 @@ Models will be loaded "eagerly" at startup, by setting the configuration option 
 
 Which models are used is decided by the `profile`, and a request may name another one — see [Profiles](doc/profiles.md).
 
+No browser page on another origin may call the API as shipped; a deployment names the origins it answers — see [Cross-origin requests](doc/cors.md).
+
 #### Sequence models from the Hugging Face Hub
 
 The `delft` engine takes a model directly from the Hugging Face Hub, as well as from an archive
@@ -133,7 +135,13 @@ Run the server with auto reload but no debug logging:
 make dev-start-no-debug-logging-auto-reload
 ```
 
-By default the server will start on port 8080 and you can find the API docs under `/api/docs`, e.g.:
+By default the server will start on port 8080. Opening it serves a page that converts a document
+without writing a request, with the profile, page range, requested fields and output format
+choosable on it:
+
+[http://localhost:8080/](http://localhost:8080/)
+
+The API docs are under `/api/docs`, e.g.:
 
 [http://localhost:8080/api/docs](http://localhost:8080/api/docs)
 
@@ -363,15 +371,16 @@ docker run --rm \
     ghcr.io/elifepathways/sciencebeam-parser
 ```
 
-Note: Docker images with the tag suffix `-cv` include the dependencies required for the CV (Computer Vision) models (disabled by default).
+The CV (Computer Vision) model finds figures and tables on the rendered page. It is disabled by default, and runs in this image when enabled -- it needs no separate image, and downloads its weights on first use:
 
 ```bash
 docker run --rm \
     -p 8070:8070 \
     --env SCIENCEBEAM_PARSER__PROCESSORS__FULLTEXT__USE_CV_MODEL=true \
-    --env SCIENCEBEAM_PARSER__PROCESSORS__FULLTEXT__USE_OCR_MODEL=true \
-    ghcr.io/elifepathways/sciencebeam-parser:latest-cv
+    ghcr.io/elifepathways/sciencebeam-parser
 ```
+
+Note: images with the tag suffix `-cv` are still published, and are this image plus the tesseract system libraries.
 
 Non-release builds are available with the `_unstable` image suffix, e.g. `ghcr.io/elifepathways/sciencebeam-parser_unstable`.
 

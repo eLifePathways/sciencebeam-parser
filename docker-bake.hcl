@@ -4,12 +4,6 @@ target "builder" {
   target     = "builder"
 }
 
-target "builder-cv" {
-  context    = "."
-  dockerfile = "Dockerfile"
-  target     = "builder-cv"
-}
-
 target "sciencebeam-parser" {
   context    = "."
   dockerfile = "Dockerfile"
@@ -24,7 +18,7 @@ target "sciencebeam-parser-cv" {
   dockerfile = "Dockerfile"
   target     = "runtime-cv"
   contexts = {
-    "builder-cv" = "target:builder-cv"
+    "builder" = "target:builder"
   }
 }
 
@@ -33,7 +27,7 @@ target "sciencebeam-parser-dev" {
   dockerfile = "Dockerfile"
   target     = "dev"
   contexts = {
-    "builder-cv" = "target:builder-cv"
+    "builder" = "target:builder"
   }
 }
 

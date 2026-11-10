@@ -26,6 +26,27 @@ Gold is JATS; predictions are TEI or JATS. sciencebeam-judge picks its field
 mapping from the root element, so both score through the same definitions — the
 extension is the only difference. Fields and methods are set in `eval.yml`.
 
+A field's scoring type says how a side holding more than one value resolves it:
+
+| type | pairing | length |
+| --- | --- | --- |
+| `string` | joins the values and compares as one | — |
+| `list` | by position | must match |
+| `partial_list` | by position, padding the shorter side | may differ |
+| `ulist` | optimally, in any order | must match |
+| `partial_ulist` | optimally, padding the shorter side | may differ |
+| `best_match` | the best gold/predicted pair anywhere in either list | may differ |
+| `linked` | `affiliation_linked` only, see `benchmarks/affiliation_linking.py` | — |
+
+`partial_*` scores each item rather than the list, so half a list can score well
+while the other half scores badly. `expected` and `actual` name the mapping entry
+each side reads, where a field compares two different ones.
+
+`title_any_case` is `title` with the case taken off both sides. A publisher
+setting its title in capitals where the JATS declares title case is describing its
+own typography, not a different title, and the two rows apart tell a model's
+reading of a title from the capitals its pages are set in.
+
 ### Author–affiliation linking
 
 `affiliation_text` compares a document's affiliations as one flat list: it says

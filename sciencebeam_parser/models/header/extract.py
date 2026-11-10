@@ -19,7 +19,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutTokensText
 )
 from sciencebeam_parser.models.extract import SimpleModelSemanticExtractor
-from sciencebeam_parser.utils.language import detect_language
+from sciencebeam_parser.utils.language import detect_language, detect_title_language
 
 
 LOGGER = logging.getLogger(__name__)
@@ -188,7 +188,11 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
             next_previous_label = name
             if name == '<title>' and not has_title:
                 clean_block, trailing = _split_trailing_title_punct(layout_block)
-                yield SemanticTitle(layout_block=clean_block, trailing_text=trailing)
+                yield SemanticTitle(
+                    layout_block=clean_block,
+                    trailing_text=trailing,
+                    language=detect_title_language(str(LayoutTokensText(clean_block)))
+                )
                 has_title = True
                 continue
             if name == '<abstract>':
