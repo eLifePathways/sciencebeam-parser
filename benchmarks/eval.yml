@@ -1,9 +1,6 @@
 dataset:
-  # Pinned rather than `main`: these corpora are rebuilt in place, most recently
-  # to drop rows whose ground truth an audit found unusable, and following the
-  # branch means every recorded aggregate moves with the next rebuild without
-  # anything erroring. The tag is a90f42e2d22e45c388915d16d3c20967713c4d56.
-  #
+  # Pinned rather than `main`: these corpora are rebuilt in place, so following the
+  # branch would move every recorded aggregate. Tag a90f42e2d22e45c388915d16d3c20967713c4d56.
   # v002 rows are a subset of v001's, ids and xml unchanged, so `variant` stays.
   repo_id: elifepathways/sciencebeam-v2-benchmarking
   revision: benchmark-v002
@@ -45,16 +42,9 @@ dataset:
         id_column: id
         variant: v1
     validation:
-      # PLOS RSRCH-2064: its own private repo, pinned to a tag because the corpus
-      # grows per version and reading `main` would change every aggregate with it.
-      # Balanced across 14 journals, so it is sampled per stratum rather than
-      # uniformly, from the ranks its published manifest records. `optional` keeps it
-      # out of a run that did not ask for it: the manuscripts are not
-      # redistributable, so reaching for them is a decision, not a default.
-      #
-      # Predictions over it are stored in sciencebeam-eval-predictions, which must
-      # therefore stay private — a prediction is close to the whole text of the
-      # manuscript it came from. See RepoPredictionsStore.
+      # Private repo, pinned like the others, and sampled per journal because it is
+      # balanced across 14 of them. A prediction over it is close to the whole
+      # manuscript, so predictions stay private too (see RepoPredictionsStore).
       plos-manuscripts:
         repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
         revision: plos-rsrch-2064-v002
@@ -102,18 +92,12 @@ dataset:
         variant: v002
         optional: true
 
-# Rough split sizes, as a guide for choosing mode sizes rather than a limit; these
-# hold until the pinned revision above is bumped (validation / train, at
-# benchmark-v002):
+# Split sizes at benchmark-v002 (validation/train), a guide rather than a limit:
 #   biorxiv 41/29, ore 58/37, pkp 132/95,
 #   scielo_br 181/123, scielo_mx 39/30, scielo_preprints-jats 125/83
-# A mode asking for more than a split holds takes all of it rather than failing, so
-# the larger modes coincide with `full` for all but pkp and scielo_br.
-# plos-manuscripts is sized in multiples of its 14 journals, since a sample smaller than that
-# cannot contain one document from each, and being balanced across journals is the
-# property the corpus was built for. Its `full` is null rather than a count because
-# its splits differ in size (test 332, validation 132) and one number cannot be
-# right for both.
+# A mode asking for more than a split holds takes all of it. plos-manuscripts is
+# sized in multiples of its 14 journals, and its `full` is null because its splits
+# differ in size.
 sampling:
   smoke:
     biorxiv: 10
@@ -160,11 +144,8 @@ sampling:
     scielo_preprints-jats: null
 
 parser:
-  # Per-document conversion timeout (seconds). A timeout is recorded as an error
-  # and the run continues, so a budget below what the parser itself will spend
-  # turns a document it completed into a missing one: an llm profile allows one
-  # call 300s and retries it, and the slowest observed document took 458s that
-  # way, having timed out once and succeeded on the second attempt.
+  # Per-document conversion timeout (seconds). Below what the parser will spend, a
+  # document it completed is recorded as missing; an llm profile has reached 458s.
   timeout_seconds: 900
 
 seeds:
@@ -193,60 +174,7 @@ fields:
   - reference_doi
 
 scoring:
-  # Scoring types:
-  #   string       - joins all list items with '' then compares as a single string
-  #                  (appropriate for fields that are a single value in practice)
-  #   ulist        - optimal item pairing regardless of order; requires equal list length
-  #                  (appropriate for unordered multi-value fields, e.g. author names)
-  #   partial_ulist - ulist but pads the shorter list; tolerates length mismatch
-  #                  (appropriate for unordered fields with variable counts)
-  #   list         - item-by-item comparison at matching positions; requires equal length
-  #                  (appropriate for ordered multi-value fields)
-  #   partial_list - list but pads the shorter list; tolerates length mismatch
-  #                  (appropriate for ordered fields where predicted count may differ)
-  #   best_match   - the best matching pair of gold and predicted values, wherever each
-  #                  sits in its list, scored as a single string; records which gold value
-  #                  it was (appropriate where several values are one right answer said
-  #                  differently, rather than a set to reproduce)
-  #   linked       - affiliation_linked only, and not set here: each gold author is paired
-  #                  with a predicted one and the affiliations attached to both compared,
-  #                  counting author-affiliation links. See benchmarks/affiliation_linking.py
-  #
-  # Three readings of the same gold, from strictest to most lenient:
-  #   abstract          - the article's own abstract on both sides; the headline, and
-  #                       literal
-  #   abstract_anywhere - the article's own abstract against any abstract the prediction
-  #                       carries, so a tool that finds it but files it as the translation
-  #                       is credited. Equal to `abstract` for a prediction holding one
-  #                       abstract; the gap between the rows is how often one was filed
-  #                       as a translation. The parser's TEI carries a second abstract
-  #                       where the document has one, so the gap is readable on it
-  #   abstract_any_language - any language the document carries, against any the
-  #                       prediction does; what that buys over the rows above, and how
-  #                       often a prediction returned several languages as one value, are
-  #                       counted below each corpus table
-  #   abstract_all_languages - every language the document carries, against every one the
-  #                       prediction does, paired optimally and padded. The only abstract
-  #                       row that charges for a value the gold has none of, and the only
-  #                       one a prediction reproducing the set can score 1.0 on. Its
-  #                       denominator counts values rather than documents, so a document
-  #                       carrying four languages weighs four times one carrying one, and
-  #                       it is not comparable with the rows above
-  # Each name says what it relaxes, or requires; the Type column says how a field with
-  # more than one value on a side resolves it. `expected` and `actual` name the mapping
-  # entry each side reads.
-  #
-  # `abstract_language` scores the language each abstract is declared to be in, rather
-  # than its text. The two sides are paired by the text, since neither the order nor the
-  # count can be relied on, and a gold abstract that declares no language is left out of
-  # the comparison -- `scielo_br` and `scielo_preprints-jats` declare one on
-  # `<trans-abstract>` and not on the `<abstract>` beside it, and `biorxiv`, `ore` and
-  # `pkp` declare none at all. Its denominator is therefore pairs rather than documents,
-  # and it is not comparable with the rows above.
-  #
-  # `abstract_legacy` is the measure these replaced — every `<abstract>` element joined
-  # into one string, `<trans-abstract>` unread — kept so that a figure published before
-  # the change can be reproduced by a current run rather than only restated.
+  # What each scoring type and field means is in doc/benchmarks.md.
   default_methods:
     - levenshtein
     - edit_sim
@@ -254,17 +182,6 @@ scoring:
   per_field:
     title:
       methods: [exact, levenshtein, edit_sim]
-    # The same comparison with the case taken off both sides, beside the one
-    # that keeps it, because a publisher setting its title in capitals where
-    # the JATS declares title case is describing its own typography.  Every
-    # letter after the first of each word then differs, which reads as a
-    # different title: 0.347 and 0.297 on the two titles of one SciELO
-    # Preprints document, against the 0.8 `levenshtein` asks for and 1.000
-    # once the case is gone.  Of the 83 SciELO Preprints documents in this
-    # revision, 74 declare a title in mixed or title case.
-    #
-    # Two result items rather than one, so a model's reading of a title can
-    # be told from the publisher's capitals.
     title_any_case:
       expected: title
       actual: title
