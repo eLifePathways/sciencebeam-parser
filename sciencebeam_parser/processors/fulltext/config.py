@@ -3,6 +3,7 @@ from typing import NamedTuple, Set
 
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.document.layout_noise_filter import LayoutNoiseFilterConfig
+from sciencebeam_parser.processors.graphic_regions import GraphicRegionConfig
 
 from sciencebeam_parser.processors.document_page_image import (
     DEFAULT_PDF_RENDER_DPI
@@ -59,17 +60,23 @@ class FullTextProcessorConfig(NamedTuple):
     replace_text_by_cv_graphic: bool = False
     max_graphic_distance: float = DEFAULT_MAX_GRAPHIC_DISTANCE
     noise_filter: LayoutNoiseFilterConfig = LayoutNoiseFilterConfig()
+    graphic_regions: GraphicRegionConfig = GraphicRegionConfig()
 
     @staticmethod
     def from_app_config(app_config: AppConfig) -> 'FullTextProcessorConfig':
         props = dict(app_config.get('processors', {}).get('fulltext', {}))
-        noise_filter_props = props.pop('noise_filter', None)
+        nested_props = {
+            name: props.pop(name, None)
+            for name in ('noise_filter', 'graphic_regions')
+        }
         config = FullTextProcessorConfig()._replace(**props)
-        if not noise_filter_props:
-            return config
-        return config._replace(  # pylint: disable=no-member
-            noise_filter=dataclasses.replace(config.noise_filter, **noise_filter_props)
-        )
+        for name, name_props in nested_props.items():
+            if not name_props:
+                continue
+            config = config._replace(**{  # pylint: disable=no-member
+                name: dataclasses.replace(getattr(config, name), **name_props)
+            })
+        return config
 
     def get_for_requested_field_names(
         self,

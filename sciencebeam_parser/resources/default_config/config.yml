@@ -120,6 +120,14 @@ processors:
     use_ocr_model: false
     replace_text_by_cv_graphic: false
     max_graphic_distance: 0.3
+    # Ratios are shares of the page, so they hold at any page size.
+    graphic_regions:
+      enabled: true
+      merge_gap_ratio: 0.02
+      min_area_ratio: 0.01
+      vector_cluster_gap_ratio: 0.02
+      min_vector_path_count: 8
+      min_vector_shape_path_count: 2
 models:
   segmentation:
     path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-segmentation-biorxiv-10k-auto-v0.0.23-train-1966-e133.tar.gz'

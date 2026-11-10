@@ -90,6 +90,9 @@ from sciencebeam_parser.processors.graphic_matching import (
     GraphicRelatedBlockTextGraphicMatcher,
     OpticalCharacterRecognitionGraphicMatcher
 )
+from sciencebeam_parser.processors.graphic_regions import (
+    get_layout_document_with_graphic_regions
+)
 from sciencebeam_parser.processors.graphic_provider import (
     DocumentGraphicProvider,
     SimpleDocumentGraphicProvider,
@@ -428,6 +431,10 @@ class FullTextProcessor:
         context: FullTextProcessorDocumentContext
     ):
         unmatched_graphics_container = SemanticMixedNote(note_type='unmatched_graphics')
+        layout_document = get_layout_document_with_graphic_regions(
+            layout_document,
+            config=self.config.graphic_regions
+        )
         candidate_semantic_content_list = list(
             document.iter_by_types_recursively((SemanticFigure, SemanticTable,))
         )
