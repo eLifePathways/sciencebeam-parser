@@ -945,7 +945,7 @@ class TestFullTextProcessorAffiliation:
             local_file_path=graphic_local_file_path,
             page_meta=PAGE_META_1
         )
-        _coordinates = _coordinates.move_by(dy=10)
+        _coordinates = _coordinates.move_by(dy=110)
         label_block = _get_layout_block_for_text('Figure 1', coordinates=_coordinates)
         _coordinates = _coordinates.move_by(dy=10)
         caption_block = _get_layout_block_for_text('Caption 1', coordinates=_coordinates)
@@ -1042,7 +1042,7 @@ class TestFullTextProcessorAffiliation:
             layout_graphic=graphic,
             relative_path=os.path.basename(graphic_local_file_path)
         )]
-        _coordinates = _coordinates.move_by(dy=10)
+        _coordinates = _coordinates.move_by(dy=110)
         label_block = _get_layout_block_for_text('Figure 1', coordinates=_coordinates)
         _coordinates = _coordinates.move_by(dy=10)
         caption_block = _get_layout_block_for_text('Caption 1', coordinates=_coordinates)
@@ -1204,7 +1204,7 @@ class TestFullTextProcessorAffiliation:
             layout_graphic=graphic,
             relative_path=os.path.basename(graphic_local_file_path)
         )]
-        _coordinates = _coordinates.move_by(dy=10)
+        _coordinates = _coordinates.move_by(dy=110)
         label_block = _get_layout_block_for_text('Table 1', coordinates=_coordinates)
         _coordinates = _coordinates.move_by(dy=10)
         caption_block = _get_layout_block_for_text('Caption 1', coordinates=_coordinates)

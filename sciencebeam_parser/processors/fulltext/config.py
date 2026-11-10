@@ -12,7 +12,10 @@ from sciencebeam_parser.models.header.extract import (
     DEFAULT_ABSTRACTS_MODE,
     DEFAULT_TITLES_MODE
 )
-from sciencebeam_parser.processors.graphic_matching import DEFAULT_MAX_GRAPHIC_DISTANCE
+from sciencebeam_parser.processors.graphic_matching import (
+    DEFAULT_MAX_ENCLOSED_TEXT_RATIO,
+    DEFAULT_MAX_GRAPHIC_DISTANCE
+)
 
 
 class RequestFieldNames:
@@ -59,6 +62,7 @@ class FullTextProcessorConfig(NamedTuple):
     use_ocr_model: bool = False
     replace_text_by_cv_graphic: bool = False
     max_graphic_distance: float = DEFAULT_MAX_GRAPHIC_DISTANCE
+    max_enclosed_text_ratio: float = DEFAULT_MAX_ENCLOSED_TEXT_RATIO
     noise_filter: LayoutNoiseFilterConfig = LayoutNoiseFilterConfig()
     graphic_regions: GraphicRegionConfig = GraphicRegionConfig()
 

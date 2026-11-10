@@ -120,6 +120,8 @@ processors:
     use_ocr_model: false
     replace_text_by_cv_graphic: false
     max_graphic_distance: 0.3
+    # A graphic enclosing this much of a candidate's own text is its ruling, not its image.
+    max_enclosed_text_ratio: 0.5
     # Ratios are shares of the page, so they hold at any page size.
     graphic_regions:
       enabled: true
