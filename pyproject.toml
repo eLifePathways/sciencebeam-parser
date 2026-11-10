@@ -35,9 +35,6 @@ delft = [
     # and the commit it resolves to is in uv.lock.
     "delft>=1.2.1",
 ]
-cv = [
-    "layoutparser==0.3.2",
-]
 # Tracing for the llm engine. Optional: without it, and without a collector
 # endpoint, the engine emits nothing and behaves identically.
 telemetry = [

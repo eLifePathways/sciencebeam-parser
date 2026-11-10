@@ -37,9 +37,8 @@ logging:
     uvicorn:
       level: INFO
 
-# The download directory for ScienceBeam Parser resources
-# Note: the CV model may download resources to `~/.torch/iopath_cache`,
-#    unless FVCORE_CACHE is set. (See `iopath.common.file_io.get_cache_dir`)
+# The download directory for ScienceBeam Parser resources.
+# Not the cv model, which caches under HF_HOME.
 download_dir: '~/.cache/sciencebeam-parser/downloads'
 
 # Where the llm engine replays completions from, for every llm model at once.
@@ -434,6 +433,15 @@ profiles:
         noise_filter:
           enabled: false
         abstracts_mode: 'merged_by_language'
+  grobid_crf_cv:
+    label: 'GROBID CRF 0.9.0, graphics located by the cv model'
+    description: 'The default models, with figures and tables located on the rendered page by the computer-vision model.'
+    sequence_models: grobid_crf_0_9_0
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+        use_cv_model: true
   wapiti_grobid_only:
     label: 'Wapiti reference models, GROBID data only'
     description: 'GROBID 0.9.0 with both reference models retrained as wapiti CRFs on GROBID training data alone.'
@@ -530,6 +538,15 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+  delft_all_scielo_preprints_ore_cv:
+    label: 'DeLFT retrained models, SciELO preprints and ORE, graphics located by the cv model'
+    description: 'The retrained DeLFT models, with figures and tables located on the rendered page by the computer-vision model.'
+    sequence_models: delft_all_scielo_preprints_ore
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+        use_cv_model: true
   llm_reference_segmenter:
     label: 'LLM reference segmenter'
     description: 'GROBID 0.9.0 with the references split apart by an LLM rather than a CRF. Needs an API key.'
@@ -612,9 +629,15 @@ cors:
 
 cv_models:
   default:
-    path: 'lp://efficientdet/PubLayNet'
-    engine: 'layout_parser'
-    score_threshold: 0.1
+    path: 'docling-project/docling-layout-heron'
+    engine: 'transformers'
+    score_threshold: 0.5
+    # A share of the page area, so it holds at any `cv_render_dpi`.
+    min_area_ratio: 0.01
+    # The checkpoint's own labels; an unmapped one is dropped.
+    type_name_by_label:
+      picture: 'Figure'
+      table: 'Table'
 
 ocr_models:
   default:

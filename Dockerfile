@@ -59,27 +59,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --extra delft
 
 
-# builder-cv
-FROM builder AS builder-cv
-
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --active --frozen \
-    --no-dev \
-    --extra cpu \
-    --extra delft \
-    --extra cv
-
-# Note: OCR requirements are not included in the cv builder image because of issues installing tesserocr
-# COPY requirements.ocr.txt ./
-# RUN pip install --disable-pip-version-check --no-warn-script-location \
-#     -r requirements.cpu.txt \
-#     -r requirements.cv.txt \
-#     -r requirements.torch.txt \
-#     -r requirements.ocr.txt
-
-
 # dev image
-FROM builder-cv AS dev
+FROM builder AS dev
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -92,7 +73,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --dev \
     --extra cpu \
     --extra delft \
-    --extra cv \
     --extra telemetry
 
 COPY sciencebeam_parser ./sciencebeam_parser
@@ -183,6 +163,9 @@ ENTRYPOINT ["/usr/bin/dumb-init", "--", "/opt/sciencebeam_parser/docker/entrypoi
 
 
 # runtime-cv image
+# The cv models run in the plain runtime image, so this differs from it only by
+# the tesseract system libraries the ocr matcher would need. The tags are kept
+# so that whoever pulls `:latest-cv` keeps getting a working image.
 FROM base AS runtime-cv
 
 RUN apt-get update \
@@ -191,7 +174,7 @@ RUN apt-get update \
         tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder-cv /opt/venv /opt/venv
+COPY --from=builder /opt/venv /opt/venv
 
 COPY sciencebeam_parser ./sciencebeam_parser
 COPY delft ./delft
