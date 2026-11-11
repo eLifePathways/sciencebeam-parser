@@ -7,7 +7,10 @@ from sciencebeam_parser.document.layout_noise_filter import LayoutNoiseFilterCon
 from sciencebeam_parser.processors.document_page_image import (
     DEFAULT_PDF_RENDER_DPI
 )
-from sciencebeam_parser.models.header.extract import DEFAULT_ABSTRACTS_MODE
+from sciencebeam_parser.models.header.extract import (
+    DEFAULT_ABSTRACTS_MODE,
+    DEFAULT_TITLES_MODE
+)
 from sciencebeam_parser.processors.graphic_matching import DEFAULT_MAX_GRAPHIC_DISTANCE
 
 
@@ -33,6 +36,7 @@ FRONT_FIELDS = {
 class FullTextProcessorConfig(NamedTuple):
     extract_front: bool = True
     abstracts_mode: str = DEFAULT_ABSTRACTS_MODE
+    titles_mode: str = DEFAULT_TITLES_MODE
     extract_authors: bool = True
     extract_affiliations: bool = True
     extract_body_sections: bool = True
