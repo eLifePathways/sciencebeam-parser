@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 from abc import ABC, abstractmethod
 from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, cast
 
@@ -16,9 +17,11 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticContentWrapper,
     SemanticGraphic,
     SemanticLabel,
-    SemanticMixedContentWrapper
+    SemanticMixedContentWrapper,
+    SemanticTable
 )
 from sciencebeam_parser.ocr_models.ocr_model import OpticalCharacterRecognitionModel
+from sciencebeam_parser.processors.graphic_regions import VECTOR_REGION_GRAPHIC_TYPE
 from sciencebeam_parser.processors.ref_matching import SimpleContentIdMatcher
 
 
@@ -26,6 +29,18 @@ LOGGER = logging.getLogger(__name__)
 
 
 DEFAULT_MAX_GRAPHIC_DISTANCE = 0.3
+
+DEFAULT_MAX_ENCLOSED_TEXT_RATIO = 0.5
+
+FIGURE_REFERENCE_PATTERN = re.compile(
+    r'^\s*(?:figure|fig\.?|table)\s*([0-9]+|[ivxlc]+)\s*[.:]?\s*$',
+    re.IGNORECASE
+)
+
+
+def get_referenced_label(text_line: str) -> Optional[str]:
+    match = FIGURE_REFERENCE_PATTERN.match(text_line)
+    return match.group(1) if match else None
 
 
 class GraphicMatch(NamedTuple):
@@ -160,6 +175,8 @@ class BoundingBoxRef(NamedTuple):
     key: int
     bounding_box_list: Sequence[LayoutPageCoordinates]
     semantic_content: SemanticContentWrapper
+    text_bounding_box_list: Sequence[LayoutPageCoordinates] = ()
+    has_graphic: bool = False
 
     def __repr__(self) -> str:
         return '%s(key=%r, bounding_box_list=%r, semantic_content=%s)' % (
@@ -180,7 +197,8 @@ class BoundingBoxRef(NamedTuple):
         bounding_box_list: Sequence[LayoutPageCoordinates]
     ) -> 'BoundingBoxRef':
         return self._replace(  # pylint: disable=no-member
-            bounding_box_list=list(self.bounding_box_list) + list(bounding_box_list)
+            bounding_box_list=list(self.bounding_box_list) + list(bounding_box_list),
+            has_graphic=True
         )
 
 
@@ -210,6 +228,43 @@ def get_graphic_match_for_distance_between(
             distance_between.bounding_box_ref_2.semantic_content
         )
     )
+
+
+def get_intersection_area(
+    coordinates_1: LayoutPageCoordinates,
+    coordinates_2: LayoutPageCoordinates
+) -> float:
+    if coordinates_1.page_number != coordinates_2.page_number:
+        return 0.0
+    width = (
+        min(coordinates_1.x + coordinates_1.width, coordinates_2.x + coordinates_2.width)
+        - max(coordinates_1.x, coordinates_2.x)
+    )
+    height = (
+        min(coordinates_1.y + coordinates_1.height, coordinates_2.y + coordinates_2.height)
+        - max(coordinates_1.y, coordinates_2.y)
+    )
+    if width <= 0 or height <= 0:
+        return 0.0
+    return width * height
+
+
+def get_enclosed_text_ratio(
+    graphic_bounding_box_list: Sequence[LayoutPageCoordinates],
+    text_bounding_box_list: Sequence[LayoutPageCoordinates]
+) -> float:
+    text_area = sum(
+        coordinates.width * coordinates.height
+        for coordinates in text_bounding_box_list
+    )
+    if not text_area:
+        return 0.0
+    enclosed_area = sum(
+        get_intersection_area(text_coordinates, graphic_coordinates)
+        for text_coordinates in text_bounding_box_list
+        for graphic_coordinates in graphic_bounding_box_list
+    )
+    return min(1.0, enclosed_area / text_area)
 
 
 def get_normalized_bounding_box_for_page_coordinates_and_page_meta(
@@ -285,17 +340,33 @@ def get_sorted_graphic_matches(graphic_matches: Sequence[GraphicMatch]) -> Seque
     return sorted(graphic_matches, key=get_graphic_match_sort_key)
 
 
+def _get_candidate_bounding_box_ref(
+    candidate_semantic_content: SemanticContentWrapper
+) -> BoundingBoxRef:
+    bounding_box_list = get_normalized_bounding_box_list_for_layout_block(
+        candidate_semantic_content.merged_block
+    )
+    return BoundingBoxRef(
+        id(candidate_semantic_content),
+        bounding_box_list=bounding_box_list,
+        semantic_content=candidate_semantic_content,
+        text_bounding_box_list=bounding_box_list
+    )
+
+
 class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
     graphic_bounding_box_ref_list: Sequence[BoundingBoxRef]
     candidate_bounding_box_ref_list: Sequence[BoundingBoxRef]
     max_distance: float
+    max_enclosed_text_ratio: float = DEFAULT_MAX_ENCLOSED_TEXT_RATIO
 
     @staticmethod
     def create(
         semantic_graphic_list: Sequence[SemanticGraphic],
         candidate_semantic_content_list: Sequence[SemanticContentWrapper],
         ignored_graphic_types: Set[str],
-        max_distance: float
+        max_distance: float,
+        max_enclosed_text_ratio: float = DEFAULT_MAX_ENCLOSED_TEXT_RATIO
     ) -> '_BoundingBoxDistanceGraphicMatcherInstance':
         graphic_bounding_box_ref_list = [
             BoundingBoxRef(
@@ -314,25 +385,47 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
         ]
         LOGGER.debug('graphic_bounding_box_ref_list: %r', graphic_bounding_box_ref_list)
         candidate_bounding_box_ref_list = [
-            BoundingBoxRef(
-                id(candidate_semantic_content),
-                bounding_box_list=get_normalized_bounding_box_list_for_layout_block(
-                    candidate_semantic_content
-                    .merged_block
-                ),
-                semantic_content=candidate_semantic_content
-            )
+            _get_candidate_bounding_box_ref(candidate_semantic_content)
             for candidate_semantic_content in candidate_semantic_content_list
         ]
         LOGGER.debug('candidate_bounding_box_ref_list: %r', candidate_bounding_box_ref_list)
         return _BoundingBoxDistanceGraphicMatcherInstance(
             graphic_bounding_box_ref_list=graphic_bounding_box_ref_list,
             candidate_bounding_box_ref_list=candidate_bounding_box_ref_list,
-            max_distance=max_distance
+            max_distance=max_distance,
+            max_enclosed_text_ratio=max_enclosed_text_ratio
         )
 
     def is_accept_distance(self, distance_between: BoundingBoxDistanceBetween) -> bool:
         return distance_between.bounding_box_distance.euclidean_distance < self.max_distance
+
+    def is_enclosing_candidate_text(
+        self,
+        distance_between: BoundingBoxDistanceBetween
+    ) -> bool:
+        if not isinstance(
+            distance_between.bounding_box_ref_2.semantic_content, SemanticTable
+        ):
+            return False
+        semantic_graphic = distance_between.bounding_box_ref_1.semantic_content
+        layout_graphic = (
+            semantic_graphic.layout_graphic
+            if isinstance(semantic_graphic, SemanticGraphic)
+            else None
+        )
+        if not layout_graphic or layout_graphic.graphic_type != VECTOR_REGION_GRAPHIC_TYPE:
+            return False
+        enclosed_text_ratio = get_enclosed_text_ratio(
+            distance_between.bounding_box_ref_1.bounding_box_list,
+            distance_between.bounding_box_ref_2.text_bounding_box_list
+        )
+        if enclosed_text_ratio < self.max_enclosed_text_ratio:
+            return False
+        LOGGER.debug(
+            'graphic encloses %.2f of the candidate text: %r',
+            enclosed_text_ratio, distance_between
+        )
+        return True
 
     def with_graphic_bounding_box_ref_list(
         self,
@@ -368,19 +461,49 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
             key=BoundingBoxDistanceBetween.get_sort_key
         )
 
+    def iter_accepted_distances_between_for_graphic_bounding_box_ref(
+        self,
+        graphic_bounding_box_ref: BoundingBoxRef
+    ) -> Sequence[BoundingBoxDistanceBetween]:
+        return [
+            distance_between
+            for distance_between in (
+                self.get_sorted_distances_between_for_graphic_bounding_box_ref(
+                    graphic_bounding_box_ref
+                )
+            )
+            if not self.is_enclosing_candidate_text(distance_between)
+        ]
+
+    def get_best_distance_between(
+        self,
+        sorted_distances_between: Sequence[BoundingBoxDistanceBetween]
+    ) -> Optional[BoundingBoxDistanceBetween]:
+        accepted = [
+            distance_between
+            for distance_between in sorted_distances_between
+            if self.is_accept_distance(distance_between)
+        ]
+        if not accepted:
+            return None
+        for distance_between in accepted:
+            if not distance_between.bounding_box_ref_2.has_graphic:
+                return distance_between
+        return accepted[0]
+
     def get_best_distance_between_batch(self) -> Sequence[BoundingBoxDistanceBetween]:
         best_distance_between_by_candidate_key: Dict[int, BoundingBoxDistanceBetween] = {}
         for graphic_bounding_box_ref in self.graphic_bounding_box_ref_list:
             sorted_distances_between = (
-                self.get_sorted_distances_between_for_graphic_bounding_box_ref(
+                self.iter_accepted_distances_between_for_graphic_bounding_box_ref(
                     graphic_bounding_box_ref
                 )
             )
             if not sorted_distances_between:
                 continue
-            best_distance_between = sorted_distances_between[0]
-            if not self.is_accept_distance(best_distance_between):
-                LOGGER.debug('not accepting distance: %r', best_distance_between)
+            best_distance_between = self.get_best_distance_between(sorted_distances_between)
+            if best_distance_between is None:
+                LOGGER.debug('no accepted distance for: %r', graphic_bounding_box_ref)
                 continue
             LOGGER.debug('sorted_distances_between: %r', sorted_distances_between)
             candidate_key = best_distance_between.bounding_box_ref_2.key
@@ -410,9 +533,17 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
         self,
         best_distance_between_batch: Iterable[BoundingBoxDistanceBetween]
     ) -> Iterable[BoundingBoxRef]:
-        for best_distance_between in best_distance_between_batch:
-            yield best_distance_between.bounding_box_ref_2.with_extended_bounding_box_list(
-                best_distance_between.bounding_box_ref_1.bounding_box_list
+        extended_by_candidate_key = {
+            best_distance_between.bounding_box_ref_2.key: (
+                best_distance_between.bounding_box_ref_2.with_extended_bounding_box_list(
+                    best_distance_between.bounding_box_ref_1.bounding_box_list
+                )
+            )
+            for best_distance_between in best_distance_between_batch
+        }
+        for candidate_bounding_box_ref in self.candidate_bounding_box_ref_list:
+            yield extended_by_candidate_key.get(
+                candidate_bounding_box_ref.key, candidate_bounding_box_ref
             )
 
     def iter_graphic_matches(self) -> Iterable[GraphicMatch]:
@@ -460,12 +591,17 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
 
 
 class BoundingBoxDistanceGraphicMatcher(GraphicMatcher):
-    def __init__(self, max_distance: float = DEFAULT_MAX_GRAPHIC_DISTANCE):
+    def __init__(
+        self,
+        max_distance: float = DEFAULT_MAX_GRAPHIC_DISTANCE,
+        max_enclosed_text_ratio: float = DEFAULT_MAX_ENCLOSED_TEXT_RATIO
+    ):
         super().__init__()
         # we ignore svgs for now because they currently represent the whole page
         # rather than individual images
         self.ignored_graphic_types = {'svg'}
         self.max_distance = max_distance
+        self.max_enclosed_text_ratio = max_enclosed_text_ratio
 
     def get_graphic_matches(
         self,
@@ -476,7 +612,8 @@ class BoundingBoxDistanceGraphicMatcher(GraphicMatcher):
             semantic_graphic_list=semantic_graphic_list,
             candidate_semantic_content_list=candidate_semantic_content_list,
             ignored_graphic_types=self.ignored_graphic_types,
-            max_distance=self.max_distance
+            max_distance=self.max_distance,
+            max_enclosed_text_ratio=self.max_enclosed_text_ratio
         )
         graphic_matches = list(matcher.iter_graphic_matches())
         all_matched_graphic_keys = {
@@ -552,14 +689,27 @@ class AbstractGraphicTextGraphicMatcher(GraphicMatcher):
 
 
 class GraphicRelatedBlockTextGraphicMatcher(AbstractGraphicTextGraphicMatcher):
+    """Matches on a label the graphic itself names, such as a figure page's own heading.
+
+    Only a line naming a label counts: a page's remaining text is axis ticks and
+    legend entries, which match a label of their own by accident.
+    """
+
     def get_text_for_semantic_graphic(self, semantic_graphic: SemanticGraphic) -> str:
         assert semantic_graphic.layout_graphic
-        if semantic_graphic.layout_graphic.related_block:
-            return '\n'.join([
-                line.text.strip()
-                for line in semantic_graphic.layout_graphic.related_block.lines
-            ])
-        return ''
+        related_block = semantic_graphic.layout_graphic.related_block
+        if not related_block:
+            return ''
+        text_lines: List[str] = []
+        for line in related_block.lines:
+            for text_line in line.text.splitlines():
+                text_line = text_line.strip()
+                referenced_label = get_referenced_label(text_line)
+                if not referenced_label:
+                    continue
+                text_lines.append(text_line)
+                text_lines.append(referenced_label)
+        return '\n'.join(text_lines)
 
 
 DEFAULT_OCR_MAX_RESOLUTION = 1024

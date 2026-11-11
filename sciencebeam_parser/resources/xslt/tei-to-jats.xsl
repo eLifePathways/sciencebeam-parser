@@ -235,6 +235,7 @@
           </tr>
         </tbody>
       </table>
+      <xsl:apply-templates select="tei:graphic"/>
     </table-wrap>
   </xsl:template>
 
