@@ -1,15 +1,19 @@
 """Attaching the affiliations of a document's front to its authors, as GROBID does.
 
-A port of GROBID 0.9.1's AuthorAffiliationAssigner and of the order its HeaderParser
-calls it in. With no marker anywhere, an affiliation is first linked to the authors of
-the author blocks right before its block in the header (pre-link). Then, in priority
-order: a lone affiliation goes to every author and a lone author takes every
-affiliation; an affiliation goes to the authors carrying its marker; an affiliation's
-marker is looked for in the text of the author blocks and the affiliation goes to the
-author whose surname ends nearest each occurrence; an author still without one takes
-the nearest unattached affiliation on the page; failing coordinates, the remaining
-affiliations are dealt out in sequence; and an affiliation still attached to nothing
-is rescued onto the nearest author, unless that author already has one saying the same.
+A port of GROBID 0.9.1's AuthorAffiliationAssigner, with the markers first. In
+priority order: an affiliation goes to the authors carrying its marker; an
+affiliation's marker is looked for in the text of the author blocks and the
+affiliation goes to the author whose surname ends nearest each occurrence; with no
+marker anywhere, an affiliation goes to the authors of the author blocks right before
+its block in the header (pre-link); a lone affiliation goes to every author and a lone
+author takes every affiliation; an author still without one takes the nearest
+unattached affiliation on the page; failing coordinates, the remaining affiliations
+are dealt out in sequence; and an affiliation still attached to nothing is rescued
+onto the nearest author, unless that author already has one saying the same.
+
+GROBID's HeaderParser runs the pre-link before the rest. Running it after the markers
+links the same: the pre-link does nothing where there is any marker, and the marker
+steps do nothing where there is none.
 
 An affiliation is attached to an author once at most (GROBID's Person.addAffiliation).
 """
@@ -444,11 +448,16 @@ def rescue_orphan_affiliations(
 def assign(
     authors: Sequence[SemanticAuthor],
     affiliations: Sequence[SemanticAffiliationAddress],
-    original_authors_text: str
+    original_authors_text: str,
+    header_clusters: Sequence[HeaderCluster] = ()
 ) -> None:
-    """GROBID's AuthorAffiliationAssigner.assign."""
+    """GROBID's AuthorAffiliationAssigner.assign, with the markers first and the
+    pre-link by the header's clusters right after them."""
     if not authors or not affiliations:
         return
+    assign_by_direct_markers(authors, affiliations)
+    assign_by_markers(authors, affiliations, original_authors_text)
+    pre_link_by_preceding_author_cluster(authors, affiliations, header_clusters)
     if len(affiliations) == 1:
         for author in authors:
             add_affiliation(author, affiliations[0])
@@ -457,8 +466,6 @@ def assign(
         for affiliation in affiliations:
             add_affiliation(authors[0], affiliation)
         return
-    assign_by_direct_markers(authors, affiliations)
-    assign_by_markers(authors, affiliations, original_authors_text)
     assign_by_proximity(authors, affiliations)
     assign_by_sequence(authors, affiliations)
     rescue_orphan_affiliations(authors, affiliations)
@@ -622,8 +629,6 @@ def attach_affiliations_for_front(
     original_authors_text: str,
     header_clusters: Sequence[HeaderCluster] = ()
 ) -> None:
-    """GROBID's HeaderParser: the pre-link by the header's clusters, then the
-    assignment. The authors are expected deduplicated, as GROBID deduplicates them
-    before this."""
-    pre_link_by_preceding_author_cluster(authors, affiliations, header_clusters)
-    assign(authors, affiliations, original_authors_text)
+    """The assignment, markers first, with the pre-link by the header's clusters. The
+    authors are expected deduplicated, as GROBID deduplicates them before this."""
+    assign(authors, affiliations, original_authors_text, header_clusters)

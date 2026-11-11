@@ -382,7 +382,21 @@ class TestPreLinkByPrecedingAuthorCluster:
 
 
 class TestAttachAffiliationsForFront:
-    def test_should_pre_link_then_assign(self):
+    def test_should_attach_by_markers_before_the_pre_link(self):
+        # with markers the pre-link stands aside, even where the header's blocks
+        # would pair the affiliations the other way round
+        authors = [_author('Smith', 'John', markers='2'), _author('Madison', 'Maria', markers='1')]
+        aff_1 = _affiliation('Inst1', '1')
+        aff_2 = _affiliation('Inst2', '2')
+        attach_affiliations_for_front(authors, [aff_1, aff_2], 'John Smith 2\tMaria Madison 1', [
+            ('<author>', LayoutBlock.for_text('John Smith')),
+            ('<affiliation>', aff_1.merged_block),
+            ('<author>', LayoutBlock.for_text('Maria Madison')),
+            ('<affiliation>', aff_2.merged_block)
+        ])
+        assert _attached(authors) == [['Inst2'], ['Inst1']]
+
+    def test_should_pre_link_without_markers(self):
         authors = [_author('Smith', 'John'), _author('Madison', 'Maria')]
         aff_1 = _affiliation('Inst1')
         aff_2 = _affiliation('Inst2')

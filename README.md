@@ -96,12 +96,12 @@ marker closes the author it follows, and a second title, forename or surname sta
 An author the header names more than once, by surname and forename initial, is merged into their
 first mention as GROBID's `Person.deduplicate` merges them, keeping the fullest form of the name
 and every marker; two mentions whose forenames clash ("James" and "John") are left apart.
-Affiliations are attached to authors as GROBID's `AuthorAffiliationAssigner` attaches them. With
-no marker anywhere, an affiliation block first goes to the authors named in the author blocks
-right before it in the header. Then, in order: a lone affiliation goes to every author and a lone
-author takes every affiliation; an affiliation goes to the authors carrying its marker; its
-marker is looked for in the text of the author blocks and the affiliation goes to the author
-whose surname ends nearest; an author still without one takes the nearest unattached
+Affiliations are attached to authors as GROBID's `AuthorAffiliationAssigner` attaches them, with
+the markers first. In order: an affiliation goes to the authors carrying its marker; its marker
+is looked for in the text of the author blocks and the affiliation goes to the author whose
+surname ends nearest; with no marker anywhere, an affiliation block goes to the authors named in
+the author blocks right before it in the header; a lone affiliation goes to every author and a
+lone author takes every affiliation; an author still without one takes the nearest unattached
 affiliation on the page; failing positions, the remaining affiliations are dealt out in
 sequence; and an affiliation still attached to nothing goes to the nearest author, unless that
 author already has one saying the same. The TEI writes an affiliation out under each author it
