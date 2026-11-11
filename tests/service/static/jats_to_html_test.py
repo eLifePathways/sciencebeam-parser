@@ -319,6 +319,20 @@ class TestFiguresAndTables:
             {'label': 'graphic', 'href': 'image1.png'}
         ]
 
+    def test_should_read_a_table_with_its_graphic(self):
+        view_model = get_article_view_model(get_article_xml(
+            body=(
+                '<sec><table-wrap id="tab_0"><label>Table 1</label>'
+                '<caption><title>Table 1</title></caption>'
+                '<graphic xlink:href="table1.png"/></table-wrap></sec>'
+            )
+        ))
+        table = view_model['sections'][0]['blocks'][0]
+        assert table['type'] == 'table'
+        assert without_paths(table['graphics']) == [
+            {'label': 'graphic', 'href': 'table1.png'}
+        ]
+
     def test_should_read_a_table_row_by_row(self):
         view_model = get_article_view_model(get_article_xml(
             body=(
@@ -566,6 +580,18 @@ class TestFigureGraphic:
         assert 'alt="image1.png"' in html
         assert 'class="jats-graphic-image"' in html
 
+    def test_should_show_the_image_a_table_carries(self):
+        html = get_rendered_article(
+            get_article_xml(body=(
+                '<sec><table-wrap id="tab_0"><label>Table 1</label>'
+                '<graphic xlink:href="table1.png"/></table-wrap></sec>'
+            )),
+            assets={'table1.png': 'blob:a-table'}
+        )
+        assert '<img' in html
+        assert 'src="blob:a-table"' in html
+        assert 'alt="table1.png"' in html
+
     def test_should_name_the_file_where_the_image_is_not_beside_the_xml(self):
         html = get_rendered_article(FIGURE_ARTICLE_XML)
         assert '<img' not in html
@@ -623,6 +649,15 @@ class TestFigureGraphic:
         assert view_model['graphicHrefs'] == [
             'image1.png', 'image2.png', 'image3.png', 'image4.png'
         ]
+
+    def test_should_name_the_graphic_a_table_asks_for(self):
+        view_model = get_article_view_model(get_article_xml(
+            body=(
+                '<sec><table-wrap id="tab_0"><label>Table 1</label>'
+                '<graphic xlink:href="table1.png"/></table-wrap></sec>'
+            )
+        ))
+        assert view_model['graphicHrefs'] == ['table1.png']
 
     def test_should_name_no_graphic_where_the_figures_name_no_file(self):
         view_model = get_article_view_model(get_article_xml(

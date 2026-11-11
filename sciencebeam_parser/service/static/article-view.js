@@ -403,7 +403,7 @@ function getFigureName(figure) {
 
 function addGraphicReferences(references, blocks) {
   blocks.forEach((block) => {
-    if (block.type === 'figure') {
+    if (block.type === 'figure' || block.type === 'table') {
       (block.graphics || []).forEach((graphic) => {
         if (graphic.href) {
           references.push({ href: graphic.href, figure: getFigureName(block) });
