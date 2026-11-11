@@ -42,6 +42,8 @@ class GraphicRegionConfig:
     min_vector_path_count: int = 8
     min_vector_shape_path_count: int = 2
     max_vector_path_count: int = 10000
+    min_vector_content_size: float = 10.0
+    max_text_ratio_without_content: float = 0.2
     render_dpi: float = 150.0
     min_text_over_graphic_ratio: float = 0.5
     uncommon_page_as_one_region: bool = True
@@ -214,10 +216,36 @@ def _is_shape_box(box: _Box, minimum: float = 1.0) -> bool:
     return box.width >= minimum and box.height >= minimum
 
 
+def _is_text_box_rather_than_drawing(
+    region_box: _Box,
+    cluster_boxes: Sequence[_Box],
+    text_boxes: Sequence[_Box],
+    config: GraphicRegionConfig
+) -> bool:
+    content_boxes = [
+        box for box in cluster_boxes
+        if box.area < 0.8 * region_box.area
+    ]
+    has_drawn_content = any(
+        box.width >= config.min_vector_content_size
+        and box.height >= config.min_vector_content_size
+        for box in content_boxes
+    )
+    if has_drawn_content:
+        return False
+    covered_area = 0.0
+    for text_box in text_boxes:
+        intersection = region_box.intersection(text_box)
+        if intersection.width > 0 and intersection.height > 0:
+            covered_area += intersection.area
+    return covered_area / region_box.area >= config.max_text_ratio_without_content
+
+
 def iter_vector_region_graphics(
     layout_graphic: LayoutGraphic,
     page_coordinates: Optional[LayoutPageCoordinates],
-    config: GraphicRegionConfig
+    config: GraphicRegionConfig,
+    text_boxes: Sequence[_Box] = ()
 ) -> List[LayoutGraphic]:
     local_file_path = layout_graphic.local_file_path
     if not local_file_path or not os.path.exists(local_file_path):
@@ -252,6 +280,9 @@ def iter_vector_region_graphics(
         region_box = cluster_boxes[0]
         for box in cluster_boxes[1:]:
             region_box = region_box.union(box)
+        if _is_text_box_rather_than_drawing(region_box, cluster_boxes, text_boxes, config):
+            LOGGER.debug('skipping a framed text box: %r', region_box)
+            continue
         region_graphics.append(LayoutGraphic(
             coordinates=_get_coordinates_for_box(region_box, page_number=page_number),
             graphic_type=VECTOR_REGION_GRAPHIC_TYPE,
@@ -476,6 +507,7 @@ def get_layout_page_with_graphic_regions(
 ) -> LayoutPage:
     page_coordinates = layout_page.meta.coordinates if layout_page.meta else None
     page_box = _get_box_for_coordinates(page_coordinates) if page_coordinates else None
+    text_boxes = _iter_text_boxes(layout_page)
     expanded: List[LayoutGraphic] = []
     unchanged: List[LayoutGraphic] = []
     for layout_graphic in layout_page.graphics:
@@ -486,7 +518,8 @@ def get_layout_page_with_graphic_regions(
                 unchanged.append(layout_graphic)
             else:
                 expanded.extend(iter_vector_region_graphics(
-                    layout_graphic, page_coordinates=page_coordinates, config=config
+                    layout_graphic, page_coordinates=page_coordinates, config=config,
+                    text_boxes=text_boxes
                 ))
             continue
         expanded.append(layout_graphic)
@@ -508,7 +541,6 @@ def get_layout_page_with_graphic_regions(
         if _is_large_enough(layout_graphic, page_coordinates, config)
     ]
     if require_file and renderer is not None and temp_dir:
-        text_boxes = _iter_text_boxes(layout_page)
         graphics = [
             rendered_graphic
             for rendered_graphic in (

@@ -131,6 +131,8 @@ processors:
       min_vector_path_count: 8
       min_vector_shape_path_count: 2
       max_vector_path_count: 10000
+      min_vector_content_size: 10
+      max_text_ratio_without_content: 0.2
       # An asset is rendered from the page where text is drawn over the region.
       render_dpi: 150
       min_text_over_graphic_ratio: 0.5
