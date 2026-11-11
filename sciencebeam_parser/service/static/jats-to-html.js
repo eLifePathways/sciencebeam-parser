@@ -73,16 +73,20 @@ function getCaption(node) {
   };
 }
 
+function getGraphics(node) {
+  return getChildElements(node, 'graphic').map((graphic) => ({
+    label: graphic.name,
+    path: graphic.path,
+    href: getAttribute(graphic, 'xlink:href')
+  }));
+}
+
 function getFigure(node) {
   return {
     type: 'figure',
     id: getAttribute(node, 'id'),
     ...getCaption(node),
-    graphics: getChildElements(node, 'graphic').map((graphic) => ({
-      label: graphic.name,
-      path: graphic.path,
-      href: getAttribute(graphic, 'xlink:href')
-    }))
+    graphics: getGraphics(node)
   };
 }
 
@@ -93,6 +97,7 @@ function getTable(node) {
     type: 'table',
     id: getAttribute(node, 'id'),
     ...getCaption(node),
+    graphics: getGraphics(node),
     rows: (body ? getChildElements(body, 'tr') : []).map(
       (row) => getChildElements(row, 'td').map(getParagraph)
     )

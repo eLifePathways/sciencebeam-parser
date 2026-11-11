@@ -115,9 +115,10 @@ function appendFigure(parent, block, options) {
   block.graphics.forEach((graphic) => appendGraphic(figure, graphic, options));
 }
 
-function appendTable(parent, block) {
+function appendTable(parent, block, options) {
   const figure = appendElement(parent, 'figure', 'jats-table', block);
   appendCaption(figure, block);
+  (block.graphics || []).forEach((graphic) => appendGraphic(figure, graphic, options));
   if (!block.rows.length) {
     return;
   }
@@ -138,7 +139,7 @@ function appendBlocks(parent, blocks, level, options) {
     } else if (block.type === 'figure') {
       appendFigure(parent, block, options);
     } else if (block.type === 'table') {
-      appendTable(parent, block);
+      appendTable(parent, block, options);
     } else if (block.type === 'section') {
       appendSection(parent, block, level, options);
     }
@@ -403,7 +404,7 @@ function getFigureName(figure) {
 function addGraphicReferences(references, blocks) {
   blocks.forEach((block) => {
     if (block.type === 'figure') {
-      block.graphics.forEach((graphic) => {
+      (block.graphics || []).forEach((graphic) => {
         if (graphic.href) {
           references.push({ href: graphic.href, figure: getFigureName(block) });
         }
