@@ -1,7 +1,9 @@
 import logging
 import re
 from collections import OrderedDict
-from typing import AbstractSet, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    AbstractSet, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
+)
 
 from sciencebeam_parser.document.semantic_document import (
     SemanticContentWrapper,
@@ -93,6 +95,32 @@ def get_semantic_abstract_for_layout_block(
     )
 
 
+TITLE_SAME_TEXT_PATTERN = re.compile(r'[^0-9a-z\u00c0-\u024f]+')
+
+
+def _title_key(semantic_title: SemanticTitle) -> str:
+    return TITLE_SAME_TEXT_PATTERN.sub('', semantic_title.get_text().lower())
+
+
+def iter_titles_printed_once(
+    semantic_titles: Sequence[SemanticTitle]
+) -> Iterator[SemanticTitle]:
+    """Each title a page prints, in the order it prints them, once.
+
+    A page sets its title again under a heading or at the head of a second page, and
+    every printing is labelled, so the same title arrives more than once.  The letters
+    and digits are what say two printings are one title: the repeat is set in capitals
+    where the first is not, or punctuated differently.
+    """
+    seen: Set[str] = set()
+    for semantic_title in semantic_titles:
+        key = _title_key(semantic_title)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield semantic_title
+
+
 def merge_abstracts_by_language(
     semantic_abstracts: Sequence[SemanticAbstract]
 ) -> List[SemanticAbstract]:
@@ -178,22 +206,21 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         LOGGER.debug('entity_tokens: %s', entity_tokens)
         carry_variants = abstracts_mode != AbstractsMode.FIRST
         merge_by_language = abstracts_mode == AbstractsMode.MERGED_BY_LANGUAGE
-        has_title: bool = False
         primary_abstract_block: Optional[LayoutBlock] = None
+        semantic_titles: List[SemanticTitle] = []
         semantic_abstracts: List[SemanticAbstract] = []
         aff_address: Optional[SemanticRawAffiliationAddress] = None
         next_previous_label: str = ''
         for name, layout_block in entity_tokens:
             previous_label = next_previous_label
             next_previous_label = name
-            if name == '<title>' and not has_title:
+            if name == '<title>':
                 clean_block, trailing = _split_trailing_title_punct(layout_block)
-                yield SemanticTitle(
+                semantic_titles.append(SemanticTitle(
                     layout_block=clean_block,
                     trailing_text=trailing,
                     language=detect_title_language(str(LayoutTokensText(clean_block)))
-                )
-                has_title = True
+                ))
                 continue
             if name == '<abstract>':
                 abstract_layout_block = get_cleaned_abstract_layout_block(
@@ -236,4 +263,5 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
             )
         if aff_address is not None:
             yield aff_address
+        yield from iter_titles_printed_once(semantic_titles)
         yield from merge_abstracts_by_language(semantic_abstracts)

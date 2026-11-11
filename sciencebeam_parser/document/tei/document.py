@@ -87,7 +87,7 @@ class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
     def get_title(self) -> str:
         return '\n'.join(get_tei_xpath_text_content_list(
             self.root,
-            '//tei:fileDesc/tei:titleStmt/tei:title[@level="a"][@type="main"]',
+            '(//tei:fileDesc/tei:titleStmt/tei:title[@level="a"][@type="main"])[1]',
         ))
 
     def set_title(self, title: str):

@@ -157,8 +157,7 @@ class TestHeaderSemanticExtractor:
         assert front.get_text_by_type(SemanticTitle) == TITLE_1
         assert semantic_title.trailing_text == '.'
 
-    def test_should_ignore_additional_title(self):
-        # Note: this behaviour should be reviewed
+    def test_should_keep_every_title_the_page_prints(self):
         semantic_content_list = list(
             HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<title>', LayoutBlock.for_text(TITLE_1)),
@@ -167,7 +166,33 @@ class TestHeaderSemanticExtractor:
         )
         front = SemanticFront(semantic_content_list)
         LOGGER.debug('front: %s', front)
-        assert front.get_text_by_type(SemanticTitle) == TITLE_1
+        assert [
+            title.get_text() for title in front.iter_by_type(SemanticTitle)
+        ] == [TITLE_1, 'other']
+
+    def test_should_keep_a_title_the_page_prints_again_only_once(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<title>', LayoutBlock.for_text(TITLE_1)),
+                ('<title>', LayoutBlock.for_text(TITLE_1.upper() + ' .'))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        assert [
+            title.get_text() for title in front.iter_by_type(SemanticTitle)
+        ] == [TITLE_1]
+
+    def test_should_keep_two_titles_that_say_different_things(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<title>', LayoutBlock.for_text(TITLE_1)),
+                ('<title>', LayoutBlock.for_text('other'))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        assert [
+            title.get_text() for title in front.iter_by_type(SemanticTitle)
+        ] == [TITLE_1, 'other']
 
     def _abstracts(self, texts, abstracts_mode=None):
         kwargs = {} if abstracts_mode is None else {'abstracts_mode': abstracts_mode}

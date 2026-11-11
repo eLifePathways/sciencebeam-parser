@@ -85,12 +85,24 @@ TITLE_STMT = (
 class TestTitle:
     def test_should_read_the_article_title_and_the_element_it_came_from(self):
         view_model = get_tei_view_model(get_tei_xml(header=TITLE_STMT))
-        assert without_paths(view_model['title']) == {
+        assert without_paths(view_model['titles']) == [{
             'label': 'title', 'text': 'The title'
-        }
+        }]
 
     def test_should_carry_no_title_where_the_document_states_none(self):
-        assert get_tei_view_model(get_tei_xml())['title'] is None
+        assert get_tei_view_model(get_tei_xml())['titles'] == []
+
+    def test_should_read_every_title_with_the_language_it_declares(self):
+        view_model = get_tei_view_model(get_tei_xml(header=(
+            '<fileDesc><titleStmt>'
+            '<title level="a" type="main" xml:lang="en">The title</title>'
+            '<title level="a" type="main" xml:lang="de">Der Titel</title>'
+            '</titleStmt></fileDesc>'
+        )))
+        assert without_paths(view_model['titles']) == [
+            {'label': 'title', 'text': 'The title', 'language': 'en'},
+            {'label': 'title', 'text': 'Der Titel', 'language': 'de'}
+        ]
 
 
 AUTHORS_HEADER = (
@@ -359,7 +371,7 @@ FULL_TEI_XML = get_tei_xml(
 class TestElementPaths:
     def test_should_say_where_in_the_document_a_value_was_found(self):
         view_model = get_tei_view_model(FULL_TEI_XML)
-        assert view_model['title']['path'] == (
+        assert view_model['titles'][0]['path'] == (
             '/TEI/teiHeader/fileDesc[1]/titleStmt/title'
         )
 
@@ -387,6 +399,19 @@ class TestRenderedTei:
             'biblStruct'
         ]:
             assert f'data-jats="{label}"' in html
+
+    def test_should_show_every_title_with_the_language_it_declares(self):
+        html = get_rendered_tei(get_tei_xml(header=(
+            '<fileDesc><titleStmt>'
+            '<title level="a" type="main" xml:lang="en">The title</title>'
+            '<title level="a" type="main" xml:lang="de">Der Titel</title>'
+            '</titleStmt></fileDesc>'
+        )))
+        assert 'lang="en"' in html
+        assert 'lang="de"' in html
+        text_only = get_text_without_labels(html)
+        assert 'The title' in text_only
+        assert 'Der Titel' in text_only
 
     def test_should_read_as_the_article_without_the_names_shown(self):
         text_only = get_text_without_labels(get_rendered_tei(FULL_TEI_XML))

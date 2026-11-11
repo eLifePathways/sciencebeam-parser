@@ -13,6 +13,8 @@ VIEW_MODEL_HARNESS_FILE = Path(__file__).parent / 'get_article_view_model.mjs'
 RENDER_HARNESS_FILE = Path(__file__).parent / 'render_article.mjs'
 
 XLINK_NS = 'http://www.w3.org/1999/xlink'
+XML_NS = 'http://www.w3.org/XML/1998/namespace'
+PREFIX_BY_NAMESPACE = {XLINK_NS: 'xlink', XML_NS: 'xml'}
 
 
 pytestmark = pytest.mark.skipif(
@@ -25,7 +27,8 @@ def get_attribute_name(name: str) -> str:
     if not name.startswith('{'):
         return name
     namespace, local_name = name[1:].split('}', maxsplit=1)
-    return f'xlink:{local_name}' if namespace == XLINK_NS else local_name
+    prefix = PREFIX_BY_NAMESPACE.get(namespace)
+    return f'{prefix}:{local_name}' if prefix else local_name
 
 
 def get_xml_node(element: etree.ElementBase) -> Dict[str, Any]:
@@ -149,12 +152,28 @@ class TestTitle:
         view_model = get_article_view_model(get_article_xml(
             front='<title-group><article-title>The title</article-title></title-group>'
         ))
-        assert without_paths(view_model['title']) == {
+        assert without_paths(view_model['titles']) == [{
             'label': 'article-title', 'text': 'The title'
-        }
+        }]
 
     def test_should_carry_no_title_where_the_document_states_none(self):
-        assert get_article_view_model(get_article_xml())['title'] is None
+        assert get_article_view_model(get_article_xml())['titles'] == []
+
+    def test_should_read_a_translated_title_with_the_language_it_declares(self):
+        view_model = get_article_view_model(get_article_xml(
+            front=(
+                '<title-group>'
+                '<article-title xml:lang="en">The title</article-title>'
+                '<trans-title-group xml:lang="de">'
+                '<trans-title>Der Titel</trans-title>'
+                '</trans-title-group>'
+                '</title-group>'
+            )
+        ))
+        assert without_paths(view_model['titles']) == [
+            {'label': 'article-title', 'text': 'The title', 'language': 'en'},
+            {'label': 'trans-title', 'text': 'Der Titel', 'language': 'de'}
+        ]
 
 
 class TestAuthors:
@@ -471,10 +490,27 @@ class TestRenderedArticle:
     def test_should_name_the_element_beside_the_value_it_labels(self):
         html = get_rendered_article(FULL_ARTICLE_XML)
         assert re.search(
-            r'<h1 data-jats="article-title">'
+            r'<h1 data-jats="article-title" class="jats-title">'
             r'<span[^>]*class="jats-tag"[^>]*>article-title</span>The title</h1>',
             html
         )
+
+    def test_should_show_every_title_with_the_language_it_declares(self):
+        html = get_rendered_article(get_article_xml(
+            front=(
+                '<title-group>'
+                '<article-title xml:lang="en">The title</article-title>'
+                '<trans-title-group xml:lang="de">'
+                '<trans-title>Der Titel</trans-title>'
+                '</trans-title-group>'
+                '</title-group>'
+            )
+        ))
+        assert 'lang="en"' in html
+        assert 'lang="de"' in html
+        text_only = get_text_without_labels(html)
+        assert 'The title' in text_only
+        assert 'Der Titel' in text_only
 
     def test_should_read_as_the_article_without_the_names_shown(self):
         html = get_rendered_article(FULL_ARTICLE_XML)
@@ -749,7 +785,7 @@ PATHED_ARTICLE_XML = get_article_xml(
 class TestElementPaths:
     def test_should_say_where_in_the_document_a_value_was_found(self):
         view_model = get_article_view_model(PATHED_ARTICLE_XML)
-        assert view_model['title']['path'] == (
+        assert view_model['titles'][0]['path'] == (
             '/article/front/article-meta/title-group/article-title'
         )
 

@@ -89,6 +89,22 @@ export function addPaths(node, parentPath) {
 }
 
 
+/* Every child of that name as a value, each carrying the language it declares. */
+export function getValuesWithLanguage(node, name, label) {
+  return getChildElements(node, name)
+    .map((child) => {
+      const text = getTextContent(child).trim();
+      if (!text) {
+        return null;
+      }
+      const language = getLanguage(child);
+      const value = { label: label || name, text, path: child.path };
+      return language ? { ...value, language } : value;
+    })
+    .filter((value) => value !== null);
+}
+
+
 export function getValue(node, name, label) {
   const child = getFirstChildElement(node, name);
   const text = child ? getTextContent(child).trim() : '';
