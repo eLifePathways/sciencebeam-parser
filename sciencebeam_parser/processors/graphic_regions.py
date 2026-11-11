@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import List, NamedTuple, Optional, Sequence
 
 import PIL.Image
-import pypdfium2
 from lxml import etree
 
 from sciencebeam_parser.document.layout_document import (
@@ -14,6 +13,9 @@ from sciencebeam_parser.document.layout_document import (
     LayoutGraphic,
     LayoutPage,
     LayoutPageCoordinates
+)
+from sciencebeam_parser.processors.document_page_image import (
+    iter_pdf_document_page_images
 )
 from sciencebeam_parser.processors.graphic_provider import (
     get_page_numbers_with_uncommon_page_dimension
@@ -89,29 +91,42 @@ class _Box(NamedTuple):
 
 
 class PageRegionRenderer:
-    def __init__(self, pdf_path: str, dpi: float):
+    """Renders a region of a page, through the same renderer the detector uses.
+
+    `pdf2image` runs `pdftoppm` as a process of its own, so a document that
+    defeats the renderer cannot take the caller down with it.
+    """
+
+    def __init__(self, pdf_path: str, dpi: float, temp_dir: str):
         self.pdf_path = pdf_path
+        self.dpi = dpi
         self.scale = dpi / 72.0
-        self._pdf_document: Optional[pypdfium2.PdfDocument] = None
+        self.temp_dir = temp_dir
         self._page_number: Optional[int] = None
         self._page_image: Optional[PIL.Image.Image] = None
 
-    def _get_page_image(self, page_number: int) -> PIL.Image.Image:
-        if self._page_number != page_number or self._page_image is None:
-            if self._pdf_document is None:
-                self._pdf_document = pypdfium2.PdfDocument(self.pdf_path)
-            self._page_image = (
-                self._pdf_document[page_number - 1]
-                .render(scale=self.scale)
-                .to_pil()
-                .convert('RGB')
-            )
-            self._page_number = page_number
-        return self._page_image
+    def _get_page_image(self, page_number: int) -> Optional[PIL.Image.Image]:
+        if self._page_number == page_number and self._page_image is not None:
+            return self._page_image
+        page_images = list(iter_pdf_document_page_images(
+            pdf_path=self.pdf_path,
+            output_dir=self.temp_dir,
+            dpi=self.dpi,
+            page_numbers=[page_number]
+        ))
+        if not page_images:
+            return None
+        page_image = PIL.Image.open(page_images[0].page_image_path).convert('RGB')
+        page_image.load()
+        self._page_number = page_number
+        self._page_image = page_image
+        return page_image
 
     def render(self, page_number: int, box: '_Box', image_path: str) -> Optional[str]:
         try:
             page_image = self._get_page_image(page_number)
+            if page_image is None:
+                return None
             cropped_image = page_image.crop((
                 max(0, round(box.x1 * self.scale)),
                 max(0, round(box.y1 * self.scale)),
@@ -547,8 +562,8 @@ def get_layout_document_with_graphic_regions(
     if not config.enabled:
         return layout_document
     renderer = (
-        PageRegionRenderer(pdf_path, config.render_dpi)
-        if require_file and pdf_path and os.path.exists(pdf_path)
+        PageRegionRenderer(pdf_path, config.render_dpi, temp_dir=temp_dir)
+        if require_file and pdf_path and temp_dir and os.path.exists(pdf_path)
         else None
     )
     uncommon_page_numbers = (
