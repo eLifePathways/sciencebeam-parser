@@ -76,7 +76,8 @@ class AltoParser:
         self,
         line_node: etree.ElementBase,
         page_number: int,
-        page_meta: LayoutPageMeta
+        page_meta: LayoutPageMeta,
+        block_id: int = -1
     ) -> LayoutLine:
         return LayoutLine(tokens=[
             self.parse_token(
@@ -84,7 +85,8 @@ class AltoParser:
                 page_number=page_number,
                 layout_line_meta=LayoutLineMeta(
                     line_id=id(line_node),
-                    page_meta=page_meta
+                    page_meta=page_meta,
+                    block_id=block_id
                 )
             )
             for token_node in alto_xpath(line_node, './/alto:String')
@@ -97,7 +99,12 @@ class AltoParser:
         page_meta: LayoutPageMeta
     ) -> LayoutBlock:
         return LayoutBlock(lines=[
-            self.parse_line(line_node, page_number=page_number, page_meta=page_meta)
+            self.parse_line(
+                line_node,
+                page_number=page_number,
+                page_meta=page_meta,
+                block_id=id(block_node)
+            )
             for line_node in alto_xpath(block_node, './/alto:TextLine[alto:String]')
         ])
 

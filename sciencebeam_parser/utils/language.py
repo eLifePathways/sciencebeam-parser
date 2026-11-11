@@ -49,6 +49,35 @@ MIN_TITLE_LANGUAGE_DETECTION_MARGIN = 1
 WORD_PATTERN = re.compile(r'[^\W\d_]+', re.UNICODE)
 
 
+def detect_language_among(text: str, languages: AbstractSet[str]) -> Optional[str]:
+    """Which of those languages the passage is written in, or None where it cannot be told.
+
+    Counting only the languages a document carries elsewhere turns a tie between the
+    languages it does not into no contest at all: the function words of a short title are
+    shared across the Romance languages, so a title in one of them often leads none.
+
+    The passage still has to carry a function word of the language to be named it, so the
+    one language a monolingual document offers is a tie-break rather than an answer.
+    """
+    words = [word.lower() for word in WORD_PATTERN.findall(text)]
+    count_by_language = {
+        language: sum(1 for word in words if word in STOPWORD_SET_BY_LANGUAGE[language])
+        for language in languages
+        if language in STOPWORD_SET_BY_LANGUAGE
+    }
+    if not count_by_language:
+        return None
+    best_language = max(count_by_language, key=lambda language: count_by_language[language])
+    best_count = count_by_language[best_language]
+    runner_up = max(
+        (count for language, count in count_by_language.items() if language != best_language),
+        default=0
+    )
+    if not best_count or best_count == runner_up:
+        return None
+    return best_language
+
+
 def detect_language(
     text: str,
     min_word_count: int = MIN_LANGUAGE_DETECTION_WORD_COUNT,

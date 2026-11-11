@@ -376,7 +376,8 @@ class FullTextProcessor:
         )
         self.header_model.update_semantic_document_with_entity_blocks(
             semantic_document, entity_blocks,
-            abstracts_mode=self.config.abstracts_mode
+            abstracts_mode=self.config.abstracts_mode,
+            titles_mode=self.config.titles_mode
         )
         if self.config.extract_authors:
             self._process_raw_authors(semantic_document.front)
