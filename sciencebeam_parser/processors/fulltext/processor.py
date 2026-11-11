@@ -8,7 +8,6 @@ from typing import (
     NamedTuple,
     Optional,
     Sequence,
-    Set,
     Tuple,
     Type,
     Union
@@ -581,48 +580,34 @@ class FullTextProcessor:
     def _process_raw_affiliations(self, semantic_document: SemanticDocument):
         result_content: List[SemanticContentWrapper] = []
         raw_aff_address_list: List[SemanticRawAffiliationAddress] = []
-        # the tokens opening an affiliation block another block of the header sat
-        # before: a gap in the sequence, which closes an affiliation as GROBID's
-        # offset check does
-        segment_start_token_ids: Set[int] = set()
-        previous_was_raw_aff_address = False
         for semantic_content in semantic_document.front:
             if isinstance(semantic_content, SemanticRawAffiliationAddress):
-                if raw_aff_address_list and not previous_was_raw_aff_address:
-                    first_token = next(iter(semantic_content.iter_tokens()), None)
-                    if first_token is not None:
-                        segment_start_token_ids.add(id(first_token))
                 raw_aff_address_list.append(semantic_content)
-                previous_was_raw_aff_address = True
                 continue
-            previous_was_raw_aff_address = False
             result_content.append(semantic_content)
         if raw_aff_address_list:
-            # one sequence for all of the header's affiliation and address blocks,
-            # labelled and cut into affiliations in one go, as GROBID's
-            # AffiliationAddressParser.processingLayoutTokens does: an affiliation
-            # may continue from one block into the next
-            raw_aff_layout_document = LayoutDocument.for_blocks([
-                block
+            raw_aff_layout_documents = [
+                LayoutDocument.for_blocks(list(raw_aff_or_address.iter_blocks()))
                 for raw_aff_or_address in raw_aff_address_list
-                for block in raw_aff_or_address.iter_blocks()
-            ])
+            ]
             labeled_layout_tokens_list = (
                 self.affiliation_address_model
                 .predict_labels_for_layout_documents(
-                    [raw_aff_layout_document],
+                    raw_aff_layout_documents,
                     app_features_context=self.app_features_context
                 )
             )
             LOGGER.debug('labeled_layout_tokens_list (aff): %r', labeled_layout_tokens_list)
-            for labeled_layout_tokens in labeled_layout_tokens_list:
-                result_content.extend(
+            aff_iterable = (
+                aff
+                for labeled_layout_tokens in labeled_layout_tokens_list
+                for aff in (
                     self.affiliation_address_model
-                    .iter_semantic_content_for_labeled_layout_tokens(
-                        labeled_layout_tokens,
-                        segment_start_token_ids=segment_start_token_ids
-                    )
+                    .iter_semantic_content_for_labeled_layout_tokens(labeled_layout_tokens)
                 )
+            )
+            for aff in aff_iterable:
+                result_content.append(aff)
         semantic_document.front.mixed_content = result_content
         self._assign_content_ids(
             semantic_document.front.iter_by_type(SemanticAffiliationAddress),

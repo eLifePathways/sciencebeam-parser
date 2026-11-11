@@ -186,11 +186,6 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         for name, layout_block in entity_tokens:
             previous_label = next_previous_label
             next_previous_label = name
-            if aff_address is not None and name not in {'<affiliation>', '<address>'}:
-                # a block of another kind ends the run of affiliation blocks, whatever
-                # it is: the affiliations on either side of it are separate blocks
-                yield aff_address
-                aff_address = None
             if name == '<title>' and not has_title:
                 clean_block, trailing = _split_trailing_title_punct(layout_block)
                 yield SemanticTitle(
@@ -233,6 +228,9 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                     name, layout_block
                 ))
                 continue
+            if aff_address is not None:
+                yield aff_address
+                aff_address = None
             yield self.get_semantic_content_for_entity_name(
                 name, layout_block
             )

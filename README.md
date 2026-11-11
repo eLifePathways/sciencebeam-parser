@@ -96,11 +96,7 @@ marker closes the author it follows, and a second title, forename or surname sta
 An author the header names more than once, by surname and forename initial, is merged into their
 first mention as GROBID's `Person.deduplicate` merges them, keeping the fullest form of the name
 and every marker; two mentions whose forenames clash ("James" and "John") are left apart.
-The header's affiliation and address blocks are labelled as one sequence and cut into
-affiliations by GROBID's rules: a marker on a new line or after another marker, a second
-institution after an address, a marker or a line break, or a second department or laboratory
-after an address or a line break, starts a new affiliation, and a gap between the blocks closes
-one. Affiliations are attached to authors as GROBID's `AuthorAffiliationAssigner` attaches them. With
+Affiliations are attached to authors as GROBID's `AuthorAffiliationAssigner` attaches them. With
 no marker anywhere, an affiliation block first goes to the authors named in the author blocks
 right before it in the header. Then, in order: a lone affiliation goes to every author and a lone
 author takes every affiliation; an affiliation goes to the authors carrying its marker; its

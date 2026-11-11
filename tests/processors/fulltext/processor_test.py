@@ -584,21 +584,18 @@ class TestFullTextProcessorAffiliation:
         assert affiliations[0].get_text_by_type(SemanticCountry) == country_block.text
         assert affiliations[0].content_id == 'aff0'
 
-    def _get_affiliations_for_raw_affiliation_blocks(
-        self,
-        fulltext_models_mock: MockFullTextModels,
-        institution_blocks: List[LayoutBlock],
-        country_blocks: Optional[List[LayoutBlock]] = None
-    ) -> List[SemanticAffiliationAddress]:
-        if country_blocks is None:
-            aff_blocks = institution_blocks
-        else:
-            aff_blocks = [
-                LayoutBlock.merge_blocks([institution_block, country_block])
-                for institution_block, country_block in zip(institution_blocks, country_blocks)
-            ]
+    def test_should_not_merge_separate_raw_affiliations(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        aff_suffix_texts = ['1', '2']
+        institution_blocks = [
+            LayoutBlock.for_text(f'Institution{t}')
+            for t in aff_suffix_texts
+        ]
+        aff_blocks = institution_blocks
+        aff_address_blocks = aff_blocks
         fulltext_processor = FullTextProcessor(fulltext_models_mock)
-        header_block = LayoutBlock.merge_blocks(aff_blocks)
+        header_block = LayoutBlock.merge_blocks(aff_address_blocks)
 
         segmentation_model_mock = fulltext_models_mock.segmentation_model_mock
         header_model_mock = fulltext_models_mock.header_model_mock
@@ -617,10 +614,6 @@ class TestFullTextProcessorAffiliation:
             affiliation_address_model_mock.update_label_by_layout_block(
                 institution_block, '<institution>'
             )
-        for country_block in (country_blocks or []):
-            affiliation_address_model_mock.update_label_by_layout_block(
-                country_block, '<country>'
-            )
 
         layout_document = LayoutDocument(pages=[LayoutPage(blocks=[
             header_block
@@ -631,88 +624,14 @@ class TestFullTextProcessorAffiliation:
         assert semantic_document is not None
         affiliations = list(semantic_document.front.iter_by_type(SemanticAffiliationAddress))
         LOGGER.debug('affiliations: %r', affiliations)
-        return affiliations
-
-    def test_should_continue_an_affiliation_without_address_into_the_next_raw_block(
-        self, fulltext_models_mock: MockFullTextModels
-    ):
-        # GROBID labels all of the header's affiliation blocks as one sequence and
-        # only starts a new affiliation on a second institution after an address
-        institution_blocks = [
-            LayoutBlock.for_text('Institution1'),
-            LayoutBlock.for_text('Institution2')
-        ]
-        affiliations = self._get_affiliations_for_raw_affiliation_blocks(
-            fulltext_models_mock, institution_blocks
+        assert (
+            [aff.get_text() for aff in affiliations]
+            == [aff_block.text for aff_block in aff_blocks]
         )
-        assert [
-            aff.view_by_type(SemanticInstitution).get_text_list() for aff in affiliations
-        ] == [['Institution1', 'Institution2']]
-        assert [aff.content_id for aff in affiliations] == ['aff0']
-
-    def test_should_start_a_new_affiliation_on_a_new_line(
-        self, fulltext_models_mock: MockFullTextModels
-    ):
-        institution_blocks = [
-            LayoutBlock.for_text('Institution1', line_meta=LayoutLineMeta(line_id=1)),
-            LayoutBlock.for_text('Institution2', line_meta=LayoutLineMeta(line_id=2))
-        ]
-        affiliations = self._get_affiliations_for_raw_affiliation_blocks(
-            fulltext_models_mock, institution_blocks
+        assert (
+            [aff.content_id for aff in affiliations]
+            == ['aff0', 'aff1']
         )
-        assert [aff.get_text() for aff in affiliations] == ['Institution1', 'Institution2']
-
-    def test_should_close_an_affiliation_at_a_block_of_another_kind(
-        self, fulltext_models_mock: MockFullTextModels
-    ):
-        # a gap in the affiliation sequence, as GROBID sees a jump in the offsets
-        institution_block_1 = LayoutBlock.for_text('Institution1')
-        title_block = LayoutBlock.for_text('Title')
-        institution_block_2 = LayoutBlock.for_text('Institution2')
-        header_block = LayoutBlock.merge_blocks([
-            institution_block_1, title_block, institution_block_2
-        ])
-        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
-            header_block, '<header>'
-        )
-        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
-            institution_block_1, '<affiliation>'
-        )
-        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
-            title_block, '<title>'
-        )
-        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
-            institution_block_2, '<affiliation>'
-        )
-        for institution_block in [institution_block_1, institution_block_2]:
-            fulltext_models_mock.affiliation_address_model_mock.update_label_by_layout_block(
-                institution_block, '<institution>'
-            )
-        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[header_block])])
-        semantic_document = FullTextProcessor(
-            fulltext_models_mock
-        ).get_semantic_document_for_layout_document(layout_document=layout_document)
-        affiliations = list(semantic_document.front.iter_by_type(SemanticAffiliationAddress))
-        assert [aff.get_text() for aff in affiliations] == ['Institution1', 'Institution2']
-
-    def test_should_not_merge_separate_raw_affiliations_with_addresses(
-        self, fulltext_models_mock: MockFullTextModels
-    ):
-        institution_blocks = [
-            LayoutBlock.for_text('Institution1'),
-            LayoutBlock.for_text('Institution2')
-        ]
-        country_blocks = [
-            LayoutBlock.for_text('Country1'),
-            LayoutBlock.for_text('Country2')
-        ]
-        affiliations = self._get_affiliations_for_raw_affiliation_blocks(
-            fulltext_models_mock, institution_blocks, country_blocks
-        )
-        assert [aff.get_text() for aff in affiliations] == [
-            'Institution1 Country1', 'Institution2 Country2'
-        ]
-        assert [aff.content_id for aff in affiliations] == ['aff0', 'aff1']
 
     def test_should_extract_raw_references_from_document(
         self, fulltext_models_mock: MockFullTextModels
@@ -1384,21 +1303,15 @@ class TestFullTextProcessorAffiliationAttachment:
         institution_block: LayoutBlock,
         marker_block: Optional[LayoutBlock] = None
     ) -> LayoutBlock:
-        # each affiliation gets a country, as GROBID only starts a new affiliation
-        # on a second institution once the current one has an address
-        country_block = LayoutBlock.for_text('Country')
         fulltext_models_mock.affiliation_address_model_mock.update_label_by_layout_block(
             institution_block, '<institution>'
         )
-        fulltext_models_mock.affiliation_address_model_mock.update_label_by_layout_block(
-            country_block, '<country>'
-        )
-        blocks = [institution_block, country_block]
+        blocks = [institution_block]
         if marker_block is not None:
             fulltext_models_mock.affiliation_address_model_mock.update_label_by_layout_block(
                 marker_block, '<marker>'
             )
-            blocks = [marker_block, institution_block, country_block]
+            blocks = [marker_block, institution_block]
         return LayoutBlock.merge_blocks(blocks)
 
     def _get_semantic_document(
