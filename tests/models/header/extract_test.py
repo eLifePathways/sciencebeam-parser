@@ -9,6 +9,7 @@ from sciencebeam_parser.document.semantic_document import (
 from sciencebeam_parser.document.layout_document import (
     LOGGER,
     LayoutBlock,
+    LayoutFont,
     LayoutLine,
     LayoutLineMeta,
     LayoutToken,
@@ -152,16 +153,23 @@ SPANISH_TITLE_TIED_1 = 'EVALUACION DE LA MIGRACION DE CONTENIDOS'
 NAME_ONLY_CONTINUATION_1 = 'Lisboa Sampaio Oliveira Niskier Caceres Mendivil'
 
 
-def _get_title_line(text: str, block_id: int) -> LayoutLine:
+TITLE_FONT_1 = LayoutFont(font_id='title')
+LABEL_FONT_1 = LayoutFont(font_id='label')
+
+
+def _get_title_line(
+    text: str, block_id: int, font: LayoutFont = TITLE_FONT_1
+) -> LayoutLine:
     line_meta = LayoutLineMeta(line_id=block_id, block_id=block_id)
     return LayoutLine(tokens=[
-        LayoutToken(token_text, line_meta=line_meta) for token_text in text.split(' ')
+        LayoutToken(token_text, font=font, line_meta=line_meta)
+        for token_text in text.split(' ')
     ])
 
 
 def _get_title_block(*text_and_block_id) -> LayoutBlock:
     return LayoutBlock(lines=[
-        _get_title_line(text, block_id) for text, block_id in text_and_block_id
+        _get_title_line(*args) for args in text_and_block_id
     ])
 
 
@@ -199,6 +207,73 @@ class TestIterTitlesSplitByLanguage:
         )))
         assert [language for _, language in titles] == ['en', 'pt']
         assert titles[0][0].text == ENGLISH_TITLE_1 + ' ' + TITLE_1
+
+
+SHORT_TITLE_1 = 'Foreword'
+
+SHORT_TITLE_2 = 'Prefacio'
+
+TITLE_LABEL_1 = 'Titulo'
+
+RUNNING_HEAD_1 = 'Mental Health of Dentists and the Pandemic'
+
+ENGLISH_TITLE_2 = 'Mental Health of Dentists during the Pandemic a Critical Review'
+
+
+class TestTitleFurniture:
+    def test_should_drop_a_label_naming_the_field_beside_the_title(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_1, 1, TITLE_FONT_1), (TITLE_LABEL_1, 2, LABEL_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [ENGLISH_TITLE_1]
+
+    def test_should_keep_a_short_title_beside_another_short_title(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (SHORT_TITLE_1, 1, TITLE_FONT_1), (SHORT_TITLE_2, 2, LABEL_FONT_1)
+        )))
+        assert SHORT_TITLE_2 in ' '.join(block.text for block, _ in titles)
+
+    def test_should_keep_a_short_continuation_set_in_the_title_font(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_FIRST_HALF_1, 1, TITLE_FONT_1), ('regions', 2, TITLE_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [
+            ENGLISH_TITLE_FIRST_HALF_1 + ' regions'
+        ]
+
+    def test_should_drop_a_running_head_where_the_title_is_set_over_several_runs(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            ('Mental Health of Dentists during the Pandemic a', 1, TITLE_FONT_1),
+            ('Critical Review', 2, TITLE_FONT_1),
+            (RUNNING_HEAD_1, 3, TITLE_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [
+            'Mental Health of Dentists during the Pandemic a Critical Review'
+        ]
+
+    def test_should_drop_a_label_where_the_title_is_set_over_several_runs(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            ('Worldwide differences in winter related', 1, TITLE_FONT_1),
+            ('mortality rates', 2, TITLE_FONT_1),
+            (TITLE_LABEL_1, 3, LABEL_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [
+            'Worldwide differences in winter related mortality rates'
+        ]
+
+    def test_should_drop_a_running_head_repeating_the_titles_words(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_2, 1, TITLE_FONT_1), (RUNNING_HEAD_1, 2, TITLE_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [ENGLISH_TITLE_2]
+
+    def test_should_keep_a_title_given_in_another_language(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_1, 1, TITLE_FONT_1), (PORTUGUESE_TITLE_1, 2, TITLE_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [
+            ENGLISH_TITLE_1, PORTUGUESE_TITLE_1
+        ]
 
 
 class TestIterTitlesSplitByLanguageAmongTheDocumentsLanguages:

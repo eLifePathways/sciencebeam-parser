@@ -157,6 +157,81 @@ def _iter_candidate_runs(layout_block: LayoutBlock) -> Iterator[List[LayoutLine]
     yield from ([line] for line in layout_block.lines)
 
 
+# A mark the page sets beside the title -- the word naming the field, a rule drawn in
+# underscores -- is dwarfed by the title it sits beside, where a title given in another
+# language is the length of its sibling. Both are short; only one is short beside
+# something long.
+MAX_TITLE_MARK_TOKEN_COUNT = 2
+MIN_TITLE_TO_MARK_TOKEN_RATIO = 4
+
+# A title set again says what has been said already, whether it is set whole or shortened.
+MIN_TITLE_REPEATED_WORD_RATIO = 0.8
+
+
+def _get_run_tokens(run: Sequence[LayoutLine]) -> List[str]:
+    return [token.text for line in run for token in line.tokens]
+
+
+def _get_run_words(run: Sequence[LayoutLine]) -> Set[str]:
+    return {
+        word for word in (
+            TITLE_SAME_TEXT_PATTERN.sub('', token.lower())
+            for token in _get_run_tokens(run)
+        ) if word
+    }
+
+
+def _get_run_fonts(run: Sequence[LayoutLine]) -> Set[str]:
+    return {token.font.font_id for line in run for token in line.tokens}
+
+
+def is_mark_beside_title(run: Sequence[LayoutLine], title_so_far: Sequence[LayoutLine]) -> bool:
+    """Whether the run is a mark the page set beside the title rather than a title.
+
+    A page that sets its front matter as a form prints the word naming each field in the
+    form's own font, and rules its sections off in underscores. Such a mark is told from a
+    title given in another language by being short beside something long, rather than by
+    being short.
+    """
+    token_count = len(_get_run_tokens(run))
+    if not token_count or token_count > MAX_TITLE_MARK_TOKEN_COUNT:
+        return False
+    if len(_get_run_tokens(title_so_far)) < MIN_TITLE_TO_MARK_TOKEN_RATIO * token_count:
+        return False
+    return not _get_run_fonts(run) & _get_run_fonts(title_so_far)
+
+
+def repeats_the_title(
+    run: Sequence[LayoutLine], title_so_far: Sequence[LayoutLine]
+) -> bool:
+    """Whether the run says again, in the same words or fewer, what the title said.
+
+    A page may set the title twice over, or set a shortened form of it beneath the title,
+    and either way its words are the title's words. A title given in another language
+    shares next to none of them, and a continuation of a title brings new ones.
+    """
+    words = _get_run_words(run)
+    if not words:
+        return False
+    shared = len(words & _get_run_words(title_so_far)) / len(words)
+    return shared >= MIN_TITLE_REPEATED_WORD_RATIO
+
+
+def iter_title_runs(
+    runs: Sequence[Sequence[LayoutLine]]
+) -> Iterator[List[LayoutLine]]:
+    """The runs that are the title, dropping what the model swept in beside it."""
+    kept: List[List[LayoutLine]] = []
+    for run in runs:
+        title_so_far = [line for kept_run in kept for line in kept_run]
+        if title_so_far and (
+            is_mark_beside_title(run, title_so_far) or repeats_the_title(run, title_so_far)
+        ):
+            continue
+        kept.append(list(run))
+    yield from kept
+
+
 def iter_titles_split_by_language(
     layout_block: LayoutBlock,
     document_languages: AbstractSet[str] = frozenset()
@@ -169,14 +244,15 @@ def iter_titles_split_by_language(
     language and those languages differ, and the block or line boundary says where.
     """
     parts: List[Tuple[List[LayoutLine], Optional[str]]] = []
-    for run in _iter_candidate_runs(layout_block):
+    for run in iter_title_runs(list(_iter_candidate_runs(layout_block))):
         language = _get_language(run, document_languages)
         if parts and (language is None or language == parts[-1][1]):
             parts[-1][0].extend(run)
             continue
         parts.append((list(run), language))
     if len({language for _, language in parts if language}) < 2:
-        yield layout_block, _get_language(layout_block.lines, document_languages)
+        lines = [line for part_lines, _ in parts for line in part_lines]
+        yield LayoutBlock(lines=lines), _get_language(lines, document_languages)
         return
     for lines, language in parts:
         yield LayoutBlock(lines=lines), language
