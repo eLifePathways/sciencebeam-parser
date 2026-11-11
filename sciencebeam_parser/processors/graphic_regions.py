@@ -44,6 +44,7 @@ class GraphicRegionConfig:
     max_vector_path_count: int = 10000
     min_vector_content_size: float = 10.0
     max_text_ratio_without_content: float = 0.2
+    min_page_border_rule_ratio: float = 0.85
     render_dpi: float = 150.0
     min_text_over_graphic_ratio: float = 0.5
     uncommon_page_as_one_region: bool = True
@@ -212,6 +213,23 @@ def _get_boxes_clipped_to_page(boxes: Sequence[_Box], page_box: Optional[_Box]) 
     ]
 
 
+def _is_page_border_rule(
+    box: _Box,
+    page_box: _Box,
+    config: GraphicRegionConfig
+) -> bool:
+    """A bar running almost the length of the page, such as a printed border.
+
+    A table's rules span its columns rather than the page, which is what keeps
+    a ruled table a region of its own.
+    """
+    if min(box.width, box.height) >= config.min_vector_content_size:
+        return False
+    if box.width >= box.height:
+        return box.width >= config.min_page_border_rule_ratio * page_box.width
+    return box.height >= config.min_page_border_rule_ratio * page_box.height
+
+
 def _is_shape_box(box: _Box, minimum: float = 1.0) -> bool:
     return box.width >= minimum and box.height >= minimum
 
@@ -253,10 +271,13 @@ def iter_vector_region_graphics(
         return []
     assert layout_graphic.coordinates
     page_number = layout_graphic.coordinates.page_number
-    boxes = _get_boxes_clipped_to_page(
-        _iter_svg_path_boxes(local_file_path),
-        _get_box_for_coordinates(page_coordinates) if page_coordinates else None
-    )
+    page_box = _get_box_for_coordinates(page_coordinates) if page_coordinates else None
+    boxes = _get_boxes_clipped_to_page(_iter_svg_path_boxes(local_file_path), page_box)
+    if page_box is not None:
+        boxes = [
+            box for box in boxes
+            if not _is_page_border_rule(box, page_box, config)
+        ]
     if not boxes:
         return []
     gap = config.vector_cluster_gap_ratio * (
