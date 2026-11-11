@@ -1,12 +1,16 @@
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
 
-from sciencebeam_parser.app.profiles import ProfileRegistry
+from sciencebeam_parser.app.profiles import (
+    ProfileRegistry,
+    get_canonical_config_json,
+    get_selectable_profile_names
+)
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.models.header.extract import ABSTRACTS_MODES
 from sciencebeam_parser.models.model_impl_factory import EngineNames, get_engine_name_for_config
@@ -20,6 +24,15 @@ CONFIG_PATH = (
 )
 
 SHARED_BASE_PROFILE = 'grobid_crf_0_9_0'
+
+# The names a deployment points at, and the profile each one currently names.
+POINTER_PROFILES: Dict[str, str] = {
+    'grobid_crf': 'grobid_crf_0_9_0',
+    'grobid_dl': 'delft_hub',
+    'recommended': 'delft_all_scielo_preprints_ore',
+    'recommended_cv': 'delft_all_scielo_preprints_ore_cv',
+    'lightweight': 'wapiti_all_scielo_preprints_ore',
+}
 
 # Profiles combining single-model profiles, and the profile each model comes from.
 COMBINED_PROFILES: Dict[str, Dict[str, str]] = {
@@ -76,6 +89,11 @@ def get_shipped_config() -> dict:
     return yaml.safe_load(CONFIG_PATH.read_text(encoding='utf-8'))
 
 
+def get_shipped_selectable_profile_names() -> List[str]:
+    config = AppConfig(get_shipped_config())
+    return get_selectable_profile_names(config, config.get_active_profile_name())
+
+
 def get_resolved_models(profile_name: Optional[str]) -> dict:
     return AppConfig(get_shipped_config()).resolve_profile(profile_name)['models']
 
@@ -92,34 +110,40 @@ ABSTRACTS_MODE_PROFILES = [
 ]
 
 
+ABSTRACTS_MODE_BASE_PROFILE = 'grobid_crf_0_9_0'
+
+
 class TestAbstractsModeProfiles:
-    """Each exists to be compared with the default, so one setting may differ and no other."""
+    """Each exists to be compared with `grobid_crf_0_9_0`, so one setting may differ."""
 
     @pytest.mark.parametrize('profile_name', ABSTRACTS_MODE_PROFILES)
-    def test_should_differ_from_the_default_profile_in_abstracts_mode_only(
+    def test_should_differ_from_its_base_profile_in_abstracts_mode_only(
         self, profile_name: str
     ):
-        default_config = get_fulltext_processor_config(None)
+        base_config = get_fulltext_processor_config(ABSTRACTS_MODE_BASE_PROFILE)
         variant_config = get_fulltext_processor_config(profile_name)
-        assert variant_config.abstracts_mode != default_config.abstracts_mode
+        assert variant_config.abstracts_mode != base_config.abstracts_mode
         assert variant_config._replace(  # pylint: disable=protected-access
-            abstracts_mode=default_config.abstracts_mode
-        ) == default_config
+            abstracts_mode=base_config.abstracts_mode
+        ) == base_config
 
     @pytest.mark.parametrize('profile_name', ABSTRACTS_MODE_PROFILES)
-    def test_should_serve_the_models_the_default_profile_serves(self, profile_name: str):
-        assert get_resolved_models(profile_name) == get_resolved_models(None)
+    def test_should_serve_the_models_its_base_profile_serves(self, profile_name: str):
+        assert (
+            get_resolved_models(profile_name)
+            == get_resolved_models(ABSTRACTS_MODE_BASE_PROFILE)
+        )
 
-    def test_should_cover_every_mode_other_than_the_default(self):
-        default_mode = get_fulltext_processor_config(None).abstracts_mode
+    def test_should_cover_every_mode_other_than_its_base(self):
+        base_mode = get_fulltext_processor_config(ABSTRACTS_MODE_BASE_PROFILE).abstracts_mode
         assert {
             get_fulltext_processor_config(name).abstracts_mode
             for name in ABSTRACTS_MODE_PROFILES
-        } == set(ABSTRACTS_MODES) - {default_mode}
+        } == set(ABSTRACTS_MODES) - {base_mode}
 
 
 CV_PROFILE_PAIRS = [
-    ('grobid_crf_cv', None),
+    ('grobid_crf_cv', 'grobid_crf_0_9_0'),
     ('delft_all_scielo_preprints_ore_cv', 'delft_all_scielo_preprints_ore')
 ]
 
@@ -174,6 +198,51 @@ class TestShippedCombinedProfiles:
         )
 
 
+class TestShippedPointerProfiles:
+    """A name a deployment points at, and the combination it currently names."""
+
+    def test_should_declare_every_pointer_the_shipped_config_names(self):
+        config = AppConfig(get_shipped_config())
+        assert {
+            name: config.get_pinned_profile_name(name)
+            for name in config.get_profile_names()
+            if config.is_profile_pointer(name)
+        } == POINTER_PROFILES
+
+    @pytest.mark.parametrize('profile_name,target_name', sorted(POINTER_PROFILES.items()))
+    def test_should_serve_exactly_what_it_names(self, profile_name: str, target_name: str):
+        assert get_resolved_models(profile_name) == get_resolved_models(target_name)
+
+    @pytest.mark.parametrize('profile_name,target_name', sorted(POINTER_PROFILES.items()))
+    def test_should_process_a_document_as_what_it_names_does(
+        self, profile_name: str, target_name: str
+    ):
+        assert (
+            get_fulltext_processor_config(profile_name)
+            == get_fulltext_processor_config(target_name)
+        )
+
+    def test_should_attribute_a_benchmark_run_where_it_already_attributed_it(self):
+        """`grobid_crf` named a profile through an alias and now names one directly."""
+        config = AppConfig(get_shipped_config())
+        assert config.get_pinned_profile_name('grobid_crf') == 'grobid_crf_0_9_0'
+
+    def test_should_fit_every_selectable_profile_under_the_model_cap(self):
+        """A deployment taking the shipped config holds all of them without refusing one."""
+        config = AppConfig(get_shipped_config())
+        model_keys = {
+            (model_name, get_canonical_config_json(model_config))
+            for profile_name in get_shipped_selectable_profile_names()
+            for model_name, model_config in config.resolve_profile(profile_name)['models'].items()
+        }
+        assert len(model_keys) <= get_shipped_config()['max_loaded_models']
+
+    def test_should_serve_a_pointer_by_default(self):
+        """A deployment taking the shipped default tracks what we recommend."""
+        config = AppConfig(get_shipped_config())
+        assert config.is_profile_pointer(config.get('profile'))
+
+
 class TestShippedProfilesOnlyChangeWhatIsPerRequest:
     def test_should_only_set_keys_a_profile_may_set(self):
         AppConfig(get_shipped_config()).validate_profiles()
@@ -187,9 +256,15 @@ class TestShippedProfilesOnlyChangeWhatIsPerRequest:
         ]
         assert not unlabelled
 
-    def test_should_declare_no_extra_selectable_profiles(self):
-        """What production serves is unchanged by adding a per-request parameter."""
-        assert get_shipped_config()['selectable_profiles'] == []
+    def test_should_declare_the_user_facing_profiles_selectable(self):
+        """What a deployment offers is the set of names, not the set of combinations."""
+        assert set(get_shipped_config()['selectable_profiles']) == set(POINTER_PROFILES)
+
+    def test_should_serve_the_profile_every_selectable_pointer_names(self):
+        """Attribution reports the pinned profile, which a caller must then be able to send."""
+        assert set(get_shipped_selectable_profile_names()) == (
+            set(POINTER_PROFILES) | set(POINTER_PROFILES.values())
+        )
 
 
 class TestShippedProfilesShareTheirModels:

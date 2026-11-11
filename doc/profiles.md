@@ -2,8 +2,36 @@
 
 A profile names a set of sequence models and the processor settings that go with
 them. `config.yml` declares them under `profiles:`, and `profile:` selects the
-one a deployment serves — `grobid_crf` as shipped, overridable with
+one a deployment serves — `recommended` as shipped, overridable with
 `SCIENCEBEAM_PARSER__PROFILE`.
+
+## Which profile to point at
+
+Five profiles are names rather than combinations: each tracks a profile declared
+beside it, and what it tracks changes between releases.
+
+| name | what it serves |
+| --- | --- |
+| `recommended` | the combination we currently recommend |
+| `recommended_cv` | the same, locating figures and tables on the rendered page; slower |
+| `lightweight` | retrained CRF models throughout, for a deployment that will not run deep-learning models |
+| `grobid_crf` | the CRF models GROBID ships, as a baseline |
+| `grobid_dl` | the deep-learning models GROBID publishes to the Hugging Face Hub |
+
+Point a deployment at one of these to follow what we would choose. Name the
+profile it currently tracks instead — `GET /api/profiles` lists both — to pin one
+combination for as long as it is declared.
+
+A profile that tracks another declares `extends` and may add only `label` and
+`description`, so it resolves to exactly what it names and cannot drift from it:
+
+```yaml
+profiles:
+  recommended:
+    extends: delft_all_scielo_preprints_ore
+    label: 'Recommended'
+    description: 'The combination we currently recommend.'
+```
 
 ## Selecting a profile per request
 
@@ -50,6 +78,12 @@ or by environment, which takes a YAML list:
 export SCIENCEBEAM_PARSER__SELECTABLE_PROFILES='[wapiti_references_scielo_preprints_ore, llm_references]'
 ```
 
+As shipped it declares the five names above; each brings the profile it tracks,
+since that is the name the response headers report. The per-model profiles —
+`delft_header_scielo_preprints_ore` and the rest, which exist so a change can be
+attributed to one model — are declared and not selectable, so a deployment opts
+into them explicitly.
+
 `all` means every profile the config declares, which is the convenient setting
 for a benchmark sweep or an experiment:
 
@@ -90,10 +124,17 @@ curl --fail --show-error 'http://localhost:8080/api/profiles'
 {
   "profiles": [
     {
-      "name": "grobid_crf_0_9_0",
-      "label": "GROBID CRF 0.9.0",
-      "description": "Wapiti CRF models for every region, as shipped with GROBID 0.9.0.",
-      "alias_names": ["grobid_crf"],
+      "name": "delft_all_scielo_preprints_ore",
+      "label": "DeLFT retrained models, SciELO preprints and ORE",
+      "description": "GROBID 0.9.0 with segmentation, the header and both reference models retrained as DeLFT models on SciELO preprints and ORE.",
+      "alias_names": [],
+      "is_default": false
+    },
+    {
+      "name": "recommended",
+      "label": "Recommended",
+      "description": "The combination we currently recommend. Its models change between releases, and the profile digest on each response identifies them.",
+      "alias_names": [],
       "is_default": true
     }
   ]
@@ -101,9 +142,14 @@ curl --fail --show-error 'http://localhost:8080/api/profiles'
 ```
 
 It lists what this deployment declares selectable, so a deployment that narrows
-`selectable_profiles` advertises only what it serves. An alias is reported as
-`alias_names` of the profile it resolves to rather than as a choice of its own:
-`grobid_crf` and `grobid_crf_0_9_0` are one profile under two names.
+`selectable_profiles` advertises only what it serves. A profile that tracks
+another is listed beside what it tracks rather than in place of it, because the
+two are different offers: one follows what we would choose, the other stays put.
+
+`profile_aliases` is for a name a profile no longer has — an old name kept
+working after a rename. An alias is reported as `alias_names` of the profile it
+resolves to rather than as a choice of its own, and a name may not be both a
+profile and an alias. The shipped config declares none.
 
 The text comes from the profile itself:
 
@@ -134,14 +180,26 @@ download directory, the lookups, the wapiti binary, the LLM response cache — i
 built once and shared by every profile in the process, so a profile setting one
 of those keys is a startup error naming the profile and the key.
 
+A profile may instead set `extends`, naming the profile it tracks, beside
+`label` and `description` and nothing else. Setting `extends` alongside
+`sequence_models`, `models` or `processors` is a startup error, as is pointing
+at a profile that itself sets `extends`: what a name serves should be readable
+without following a chain.
+
 ## Which profile served a response
 
 Two response headers say what answered a request:
 
 | header | value |
 | --- | --- |
-| `X-ScienceBeam-Profile` | the profile name, after aliases |
+| `X-ScienceBeam-Profile` | the profile name, after aliases and after a profile that tracks another |
 | `X-ScienceBeam-Profile-Digest` | a digest of the models that profile resolved to |
+
+A request naming `recommended` is answered with the profile `recommended`
+tracks, so a document saved today names a combination that still means that
+combination once `recommended` has moved. That is also why a deployment serving
+a tracking profile serves what it tracks: the name in the header is one a caller
+may send, so naming the tracking profile is enough to get both.
 
 The digest is there because the name alone is not enough to identify what ran:
 environment variables are applied after the profile is resolved and so win over

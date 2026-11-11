@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Dict, Iterable, Optional
 from unittest.mock import patch
 
 import pytest
@@ -17,7 +17,7 @@ from sciencebeam_parser.config.config import (
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 
-MINIMAL_PROFILE_CONFIG = {
+MINIMAL_PROFILE_CONFIG: Dict[str, Any] = {
     'sequence_model_profiles': {
         'profile_a': {
             'segmentation': {'path': 'path_a/segmentation'},
@@ -564,3 +564,93 @@ class TestAppConfigValidateProfileNames:
         with pytest.raises(InvalidProfileError) as exc_info:
             config.validate_profiles()
         assert 'selectable_profiles' in str(exc_info.value)
+
+
+POINTER_PROFILE_CONFIG = {
+    **MINIMAL_PROFILE_CONFIG,
+    'profiles': {
+        **MINIMAL_PROFILE_CONFIG['profiles'],
+        'pointer_a': {
+            'extends': 'profile_a',
+            'label': 'A',
+            'description': 'Whatever a currently serves.',
+        },
+    },
+}
+
+
+class TestAppConfigProfilePointers:
+    """A profile that tracks another and adds only prose."""
+
+    def test_accepts_a_pointer_that_only_adds_prose(self):
+        config = AppConfig(POINTER_PROFILE_CONFIG)
+        assert config.validate_profiles() is config
+
+    def test_resolves_a_pointer_to_the_models_it_names(self):
+        config = AppConfig(POINTER_PROFILE_CONFIG)
+        assert (
+            config.resolve_profile('pointer_a')['models']
+            == config.resolve_profile('profile_a')['models']
+        )
+
+    def test_reports_the_profile_a_pointer_names(self):
+        config = AppConfig(POINTER_PROFILE_CONFIG)
+        assert config.get_pinned_profile_name('pointer_a') == 'profile_a'
+
+    def test_reports_a_profile_that_is_not_a_pointer_as_itself(self):
+        config = AppConfig(POINTER_PROFILE_CONFIG)
+        assert config.get_pinned_profile_name('profile_a') == 'profile_a'
+
+    def test_follows_an_alias_to_the_profile_a_pointer_names(self):
+        config = AppConfig({
+            **POINTER_PROFILE_CONFIG,
+            'profile_aliases': {'alias_of_pointer': 'pointer_a'},
+        })
+        assert config.get_pinned_profile_name('alias_of_pointer') == 'profile_a'
+
+    def test_rejects_a_pointer_that_also_overlays(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profiles': {
+                **MINIMAL_PROFILE_CONFIG['profiles'],
+                'pointer_a': {'extends': 'profile_a', 'sequence_models': 'profile_b'},
+            },
+        })
+        with pytest.raises(InvalidProfileError) as exc_info:
+            config.validate_profiles()
+        assert 'pointer_a' in str(exc_info.value)
+        assert 'sequence_models' in str(exc_info.value)
+
+    def test_rejects_a_pointer_at_an_unknown_profile(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profiles': {
+                **MINIMAL_PROFILE_CONFIG['profiles'],
+                'pointer_a': {'extends': 'not_a_profile'},
+            },
+        })
+        with pytest.raises(InvalidProfileError) as exc_info:
+            config.validate_profiles()
+        assert 'not_a_profile' in str(exc_info.value)
+
+    def test_rejects_a_pointer_at_a_pointer(self):
+        config = AppConfig({
+            **POINTER_PROFILE_CONFIG,
+            'profiles': {
+                **POINTER_PROFILE_CONFIG['profiles'],
+                'pointer_b': {'extends': 'pointer_a'},
+            },
+        })
+        with pytest.raises(InvalidProfileError) as exc_info:
+            config.validate_profiles()
+        assert 'pointer_b' in str(exc_info.value)
+        assert 'pointer_a' in str(exc_info.value)
+
+    def test_rejects_a_name_that_is_both_a_profile_and_an_alias(self):
+        config = AppConfig({
+            **MINIMAL_PROFILE_CONFIG,
+            'profile_aliases': {'profile_b': 'profile_a'},
+        })
+        with pytest.raises(InvalidProfileError) as exc_info:
+            config.validate_profiles()
+        assert 'profile_b' in str(exc_info.value)

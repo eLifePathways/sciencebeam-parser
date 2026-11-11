@@ -327,8 +327,9 @@ declared under, the report adds a `main (<profile>)` column beside `main (grobid
 read from the store and never generated. If `main` has never been run under that profile
 the column is left out, and a note at the end of the report gives the dispatch that
 stores it (`gh workflow run benchmark.yml --ref main -f profile=<profile> -f
-mode=medium`). The profile is matched by the name the store files it under, so an alias
-such as `grobid_crf_0_9_0` does not find predictions pushed as `grobid_crf`.
+mode=medium`). The profile is matched by the name the store files it under, so naming
+`grobid_crf_0_9_0` does not find predictions pushed as `grobid_crf`, even though
+`grobid_crf` tracks it.
 
 ## Where the gold does not record a field
 

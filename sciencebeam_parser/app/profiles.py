@@ -185,6 +185,10 @@ def get_selectable_profile_names(
     change what one process may be asked to hold until a deployment opts in.
     `all` opts in to every profile the config declares, which `max_loaded_models`
     still bounds.
+
+    A profile that tracks another brings it: attribution reports what a pointer
+    names, so a deployment serving the pointer alone would answer with a name it
+    then refuses.
     """
     configured = config.get('selectable_profiles') or []
     if isinstance(configured, str):
@@ -200,6 +204,11 @@ def get_selectable_profile_names(
     names.discard(None)
     if default_profile_name:
         names.add(default_profile_name)
+    names.update(
+        config.get_pinned_profile_name(name)
+        for name in list(names)
+        if name and config.is_profile_pointer(name)
+    )
     return sorted(name for name in names if name)
 
 
@@ -255,14 +264,20 @@ class ProfileRegistry:
         ]
 
     def get_resolved_profile_name(self, profile_name: Optional[str]) -> Optional[str]:
-        """The name a request asked for, after aliases, checked against what is served.
+        """The pinned profile a request is served by, checked against what is served.
+
+        Aliases and pointers are followed, so a bundle is held once however many
+        names reach it, and what attribution reports is a name that keeps meaning
+        the models it meant.
 
         Both refusals list what is selectable rather than what the config
         declares: a caller can only ask for the former, and a deployment serving
         one of nine profiles should not answer a typo with the other eight.
         """
         if not profile_name:
-            return self.default_profile_name
+            if not self.default_profile_name:
+                return None
+            return self.base_config.get_pinned_profile_name(self.default_profile_name)
         resolved_name = self.base_config.get_active_profile_name(profile_name)
         available = self.get_available_profile_names()
         if resolved_name not in self.base_config.get_profile_names():
@@ -273,7 +288,7 @@ class ProfileRegistry:
             raise ProfileNotSelectableError(
                 f'Profile {profile_name!r} is not selectable. Available: {available}'
             )
-        return resolved_name
+        return self.base_config.get_pinned_profile_name(resolved_name)
 
     def get_config(self, resolved_name: Optional[str]) -> AppConfig:
         with self._lock:

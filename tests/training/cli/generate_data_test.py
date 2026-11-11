@@ -1895,7 +1895,7 @@ class TestNameCitationModelJatsPath:
 class TestGetGenerationConfig:
     def test_should_leave_the_default_profile_in_place_when_none_is_named(self):
         config = get_generation_config(None)
-        assert config.get_active_profile_name() == 'grobid_crf_0_9_0'
+        assert config.get_active_profile_name() == 'recommended'
 
     def test_should_select_the_profile_the_parser_will_resolve(self):
         # Not a merged overlay: ScienceBeamParser resolves the default profile

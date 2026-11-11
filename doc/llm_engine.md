@@ -1,8 +1,8 @@
 # LLM engine (experimental)
 
 A third sequence-model engine alongside `wapiti` and `delft`, serving the `reference_segmenter` and
-`citation` models. It is **opt-in**: the shipped default profile stays `grobid_crf`, and a default
-install acquires no network dependency and no credential requirement.
+`citation` models. It is **opt-in**: no shipped profile that a deployment is pointed at serves it, and a
+default install acquires no credential requirement.
 
 Not the same thing as the trained JATS annotation model, which is a whole-document
 pipeline benchmarked as its own tool rather than a model inside the parser — see

@@ -27,6 +27,13 @@ PROFILE_OVERLAY_KEYS = frozenset({'sequence_models', 'models', 'processors'})
 PROFILE_METADATA_KEYS = frozenset({'label', 'description'})
 
 
+# What makes a profile a pointer: a name that tracks another profile and adds
+# only prose. Permitted beside the metadata keys and never beside an overlay key,
+# which is what stops a pointer resolving to anything but its target -- so the two
+# answer a request identically and share a digest.
+PROFILE_POINTER_KEYS = frozenset({'extends'})
+
+
 # What `selectable_profiles` says to mean every declared profile. A word rather
 # than `*`, which is an alias indicator in YAML and so cannot be passed through
 # `SCIENCEBEAM_PARSER__SELECTABLE_PROFILES`.
@@ -58,6 +65,14 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
         else:
             result[key] = copy.deepcopy(value)
     return result
+
+
+def _get_pinned_profile_name(profiles: dict, name: str) -> str:
+    """One step, since `validate_profiles` refuses a pointer at a pointer."""
+    target_name = (profiles.get(name) or {}).get('extends')
+    if isinstance(target_name, str) and target_name in profiles:
+        return target_name
+    return name
 
 
 def _get_base_profile_names(name: str, extends: Any) -> List[str]:
@@ -160,6 +175,7 @@ class AppConfig:
                 f'Unknown profile {name!r}{suffix}. Available: {available}'
             )
 
+        resolved = _get_pinned_profile_name(profiles, resolved)
         profile = profiles[resolved]
         overlay: dict = {}
 
@@ -189,6 +205,21 @@ class AppConfig:
     def get_profile_names(self) -> List[str]:
         return sorted(self.props.get('profiles', {}))
 
+    def get_pinned_profile_name(self, profile_name: str) -> str:
+        """The profile whose models answer, for a name that may be a pointer.
+
+        What attribution reports, so that a document saved under a pointer names
+        a combination that still means that combination once the pointer has
+        moved. A name that is not a pointer is its own answer.
+        """
+        aliases = self.props.get('profile_aliases', {})
+        profiles = self.props.get('profiles', {})
+        return _get_pinned_profile_name(profiles, aliases.get(profile_name, profile_name))
+
+    def is_profile_pointer(self, profile_name: str) -> bool:
+        profile = self.get_profile_props(profile_name)
+        return 'extends' in profile
+
     def get_profile_props(self, profile_name: str) -> dict:
         return self.props.get('profiles', {}).get(profile_name) or {}
 
@@ -216,17 +247,56 @@ class AppConfig:
                 f'A profile may not be named {ALL_PROFILES!r}: that is what '
                 '`selectable_profiles` says to mean every profile'
             )
+        aliases = self.props.get('profile_aliases', {})
+        shadowed_aliases = sorted(set(aliases) & set(profiles))
+        if shadowed_aliases:
+            raise InvalidProfileError(
+                f'{shadowed_aliases} are declared as profiles and as '
+                '`profile_aliases`, so a request naming one could mean either. '
+                'An alias is for a name a profile no longer has.'
+            )
         for name, profile in sorted(profiles.items()):
             invalid_keys = sorted(
-                set(profile) - PROFILE_OVERLAY_KEYS - PROFILE_METADATA_KEYS
+                set(profile)
+                - PROFILE_OVERLAY_KEYS - PROFILE_METADATA_KEYS - PROFILE_POINTER_KEYS
             )
             if invalid_keys:
                 raise InvalidProfileError(
                     f'Profile {name!r} may not set {invalid_keys}. '
                     f'A profile may only set '
-                    f'{sorted(PROFILE_OVERLAY_KEYS | PROFILE_METADATA_KEYS)}'
+                    f'{sorted(PROFILE_OVERLAY_KEYS | PROFILE_METADATA_KEYS | PROFILE_POINTER_KEYS)}'
                 )
+            if 'extends' in profile:
+                self._validate_profile_pointer(name, profile, profiles)
         return self
+
+    def _validate_profile_pointer(self, name: str, profile: dict, profiles: dict) -> None:
+        overlay_keys = sorted(set(profile) & PROFILE_OVERLAY_KEYS)
+        if overlay_keys:
+            raise InvalidProfileError(
+                f'Profile {name!r} extends {profile["extends"]!r} and also sets '
+                f'{overlay_keys}. A profile that extends another adds '
+                f'{sorted(PROFILE_METADATA_KEYS)} and nothing else, so that it cannot '
+                'resolve to anything but what it names.'
+            )
+        target_name = profile['extends']
+        if not isinstance(target_name, str):
+            raise InvalidProfileError(
+                f'Profile {name!r} must extend one profile by name, but extends '
+                f'{target_name!r}'
+            )
+        if target_name not in profiles:
+            raise InvalidProfileError(
+                f'Profile {name!r} extends unknown profile {target_name!r}. '
+                f'Available: {sorted(profiles)}'
+            )
+        if 'extends' in profiles[target_name]:
+            raise InvalidProfileError(
+                f'Profile {name!r} extends {target_name!r}, which extends '
+                f'{profiles[target_name]["extends"]!r}. A profile points at one that '
+                'declares its own models, so that what it serves is readable without '
+                'following a chain.'
+            )
 
     def get(self, key: str, default_value: Optional[Any] = None):
         return self.props.get(key, default_value)
