@@ -2,7 +2,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +21,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticAuthor,
     SemanticCaption,
     SemanticCountry,
+    SemanticDocument,
     SemanticEditor,
     SemanticFigure,
     SemanticFigureCitation,
@@ -41,6 +42,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticTitle,
     iter_by_semantic_type_recursively
 )
+from sciencebeam_parser.document.tei_document import get_tei_for_semantic_document
 from sciencebeam_parser.processors.fulltext import processor as processor_module
 from sciencebeam_parser.processors.fulltext.processor import (
     FullTextProcessor,
@@ -1269,3 +1271,237 @@ class TestFullTextProcessorAffiliation:
         assert get_cv_document_graphic_provider_mock.call_args[1]['page_numbers'] == [
             _coordinates.page_number
         ]
+
+
+class TestFullTextProcessorAffiliationAttachment:
+    """Affiliations are attached to authors the way GROBID attaches them."""
+
+    def _setup_author(
+        self,
+        fulltext_models_mock: MockFullTextModels,
+        given_name_block: LayoutBlock,
+        surname_block: LayoutBlock,
+        marker_block: Optional[LayoutBlock] = None
+    ) -> LayoutBlock:
+        fulltext_models_mock.name_header_model_mock.update_label_by_layout_block(
+            given_name_block, '<forename>'
+        )
+        fulltext_models_mock.name_header_model_mock.update_label_by_layout_block(
+            surname_block, '<surname>'
+        )
+        blocks = [given_name_block, surname_block]
+        if marker_block is not None:
+            fulltext_models_mock.name_header_model_mock.update_label_by_layout_block(
+                marker_block, '<marker>'
+            )
+            blocks.append(marker_block)
+        return LayoutBlock.merge_blocks(blocks)
+
+    def _setup_affiliation(
+        self,
+        fulltext_models_mock: MockFullTextModels,
+        institution_block: LayoutBlock,
+        marker_block: Optional[LayoutBlock] = None
+    ) -> LayoutBlock:
+        fulltext_models_mock.affiliation_address_model_mock.update_label_by_layout_block(
+            institution_block, '<institution>'
+        )
+        blocks = [institution_block]
+        if marker_block is not None:
+            fulltext_models_mock.affiliation_address_model_mock.update_label_by_layout_block(
+                marker_block, '<marker>'
+            )
+            blocks = [marker_block, institution_block]
+        return LayoutBlock.merge_blocks(blocks)
+
+    def _get_semantic_document(
+        self,
+        fulltext_models_mock: MockFullTextModels,
+        author_blocks: List[LayoutBlock],
+        affiliation_blocks: List[LayoutBlock]
+    ) -> SemanticDocument:
+        header_block = LayoutBlock.merge_blocks(author_blocks + affiliation_blocks)
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            header_block, '<header>'
+        )
+        for author_block in author_blocks:
+            if author_block.text == 'Title':
+                continue
+            fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+                author_block, '<author>'
+            )
+        for affiliation_block in affiliation_blocks:
+            fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+                affiliation_block, '<affiliation>'
+            )
+        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[header_block])])
+        return FullTextProcessor(
+            fulltext_models_mock
+        ).get_semantic_document_for_layout_document(layout_document=layout_document)
+
+    def test_should_give_a_lone_affiliation_to_every_author(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        author_block = LayoutBlock.merge_blocks([
+            self._setup_author(
+                fulltext_models_mock, LayoutBlock.for_text('John'), LayoutBlock.for_text('Smith')
+            ),
+            self._setup_author(
+                fulltext_models_mock, LayoutBlock.for_text('Maria'), LayoutBlock.for_text('Madison')
+            )
+        ])
+        affiliation_block = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution1')
+        )
+        semantic_document = self._get_semantic_document(
+            fulltext_models_mock, [author_block], [affiliation_block]
+        )
+        authors = semantic_document.front.authors
+        assert [author.surname_text for author in authors] == ['Smith', 'Madison']
+        assert [
+            [aff.content_id for aff in author.affiliations]
+            for author in authors
+        ] == [['aff0'], ['aff0']]
+
+    def test_should_attach_affiliations_by_their_markers(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        author_block = LayoutBlock.merge_blocks([
+            self._setup_author(
+                fulltext_models_mock,
+                LayoutBlock.for_text('John'),
+                LayoutBlock.for_text('Smith'),
+                LayoutBlock.for_text('2')
+            ),
+            self._setup_author(
+                fulltext_models_mock,
+                LayoutBlock.for_text('Maria'),
+                LayoutBlock.for_text('Madison'),
+                LayoutBlock.for_text('1')
+            )
+        ])
+        affiliation_block_1 = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution1'), LayoutBlock.for_text('1')
+        )
+        affiliation_block_2 = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution2'), LayoutBlock.for_text('2')
+        )
+        semantic_document = self._get_semantic_document(
+            fulltext_models_mock, [author_block], [affiliation_block_1, affiliation_block_2]
+        )
+        authors = semantic_document.front.authors
+        assert [author.surname_text for author in authors] == ['Smith', 'Madison']
+        assert [
+            [aff.get_text_by_type(SemanticInstitution) for aff in author.affiliations]
+            for author in authors
+        ] == [['Institution2'], ['Institution1']]
+
+    def test_should_link_an_affiliation_block_to_the_author_block_before_it(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        # GROBID 0.9.1's pre-link by the preceding author cluster, with no marker
+        author_block_1 = self._setup_author(
+            fulltext_models_mock, LayoutBlock.for_text('John'), LayoutBlock.for_text('Smith')
+        )
+        affiliation_block_1 = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution1')
+        )
+        author_block_2 = self._setup_author(
+            fulltext_models_mock, LayoutBlock.for_text('Maria'), LayoutBlock.for_text('Madison')
+        )
+        affiliation_block_2 = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution2')
+        )
+        header_block = LayoutBlock.merge_blocks([
+            author_block_1, affiliation_block_1, author_block_2, affiliation_block_2
+        ])
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            header_block, '<header>'
+        )
+        for author_block in [author_block_1, author_block_2]:
+            fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+                author_block, '<author>'
+            )
+        for affiliation_block in [affiliation_block_1, affiliation_block_2]:
+            fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+                affiliation_block, '<affiliation>'
+            )
+        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[header_block])])
+        semantic_document = FullTextProcessor(
+            fulltext_models_mock
+        ).get_semantic_document_for_layout_document(layout_document=layout_document)
+        authors = semantic_document.front.authors
+        assert [author.surname_text for author in authors] == ['Smith', 'Madison']
+        assert [
+            [aff.get_text_by_type(SemanticInstitution) for aff in author.affiliations]
+            for author in authors
+        ] == [['Institution1'], ['Institution2']]
+
+    def test_should_pre_link_the_authors_before_an_affiliation_and_rescue_the_rest(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        # GROBID 0.9.1 with no marker: the affiliation block right after the author
+        # block goes to the authors named in it; the second affiliation block, which
+        # follows an affiliation, is left for the orphan rescue, which without
+        # positions gives it to the author with the fewest affiliations
+        author_block = LayoutBlock.merge_blocks([
+            self._setup_author(
+                fulltext_models_mock, LayoutBlock.for_text('John'), LayoutBlock.for_text('Smith')
+            ),
+            self._setup_author(
+                fulltext_models_mock, LayoutBlock.for_text('Maria'), LayoutBlock.for_text('Madison')
+            )
+        ])
+        affiliation_block_1 = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution1')
+        )
+        affiliation_block_2 = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution2')
+        )
+        semantic_document = self._get_semantic_document(
+            fulltext_models_mock, [author_block], [affiliation_block_1, affiliation_block_2]
+        )
+        authors = semantic_document.front.authors
+        assert [
+            [aff.get_text_by_type(SemanticInstitution) for aff in author.affiliations]
+            for author in authors
+        ] == [['Institution1', 'Institution2'], ['Institution1']]
+        tei_document = get_tei_for_semantic_document(semantic_document)
+        assert not tei_document.get_xpath_text_content_list(
+            '//tei:author/tei:note[@type="dummy_author"]'
+        )
+
+    def test_should_deal_affiliations_out_in_sequence_without_markers_or_positions(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        # with another block between the authors and the affiliations, nothing is
+        # pre-linked, and without markers or positions the affiliations are dealt
+        # out one per author
+        author_block = LayoutBlock.merge_blocks([
+            self._setup_author(
+                fulltext_models_mock, LayoutBlock.for_text('John'), LayoutBlock.for_text('Smith')
+            ),
+            self._setup_author(
+                fulltext_models_mock, LayoutBlock.for_text('Maria'), LayoutBlock.for_text('Madison')
+            )
+        ])
+        title_block = LayoutBlock.for_text('Title')
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            title_block, '<title>'
+        )
+        affiliation_block_1 = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution1')
+        )
+        affiliation_block_2 = self._setup_affiliation(
+            fulltext_models_mock, LayoutBlock.for_text('Institution2')
+        )
+        semantic_document = self._get_semantic_document(
+            fulltext_models_mock,
+            [author_block, title_block],
+            [affiliation_block_1, affiliation_block_2]
+        )
+        authors = semantic_document.front.authors
+        assert [
+            [aff.get_text_by_type(SemanticInstitution) for aff in author.affiliations]
+            for author in authors
+        ] == [['Institution1'], ['Institution2']]

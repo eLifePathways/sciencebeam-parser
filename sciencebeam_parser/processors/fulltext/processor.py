@@ -20,6 +20,11 @@ from sciencebeam_parser.models.model import (
     get_layout_document_label_result_with_relabelled_lines,
 )
 from sciencebeam_parser.cv_models.cv_model import ComputerVisionModel
+from sciencebeam_parser.processors.fulltext.attach_affiliations import (
+    HeaderCluster,
+    attach_affiliations_for_front,
+    get_header_clusters
+)
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
 from sciencebeam_parser.utils.misc import iter_ids
 
@@ -338,10 +343,16 @@ class FullTextProcessor:
             semantic_document, entity_blocks,
             abstracts_mode=self.config.abstracts_mode
         )
+        header_clusters = get_header_clusters(semantic_document.front)
+        original_authors_text: Optional[str] = None
         if self.config.extract_authors:
-            self._process_raw_authors(semantic_document.front)
+            original_authors_text = self._process_raw_authors(semantic_document.front)
         if self.config.extract_affiliations:
             self._process_raw_affiliations(semantic_document)
+        if original_authors_text is not None and self.config.extract_affiliations:
+            self._attach_affiliations(
+                semantic_document.front, original_authors_text, header_clusters
+            )
 
     def _preprocess_layout_graphics(
         self,
@@ -495,7 +506,12 @@ class FullTextProcessor:
             if content_id:
                 citation.target_content_id = content_id
 
-    def _process_raw_authors(self, semantic_parent: SemanticMixedContentWrapper):
+    def _process_raw_authors(
+        self,
+        semantic_parent: SemanticMixedContentWrapper
+    ) -> str:
+        """Replaces the raw author blocks by the parsed authors and returns the text
+        of the blocks, tab separated as GROBID keeps it for attaching affiliations."""
         result_content: List[SemanticContentWrapper] = []
         raw_authors: List[SemanticRawAuthors] = []
         for semantic_content in semantic_parent:
@@ -540,6 +556,26 @@ class FullTextProcessor:
                 )
             result_content.extend(parsed_authors)
         semantic_parent.mixed_content = result_content
+        return '\t'.join(raw_author.get_text() for raw_author in raw_authors)
+
+    def _attach_affiliations(
+        self,
+        semantic_front: SemanticMixedContentWrapper,
+        original_authors_text: str,
+        header_clusters: Sequence[HeaderCluster]
+    ):
+        authors = list(semantic_front.iter_by_type(SemanticAuthor))
+        affiliations = list(semantic_front.iter_by_type(SemanticAffiliationAddress))
+        attach_affiliations_for_front(
+            authors,
+            affiliations,
+            original_authors_text=original_authors_text,
+            header_clusters=header_clusters
+        )
+        LOGGER.debug(
+            'attached affiliations: %r',
+            [[aff.content_id for aff in author.affiliations] for author in authors]
+        )
 
     def _process_raw_affiliations(self, semantic_document: SemanticDocument):
         result_content: List[SemanticContentWrapper] = []
