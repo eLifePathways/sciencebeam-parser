@@ -21,6 +21,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticTable
 )
 from sciencebeam_parser.ocr_models.ocr_model import OpticalCharacterRecognitionModel
+from sciencebeam_parser.processors.graphic_regions import VECTOR_REGION_GRAPHIC_TYPE
 from sciencebeam_parser.processors.ref_matching import SimpleContentIdMatcher
 
 
@@ -405,6 +406,14 @@ class _BoundingBoxDistanceGraphicMatcherInstance(NamedTuple):
         if not isinstance(
             distance_between.bounding_box_ref_2.semantic_content, SemanticTable
         ):
+            return False
+        semantic_graphic = distance_between.bounding_box_ref_1.semantic_content
+        layout_graphic = (
+            semantic_graphic.layout_graphic
+            if isinstance(semantic_graphic, SemanticGraphic)
+            else None
+        )
+        if not layout_graphic or layout_graphic.graphic_type != VECTOR_REGION_GRAPHIC_TYPE:
             return False
         enclosed_text_ratio = get_enclosed_text_ratio(
             distance_between.bounding_box_ref_1.bounding_box_list,
