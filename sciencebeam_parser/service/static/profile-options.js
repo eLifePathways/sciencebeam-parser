@@ -10,16 +10,17 @@
  * A profile nothing tracks is a choice of its own and stays. A deployment that
  * makes every profile selectable has far more of those than of the others --
  * one per model whose contribution can be measured -- so the names maintained
- * as a recommendation lead, and the headings say what separates them. A
- * deployment serving one kind gets no heading, since a sole heading divides
- * nothing.
+ * as a recommendation lead, and the headings say which to pick rather than how
+ * the two differ -- what a name resolves to, and whether that moves between
+ * releases, is what the description beside the menu is for. A deployment
+ * serving one kind gets no heading, since a sole heading divides nothing.
  *
  * Within a heading the order is what the menu shows rather than the profile
  * names behind it, which otherwise reads at random.
  */
 
-export const TRACKING_GROUP_LABEL = 'Updated between releases';
-export const PINNED_GROUP_LABEL = 'Fixed combinations';
+export const TRACKING_GROUP_LABEL = 'For most uses';
+export const PINNED_GROUP_LABEL = 'For specific needs';
 
 function getLabel(profile) {
   return (profile.label || profile.name || '').toLowerCase();

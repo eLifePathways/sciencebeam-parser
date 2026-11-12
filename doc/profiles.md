@@ -157,9 +157,8 @@ way. A client pinning a combination rather than offering a menu wants the other
 one.
 
 Under `selectable_profiles: all` the per-model profiles outnumber the rest, so
-the page leads with the names that track and heads the two parts "Updated
-between releases" and "Fixed combinations"; a deployment serving one kind gets
-no heading.
+the page leads with the names that track and heads the two parts "For most
+uses" and "For specific needs"; a deployment serving one kind gets no heading.
 
 `profile_aliases` is for a name a profile no longer has — an old name kept
 working after a rename. An alias is reported as `alias_names` of the profile it

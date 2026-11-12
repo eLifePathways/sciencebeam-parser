@@ -79,7 +79,7 @@ class TestGetProfileOptionGroups:
     def test_should_head_each_kind_where_a_deployment_serves_both(self):
         menu = get_menu([profile('pinned_a'), profile('tracking_b', tracks='pinned_b')])
         assert [group['label'] for group in menu['groups']] == [
-            'Updated between releases', 'Fixed combinations'
+            'For most uses', 'For specific needs'
         ]
 
     def test_should_not_head_a_menu_that_holds_one_kind(self):
