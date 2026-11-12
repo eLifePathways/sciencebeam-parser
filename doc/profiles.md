@@ -149,10 +149,12 @@ another is listed beside what it tracks rather than in place of it, because the
 two are different offers: one follows what we would choose, the other stays put.
 
 `tracks` is what tells them apart: the profile this one currently serves the
-models of, or `null` where it declares its own. The two resolve to the same
-models, so a client offering a menu should separate them rather than list them
-flat — the page this service serves groups them under "Recommended" and "A
-specific combination".
+configuration of, or `null` where it declares its own. The two answer a request
+identically, so a client offering a menu has one conversion under two names and
+should pick one — the page this service serves offers the tracking name and
+drops what it tracks, since a response reports the profile that answered either
+way. A client pinning a combination rather than offering a menu wants the other
+one.
 
 `profile_aliases` is for a name a profile no longer has — an old name kept
 working after a rename. An alias is reported as `alias_names` of the profile it

@@ -1,23 +1,25 @@
 /*
- * How the profile menu is divided.
+ * Which profiles the menu offers.
  *
- * A profile that tracks another serves that one's models, so a flat list would
- * offer the same combination twice under two names. The groups separate the two
- * choices: follow what the service recommends, or stay on one combination.
+ * A profile that tracks another serves exactly what that one serves, so
+ * offering both is offering one conversion twice under two names. The menu
+ * keeps the tracking name, which is the one that says what it is for, and drops
+ * the profile it tracks; a response still reports the profile that answered, so
+ * which combination ran is not lost.
+ *
+ * A profile nothing tracks is a choice of its own and stays.
  */
 
-export const TRACKING_GROUP_LABEL = 'Recommended';
-export const PINNED_GROUP_LABEL = 'A specific combination';
+export function getProfileOptions(profiles) {
+  const tracked = new Set(
+    profiles.map((profile) => profile.tracks).filter((name) => name)
+  );
+  return profiles.filter((profile) => !tracked.has(profile.name));
+}
 
-export function getProfileOptionGroups(profiles) {
-  const tracking = profiles.filter((profile) => profile.tracks);
-  const pinned = profiles.filter((profile) => !profile.tracks);
-  if (!tracking.length || !pinned.length) {
-    // Nothing to tell apart, and a sole group heading is noise.
-    return profiles.length ? [{ label: null, profiles: profiles }] : [];
+export function getTrackedProfile(profiles, profile) {
+  if (!profile || !profile.tracks) {
+    return null;
   }
-  return [
-    { label: TRACKING_GROUP_LABEL, profiles: tracking },
-    { label: PINNED_GROUP_LABEL, profiles: pinned }
-  ];
+  return profiles.find((item) => item.name === profile.tracks) || null;
 }

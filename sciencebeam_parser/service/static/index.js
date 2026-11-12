@@ -7,7 +7,7 @@ import { parseJatsViewModel } from './jats-to-html.js';
 import { parseTeiViewModel } from './tei-to-html.js';
 import { getZipSourceForBlob, readZipEntries } from './read-zip.js';
 import { addSvgViewBox } from './svg-view-box.js';
-import { getProfileOptionGroups } from './profile-options.js';
+import { getProfileOptions, getTrackedProfile } from './profile-options.js';
 
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
@@ -121,19 +121,12 @@ function checkSelectedFile() {
   convertButton.disabled = rejected;
 }
 
-function addOption(parent, value, label) {
+function addOption(select, value, label) {
   const option = document.createElement('option');
   option.value = value;
   option.textContent = label;
-  parent.appendChild(option);
+  select.appendChild(option);
   return option;
-}
-
-function addOptionGroup(select, label) {
-  const group = document.createElement('optgroup');
-  group.label = label;
-  select.appendChild(group);
-  return group;
 }
 
 function setUpOutputSelect() {
@@ -180,18 +173,28 @@ function getSelectedIncludes() {
 }
 
 function addProfileOptions(profiles) {
-  getProfileOptionGroups(profiles).forEach((group) => {
-    const parent = group.label ? addOptionGroup(profileSelect, group.label) : profileSelect;
-    group.profiles.forEach((profile) => {
-      const option = addOption(parent, profile.name, profile.label || profile.name);
-      option.selected = profile.is_default;
-    });
+  getProfileOptions(profiles).forEach((profile) => {
+    const option = addOption(profileSelect, profile.name, profile.label || profile.name);
+    option.selected = profile.is_default;
   });
+}
+
+function getProfileHint(profiles, profile) {
+  if (!profile) {
+    return '';
+  }
+  const tracked = getTrackedProfile(profiles, profile);
+  // Which combination it is today, since the response will name that one rather
+  // than the name picked here.
+  const serves = tracked
+    ? 'Currently serves ' + (tracked.label || tracked.name) + '.'
+    : '';
+  return [profile.description || '', serves].filter((part) => part).join(' ');
 }
 
 function showProfileDescription(profiles) {
   const profile = profiles.find((item) => item.name === profileSelect.value);
-  profileHint.textContent = profile ? (profile.description || '') : '';
+  profileHint.textContent = getProfileHint(profiles, profile);
 }
 
 async function loadProfiles() {

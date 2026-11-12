@@ -1,8 +1,7 @@
-"""How the page divides the profile menu.
+"""Which profiles the page's menu offers.
 
-A profile that tracks another serves that one's models, so the menu has to say
-which of the two a reader is choosing rather than offering the same combination
-twice.
+A profile that tracks another serves exactly what that one serves, so offering
+both would offer one conversion twice under two names.
 """
 import json
 import shutil
@@ -13,7 +12,7 @@ from typing import List, Optional
 import pytest
 
 
-HARNESS_FILE = Path(__file__).parent / 'get_profile_option_groups.mjs'
+HARNESS_FILE = Path(__file__).parent / 'get_profile_options.mjs'
 
 
 pytestmark = pytest.mark.skipif(
@@ -22,7 +21,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def get_profile_option_groups(profiles: List[dict]) -> List[dict]:
+def get_menu(profiles: List[dict]) -> dict:
     result = subprocess.run(
         ['node', str(HARNESS_FILE)],
         input=json.dumps(profiles),
@@ -37,33 +36,39 @@ def profile(name: str, tracks: Optional[str] = None) -> dict:
     return {'name': name, 'label': name, 'tracks': tracks, 'is_default': False}
 
 
-class TestGetProfileOptionGroups:
-    def test_should_separate_a_tracking_profile_from_a_pinned_one(self):
-        groups = get_profile_option_groups([
-            profile('pinned_a'), profile('tracking_a', tracks='pinned_a')
-        ])
-        assert [
-            (group['label'], [item['name'] for item in group['profiles']])
-            for group in groups
-        ] == [
-            ('Recommended', ['tracking_a']),
-            ('A specific combination', ['pinned_a'])
-        ]
+class TestGetProfileOptions:
+    def test_should_offer_one_option_for_a_profile_and_the_one_it_tracks(self):
+        menu = get_menu([profile('pinned_a'), profile('tracking_a', tracks='pinned_a')])
+        assert menu['options'] == ['tracking_a']
 
-    def test_should_offer_what_the_service_recommends_first(self):
-        groups = get_profile_option_groups([
-            profile('pinned_a'), profile('tracking_a', tracks='pinned_a')
-        ])
-        assert groups[0]['profiles'][0]['name'] == 'tracking_a'
+    def test_should_offer_a_profile_nothing_tracks(self):
+        menu = get_menu([profile('pinned_a'), profile('pinned_b')])
+        assert menu['options'] == ['pinned_a', 'pinned_b']
 
-    def test_should_not_head_a_list_that_holds_one_kind(self):
-        groups = get_profile_option_groups([profile('pinned_a'), profile('pinned_b')])
-        assert [group['label'] for group in groups] == [None]
-        assert [item['name'] for item in groups[0]['profiles']] == ['pinned_a', 'pinned_b']
-
-    def test_should_not_head_a_list_that_tracks_throughout(self):
-        groups = get_profile_option_groups([profile('tracking_a', tracks='pinned_a')])
-        assert [group['label'] for group in groups] == [None]
+    def test_should_keep_a_profile_whose_target_this_deployment_withholds(self):
+        """Dropping it would leave a deployment that narrowed the list with nothing."""
+        menu = get_menu([profile('tracking_a', tracks='pinned_a')])
+        assert menu['options'] == ['tracking_a']
 
     def test_should_offer_nothing_where_the_service_lists_nothing(self):
-        assert get_profile_option_groups([]) == []
+        assert get_menu([])['options'] == []
+
+    def test_should_keep_the_order_the_service_listed(self):
+        menu = get_menu([
+            profile('pinned_b'), profile('tracking_a', tracks='pinned_a'), profile('pinned_a')
+        ])
+        assert menu['options'] == ['pinned_b', 'tracking_a']
+
+
+class TestGetTrackedProfile:
+    def test_should_find_what_a_profile_tracks(self):
+        menu = get_menu([profile('pinned_a'), profile('tracking_a', tracks='pinned_a')])
+        assert menu['tracked']['tracking_a'] == 'pinned_a'
+
+    def test_should_find_nothing_for_a_profile_that_tracks_nothing(self):
+        menu = get_menu([profile('pinned_a')])
+        assert menu['tracked']['pinned_a'] is None
+
+    def test_should_find_nothing_where_the_deployment_withholds_the_target(self):
+        menu = get_menu([profile('tracking_a', tracks='pinned_a')])
+        assert menu['tracked']['tracking_a'] is None
