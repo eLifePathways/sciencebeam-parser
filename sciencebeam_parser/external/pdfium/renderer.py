@@ -65,6 +65,7 @@ class PdfRenderWorker:
         self.timeout = timeout
         self.limit = limit if limit is not None else get_render_worker_limit()
         self._process: Optional[subprocess.Popen] = None
+        self._exchange_thread: Optional[threading.Thread] = None
         self._has_slot = False
         self._failed = False
 
@@ -117,9 +118,17 @@ class PdfRenderWorker:
             process.kill()
         except OSError:
             pass
+        # an exchange left blocked on the pipe is reading what communicate
+        # would read, so it is given the chance to end before we do
+        thread = self._exchange_thread
+        self._exchange_thread = None
+        if thread is not None and thread.is_alive():
+            thread.join(5)
+            if thread.is_alive():
+                return
         try:
             _, error_output = process.communicate(timeout=5)
-        except (subprocess.TimeoutExpired, ValueError, OSError):
+        except Exception:  # pylint: disable=broad-except
             return
         if error_output and error_output.strip():
             LOGGER.warning(
@@ -159,6 +168,7 @@ class PdfRenderWorker:
                 reply_holder['error'] = exc
 
         thread = threading.Thread(target=_exchange, daemon=True)
+        self._exchange_thread = thread
         thread.start()
         thread.join(self.timeout)
         if thread.is_alive():
@@ -169,6 +179,7 @@ class PdfRenderWorker:
             self._failed = True
             self._stop_process()
             return None
+        self._exchange_thread = None
         if 'error' in reply_holder or 'reply' not in reply_holder:
             LOGGER.warning(
                 'render worker failed for %r: %r',

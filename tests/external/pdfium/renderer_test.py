@@ -1,4 +1,6 @@
 import logging
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -94,6 +96,28 @@ class TestRenderWorkerLimit:
         del worker
         assert limit.acquire(timeout=5)
         limit.release()
+
+    def test_should_render_once_a_slot_comes_free(self, tmp_path: Path):
+        limit = RenderWorkerLimit(max_workers=1)
+        holder = PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH, limit=limit)
+        assert holder.render(1, 0.5, str(tmp_path / 'held.png'))
+        rendered = []
+
+        def _render_once_free():
+            with PdfRenderWorker(
+                MINIMAL_EXAMPLE_PDF_PATH, timeout=30, limit=limit
+            ) as waiting:
+                rendered.append(
+                    waiting.render(1, 0.5, str(tmp_path / 'waited.png'))
+                )
+
+        waiting_thread = threading.Thread(target=_render_once_free)
+        waiting_thread.start()
+        time.sleep(0.5)
+        assert not rendered
+        holder.close()
+        waiting_thread.join(30)
+        assert rendered and rendered[0]
 
     def test_should_render_nothing_where_no_slot_comes_free(self, tmp_path: Path):
         limit = RenderWorkerLimit(max_workers=1)
