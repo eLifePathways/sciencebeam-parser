@@ -211,6 +211,18 @@ function getReference(node) {
   return reference;
 }
 
+function getAbstract(abstract) {
+  const language = getLanguage(abstract);
+  const value = {
+    label: abstract.name,
+    path: abstract.path,
+    title: getValue(abstract, 'title'),
+    paragraphs: getDescendantElements(abstract, 'p').map(getParagraph)
+  };
+  return language ? { ...value, language } : value;
+}
+
+
 export function getArticleViewModel(article) {
   if (!article.path) {
     article.path = `/${article.name}`;
@@ -246,12 +258,7 @@ export function getArticleViewModel(article) {
     authorGroup: getContribGroup(articleMeta),
     authors: getAuthors(articleMeta),
     affiliations: getAffiliations(articleMeta),
-    abstracts: getChildElements(articleMeta, 'abstract').map((abstract) => ({
-      label: abstract.name,
-      path: abstract.path,
-      title: getValue(abstract, 'title'),
-      paragraphs: getDescendantElements(abstract, 'p').map(getParagraph)
-    })),
+    abstracts: getChildElements(articleMeta, 'abstract').map(getAbstract),
     sections: getChildElements(body, 'sec').map(getSection),
     acknowledgements: ack ? getSectionBlocks(ack) : [],
     appendices: getChildElements(appGroup, 'app').map(getSection),

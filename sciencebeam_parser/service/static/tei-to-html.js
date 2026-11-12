@@ -15,6 +15,7 @@ import {
   getFirstChildElement,
   getFirstDescendantElement,
   getInlineRuns,
+  getLanguage,
   getTextContent,
   getValue,
   getValuesWithLanguage,
@@ -235,6 +236,18 @@ function getBackDivision(back, type) {
   ) || null;
 }
 
+function getAbstract(abstract) {
+  const language = getLanguage(abstract);
+  const value = {
+    label: abstract.name,
+    path: abstract.path,
+    title: null,
+    paragraphs: getChildElements(abstract, 'p').map(getParagraph)
+  };
+  return language ? { ...value, language } : value;
+}
+
+
 export function getTeiArticleViewModel(article) {
   if (!article.path) {
     article.path = `/${article.name}`;
@@ -248,8 +261,8 @@ export function getTeiArticleViewModel(article) {
   const text = getFirstChildElement(article, 'text');
   const body = text ? getFirstChildElement(text, 'body') : null;
   const back = text ? getFirstChildElement(text, 'back') : null;
-  const abstract = header
-    ? getFirstDescendantElement(header, 'abstract')
+  const profileDesc = header
+    ? getFirstDescendantElement(header, 'profileDesc')
     : null;
   const journalTitle = header
     ? getChildByAttribute(
@@ -275,13 +288,8 @@ export function getTeiArticleViewModel(article) {
     affiliations: authors.flatMap(
       (author) => getChildElements(author, 'affiliation').map(getAffiliation)
     ),
-    abstracts: abstract
-      ? [{
-        label: abstract.name,
-        path: abstract.path,
-        title: null,
-        paragraphs: getChildElements(abstract, 'p').map(getParagraph)
-      }]
+    abstracts: profileDesc
+      ? getChildElements(profileDesc, 'abstract').map(getAbstract)
       : [],
     sections: body ? getDivisionBlocks(body) : [],
     acknowledgements: acknowledgement
