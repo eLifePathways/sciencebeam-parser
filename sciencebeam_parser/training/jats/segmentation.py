@@ -317,7 +317,7 @@ def _tag_by_coordinates(
         y_ratio = y_ratio_by_line[id(seg_line)]
         if id(seg_line) in page_number_lines:
             seg_line.seg_label = SEG_PAGE
-        elif y_ratio > config.footnote_y_ratio:
+        elif y_ratio is not None and y_ratio > config.footnote_y_ratio:
             seg_line.seg_label = (
                 SEG_FRONT if id(seg_line) in corresponding_author_lines
                 else SEG_FOOTNOTE
@@ -1485,6 +1485,33 @@ _STATEMENT_LABEL_BY_KIND = {
 }
 
 
+def _starts_a_column_of_its_own(seg_lines: List[_SegLine], index: int) -> bool:
+    """Whether the page sets this line where the one above it does not reach."""
+    if index == 0:
+        return False
+    position = _get_line_position(seg_lines[index])
+    above = _get_line_position(seg_lines[index - 1])
+    if position is None or above is None:
+        return False
+    return abs(position[0] - above[0]) > _SAME_COLUMN_MAX_X_GAP
+
+
+def _declarations_are_beside_it(seg_lines: List[_SegLine], index: int) -> bool:
+    """Whether the run of declarations the article closes with is on either side.
+
+    Below as well as above, because the run has a first declaration as well as a
+    last and that one has the argument above it -- but only where the page sets
+    the heading in a column of its own.  A heading the argument runs straight
+    into is the argument naming a declaration rather than making one.
+    """
+    if _enclosing_label(seg_lines, index, -1) in _STATEMENT_LABELS:
+        return True
+    return (
+        _enclosing_label(seg_lines, index, 1) in _STATEMENT_LABELS
+        and _starts_a_column_of_its_own(seg_lines, index)
+    )
+
+
 def _claim_statement_by_heading(
     seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
 ) -> None:
@@ -1510,7 +1537,7 @@ def _claim_statement_by_heading(
         if not _is_bold(seg_line):
             continue
         label = _STATEMENT_LABEL_BY_KIND.get(match_fn_keywords(text) or '')
-        if label is None or _enclosing_label(seg_lines, index, -1) not in _STATEMENT_LABELS:
+        if label is None or not _declarations_are_beside_it(seg_lines, index):
             continue
         for position in range(index, len(seg_lines)):
             if seg_lines[position].seg_label in _FURNITURE_LABELS:
@@ -1599,7 +1626,12 @@ def _extend_region_to_page_end(
 
     Bounded to the page the run ends on, to the column the run is set in, and
     stopped by anything evidenced, so it only takes what is already inside the
-    run's own column of its own page.  A running foot is
+    run's own column of its own page.  On a page set in columns, to where the
+    run is set as well as to the column it was put in: a narrow column of
+    affiliations beside two of text reads as two columns, and the affiliations
+    share the first of them with the text column next to it.  A page set in one
+    column has no such second reading, and there a line further along the row --
+    the DOI closing a reference -- is the same column still.  A running foot is
     stepped over rather than taken, the same way the gap merge steps over a
     running head.  Per run, because an article that records what changed since
     its previous version carries front matter on a later page too.
@@ -1623,6 +1655,12 @@ def _extend_region_to_page_end(
             if (
                 edge_column is not None and position is not None
                 and _get_column_index(position[0], column_edges) != edge_column
+            ):
+                break
+            if (
+                len(column_edges) > 1
+                and edge_position is not None and position is not None
+                and abs(position[0] - edge_position[0]) > _SAME_COLUMN_MAX_X_GAP
             ):
                 break
             if seg_line.seg_label in _FURNITURE_LABELS:
@@ -2194,8 +2232,12 @@ def _release_front_after_the_body(
 
     Only a line the JATS names a declaration: the front matter itself can print
     past the first line of body, where an affiliation column runs onto the page
-    the article opens on.  What the page sets between two declarations is let go
-    rather than relabelled, the regions claiming it on their own terms.
+    the article opens on.  A run the declarations close over is let go
+    rather than relabelled, the regions claiming it on their own terms -- a
+    table printed among them, and the byline the aligner reads into its
+    caption.  By the run rather than the line, because a correspondence block
+    printed after the declarations opens with a heading of its own that nothing
+    grounds, and what keeps the block is what keeps its heading.
     """
     body_start = next(
         (
@@ -2226,12 +2268,18 @@ def _release_front_after_the_body(
         if label is not None:
             seg_line.seg_label = label
     back_labels = set(_BACK_LABEL_BY_FRONT_FIELD.values())
-    for index in range(body_start, len(seg_lines)):
-        seg_line = seg_lines[index]
-        if seg_line.seg_label != SEG_FRONT or _is_grounded(seg_line, annotated):
+    for run in list(_iter_label_runs(seg_lines, SEG_FRONT)):
+        if run[0] < body_start:
             continue
-        if _enclosing_label(seg_lines, index, -1) in back_labels:
-            seg_line.seg_label = None
+        if any(
+            fields_of(seg_lines[index]) & _FRONT_AFTER_THE_BODY_FIELDS
+            for index in run
+        ):
+            continue
+        if _enclosing_label(seg_lines, run[0], -1) not in back_labels:
+            continue
+        for index in run:
+            seg_lines[index].seg_label = None
 
 
 class SegmentationLabelDeriver:
@@ -2348,6 +2396,9 @@ class SegmentationLabelDeriver:
         # After every pass that builds the front run, because what it reads is
         # the run as it ends up rather than the lines the JATS vote claimed.
         _release_front_after_the_body(seg_lines, annotated)
+        # Again, because the run of declarations an article closes with is only
+        # a run of declarations once the pass above has released it.
+        _claim_statement_by_heading(seg_lines, annotated)
 
         # ── Default remaining untagged lines → body ──
         for sl in seg_lines:

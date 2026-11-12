@@ -117,6 +117,17 @@ class TestPageColumns:
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in lines[-2:]] == [SEG_REFERENCES] * 2
 
+    def test_a_region_stops_where_a_narrow_column_shares_a_bucket(self):
+        # A page setting a narrow column beside two of text reads as two
+        # columns, so the narrow one shares a bucket with the text beside it.
+        doc, lines, annotated = self._page(
+            *[(f'Reference entry number {i} here.', 28.4, True) for i in range(5)],
+            ('The argument of the article goes on.', 167.2, False),
+            *[(f'and on and on and on {i}.', 400.0, False) for i in range(5)],
+        )
+        labels = derive_labels(doc, annotated)
+        assert labels[id(lines[5])] != SEG_REFERENCES
+
     def test_a_region_stops_at_the_other_column_of_a_two_column_page(self):
         doc, lines, annotated = self._page(
             *[(f'Reference entry number {i} here.', 56.7, True) for i in range(5)],

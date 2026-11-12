@@ -369,15 +369,16 @@ class TestFootnotesAcrossTwoColumns:
 class TestStatementMatchedOnTheCover:
     """A deposit cover declares, in the statement's own words, that it exists."""
 
-    def _make_doc(self, after_the_declarations: bool):
+    def _make_doc(self, after_the_declarations: bool, heading_x: float = 10.0):
         argument = [
             make_line('The', 'argument', f'ends{index}', y=100.0 + 10 * index)
             for index in range(3)
         ]
         contribution = make_line('Both', 'authors', 'wrote', 'it', y=140.0)
         heading = make_line('Declaracion', 'de', 'conflicto', 'de', 'intereses:',
-                            y=160.0, bold=True)
-        statement = make_line('The', 'authors', 'declare', 'none', y=180.0)
+                            y=160.0, x=heading_x, bold=True)
+        statement = make_line('The', 'authors', 'declare', 'none', y=180.0,
+                              x=heading_x)
         funding = make_line('This', 'work', 'was', 'self-funded', y=200.0)
         lines = (
             argument + [contribution, heading, statement, funding]
@@ -414,6 +415,13 @@ class TestStatementMatchedOnTheCover:
     def test_a_heading_the_argument_runs_into_is_left_alone(self):
         doc, annotated, heading, _ = self._make_doc(after_the_declarations=False)
         assert derive_labels(doc, annotated)[id(heading)] != SEG_CONFLICT
+
+    def test_a_heading_opening_a_column_of_its_own_is_claimed(self):
+        doc, annotated, heading, statement = self._make_doc(
+            after_the_declarations=False, heading_x=300.0
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(heading)], labels[id(statement)]] == [SEG_CONFLICT] * 2
 
 
 class TestFrontMatterReachingTheNextPage:
@@ -538,8 +546,17 @@ class TestDeclarationPrintedAfterTheArticle:
             'The', 'authors', 'declare', 'none', y=400.0, page_number=2
         )
         table = make_line('Macrodomain', 'Proposal', y=420.0, page_number=2)
+        caption = make_line(
+            'Coordinators', ':', 'Ada', 'Lovelace', y=430.0, page_number=2
+        )
         ethics = make_line(
             'The', 'study', 'needed', 'no', 'approval', y=440.0, page_number=2
+        )
+        correspondence_heading = make_line(
+            'CORRESPONDÊNCIA', ':', y=460.0, page_number=2
+        )
+        correspondence = make_line(
+            'Ada', 'Lovelace', ':', 'ada@example.org', y=470.0, page_number=2
         )
         doc = LayoutDocument(pages=[
             LayoutPage(
@@ -548,7 +565,10 @@ class TestDeclarationPrintedAfterTheArticle:
             ),
             LayoutPage(
                 blocks=[LayoutBlock(
-                    lines=[late_affiliation] + more_body + [conflict, table, ethics]
+                    lines=[late_affiliation] + more_body + [
+                        conflict, table, caption, ethics,
+                        correspondence_heading, correspondence,
+                    ]
                 )],
                 meta=make_page_meta(2),
             ),
@@ -560,12 +580,16 @@ class TestDeclarationPrintedAfterTheArticle:
             lines.index(late_affiliation): JatsFieldNames.AUTHOR_AFF,
             lines.index(conflict): JatsFieldNames.CONFLICT_NOTE,
             lines.index(ethics): JatsFieldNames.AUTHOR_NOTES,
+            lines.index(caption): JatsFieldNames.AUTHOR,
+            lines.index(correspondence): JatsFieldNames.CORRESPONDENCE,
         }
         for line in body + more_body:
             fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
         return doc, annotate(doc, fields), {
-            'conflict': conflict, 'ethics': ethics,
-            'table': table, 'late_affiliation': late_affiliation,
+            'conflict': conflict, 'ethics': ethics, 'table': table,
+            'caption': caption, 'late_affiliation': late_affiliation,
+            'correspondence_heading': correspondence_heading,
+            'correspondence': correspondence,
         }
 
     def test_a_declaration_takes_the_label_it_names(self):
@@ -579,6 +603,18 @@ class TestDeclarationPrintedAfterTheArticle:
     def test_what_the_page_sets_between_two_declarations_is_let_go(self):
         doc, annotated, lines = self._make_doc()
         assert derive_labels(doc, annotated)[id(lines['table'])] == SEG_BODY
+
+    def test_a_byline_read_into_a_caption_is_let_go_with_it(self):
+        doc, annotated, lines = self._make_doc()
+        assert derive_labels(doc, annotated)[id(lines['caption'])] == SEG_BODY
+
+    def test_a_correspondence_block_after_them_keeps_its_heading(self):
+        doc, annotated, lines = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [
+            labels[id(lines['correspondence_heading'])],
+            labels[id(lines['correspondence'])],
+        ] == [SEG_FRONT] * 2
 
     def test_front_matter_printed_past_the_first_body_line_is_left_alone(self):
         doc, annotated, lines = self._make_doc()
