@@ -44,6 +44,14 @@ class TestIterPdfDocumentPageImages:
         ))
         assert [page_image.page_number for page_image in page_images] == [1]
 
+    def test_should_render_nothing_where_no_worker_is_free(self, tmp_path: Path):
+        pool = PdfRenderWorkerPool(max_workers=1, timeout=1)
+        with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
+            page_images = list(iter_pdf_document_page_images(
+                MINIMAL_EXAMPLE_PDF_PATH, str(tmp_path), pool, dpi=36
+            ))
+        assert not page_images
+
     def test_should_render_nothing_for_a_document_it_cannot_read(
         self, tmp_path: Path, pool: PdfRenderWorkerPool
     ):

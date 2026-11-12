@@ -26,6 +26,10 @@ DEFAULT_RENDER_TIMEOUT = 120.0
 T_Crop = Tuple[float, float, float, float]
 
 
+class RenderWorkerUnavailableError(RuntimeError):
+    """The bound from the config, reached. What a caller does without an image is its own."""
+
+
 class PdfRenderWorker:
     def __init__(
         self,
@@ -164,8 +168,8 @@ class PdfRenderWorkerPool:
     """Hands out render workers, no more than `max_workers` of them at a time.
 
     A worker holds a document open for as long as it serves one, so what is
-    bounded is documents in flight. Asking when none is free waits; waiting
-    longer than `timeout` gives no worker rather than no end of waiting.
+    bounded is documents in flight. Asking when none is free waits, and waiting
+    longer than `timeout` raises.
     """
 
     def __init__(
@@ -178,14 +182,12 @@ class PdfRenderWorkerPool:
         self._semaphore = threading.BoundedSemaphore(max(1, max_workers))
 
     @contextmanager
-    def worker(self, pdf_path: str) -> Iterator[Optional[PdfRenderWorker]]:
+    def worker(self, pdf_path: str) -> Iterator[PdfRenderWorker]:
         wait_start = monotonic()
         if not self._semaphore.acquire(timeout=self.timeout):  # noqa pylint: disable=consider-using-with
-            LOGGER.warning(
-                'no render worker free within %.0fs for %r', self.timeout, pdf_path
+            raise RenderWorkerUnavailableError(
+                'no render worker free within %.0fs for %r' % (self.timeout, pdf_path)
             )
-            yield None
-            return
         waited = monotonic() - wait_start
         if waited > 1:
             LOGGER.info('waited %.1fs for a render worker', waited)

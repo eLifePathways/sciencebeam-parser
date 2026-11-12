@@ -6,8 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import PIL.Image
+import pytest
 
 from sciencebeam_parser.external.pdfium.renderer import (
+    RenderWorkerUnavailableError,
     PdfRenderWorker,
     PdfRenderWorkerPool
 )
@@ -90,33 +92,30 @@ class TestPdfRenderWorker:
 
 
 class TestPdfRenderWorkerPool:
-    def test_should_hold_a_worker_out_while_one_is_in_use(self, tmp_path: Path):
+    def test_should_refuse_a_worker_while_the_only_one_is_in_use(self, tmp_path: Path):
         pool = PdfRenderWorkerPool(max_workers=1, timeout=1)
         with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
-            assert worker is not None
             assert worker.render(1, 1.0, str(tmp_path / 'first.png'))
-            with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as waiting:
-                assert waiting is None
+            with pytest.raises(RenderWorkerUnavailableError):
+                with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
+                    pass
 
     def test_should_hand_out_a_worker_once_one_is_given_back(self, tmp_path: Path):
         pool = PdfRenderWorkerPool(max_workers=1, timeout=30)
         with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
-            assert worker is not None
             assert worker.render(1, 1.0, str(tmp_path / 'first.png'))
         with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
-            assert worker is not None
             assert worker.render(1, 1.0, str(tmp_path / 'second.png'))
 
     def test_should_give_a_worker_back_where_rendering_raises(self):
         pool = PdfRenderWorkerPool(max_workers=1, timeout=1)
         try:
-            with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
-                assert worker is not None
+            with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
                 raise RuntimeError('while rendering')
         except RuntimeError:
             pass
-        with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
-            assert worker is not None
+        with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
+            pass
 
     def test_should_wait_for_a_worker_rather_than_go_without(self, tmp_path: Path):
         pool = PdfRenderWorkerPool(max_workers=1, timeout=30)
@@ -124,11 +123,9 @@ class TestPdfRenderWorkerPool:
 
         def _render_once_free():
             with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as waiting:
-                assert waiting is not None
                 rendered.append(waiting.render(1, 0.5, str(tmp_path / 'waited.png')))
 
-        with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
-            assert worker is not None
+        with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
             waiting_thread = threading.Thread(target=_render_once_free)
             waiting_thread.start()
             time.sleep(0.5)

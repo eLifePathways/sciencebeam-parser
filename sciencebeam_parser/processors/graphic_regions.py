@@ -16,7 +16,8 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.external.pdfium.renderer import (
     PdfRenderWorker,
-    PdfRenderWorkerPool
+    PdfRenderWorkerPool,
+    RenderWorkerUnavailableError
 )
 from sciencebeam_parser.processors.graphic_provider import (
     get_page_numbers_with_uncommon_page_dimension
@@ -620,12 +621,14 @@ def get_layout_document_with_graphic_regions(
     assert render_worker_pool is not None, (
         'rendering a region asks for a worker, which a pool hands out'
     )
-    with render_worker_pool.worker(pdf_path) as worker:
-        return _get_layout_document_with_graphic_regions(
-            layout_document, config, temp_dir, require_file,
-            renderer=(
-                PageRegionRenderer(worker, config.render_dpi)
-                if worker is not None
-                else None
+    try:
+        with render_worker_pool.worker(pdf_path) as worker:
+            return _get_layout_document_with_graphic_regions(
+                layout_document, config, temp_dir, require_file,
+                renderer=PageRegionRenderer(worker, config.render_dpi)
             )
+    except RenderWorkerUnavailableError:
+        LOGGER.warning('deriving graphic regions without rendering', exc_info=True)
+        return _get_layout_document_with_graphic_regions(
+            layout_document, config, temp_dir, require_file, renderer=None
         )
