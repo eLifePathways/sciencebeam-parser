@@ -20,6 +20,7 @@ import {
   getTextContent,
   getValue,
   getLanguage,
+  getValuesWithLanguage,
   parseXmlNode
 } from './xml-nodes.js';
 import { renderArticleViewModel } from './article-view.js';
@@ -72,16 +73,20 @@ function getCaption(node) {
   };
 }
 
+function getGraphics(node) {
+  return getChildElements(node, 'graphic').map((graphic) => ({
+    label: graphic.name,
+    path: graphic.path,
+    href: getAttribute(graphic, 'xlink:href')
+  }));
+}
+
 function getFigure(node) {
   return {
     type: 'figure',
     id: getAttribute(node, 'id'),
     ...getCaption(node),
-    graphics: getChildElements(node, 'graphic').map((graphic) => ({
-      label: graphic.name,
-      path: graphic.path,
-      href: getAttribute(graphic, 'xlink:href')
-    }))
+    graphics: getGraphics(node)
   };
 }
 
@@ -92,6 +97,7 @@ function getTable(node) {
     type: 'table',
     id: getAttribute(node, 'id'),
     ...getCaption(node),
+    graphics: getGraphics(node),
     rows: (body ? getChildElements(body, 'tr') : []).map(
       (row) => getChildElements(row, 'td').map(getParagraph)
     )
@@ -212,14 +218,6 @@ export function getArticleViewModel(article) {
   }
   const front = getFirstChildElement(article, 'front');
   const articleMeta = getFirstChildElement(front, 'article-meta');
-  function titleWithLanguage(group) {
-    const value = group ? getValue(group, 'article-title') : null;
-    if (!value) {
-      return null;
-    }
-    const language = getLanguage(getFirstChildElement(group, 'article-title'));
-    return language ? { ...value, language } : value;
-  }
   const titleGroup = getFirstChildElement(articleMeta, 'title-group');
   const body = getFirstChildElement(article, 'body');
   const back = getFirstChildElement(article, 'back');
@@ -230,7 +228,14 @@ export function getArticleViewModel(article) {
     ? getFirstDescendantElement(front, 'journal-title')
     : null;
   return {
-    title: titleWithLanguage(titleGroup),
+    titles: titleGroup ? [
+      ...getValuesWithLanguage(titleGroup, 'article-title'),
+      ...getChildElements(titleGroup, 'trans-title-group').flatMap(
+        (group) => getValuesWithLanguage(group, 'trans-title').map(
+          (value) => ({ ...value, language: value.language || getLanguage(group) })
+        )
+      )
+    ] : [],
     journal: journalTitle
       ? {
         label: 'journal-title',

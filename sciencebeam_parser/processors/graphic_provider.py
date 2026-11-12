@@ -2,7 +2,7 @@ import functools
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Counter, Iterable, List, Optional, Sequence
+from typing import Counter, Iterable, List, Optional, Sequence, Tuple
 
 from sciencebeam_parser.utils.bounding_box import BoundingBox
 from sciencebeam_parser.document.layout_document import (
@@ -92,11 +92,15 @@ def get_graphic_matching_candidate_page_numbers_for_semantic_content_list(
     return page_numbers
 
 
+def _get_rounded_page_dimension(bounding_box: BoundingBox) -> Tuple[int, int]:
+    return (round(bounding_box.width), round(bounding_box.height))
+
+
 def get_page_numbers_with_uncommon_page_dimension(
     layout_document: LayoutDocument
 ) -> Sequence[int]:
     page_dimension_counter = Counter((
-        page.meta.coordinates.bounding_box
+        _get_rounded_page_dimension(page.meta.coordinates.bounding_box)
         for page in layout_document.pages
         if page.meta and page.meta.coordinates
     ))
@@ -111,7 +115,8 @@ def get_page_numbers_with_uncommon_page_dimension(
         if (
             page.meta
             and page.meta.coordinates
-            and page.meta.coordinates.bounding_box != most_common_page_dimension
+            and _get_rounded_page_dimension(page.meta.coordinates.bounding_box)
+            != most_common_page_dimension
         )
     })
 

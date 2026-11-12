@@ -943,7 +943,7 @@ class TestFullTextProcessorAffiliation:
             local_file_path=graphic_local_file_path,
             page_meta=PAGE_META_1
         )
-        _coordinates = _coordinates.move_by(dy=10)
+        _coordinates = _coordinates.move_by(dy=110)
         label_block = _get_layout_block_for_text('Figure 1', coordinates=_coordinates)
         _coordinates = _coordinates.move_by(dy=10)
         caption_block = _get_layout_block_for_text('Caption 1', coordinates=_coordinates)
@@ -1040,7 +1040,7 @@ class TestFullTextProcessorAffiliation:
             layout_graphic=graphic,
             relative_path=os.path.basename(graphic_local_file_path)
         )]
-        _coordinates = _coordinates.move_by(dy=10)
+        _coordinates = _coordinates.move_by(dy=110)
         label_block = _get_layout_block_for_text('Figure 1', coordinates=_coordinates)
         _coordinates = _coordinates.move_by(dy=10)
         caption_block = _get_layout_block_for_text('Caption 1', coordinates=_coordinates)
@@ -1176,6 +1176,59 @@ class TestFullTextProcessorAffiliation:
         assert table_citation_list[0].get_text() == citation_block.text
         assert table_citation_list[0].target_content_id == 'tab_0'
 
+    def test_should_keep_a_file_for_every_graphic_when_extracting_assets(
+        self, fulltext_models_mock: MockFullTextModels,
+        tmp_path: Path
+    ):
+        page_graphics = [
+            LayoutGraphic(
+                coordinates=COORDINATES_1._replace(x=10 + index * 205),
+                local_file_path='/path/to/graphic%d.png' % index,
+                graphic_type='image',
+                page_meta=PAGE_META_1
+            )
+            for index in range(2)
+        ]
+        _coordinates = COORDINATES_1.move_by(dy=110)
+        label_block = _get_layout_block_for_text('Figure 1', coordinates=_coordinates)
+        _coordinates = _coordinates.move_by(dy=10)
+        caption_block = _get_layout_block_for_text('Caption 1', coordinates=_coordinates)
+        figure_block = LayoutBlock.merge_blocks([label_block, caption_block])
+        fulltext_processor = FullTextProcessor(
+            fulltext_models_mock,
+            FullTextProcessorConfig(
+                extract_figure_fields=True,
+                extract_graphic_bounding_boxes=True,
+                extract_graphic_assets=True
+            )
+        )
+        segmentation_model_mock = fulltext_models_mock.segmentation_model_mock
+        fulltext_model_mock = fulltext_models_mock.fulltext_model_mock
+        figure_model_mock = fulltext_models_mock.figure_model_mock
+        segmentation_model_mock.update_label_by_layout_block(figure_block, '<body>')
+        fulltext_model_mock.update_label_by_layout_block(figure_block, '<figure>')
+        figure_model_mock.update_label_by_layout_block(label_block, '<label>')
+        figure_model_mock.update_label_by_layout_block(caption_block, '<figDesc>')
+        layout_document = LayoutDocument(pages=[LayoutPage(
+            blocks=[figure_block],
+            graphics=page_graphics,
+            meta=PAGE_META_1
+        )])
+        semantic_document = fulltext_processor.get_semantic_document_for_layout_document(
+            layout_document=layout_document,
+            context=FullTextProcessorDocumentContext(
+                pdf_path=str(tmp_path / 'test.pdf'), temp_dir=str(tmp_path)
+            )
+        )
+        semantic_graphic_list = list(semantic_document.iter_by_type_recursively(
+            SemanticGraphic
+        ))
+        assert semantic_graphic_list
+        for semantic_graphic in semantic_graphic_list:
+            assert semantic_graphic.relative_path
+            assert semantic_graphic.layout_graphic
+            assert semantic_graphic.layout_graphic.local_file_path
+
     @pytest.mark.parametrize(
         'segmentation_label',
         ['<body>', '<annex>']
@@ -1202,7 +1255,7 @@ class TestFullTextProcessorAffiliation:
             layout_graphic=graphic,
             relative_path=os.path.basename(graphic_local_file_path)
         )]
-        _coordinates = _coordinates.move_by(dy=10)
+        _coordinates = _coordinates.move_by(dy=110)
         label_block = _get_layout_block_for_text('Table 1', coordinates=_coordinates)
         _coordinates = _coordinates.move_by(dy=10)
         caption_block = _get_layout_block_for_text('Caption 1', coordinates=_coordinates)

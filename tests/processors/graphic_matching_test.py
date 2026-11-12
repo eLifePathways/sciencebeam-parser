@@ -21,8 +21,10 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticFigure,
     SemanticGraphic,
     SemanticLabel,
-    SemanticMixedContentWrapper
+    SemanticMixedContentWrapper,
+    SemanticTable
 )
+from sciencebeam_parser.processors.graphic_regions import VECTOR_REGION_GRAPHIC_TYPE
 from sciencebeam_parser.processors.graphic_matching import (
     BoundingBoxDistance,
     BoundingBoxDistanceBetween,
@@ -108,7 +110,8 @@ def _ocr_model_mock() -> MagicMock:
 def _get_semantic_content_for_page_coordinates(
     coordinates: LayoutPageCoordinates,
     text: str = 'dummy',
-    line_meta: Optional[LayoutLineMeta] = None
+    line_meta: Optional[LayoutLineMeta] = None,
+    semantic_content_class=SemanticFigure
 ) -> SemanticContentWrapper:
     if line_meta is None:
         line_meta = LINE_META_1._replace(
@@ -117,7 +120,7 @@ def _get_semantic_content_for_page_coordinates(
             )
         )
 
-    return SemanticFigure(
+    return semantic_content_class(
         layout_block=LayoutBlock.for_tokens([
             LayoutToken(
                 text=text,
@@ -361,6 +364,86 @@ class TestBoundingBoxDistanceGraphicMatcher:
             candidate_semantic_content_list=[SemanticMixedContentWrapper()]
         )
         assert not result
+
+    def test_should_match_graphic_enclosing_a_figure_label(self):
+        semantic_graphic_1 = SemanticGraphic(layout_graphic=LayoutGraphic(
+            coordinates=GRAPHIC_ABOVE_FIGURE_COORDINATES_1,
+            page_meta=PAGE_META_1
+        ))
+        enclosed_candidate = _get_semantic_content_for_page_coordinates(
+            coordinates=GRAPHIC_ABOVE_FIGURE_COORDINATES_1._replace(
+                y=GRAPHIC_ABOVE_FIGURE_COORDINATES_1.y + 10,
+                height=20
+            )
+        )
+        result = BoundingBoxDistanceGraphicMatcher().get_graphic_matches(
+            semantic_graphic_list=[semantic_graphic_1],
+            candidate_semantic_content_list=[enclosed_candidate]
+        )
+        assert len(result) == 1
+
+    def test_should_not_match_vector_region_enclosing_the_candidate_text(self):
+        semantic_graphic_1 = SemanticGraphic(layout_graphic=LayoutGraphic(
+            coordinates=GRAPHIC_ABOVE_FIGURE_COORDINATES_1,
+            graphic_type=VECTOR_REGION_GRAPHIC_TYPE,
+            page_meta=PAGE_META_1
+        ))
+        enclosed_candidate = _get_semantic_content_for_page_coordinates(
+            coordinates=GRAPHIC_ABOVE_FIGURE_COORDINATES_1._replace(
+                y=GRAPHIC_ABOVE_FIGURE_COORDINATES_1.y + 10,
+                height=20
+            ),
+            semantic_content_class=SemanticTable
+        )
+        result = BoundingBoxDistanceGraphicMatcher().get_graphic_matches(
+            semantic_graphic_list=[semantic_graphic_1],
+            candidate_semantic_content_list=[enclosed_candidate]
+        )
+        LOGGER.debug('result: %r', result)
+        assert not result.graphic_matches
+        assert result.unmatched_graphics == [semantic_graphic_1]
+
+    def test_should_match_an_image_enclosing_the_candidate_text(self):
+        semantic_graphic_1 = SemanticGraphic(layout_graphic=LayoutGraphic(
+            coordinates=GRAPHIC_ABOVE_FIGURE_COORDINATES_1,
+            graphic_type='image',
+            page_meta=PAGE_META_1
+        ))
+        enclosed_candidate = _get_semantic_content_for_page_coordinates(
+            coordinates=GRAPHIC_ABOVE_FIGURE_COORDINATES_1._replace(
+                y=GRAPHIC_ABOVE_FIGURE_COORDINATES_1.y + 10,
+                height=20
+            ),
+            semantic_content_class=SemanticTable
+        )
+        result = BoundingBoxDistanceGraphicMatcher().get_graphic_matches(
+            semantic_graphic_list=[semantic_graphic_1],
+            candidate_semantic_content_list=[enclosed_candidate]
+        )
+        LOGGER.debug('result: %r', result)
+        assert len(result) == 1
+
+    def test_should_match_vector_region_enclosing_the_candidate_text_when_allowed(self):
+        semantic_graphic_1 = SemanticGraphic(layout_graphic=LayoutGraphic(
+            coordinates=GRAPHIC_ABOVE_FIGURE_COORDINATES_1,
+            graphic_type=VECTOR_REGION_GRAPHIC_TYPE,
+            page_meta=PAGE_META_1
+        ))
+        enclosed_candidate = _get_semantic_content_for_page_coordinates(
+            coordinates=GRAPHIC_ABOVE_FIGURE_COORDINATES_1._replace(
+                y=GRAPHIC_ABOVE_FIGURE_COORDINATES_1.y + 10,
+                height=20
+            ),
+            semantic_content_class=SemanticTable
+        )
+        result = BoundingBoxDistanceGraphicMatcher(
+            max_enclosed_text_ratio=1.1
+        ).get_graphic_matches(
+            semantic_graphic_list=[semantic_graphic_1],
+            candidate_semantic_content_list=[enclosed_candidate]
+        )
+        LOGGER.debug('result: %r', result)
+        assert len(result) == 1
 
     def test_should_match_graphic_above_semantic_content(self):
         semantic_graphic_1 = SemanticGraphic(layout_graphic=LayoutGraphic(

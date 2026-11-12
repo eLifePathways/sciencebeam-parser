@@ -1,7 +1,10 @@
 import logging
 import re
 from collections import OrderedDict
-from typing import AbstractSet, Iterable, List, Mapping, Optional, Sequence, Tuple
+from itertools import groupby
+from typing import (
+    AbstractSet, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
+)
 
 from sciencebeam_parser.document.semantic_document import (
     SemanticContentWrapper,
@@ -19,7 +22,13 @@ from sciencebeam_parser.document.layout_document import (
     LayoutTokensText
 )
 from sciencebeam_parser.models.extract import SimpleModelSemanticExtractor
-from sciencebeam_parser.utils.language import detect_language, detect_title_language
+from sciencebeam_parser.utils.language import (
+    MIN_TITLE_LANGUAGE_DETECTION_WORD_COUNT,
+    WORD_PATTERN,
+    detect_language,
+    detect_language_among,
+    detect_title_language
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -79,6 +88,18 @@ ABSTRACTS_MODES = (AbstractsMode.FIRST, AbstractsMode.VARIANTS, AbstractsMode.ME
 DEFAULT_ABSTRACTS_MODE = AbstractsMode.FIRST
 
 
+class TitlesMode:
+    """What becomes of a title the model labelled as one."""
+
+    AS_LABELLED = 'as_labelled'
+    SPLIT_BY_LANGUAGE = 'split_by_language'
+
+
+TITLES_MODES = (TitlesMode.AS_LABELLED, TitlesMode.SPLIT_BY_LANGUAGE)
+
+DEFAULT_TITLES_MODE = TitlesMode.SPLIT_BY_LANGUAGE
+
+
 def _get_token_count(layout_block: LayoutBlock) -> int:
     return sum(1 for _ in layout_block.iter_all_tokens())
 
@@ -91,6 +112,173 @@ def get_semantic_abstract_for_layout_block(
         layout_block=layout_block,
         language=detect_language(str(LayoutTokensText(layout_block))) if with_language else None
     )
+
+
+TITLE_SAME_TEXT_PATTERN = re.compile(r'[^0-9a-z\u00c0-\u024f]+')
+
+
+def _get_language(
+    lines: Sequence[LayoutLine],
+    document_languages: AbstractSet[str] = frozenset()
+) -> Optional[str]:
+    """Which language the lines are written in, read as a title.
+
+    A title too evenly balanced to name on its own is named among the languages the
+    document is written in elsewhere, where that settles it. One too short to be a title
+    is left unnamed either way, so a fragment cannot be cut off as a title of its own.
+    """
+    text = str(LayoutTokensText(LayoutBlock(lines=list(lines))))
+    language = detect_title_language(text)
+    if language is not None:
+        return language
+    if len(WORD_PATTERN.findall(text)) < MIN_TITLE_LANGUAGE_DETECTION_WORD_COUNT:
+        return None
+    return detect_language_among(text, document_languages)
+
+
+def _iter_line_runs_by_block(layout_block: LayoutBlock) -> Iterator[List[LayoutLine]]:
+    """The title's lines, grouped by the block each was set in."""
+    for _, block_lines in groupby(
+        layout_block.lines, key=lambda line: line.tokens[0].line_meta.block_id
+    ):
+        yield list(block_lines)
+
+
+def _iter_candidate_runs(layout_block: LayoutBlock) -> Iterator[List[LayoutLine]]:
+    """Where the title may be cut: between blocks, or between lines of a single block.
+
+    A title set across two blocks is cut between them; one block holding both languages
+    leaves only its lines to cut at.
+    """
+    runs = list(_iter_line_runs_by_block(layout_block))
+    if len(runs) > 1:
+        yield from runs
+        return
+    yield from ([line] for line in layout_block.lines)
+
+
+# A mark the page sets beside the title -- the word naming the field, a rule drawn in
+# underscores -- is dwarfed by the title it sits beside, where a title given in another
+# language is the length of its sibling. Both are short; only one is short beside
+# something long.
+MAX_TITLE_MARK_TOKEN_COUNT = 2
+MIN_TITLE_TO_MARK_TOKEN_RATIO = 4
+
+# A title set again says what has been said already, whether it is set whole or shortened.
+MIN_TITLE_REPEATED_WORD_RATIO = 0.8
+
+
+def _get_run_tokens(run: Sequence[LayoutLine]) -> List[str]:
+    return [token.text for line in run for token in line.tokens]
+
+
+def _get_run_words(run: Sequence[LayoutLine]) -> Set[str]:
+    return {
+        word for word in (
+            TITLE_SAME_TEXT_PATTERN.sub('', token.lower())
+            for token in _get_run_tokens(run)
+        ) if word
+    }
+
+
+def _get_run_fonts(run: Sequence[LayoutLine]) -> Set[str]:
+    return {token.font.font_id for line in run for token in line.tokens}
+
+
+def is_mark_beside_title(run: Sequence[LayoutLine], title_so_far: Sequence[LayoutLine]) -> bool:
+    """Whether the run is a mark the page set beside the title rather than a title.
+
+    A page that sets its front matter as a form prints the word naming each field in the
+    form's own font, and rules its sections off in underscores. Such a mark is told from a
+    title given in another language by being short beside something long, rather than by
+    being short.
+    """
+    token_count = len(_get_run_tokens(run))
+    if not token_count or token_count > MAX_TITLE_MARK_TOKEN_COUNT:
+        return False
+    if len(_get_run_tokens(title_so_far)) < MIN_TITLE_TO_MARK_TOKEN_RATIO * token_count:
+        return False
+    return not _get_run_fonts(run) & _get_run_fonts(title_so_far)
+
+
+def repeats_the_title(
+    run: Sequence[LayoutLine], title_so_far: Sequence[LayoutLine]
+) -> bool:
+    """Whether the run says again, in the same words or fewer, what the title said.
+
+    A page may set the title twice over, or set a shortened form of it beneath the title,
+    and either way its words are the title's words. A title given in another language
+    shares next to none of them, and a continuation of a title brings new ones.
+    """
+    words = _get_run_words(run)
+    if not words:
+        return False
+    shared = len(words & _get_run_words(title_so_far)) / len(words)
+    return shared >= MIN_TITLE_REPEATED_WORD_RATIO
+
+
+def iter_title_runs(
+    runs: Sequence[Sequence[LayoutLine]]
+) -> Iterator[List[LayoutLine]]:
+    """The runs that are the title, dropping what the model swept in beside it."""
+    kept: List[List[LayoutLine]] = []
+    for run in runs:
+        title_so_far = [line for kept_run in kept for line in kept_run]
+        if title_so_far and (
+            is_mark_beside_title(run, title_so_far) or repeats_the_title(run, title_so_far)
+        ):
+            continue
+        kept.append(list(run))
+    yield from kept
+
+
+def iter_titles_split_by_language(
+    layout_block: LayoutBlock,
+    document_languages: AbstractSet[str] = frozenset()
+) -> Iterator[Tuple[LayoutBlock, Optional[str]]]:
+    """One title per language, where the model labelled several as one.
+
+    A title given in two languages is labelled as a single title where the model has not
+    learnt to separate them. A run that reads as the language before it, or whose language
+    cannot be told, stays with it, so a title is only ever cut where both sides name a
+    language and those languages differ, and the block or line boundary says where.
+    """
+    parts: List[Tuple[List[LayoutLine], Optional[str]]] = []
+    for run in iter_title_runs(list(_iter_candidate_runs(layout_block))):
+        language = _get_language(run, document_languages)
+        if parts and (language is None or language == parts[-1][1]):
+            parts[-1][0].extend(run)
+            continue
+        parts.append((list(run), language))
+    if len({language for _, language in parts if language}) < 2:
+        lines = [line for part_lines, _ in parts for line in part_lines]
+        yield LayoutBlock(lines=lines), _get_language(lines, document_languages)
+        return
+    for lines, language in parts:
+        yield LayoutBlock(lines=lines), language
+
+
+def _title_key(semantic_title: SemanticTitle) -> str:
+    return TITLE_SAME_TEXT_PATTERN.sub('', semantic_title.get_text().lower())
+
+
+def iter_titles_printed_once(
+    semantic_titles: Sequence[SemanticTitle]
+) -> Iterator[SemanticTitle]:
+    """Each title a page prints, in the order it prints them, once.
+
+    A page sets its title again under a heading or at the head of a second page, and
+    every printing is labelled, so the same title arrives more than once.  The letters
+    and digits are what say two printings are one title: the repeat is set in capitals
+    where the first is not, or punctuated differently.
+    """
+    seen: Set[str] = set()
+    for semantic_title in semantic_titles:
+        key = _title_key(semantic_title)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield semantic_title
 
 
 def merge_abstracts_by_language(
@@ -164,6 +352,34 @@ def get_cleaned_abstract_layout_block(
     ))
 
 
+def _get_semantic_titles(
+    title_blocks: Sequence[Tuple[LayoutBlock, str]],
+    titles_mode: str,
+    document_languages: AbstractSet[str]
+) -> List[SemanticTitle]:
+    """The titles to yield, named among the languages the document carries elsewhere.
+
+    Built once the whole header has been read, because the abstract says which languages
+    the document is written in and a title is too short to say so on its own.
+    """
+    semantic_titles: List[SemanticTitle] = []
+    for layout_block, trailing in title_blocks:
+        if titles_mode == TitlesMode.AS_LABELLED:
+            parts = [(
+                layout_block,
+                _get_language(layout_block.lines, document_languages)
+            )]
+        else:
+            parts = list(iter_titles_split_by_language(layout_block, document_languages))
+        for index, (title_block, language) in enumerate(parts):
+            semantic_titles.append(SemanticTitle(
+                layout_block=title_block,
+                trailing_text=trailing if index == len(parts) - 1 else '',
+                language=language
+            ))
+    return semantic_titles
+
+
 class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
     def __init__(self):
         super().__init__(semantic_content_class_by_tag=SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG)
@@ -172,34 +388,35 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         self,
         entity_tokens: Iterable[Tuple[str, LayoutBlock]],
         abstracts_mode: str = DEFAULT_ABSTRACTS_MODE,
+        titles_mode: str = DEFAULT_TITLES_MODE,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
         entity_tokens = list(entity_tokens)
         LOGGER.debug('entity_tokens: %s', entity_tokens)
         carry_variants = abstracts_mode != AbstractsMode.FIRST
         merge_by_language = abstracts_mode == AbstractsMode.MERGED_BY_LANGUAGE
-        has_title: bool = False
         primary_abstract_block: Optional[LayoutBlock] = None
+        title_blocks: List[Tuple[LayoutBlock, str]] = []
+        document_languages: Set[str] = set()
         semantic_abstracts: List[SemanticAbstract] = []
         aff_address: Optional[SemanticRawAffiliationAddress] = None
         next_previous_label: str = ''
         for name, layout_block in entity_tokens:
             previous_label = next_previous_label
             next_previous_label = name
-            if name == '<title>' and not has_title:
-                clean_block, trailing = _split_trailing_title_punct(layout_block)
-                yield SemanticTitle(
-                    layout_block=clean_block,
-                    trailing_text=trailing,
-                    language=detect_title_language(str(LayoutTokensText(clean_block)))
-                )
-                has_title = True
+            if name == '<title>':
+                title_blocks.append(_split_trailing_title_punct(layout_block))
                 continue
             if name == '<abstract>':
                 abstract_layout_block = get_cleaned_abstract_layout_block(
                     layout_block
                 )
                 assert abstract_layout_block is not None
+                abstract_language = detect_language(
+                    str(LayoutTokensText(abstract_layout_block))
+                )
+                if abstract_language:
+                    document_languages.add(abstract_language)
                 if primary_abstract_block is None or (
                     carry_variants
                     and is_abstract_variant(abstract_layout_block, primary_abstract_block)
@@ -236,4 +453,7 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
             )
         if aff_address is not None:
             yield aff_address
+        yield from iter_titles_printed_once(
+            _get_semantic_titles(title_blocks, titles_mode, document_languages)
+        )
         yield from merge_abstracts_by_language(semantic_abstracts)

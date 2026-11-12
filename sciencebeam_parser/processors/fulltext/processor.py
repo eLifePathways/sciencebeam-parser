@@ -96,6 +96,9 @@ from sciencebeam_parser.processors.graphic_matching import (
     GraphicRelatedBlockTextGraphicMatcher,
     OpticalCharacterRecognitionGraphicMatcher
 )
+from sciencebeam_parser.processors.graphic_regions import (
+    get_layout_document_with_graphic_regions
+)
 from sciencebeam_parser.processors.graphic_provider import (
     DocumentGraphicProvider,
     SimpleDocumentGraphicProvider,
@@ -341,7 +344,8 @@ class FullTextProcessor:
         )
         self.header_model.update_semantic_document_with_entity_blocks(
             semantic_document, entity_blocks,
-            abstracts_mode=self.config.abstracts_mode
+            abstracts_mode=self.config.abstracts_mode,
+            titles_mode=self.config.titles_mode
         )
         header_clusters = get_header_clusters(semantic_document.front)
         original_authors_text: Optional[str] = None
@@ -398,6 +402,13 @@ class FullTextProcessor:
         context: FullTextProcessorDocumentContext
     ):
         unmatched_graphics_container = SemanticMixedNote(note_type='unmatched_graphics')
+        layout_document = get_layout_document_with_graphic_regions(
+            layout_document,
+            config=self.config.graphic_regions,
+            temp_dir=context.temp_dir,
+            require_file=self.config.extract_graphic_assets,
+            pdf_path=context.pdf_path
+        )
         candidate_semantic_content_list = list(
             document.iter_by_types_recursively((SemanticFigure, SemanticTable,))
         )
@@ -447,10 +458,11 @@ class FullTextProcessor:
         unmatched_graphics_container: SemanticMixedContentWrapper
     ):
         _graphic_matchers: List[GraphicMatcher] = [
+            GraphicRelatedBlockTextGraphicMatcher(),
             BoundingBoxDistanceGraphicMatcher(
-                max_distance=self.config.max_graphic_distance
-            ),
-            GraphicRelatedBlockTextGraphicMatcher()
+                max_distance=self.config.max_graphic_distance,
+                max_enclosed_text_ratio=self.config.max_enclosed_text_ratio
+            )
         ]
         if self.config.use_ocr_model:
             assert self.fulltext_models.ocr_model

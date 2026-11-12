@@ -136,6 +136,7 @@ pre {
 }
 
 .jats-article h1 { font-size: 20px; margin: 0 0 12px; }
+.jats-article h2.jats-title { font-size: 17px; margin: -6px 0 12px; }
 .jats-article h2 { font-size: 16px; margin: 24px 0 8px; }
 .jats-article h3 { font-size: 15px; margin: 20px 0 8px; }
 .jats-article h4, .jats-article h5, .jats-article h6 {

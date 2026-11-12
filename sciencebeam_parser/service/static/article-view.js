@@ -115,9 +115,10 @@ function appendFigure(parent, block, options) {
   block.graphics.forEach((graphic) => appendGraphic(figure, graphic, options));
 }
 
-function appendTable(parent, block) {
+function appendTable(parent, block, options) {
   const figure = appendElement(parent, 'figure', 'jats-table', block);
   appendCaption(figure, block);
+  (block.graphics || []).forEach((graphic) => appendGraphic(figure, graphic, options));
   if (!block.rows.length) {
     return;
   }
@@ -138,7 +139,7 @@ function appendBlocks(parent, blocks, level, options) {
     } else if (block.type === 'figure') {
       appendFigure(parent, block, options);
     } else if (block.type === 'table') {
-      appendTable(parent, block);
+      appendTable(parent, block, options);
     } else if (block.type === 'section') {
       appendSection(parent, block, level, options);
     }
@@ -339,20 +340,27 @@ function appendReferences(parent, references) {
   references.forEach((reference) => appendReference(list, reference));
 }
 
+function appendTitle(parent, value, tagName) {
+  const title = appendValue(parent, value, tagName, 'jats-title');
+  if (title && value.language) {
+    // On the element as well as beside it, so a reader hears the right voice
+    // and a reader of the page can see which title they were given.
+    title.setAttribute('lang', value.language);
+    const language = appendElement(title, 'span', 'jats-language');
+    language.textContent = value.language;
+  }
+}
+
+
 export function renderArticleViewModel(viewModel, document, options) {
   const renderOptions = options || {};
   const article = document.createElement('article');
   article.className = 'jats-article';
   appendValue(article, viewModel.journal, 'p', 'jats-journal');
-  if (viewModel.title) {
-    const title = appendValue(article, viewModel.title, 'h1');
-    if (title && viewModel.title.language) {
-      // On the element as well as beside it, so a reader hears the right voice
-      // and a reader of the page can see which title they were given.
-      title.setAttribute('lang', viewModel.title.language);
-      const language = appendElement(title, 'span', 'jats-language');
-      language.textContent = viewModel.title.language;
-    }
+  if (viewModel.titles.length) {
+    viewModel.titles.forEach(
+      (value, index) => appendTitle(article, value, index === 0 ? 'h1' : 'h2')
+    );
   } else {
     appendElement(article, 'h1', '').textContent = 'Untitled';
   }
@@ -395,8 +403,8 @@ function getFigureName(figure) {
 
 function addGraphicReferences(references, blocks) {
   blocks.forEach((block) => {
-    if (block.type === 'figure') {
-      block.graphics.forEach((graphic) => {
+    if (block.type === 'figure' || block.type === 'table') {
+      (block.graphics || []).forEach((graphic) => {
         if (graphic.href) {
           references.push({ href: graphic.href, figure: getFigureName(block) });
         }

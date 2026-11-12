@@ -9,15 +9,21 @@ from sciencebeam_parser.document.semantic_document import (
 from sciencebeam_parser.document.layout_document import (
     LOGGER,
     LayoutBlock,
+    LayoutFont,
+    LayoutLine,
+    LayoutLineMeta,
+    LayoutToken,
     join_layout_tokens
 )
 
 from sciencebeam_parser.models.header.extract import (
     AbstractsMode,
+    TitlesMode,
     HeaderSemanticExtractor,
     _split_trailing_title_punct,
     get_cleaned_abstract_text,
-    get_cleaned_abstract_layout_block
+    get_cleaned_abstract_layout_block,
+    iter_titles_split_by_language
 )
 
 
@@ -132,6 +138,225 @@ class TestSplitTrailingTitlePunct:
         assert trailing == ''
 
 
+ENGLISH_TITLE_1 = 'Inpatient flow for the winter season in the northern health regions'
+
+PORTUGUESE_TITLE_1 = (
+    'Fluxo de internacao no inverno e as regioes de saude que foram vistas em uma analise'
+)
+
+ENGLISH_TITLE_FIRST_HALF_1 = 'Inpatient flow for the winter season in the northern'
+
+ENGLISH_TITLE_SECOND_HALF_1 = 'health regions of a country that was studied for this report'
+
+SPANISH_TITLE_TIED_1 = 'EVALUACION DE LA MIGRACION DE CONTENIDOS'
+
+NAME_ONLY_CONTINUATION_1 = 'Lisboa Sampaio Oliveira Niskier Caceres Mendivil'
+
+
+TITLE_FONT_1 = LayoutFont(font_id='title')
+LABEL_FONT_1 = LayoutFont(font_id='label')
+
+
+def _get_title_line(
+    text: str, block_id: int, font: LayoutFont = TITLE_FONT_1
+) -> LayoutLine:
+    line_meta = LayoutLineMeta(line_id=block_id, block_id=block_id)
+    return LayoutLine(tokens=[
+        LayoutToken(token_text, font=font, line_meta=line_meta)
+        for token_text in text.split(' ')
+    ])
+
+
+def _get_title_block(*text_and_block_id) -> LayoutBlock:
+    return LayoutBlock(lines=[
+        _get_title_line(*args) for args in text_and_block_id
+    ])
+
+
+class TestIterTitlesSplitByLanguage:
+    def test_should_cut_between_the_blocks_each_language_is_set_in(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1, 2)
+        )))
+        assert [language for _, language in titles] == ['en', 'pt']
+        assert [block.text for block, _ in titles] == [ENGLISH_TITLE_1, PORTUGUESE_TITLE_1]
+
+    def test_should_cut_between_lines_where_one_block_holds_both(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1, 1)
+        )))
+        assert [language for _, language in titles] == ['en', 'pt']
+
+    def test_should_keep_one_title_set_across_two_blocks_whole(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_FIRST_HALF_1, 1), (ENGLISH_TITLE_SECOND_HALF_1, 2)
+        )))
+        assert len(titles) == 1
+        assert titles[0][1] == 'en'
+
+    def test_should_keep_a_title_whose_language_cannot_be_told_whole(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (TITLE_1, 1), (TITLE_1, 2)
+        )))
+        assert len(titles) == 1
+        assert titles[0][1] is None
+
+    def test_should_keep_a_run_of_neither_language_with_the_one_before_it(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_1, 1), (TITLE_1, 2), (PORTUGUESE_TITLE_1, 3)
+        )))
+        assert [language for _, language in titles] == ['en', 'pt']
+        assert titles[0][0].text == ENGLISH_TITLE_1 + ' ' + TITLE_1
+
+
+SHORT_TITLE_1 = 'Foreword'
+
+SHORT_TITLE_2 = 'Prefacio'
+
+TITLE_LABEL_1 = 'Titulo'
+
+RUNNING_HEAD_1 = 'Mental Health of Dentists and the Pandemic'
+
+ENGLISH_TITLE_2 = 'Mental Health of Dentists during the Pandemic a Critical Review'
+
+
+class TestTitleFurniture:
+    def test_should_drop_a_label_naming_the_field_beside_the_title(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_1, 1, TITLE_FONT_1), (TITLE_LABEL_1, 2, LABEL_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [ENGLISH_TITLE_1]
+
+    def test_should_keep_a_short_title_beside_another_short_title(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (SHORT_TITLE_1, 1, TITLE_FONT_1), (SHORT_TITLE_2, 2, LABEL_FONT_1)
+        )))
+        assert SHORT_TITLE_2 in ' '.join(block.text for block, _ in titles)
+
+    def test_should_keep_a_short_continuation_set_in_the_title_font(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_FIRST_HALF_1, 1, TITLE_FONT_1), ('regions', 2, TITLE_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [
+            ENGLISH_TITLE_FIRST_HALF_1 + ' regions'
+        ]
+
+    def test_should_drop_a_running_head_where_the_title_is_set_over_several_runs(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            ('Mental Health of Dentists during the Pandemic a', 1, TITLE_FONT_1),
+            ('Critical Review', 2, TITLE_FONT_1),
+            (RUNNING_HEAD_1, 3, TITLE_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [
+            'Mental Health of Dentists during the Pandemic a Critical Review'
+        ]
+
+    def test_should_drop_a_label_where_the_title_is_set_over_several_runs(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            ('Worldwide differences in winter related', 1, TITLE_FONT_1),
+            ('mortality rates', 2, TITLE_FONT_1),
+            (TITLE_LABEL_1, 3, LABEL_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [
+            'Worldwide differences in winter related mortality rates'
+        ]
+
+    def test_should_drop_a_running_head_repeating_the_titles_words(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_2, 1, TITLE_FONT_1), (RUNNING_HEAD_1, 2, TITLE_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [ENGLISH_TITLE_2]
+
+    def test_should_keep_a_title_given_in_another_language(self):
+        titles = list(iter_titles_split_by_language(_get_title_block(
+            (ENGLISH_TITLE_1, 1, TITLE_FONT_1), (PORTUGUESE_TITLE_1, 2, TITLE_FONT_1)
+        )))
+        assert [block.text for block, _ in titles] == [
+            ENGLISH_TITLE_1, PORTUGUESE_TITLE_1
+        ]
+
+
+class TestIterTitlesSplitByLanguageAmongTheDocumentsLanguages:
+    def test_should_name_a_tied_run_among_the_languages_the_document_carries(self):
+        titles = list(iter_titles_split_by_language(
+            _get_title_block((SPANISH_TITLE_TIED_1, 1), (ENGLISH_TITLE_1, 2)),
+            frozenset({'es', 'en'})
+        ))
+        assert [language for _, language in titles] == ['es', 'en']
+
+    def test_should_keep_the_title_whole_without_the_documents_languages(self):
+        titles = list(iter_titles_split_by_language(
+            _get_title_block((SPANISH_TITLE_TIED_1, 1), (ENGLISH_TITLE_1, 2))
+        ))
+        assert len(titles) == 1
+
+    def test_should_not_name_a_run_carrying_no_word_of_that_language(self):
+        titles = list(iter_titles_split_by_language(
+            _get_title_block((PORTUGUESE_TITLE_1, 1), (NAME_ONLY_CONTINUATION_1, 2)),
+            frozenset({'en'})
+        ))
+        assert [language for _, language in titles] == ['pt']
+
+    def test_should_not_name_a_run_too_short_to_be_a_title(self):
+        titles = list(iter_titles_split_by_language(
+            _get_title_block((PORTUGUESE_TITLE_1, 1), (TITLE_1, 2)),
+            frozenset({'en'})
+        ))
+        assert [language for _, language in titles] == ['pt']
+
+    def test_should_keep_one_title_set_across_two_blocks_whole(self):
+        titles = list(iter_titles_split_by_language(
+            _get_title_block(
+                (ENGLISH_TITLE_FIRST_HALF_1, 1), (ENGLISH_TITLE_SECOND_HALF_1, 2)
+            ),
+            frozenset({'en'})
+        ))
+        assert len(titles) == 1
+
+
+class TestHeaderSemanticExtractorTitles:
+    def test_should_keep_one_title_labelled_in_two_languages_whole_where_asked(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                [('<title>', _get_title_block(
+                    (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1, 2)
+                ))],
+                titles_mode=TitlesMode.AS_LABELLED
+            )
+        )
+        front = SemanticFront(semantic_content_list)
+        assert len(list(front.iter_by_type(SemanticTitle))) == 1
+
+    def test_should_split_a_title_labelled_in_two_languages(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                [('<title>', _get_title_block(
+                    (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1, 2)
+                ))],
+                titles_mode=TitlesMode.SPLIT_BY_LANGUAGE
+            )
+        )
+        front = SemanticFront(semantic_content_list)
+        semantic_titles = list(front.iter_by_type(SemanticTitle))
+        assert [title.get_text() for title in semantic_titles] == [
+            ENGLISH_TITLE_1, PORTUGUESE_TITLE_1
+        ]
+        assert [title.language for title in semantic_titles] == ['en', 'pt']
+
+    def test_should_keep_the_trailing_dot_on_the_last_of_the_split_titles(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                [('<title>', _get_title_block(
+                    (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1 + ' .', 2)
+                ))],
+                titles_mode=TitlesMode.SPLIT_BY_LANGUAGE
+            )
+        )
+        front = SemanticFront(semantic_content_list)
+        semantic_titles = list(front.iter_by_type(SemanticTitle))
+        assert [title.trailing_text for title in semantic_titles] == ['', '.']
+
+
 class TestHeaderSemanticExtractor:
     def test_should_set_title_and_abstract(self):
         semantic_content_list = list(
@@ -157,8 +382,7 @@ class TestHeaderSemanticExtractor:
         assert front.get_text_by_type(SemanticTitle) == TITLE_1
         assert semantic_title.trailing_text == '.'
 
-    def test_should_ignore_additional_title(self):
-        # Note: this behaviour should be reviewed
+    def test_should_keep_every_title_the_page_prints(self):
         semantic_content_list = list(
             HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
                 ('<title>', LayoutBlock.for_text(TITLE_1)),
@@ -167,7 +391,33 @@ class TestHeaderSemanticExtractor:
         )
         front = SemanticFront(semantic_content_list)
         LOGGER.debug('front: %s', front)
-        assert front.get_text_by_type(SemanticTitle) == TITLE_1
+        assert [
+            title.get_text() for title in front.iter_by_type(SemanticTitle)
+        ] == [TITLE_1, 'other']
+
+    def test_should_keep_a_title_the_page_prints_again_only_once(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<title>', LayoutBlock.for_text(TITLE_1)),
+                ('<title>', LayoutBlock.for_text(TITLE_1.upper() + ' .'))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        assert [
+            title.get_text() for title in front.iter_by_type(SemanticTitle)
+        ] == [TITLE_1]
+
+    def test_should_keep_two_titles_that_say_different_things(self):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<title>', LayoutBlock.for_text(TITLE_1)),
+                ('<title>', LayoutBlock.for_text('other'))
+            ])
+        )
+        front = SemanticFront(semantic_content_list)
+        assert [
+            title.get_text() for title in front.iter_by_type(SemanticTitle)
+        ] == [TITLE_1, 'other']
 
     def _abstracts(self, texts, abstracts_mode=None):
         kwargs = {} if abstracts_mode is None else {'abstracts_mode': abstracts_mode}

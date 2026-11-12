@@ -115,6 +115,8 @@ class LayoutLineMeta(NamedTuple):
     page_meta: LayoutPageMeta = DEFAULT_LAYOUT_PAGE_META
     text: Optional[str] = None
     """The whole line, where it is known: the training TEI parser reads it."""
+    block_id: int = -1
+    """The block the line was set in, which survives tokens being regrouped."""
 
 
 DEFAULT_LAYOUT_LINE_META = LayoutLineMeta()
