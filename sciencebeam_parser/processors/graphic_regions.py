@@ -15,10 +15,8 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPageCoordinates
 )
 from sciencebeam_parser.external.pdfium.renderer import (
-    DEFAULT_RENDER_TIMEOUT,
     PdfRenderWorker,
-    PdfRenderWorkerPool,
-    open_render_worker
+    PdfRenderWorkerPool
 )
 from sciencebeam_parser.processors.graphic_provider import (
     get_page_numbers_with_uncommon_page_dimension
@@ -607,7 +605,6 @@ def get_layout_document_with_graphic_regions(
     temp_dir: Optional[str] = None,
     require_file: bool = False,
     pdf_path: Optional[str] = None,
-    render_timeout: float = DEFAULT_RENDER_TIMEOUT,
     render_worker_pool: Optional[PdfRenderWorkerPool] = None
 ) -> LayoutDocument:
     if not config.enabled:
@@ -620,9 +617,10 @@ def get_layout_document_with_graphic_regions(
             layout_document, config, temp_dir, require_file, renderer=None
         )
     assert pdf_path
-    with open_render_worker(
-        pdf_path, timeout=render_timeout, pool=render_worker_pool
-    ) as worker:
+    assert render_worker_pool is not None, (
+        'rendering a region asks for a worker, which a pool hands out'
+    )
+    with render_worker_pool.worker(pdf_path) as worker:
         return _get_layout_document_with_graphic_regions(
             layout_document, config, temp_dir, require_file,
             renderer=(

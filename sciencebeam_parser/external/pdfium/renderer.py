@@ -1,10 +1,7 @@
 """Renders pages of a PDF through a worker process.
 
 One worker serves one document and is reused across its pages, so the
-document is opened once. A `RenderWorkerLimit` bounds how many live at a
-time, since a worker holds a document open for as long as the request it
-serves; whoever owns the process passes one in, and a caller rendering for
-itself needs none.
+document is opened once.
 """
 
 import logging
@@ -198,21 +195,3 @@ class PdfRenderWorkerPool:
         finally:
             worker.close()
             self._semaphore.release()
-
-
-@contextmanager
-def open_render_worker(
-    pdf_path: str,
-    timeout: float = DEFAULT_RENDER_TIMEOUT,
-    pool: Optional[PdfRenderWorkerPool] = None
-) -> Iterator[Optional[PdfRenderWorker]]:
-    """A worker from `pool` where there is one, otherwise one of its own."""
-    if pool is not None:
-        with pool.worker(pdf_path) as worker:
-            yield worker
-        return
-    worker = PdfRenderWorker(pdf_path, timeout=timeout)
-    try:
-        yield worker
-    finally:
-        worker.close()

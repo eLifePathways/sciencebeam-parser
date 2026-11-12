@@ -122,7 +122,6 @@ processors:
     max_graphic_distance: 0.3
     # A graphic enclosing this much of a candidate's own text is its ruling, not its image.
     max_enclosed_text_ratio: 0.5
-    render_timeout: 120
     # Ratios are shares of the page, so they hold at any page size.
     graphic_regions:
       enabled: true
@@ -678,6 +677,10 @@ max_loaded_models: 40
 # profile it serves. A worker lasts a document and holds it open, so this
 # bounds documents in flight rather than CPU. Over this, a request waits.
 max_render_workers: 2
+
+# How long, in seconds, a request will wait for a free render worker, and then
+# for that worker to answer. Over this it goes on without the image.
+render_timeout: 120
 
 # Which origins a browser page may call the API from, matched exactly, or `*`
 # for every origin. Empty permits none. See doc/cors.md.

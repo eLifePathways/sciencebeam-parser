@@ -3,11 +3,7 @@ import os
 from time import monotonic
 from typing import Iterable, NamedTuple, Optional, Sequence
 
-from sciencebeam_parser.external.pdfium.renderer import (
-    DEFAULT_RENDER_TIMEOUT,
-    PdfRenderWorkerPool,
-    open_render_worker
-)
+from sciencebeam_parser.external.pdfium.renderer import PdfRenderWorkerPool
 
 
 LOGGER = logging.getLogger(__name__)
@@ -24,14 +20,13 @@ class DocumentPageImage(NamedTuple):
 def iter_pdf_document_page_images(
     pdf_path: str,
     output_dir: str,
+    pool: PdfRenderWorkerPool,
     dpi: float = DEFAULT_PDF_RENDER_DPI,
-    page_numbers: Optional[Sequence[int]] = None,
-    timeout: float = DEFAULT_RENDER_TIMEOUT,
-    pool: Optional[PdfRenderWorkerPool] = None
+    page_numbers: Optional[Sequence[int]] = None
 ) -> Iterable[DocumentPageImage]:
     render_start = monotonic()
     rendered_count = 0
-    with open_render_worker(pdf_path, timeout=timeout, pool=pool) as worker:
+    with pool.worker(pdf_path) as worker:
         if worker is None:
             return
         if page_numbers is None:

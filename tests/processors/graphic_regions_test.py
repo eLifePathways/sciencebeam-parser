@@ -12,7 +12,10 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPageCoordinates,
     LayoutPageMeta
 )
-from sciencebeam_parser.external.pdfium.renderer import open_render_worker
+from sciencebeam_parser.external.pdfium.renderer import (
+    PdfRenderWorker,
+    PdfRenderWorkerPool
+)
 from sciencebeam_parser.processors.graphic_regions import (
     _Box,
     GraphicRegionConfig,
@@ -316,7 +319,8 @@ class TestGetLayoutDocumentWithGraphicRegions:
         result = _get_graphics(get_layout_document_with_graphic_regions(
             _get_layout_document(graphics), config=CONFIG,
             temp_dir=str(tmp_path), require_file=True,
-            pdf_path=MINIMAL_EXAMPLE_PDF_PATH
+            pdf_path=MINIMAL_EXAMPLE_PDF_PATH,
+            render_worker_pool=PdfRenderWorkerPool(max_workers=1, timeout=20)
         ))
         assert len(result) == 1
         assert result[0].graphic_type == VECTOR_REGION_GRAPHIC_TYPE
@@ -374,8 +378,7 @@ class TestGetLayoutDocumentWithGraphicRegions:
 
 class TestPageRegionRenderer:
     def test_should_render_a_region_of_a_page(self, tmp_path: Path):
-        with open_render_worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
-            assert worker is not None
+        with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
             image_path = PageRegionRenderer(worker, dpi=72.0).render(
                 1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
             )
@@ -384,15 +387,13 @@ class TestPageRegionRenderer:
             assert (rendered_image.width, rendered_image.height) == (100, 50)
 
     def test_should_return_none_for_a_page_that_is_not_there(self, tmp_path: Path):
-        with open_render_worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
-            assert worker is not None
+        with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
             assert PageRegionRenderer(worker, dpi=72.0).render(
                 99, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
             ) is None
 
     def test_should_return_none_for_a_document_it_cannot_read(self, tmp_path: Path):
-        with open_render_worker(str(tmp_path / 'not-there.pdf'), timeout=20) as worker:
-            assert worker is not None
+        with PdfRenderWorker(str(tmp_path / 'not-there.pdf'), timeout=20) as worker:
             assert PageRegionRenderer(worker, dpi=72.0).render(
                 1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
             ) is None

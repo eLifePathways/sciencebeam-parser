@@ -5,7 +5,6 @@ from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.document.layout_noise_filter import LayoutNoiseFilterConfig
 from sciencebeam_parser.processors.graphic_regions import GraphicRegionConfig
 
-from sciencebeam_parser.external.pdfium.renderer import DEFAULT_RENDER_TIMEOUT
 from sciencebeam_parser.processors.document_page_image import (
     DEFAULT_PDF_RENDER_DPI
 )
@@ -64,7 +63,6 @@ class FullTextProcessorConfig(NamedTuple):
     replace_text_by_cv_graphic: bool = False
     max_graphic_distance: float = DEFAULT_MAX_GRAPHIC_DISTANCE
     max_enclosed_text_ratio: float = DEFAULT_MAX_ENCLOSED_TEXT_RATIO
-    render_timeout: float = DEFAULT_RENDER_TIMEOUT
     noise_filter: LayoutNoiseFilterConfig = LayoutNoiseFilterConfig()
     graphic_regions: GraphicRegionConfig = GraphicRegionConfig()
 

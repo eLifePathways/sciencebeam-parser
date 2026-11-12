@@ -125,14 +125,14 @@ def get_cv_document_graphic_provider(
     cv_model: ComputerVisionModel,
     context: FullTextProcessorDocumentContext,
     page_numbers: Optional[Sequence[int]],
-    cv_render_dpi: float,
-    render_timeout: float
+    cv_render_dpi: float
 ) -> DocumentGraphicProvider:
     from sciencebeam_parser.processors.cv_graphic_provider import (  # noqa pylint: disable=import-outside-toplevel
         ComputerVisionDocumentGraphicProvider
     )
     assert context.pdf_path
     assert context.temp_dir
+    assert context.render_worker_pool is not None
     return ComputerVisionDocumentGraphicProvider(
         cv_model,
         iter_pdf_document_page_images(
@@ -140,7 +140,6 @@ def get_cv_document_graphic_provider(
             output_dir=context.temp_dir,
             page_numbers=page_numbers,
             dpi=cv_render_dpi,
-            timeout=render_timeout,
             pool=context.render_worker_pool
         ),
         temp_dir=context.temp_dir
@@ -400,7 +399,6 @@ class FullTextProcessor:
             temp_dir=context.temp_dir,
             require_file=self.config.extract_graphic_assets,
             pdf_path=context.pdf_path,
-            render_timeout=self.config.render_timeout,
             render_worker_pool=context.render_worker_pool
         )
         candidate_semantic_content_list = list(
@@ -441,8 +439,7 @@ class FullTextProcessor:
                 cv_model=self.fulltext_models.cv_model,
                 context=context,
                 page_numbers=page_numbers,
-                cv_render_dpi=self.config.cv_render_dpi,
-                render_timeout=self.config.render_timeout
+                cv_render_dpi=self.config.cv_render_dpi
             )
         return SimpleDocumentGraphicProvider()
 
