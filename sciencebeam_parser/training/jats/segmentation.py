@@ -824,6 +824,10 @@ _ENCLOSED_RUN_MAX_LINES = 10
 
 _MAROONED_RUN_MAX_LINES = 4
 
+# What a declaration the argument restates runs to, where a stray reference
+# fragment is a line or two.
+_RESTATED_DECLARATION_MAX_LINES = 10
+
 
 def _release_references_inside_availability(seg_lines: List[_SegLine]) -> None:
     """Give the availability section back the datasets it cites.
@@ -993,9 +997,14 @@ def _release_annex_inside_body(seg_lines: List[_SegLine]) -> None:
     statement an article prints at the foot of a page stands apart from the
     argument above it, and there the back matter the JATS named it is what it
     is, wherever it prints.
+
+    A declaration runs longer than a restated sentence does -- an ethics
+    statement the methods set out in full takes six lines -- so the length a
+    marooned reference is held to is not the length to hold this to.  The
+    paragraph test is what decides either way.
     """
     for run in _iter_label_runs(seg_lines, SEG_ANNEX):
-        if len(run) > _MAROONED_RUN_MAX_LINES:
+        if len(run) > _RESTATED_DECLARATION_MAX_LINES:
             continue
         if not _continues_the_lines_around_it(seg_lines, run):
             continue
@@ -1066,6 +1075,49 @@ def _reclaim_repeated_running_feet(
         seg_line.seg_label = SEG_FOOTNOTE
 
 
+# A line short enough to occur anywhere says nothing about what it is: a
+# document sets "R" and "2023)." at the end of a line as readily as anywhere.
+_RECOGNISABLE_LINE_MIN_LENGTH = 20
+
+
+def _says_enough_to_be_recognised(text: str) -> bool:
+    stripped = text.strip()
+    return (
+        len(stripped) >= _RECOGNISABLE_LINE_MIN_LENGTH
+        and len(stripped.split()) > 1
+    )
+
+
+def _reclaim_margin_lines_the_deposit_places_elsewhere(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """A margin line the deposit carries as content is content.
+
+    A table prints the same note under each of its pages -- "Abbreviation - PD:
+    Peritoneal Dialysis." -- and the aligner places most of them and loses one
+    to the ambiguity.  The one it loses is set where the footer zone begins and
+    reads as a running foot.  What the document itself says is that this text is
+    the table's: the aligner grounded it elsewhere under a region label, and no
+    running foot is ever grounded anywhere.
+    """
+    label_by_text: Dict[str, str] = {}
+    for seg_line in seg_lines:
+        if (
+            seg_line.seg_label is not None
+            and seg_line.seg_label not in _FURNITURE_LABELS
+            and _is_grounded(seg_line, annotated)
+            and _says_enough_to_be_recognised(seg_line.text)
+        ):
+            label_by_text.setdefault(seg_line.text, seg_line.seg_label)
+    running = _get_running_texts(seg_lines)
+    for seg_line in seg_lines:
+        if seg_line.seg_label != SEG_FOOTNOTE or seg_line.text in running:
+            continue
+        label = label_by_text.get(seg_line.text)
+        if label is not None:
+            seg_line.seg_label = label
+
+
 def _get_page_number(seg_line: _SegLine) -> Optional[int]:
     token = seg_line.first_token
     if token is None or token.coordinates is None or not token.coordinates:
@@ -1080,10 +1132,20 @@ def _is_grounded(seg_line: _SegLine, annotated: JatsAnnotatedLayoutDocument) -> 
     )
 
 
+def _resumes_on_the_next_page(
+    seg_lines: List[_SegLine], previous: List[int], run: List[int]
+) -> bool:
+    """Whether the run carries the previous one over a page break."""
+    ends = _get_page_number(seg_lines[previous[-1]])
+    starts = _get_page_number(seg_lines[run[0]])
+    return ends is not None and starts == ends + 1
+
+
 def _extend_region_to_page_start(
     seg_lines: List[_SegLine],
     label: str,
     annotated: JatsAnnotatedLayoutDocument,
+    including_runs_resuming_overleaf: bool = False,
 ) -> None:
     """Start a region at the top of the page its first line is on.
 
@@ -1095,22 +1157,34 @@ def _extend_region_to_page_start(
 
     One evidenced line above stops it, because that is a page whose top still
     belongs to whatever came before.
+
+    The first run of the region, and -- for the front matter, which is the only
+    region with a column that runs overleaf -- any that carries on from the page
+    before: an affiliation column set down the side of the title page continues
+    at the top of the next one, and what the page breaks there is a column
+    rather than a region.  A run that starts further into the document stands on
+    its own and takes nothing above it.
     """
-    first = next((i for i, sl in enumerate(seg_lines) if sl.seg_label == label), None)
-    if first is None:
-        return
-    page_number = _get_page_number(seg_lines[first])
-    if page_number is None:
-        return
-    start = first
-    while start > 0 and _get_page_number(seg_lines[start - 1]) == page_number:
-        start -= 1
-    span = seg_lines[start:first]
-    if any(_is_grounded(sl, annotated) for sl in span):
-        return
-    for seg_line in span:
-        if seg_line.seg_label is None:
-            seg_line.seg_label = label
+    runs = list(_iter_label_runs(seg_lines, label))
+    for position, run in enumerate(runs):
+        first = run[0]
+        page_number = _get_page_number(seg_lines[first])
+        if page_number is None:
+            continue
+        if position and not (
+            including_runs_resuming_overleaf
+            and _resumes_on_the_next_page(seg_lines, runs[position - 1], run)
+        ):
+            continue
+        start = first
+        while start > 0 and _get_page_number(seg_lines[start - 1]) == page_number:
+            start -= 1
+        span = seg_lines[start:first]
+        if any(_is_grounded(sl, annotated) for sl in span):
+            continue
+        for seg_line in span:
+            if seg_line.seg_label is None:
+                seg_line.seg_label = label
 
 
 def _iter_label_runs(
@@ -1908,6 +1982,36 @@ def _claim_footnotes_sharing_a_band(seg_lines: List[_SegLine]) -> None:
         seg_line.seg_label = SEG_FOOTNOTE
 
 
+def _release_margin_lines_continuing_a_column(seg_lines: List[_SegLine]) -> None:
+    """A margin line the column above runs straight into is not a running foot.
+
+    A publisher who sets the affiliations down the side of the title page runs
+    them past the footer threshold, and a block lying beyond it entirely reads
+    as furniture.  What the page says instead is that it goes on with the line
+    above it, in the same column at the pitch of the lines around it.  Released
+    rather than relabelled, because the column it continues may not be labelled
+    yet either -- the gap merge is what settles both.
+
+    A foot the document repeats is left alone: repeating across the pages is
+    what a running foot does, and no reading of one line can say otherwise.  So
+    is a foot that goes on with another one -- a note wrapping onto a second
+    line is a note still, and only the column the page sets above the block can
+    say the block is not one.
+    """
+    running = _get_running_texts(seg_lines)
+    released: Set[int] = set()
+    for index in range(1, len(seg_lines)):
+        seg_line = seg_lines[index]
+        if seg_line.seg_label != SEG_FOOTNOTE or seg_line.text in running:
+            continue
+        above = seg_lines[index - 1]
+        if above.seg_label in _FURNITURE_LABELS and index - 1 not in released:
+            continue
+        if _follows_on_from(seg_line, above):
+            seg_line.seg_label = None
+            released.add(index)
+
+
 def _merge_gap_lines(
     seg_lines: List[_SegLine],
     enabled_labels: Set[str],
@@ -2342,6 +2446,7 @@ class SegmentationLabelDeriver:
         # front run in two, and the merge then has no run to carry across the
         # page break to the front matter printed after it.
         _release_statements_inside_front(seg_lines)
+        _release_margin_lines_continuing_a_column(seg_lines)
         _merge_gap_lines(
             seg_lines,
             enabled_labels={
@@ -2359,7 +2464,9 @@ class SegmentationLabelDeriver:
         # thing above the front matter that nothing else claims: the title and
         # authors the cover restated, which the aligner matched on the cover and
         # so left unevidenced here.
-        _extend_region_to_page_start(seg_lines, SEG_FRONT, annotated)
+        _extend_region_to_page_start(
+            seg_lines, SEG_FRONT, annotated, including_runs_resuming_overleaf=True
+        )
 
         _claim_repeated_front_field(seg_lines, annotated)
         _release_references_inside_availability(seg_lines)
@@ -2387,6 +2494,7 @@ class SegmentationLabelDeriver:
         # the lines after it with nothing to bridge from.
         _reclaim_repeated_headnotes(seg_lines, page_meta_by_number, self.config)
         _reclaim_repeated_running_feet(seg_lines, page_meta_by_number)
+        _reclaim_margin_lines_the_deposit_places_elsewhere(seg_lines, annotated)
 
         _claim_amendments_box(seg_lines)
         _claim_appendix_region(seg_lines)

@@ -486,6 +486,33 @@ class TestAcknowledgement:
         ]
 
 
+class TestAuthorNotes:
+    def test_a_note_is_offered_whole(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="other"><p>The study needed no ethical approval at all.</p></fn>'
+            '</author-notes></article-meta></front></article>'
+        )
+        notes = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR_NOTES]
+        assert [v.text for v in notes] == [
+            'The study needed no ethical approval at all.'
+        ]
+
+    def test_a_resolver_url_written_into_it_breaks_it_into_its_prose(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="edited-by"><p>Editorial Responsibility Editor-in-chief:'
+            ' Ada Lovelace https://orcid.org/0000-0003-4181-613X .'
+            ' Deputy Editor: Grace Hopper https://orcid.org/0000-0002-2983-3968 .'
+            '</p></fn></author-notes></article-meta></front></article>'
+        )
+        notes = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR_NOTES]
+        assert [v.text for v in notes] == [
+            'Editorial Responsibility Editor-in-chief: Ada Lovelace',
+            '. Deputy Editor: Grace Hopper',
+        ]
+
+
 class TestFunding:
     def test_extracts_funding_statement(self):
         fvs = _field_values_for(

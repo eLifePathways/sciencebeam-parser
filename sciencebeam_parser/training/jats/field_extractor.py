@@ -538,6 +538,33 @@ def _iter_corresp_values(corresp: etree._Element) -> Iterator[JatsFieldValue]:
             yield JatsFieldValue(text=text, field_name=field_name)
 
 
+# A resolver URL the deposit writes into a note's prose.  Long enough that a
+# segment either side of it still says what it is.
+_NOTE_PROSE_MIN_LENGTH = 20
+_RESOLVER_URL_PATTERN = re.compile(r'https?://\S+')
+
+
+def _iter_note_prose(text: str) -> Iterator[str]:
+    """The note's prose, broken where the deposit wrote a resolver URL into it.
+
+    An editorial-responsibility note names each editor and follows the name with
+    an ORCID URL the page does not print, so the note as deposited is never
+    found on the page.  Each side of the URL is, and a page that does print the
+    URL has the segments either side of it just the same.
+
+    What is left between two of them is punctuation rather than prose, and is
+    dropped: a value of one character is found everywhere and says nothing.
+    """
+    segments = [
+        part.strip() for part in _RESOLVER_URL_PATTERN.split(text)
+        if len(part.strip()) >= _NOTE_PROSE_MIN_LENGTH
+    ]
+    if len(segments) < 2:
+        yield text
+        return
+    yield from segments
+
+
 class JatsFieldExtractor:
     """Extract (text, field_name, sub_field_name) triples from a JATS <article> root."""
 
@@ -866,9 +893,10 @@ class JatsFieldExtractor:
                     )
                     yield from _iter_corresp_values(el)
                 else:
-                    yield JatsFieldValue(
-                        text=text, field_name=JatsFieldNames.AUTHOR_NOTES
-                    )
+                    for prose in _iter_note_prose(text):
+                        yield JatsFieldValue(
+                            text=prose, field_name=JatsFieldNames.AUTHOR_NOTES
+                        )
                 continue
             statement = statement_text(el)
             if statement:
@@ -1011,6 +1039,17 @@ class JatsFieldExtractor:
             if text:
                 entries.append((position[el], JatsFieldValue(
                     text=text, field_name=JatsFieldNames.BODY_TABLE)))
+            # The note under the table is the table's, and the page prints it
+            # below the rows rather than beside the caption, so it is offered as
+            # a value of its own.  Only where the caption took the element's
+            # text in part: otherwise it is already in there.
+            if not children:
+                continue
+            for foot in el.xpath('./table-wrap-foot'):
+                foot_text = element_text(foot)
+                if foot_text:
+                    entries.append((position[foot], JatsFieldValue(
+                        text=foot_text, field_name=JatsFieldNames.BODY_TABLE)))
 
         for _, fv in sorted(entries):
             yield fv
