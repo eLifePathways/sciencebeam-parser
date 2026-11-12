@@ -338,6 +338,49 @@ def _get_abstracts(entity_tokens, **kwargs) -> List[str]:
     return [abstract.get_text() for abstract in front.iter_by_type(SemanticAbstract)]
 
 
+class TestHeaderSemanticExtractorAbstractHeading:
+    def _get_headings(self, entity_tokens, **kwargs):
+        front = SemanticFront(list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                entity_tokens, **kwargs
+            )
+        ))
+        return [
+            abstract.heading_block.text if abstract.heading_block is not None else None
+            for abstract in front.iter_by_type(SemanticAbstract)
+        ]
+
+    def test_should_carry_the_heading_labelled_above_the_abstract(self):
+        assert self._get_headings([
+            ('O', LayoutBlock.for_text('Plain language summary')),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == ['Plain language summary']
+
+    def test_should_take_the_heading_from_the_last_line_above_the_abstract(self):
+        heading_block = LayoutBlock(lines=[
+            LayoutBlock.for_text('Word Count: 1,215').lines[0],
+            LayoutBlock.for_text('ABSTRACT').lines[0]
+        ])
+        assert self._get_headings([
+            ('O', heading_block),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == ['ABSTRACT']
+
+    def test_should_carry_no_heading_where_the_block_above_is_too_long(self):
+        assert self._get_headings([
+            ('O', LayoutBlock.for_text(
+                'This manuscript was compiled on the fourth of July in the year'
+            )),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == [None]
+
+    def test_should_carry_no_heading_where_another_label_sits_above(self):
+        assert self._get_headings([
+            ('<title>', LayoutBlock.for_text(TITLE_1)),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == [None]
+
+
 class TestHeaderSemanticExtractorContinuedAbstract:
     def test_should_join_a_block_continuing_the_abstract_on_the_next_page(self):
         assert _get_abstracts([

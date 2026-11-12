@@ -107,11 +107,13 @@ def _get_token_count(layout_block: LayoutBlock) -> int:
 
 def get_semantic_abstract_for_layout_block(
     layout_block: LayoutBlock,
-    with_language: bool = True
+    with_language: bool = True,
+    heading_block: Optional[LayoutBlock] = None
 ) -> SemanticAbstract:
     return SemanticAbstract(
         layout_block=layout_block,
-        language=detect_language(str(LayoutTokensText(layout_block))) if with_language else None
+        language=detect_language(str(LayoutTokensText(layout_block))) if with_language else None,
+        heading_block=heading_block
     )
 
 
@@ -319,15 +321,26 @@ OTHER_LABEL = 'O'
 NO_ABSTRACT_YET = -1
 
 
-# The heading above an abstract is printed on its own line, where a grant statement
-# or a submission date labelled `<other>` beside it runs longer.
+# A heading is printed on its own line, where a grant statement or a submission
+# date labelled `<other>` beside it runs longer.
 MAX_ABSTRACT_HEADING_TOKEN_COUNT = 8
 
 
-def _is_abstract_heading(name: str, layout_block: LayoutBlock) -> bool:
-    if name != OTHER_LABEL:
-        return False
-    return 0 < _get_token_count(layout_block) <= MAX_ABSTRACT_HEADING_TOKEN_COUNT
+def get_abstract_heading_block(
+    name: str,
+    layout_block: LayoutBlock
+) -> Optional[LayoutBlock]:
+    """The heading an abstract is printed under, where the block before it carries one.
+
+    A heading is printed on its own line, and the block the model labels `<other>`
+    above an abstract often runs a word count or a doi into it from the line above.
+    """
+    if name != OTHER_LABEL or not layout_block.lines:
+        return None
+    heading_block = LayoutBlock(lines=layout_block.lines[-1:])
+    if not 0 < _get_token_count(heading_block) <= MAX_ABSTRACT_HEADING_TOKEN_COUNT:
+        return None
+    return heading_block
 
 
 def _iter_page_numbers(layout_block: LayoutBlock) -> Iterable[int]:
@@ -385,7 +398,7 @@ def join_continued_abstracts(
             if is_abstract_continuation(
                 layout_block,
                 abstract_block,
-                _is_abstract_heading(previous_name, previous_block)
+                get_abstract_heading_block(previous_name, previous_block) is not None
             ):
                 joined[abstract_index] = (
                     name, LayoutBlock.merge_blocks([abstract_block, layout_block])
@@ -489,9 +502,12 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         semantic_abstracts: List[SemanticAbstract] = []
         aff_address: Optional[SemanticRawAffiliationAddress] = None
         next_previous_label: str = ''
+        next_previous_block: LayoutBlock = EMPTY_BLOCK
         for name, layout_block in entity_tokens:
             previous_label = next_previous_label
+            previous_block = next_previous_block
             next_previous_label = name
+            next_previous_block = layout_block
             if name == '<title>':
                 title_blocks.append(_split_trailing_title_punct(layout_block))
                 continue
@@ -510,7 +526,11 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                     and is_abstract_variant(abstract_layout_block, primary_abstract_block)
                 ):
                     semantic_abstract = get_semantic_abstract_for_layout_block(
-                        abstract_layout_block, with_language=carry_variants
+                        abstract_layout_block,
+                        with_language=carry_variants,
+                        heading_block=get_abstract_heading_block(
+                            previous_label, previous_block
+                        )
                     )
                     if primary_abstract_block is None:
                         primary_abstract_block = abstract_layout_block
