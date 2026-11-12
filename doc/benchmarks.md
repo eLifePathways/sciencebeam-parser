@@ -321,9 +321,10 @@ Those extra variants stay out of the report CI always posts: its columns are sti
 chooses.
 
 The one exception is `main` under that same profile. `eval.yml` declares `main` under
-`grobid_crf` only, so a run under any other profile would be compared with `main` across
-a profile change as well as a code change. Where the run's profile is not one `main` is
-declared under, the report adds a `main (<profile>)` column beside `main (grobid_crf)`,
+`recommended` only, which is what the workflow runs by default, so a run under any other
+profile would be compared with `main` across a profile change as well as a code change.
+Where the run's profile is not one `main` is declared under, the report adds a
+`main (<profile>)` column beside `main (recommended)`,
 read from the store and never generated. If `main` has never been run under that profile
 the column is left out, and a note at the end of the report gives the dispatch that
 stores it (`gh workflow run benchmark.yml --ref main -f profile=<profile> -f

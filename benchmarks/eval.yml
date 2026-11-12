@@ -250,9 +250,12 @@ baselines:
   - tool: grobid
     version: 0.9.1-crf
     profile: default
+  # The profile the Benchmark workflow runs by default, so a run is compared with
+  # `main` across a code change rather than a profile change as well. Store-only:
+  # `main` pushes under whichever profile it was run with.
   - tool: sciencebeam-parser
     version: main
-    profile: grobid_crf
+    profile: recommended
     generate: false
   # Predictions stored in sciencebeam-eval-predictions (offline run of the RL step-20
   # checkpoint on the benchmark markdown); no endpoint serves it yet. Stored for
