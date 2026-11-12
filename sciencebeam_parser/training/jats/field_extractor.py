@@ -18,6 +18,7 @@ from sciencebeam_parser.training.jats.back_matter import (
     get_fn_kind,
     is_bold_heading,
     match_fn_keywords,
+    match_fn_kinds,
     statement_text,
 )
 from sciencebeam_parser.training.jats.field_vocab import (
@@ -369,12 +370,16 @@ def _ack_kind(ack: etree._Element, el: etree._Element) -> str:
     and lets each section's title say which it is, so the block's own title
     answers for none of them and may not be there at all.  The nearest title
     above the paragraph is the one that names it.
+
+    A title naming several -- "Acknowledgement, financial support and full
+    disclosure" -- names none of them in particular, and the element it heads
+    is an acknowledgement block.
     """
     for parent in [el] + list(el.iterancestors()):
         title_el = parent.find('title') if parent is not el else None
-        kind = match_fn_keywords(element_text(title_el)) if title_el is not None else None
-        if kind:
-            return kind
+        kinds = match_fn_kinds(element_text(title_el)) if title_el is not None else set()
+        if len(kinds) == 1:
+            return next(iter(kinds))
         if parent is ack:
             break
     return 'acknowledgement'

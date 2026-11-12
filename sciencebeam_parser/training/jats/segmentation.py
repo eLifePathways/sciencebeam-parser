@@ -205,6 +205,36 @@ def _get_corresponding_author_lines(
     return lines
 
 
+def _running_in_step_with_the_pages(
+    candidates: List[_SegLine]
+) -> List[_SegLine]:
+    """The margin numbers left once a page printing two has chosen between them.
+
+    An affiliation marker is set in the same margin as the page number, so the
+    one that advances with the page wins -- at whatever number the journal
+    starts its own sequence from.  A page printing one keeps it, whatever it
+    reads: "Page 3 of 12" has nothing to be mistaken for.
+    """
+    def offset_of(seg_line: _SegLine) -> Optional[int]:
+        page_number = _get_page_number(seg_line)
+        printed = _parse_page_number(seg_line.text)
+        if page_number is None or printed is None:
+            return None
+        return printed - page_number
+
+    per_page: Counter = Counter(_get_page_number(seg_line) for seg_line in candidates)
+    offsets: Counter = Counter(
+        offset for offset in map(offset_of, candidates) if offset is not None
+    )
+    if not offsets:
+        return list(candidates)
+    in_step = min(offsets, key=lambda offset: (-offsets[offset], abs(offset), offset))
+    return [
+        seg_line for seg_line in candidates
+        if per_page[_get_page_number(seg_line)] == 1 or offset_of(seg_line) == in_step
+    ]
+
+
 def _tag_by_coordinates(
     seg_lines: List[_SegLine],
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -257,6 +287,23 @@ def _tag_by_coordinates(
     corresponding_author_lines = _get_corresponding_author_lines(
         seg_lines, y_ratio_by_line, config
     )
+
+    def is_unclaimed_margin_line(seg_line: _SegLine) -> bool:
+        if seg_line.seg_label is not None:
+            return False
+        if id(seg_line) in corresponding_author_lines:
+            return False
+        if not block_is_margin.get(seg_line.block_index, True):
+            return False
+        return is_in_margin(y_ratio_by_line[id(seg_line)])
+
+    page_number_lines = {
+        id(seg_line) for seg_line in _running_in_step_with_the_pages([
+            seg_line for seg_line in seg_lines
+            if is_unclaimed_margin_line(seg_line)
+            and _is_valid_page_number_candidate(seg_line.text)
+        ])
+    }
     for seg_line in seg_lines:
         if id(seg_line) in corresponding_author_lines:
             # The note at the foot of the title page says what it is.  One
@@ -265,14 +312,10 @@ def _tag_by_coordinates(
             # labelled on it and three tokens can be carried by one.
             seg_line.seg_label = SEG_FRONT
             continue
-        if seg_line.seg_label is not None:
+        if not is_unclaimed_margin_line(seg_line):
             continue
         y_ratio = y_ratio_by_line[id(seg_line)]
-        if y_ratio is None or not block_is_margin.get(seg_line.block_index, True):
-            continue
-        if not (y_ratio < config.headnote_y_ratio or y_ratio > config.footnote_y_ratio):
-            continue
-        if _is_valid_page_number_candidate(seg_line.text):
+        if id(seg_line) in page_number_lines:
             seg_line.seg_label = SEG_PAGE
         elif y_ratio > config.footnote_y_ratio:
             seg_line.seg_label = (
@@ -995,6 +1038,32 @@ def _reclaim_repeated_headnotes(
         if not _is_in_header_zone(seg_line, page_meta_by_number, config):
             continue
         seg_line.seg_label = SEG_HEADNOTE
+
+
+def _reclaim_repeated_running_feet(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+) -> None:
+    """Give a running foot back to `<footnote>` where something else took it.
+
+    The counterpart of the headnote reclaim.  A journal sets its own citation
+    along every foot, page range and all, so the `<page>` vote takes the line on
+    the page the article opens and the front merge takes it on the next.  It is
+    the same furniture on every page it prints on.
+    """
+    foot_counts: Counter = Counter(
+        sl.text for sl in seg_lines if sl.seg_label == SEG_FOOTNOTE
+    )
+    for seg_line in seg_lines:
+        if seg_line.seg_label in (SEG_FOOTNOTE, SEG_COVER, None):
+            continue
+        count = foot_counts.get(seg_line.text, 0)
+        if count < 2 or not _is_valid_headnote_candidate(seg_line.text, count, min_count=2):
+            continue
+        y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+        if y_ratio is None or y_ratio < _RUNNING_FOOT_MIN_Y_RATIO:
+            continue
+        seg_line.seg_label = SEG_FOOTNOTE
 
 
 def _get_page_number(seg_line: _SegLine) -> Optional[int]:
@@ -2090,6 +2159,81 @@ def get_page_furniture_line_ids(
     }
 
 
+# What a declaration the JATS files with the front matter is, where the page
+# prints it after the article instead.  `<annex>` is what GROBID gives a
+# declaration it has no label for: 60 of the 60 segmentation documents opening
+# an ethics or consent statement hold it under that type.
+_BACK_LABEL_BY_FRONT_FIELD = {
+    JatsFieldNames.CONFLICT_NOTE: SEG_CONFLICT,
+    JatsFieldNames.CONTRIBUTION_NOTE: SEG_CONTRIBUTION,
+    JatsFieldNames.FUNDING: SEG_FUNDING,
+    JatsFieldNames.AUTHOR_NOTES: SEG_ANNEX,
+}
+
+# `ARTICLE_NOTES` is not among them.  A revised preprint prints the box saying
+# what changed after its body, and `_claim_amendments_box` has already decided
+# that the box is the publisher's front matter.
+
+# The front matter a paper does print after its body: a preprint server sets the
+# correspondence block at the end, and it is the front matter wherever it is set.
+_FRONT_AFTER_THE_BODY_FIELDS = frozenset({
+    JatsFieldNames.CORRESPONDENCE,
+    JatsFieldNames.CORRESP_AFF,
+    JatsFieldNames.CORRESP_ADDRESS,
+    JatsFieldNames.CORRESP_PHONE,
+})
+
+
+def _release_front_after_the_body(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """A declaration the page prints after the article is not the front matter.
+
+    Where the page sets a declaration is what decides, which is the rule
+    `_release_statements_inside_front` reads from the other end.
+
+    Only a line the JATS names a declaration: the front matter itself can print
+    past the first line of body, where an affiliation column runs onto the page
+    the article opens on.  What the page sets between two declarations is let go
+    rather than relabelled, the regions claiming it on their own terms.
+    """
+    body_start = next(
+        (
+            index for index, seg_line in enumerate(seg_lines)
+            if seg_line.seg_label == SEG_BODY
+        ),
+        None,
+    )
+    if body_start is None:
+        return
+
+    def fields_of(seg_line: _SegLine) -> Set[Optional[str]]:
+        return {
+            annotated.get_token_field(token)
+            for token in seg_line.layout_line.tokens
+        }
+
+    for seg_line in seg_lines[body_start:]:
+        if seg_line.seg_label != SEG_FRONT:
+            continue
+        label = next(
+            (
+                _BACK_LABEL_BY_FRONT_FIELD[field] for field in fields_of(seg_line)
+                if field in _BACK_LABEL_BY_FRONT_FIELD
+            ),
+            None,
+        )
+        if label is not None:
+            seg_line.seg_label = label
+    back_labels = set(_BACK_LABEL_BY_FRONT_FIELD.values())
+    for index in range(body_start, len(seg_lines)):
+        seg_line = seg_lines[index]
+        if seg_line.seg_label != SEG_FRONT or _is_grounded(seg_line, annotated):
+            continue
+        if _enclosing_label(seg_lines, index, -1) in back_labels:
+            seg_line.seg_label = None
+
+
 class SegmentationLabelDeriver:
     """Derives one segmentation label per LayoutLine from token-level JATS annotations."""
 
@@ -2194,11 +2338,16 @@ class SegmentationLabelDeriver:
         # region may itself be a running header, and taking it back first leaves
         # the lines after it with nothing to bridge from.
         _reclaim_repeated_headnotes(seg_lines, page_meta_by_number, self.config)
+        _reclaim_repeated_running_feet(seg_lines, page_meta_by_number)
 
         _claim_amendments_box(seg_lines)
         _claim_appendix_region(seg_lines)
         _tag_publication_dates(seg_lines)
         _claim_lines_sharing_a_row(seg_lines, page_meta_by_number)
+
+        # After every pass that builds the front run, because what it reads is
+        # the run as it ends up rather than the lines the JATS vote claimed.
+        _release_front_after_the_body(seg_lines, annotated)
 
         # ── Default remaining untagged lines → body ──
         for sl in seg_lines:

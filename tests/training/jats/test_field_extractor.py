@@ -463,6 +463,28 @@ class TestAcknowledgement:
         assert len(ack) == 1
         assert 'thank' in ack[0].text
 
+    def test_a_title_naming_one_declaration_hands_the_block_over(self):
+        fvs = _field_values_for(
+            '<article><back><ack><title>Funding</title>'
+            '<p>The work was funded by UNICRUZ.</p></ack></back></article>'
+        )
+        assert [v.field_name for v in fvs] == [
+            JatsFieldNames.FUNDING_SECTION_TITLE,
+            JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
+        ]
+
+    def test_a_title_naming_several_names_none_of_them(self):
+        fvs = _field_values_for(
+            '<article><back><ack>'
+            '<title>Acknowledgement, financial support and full disclosure</title>'
+            '<p>The authors are grateful to UNICRUZ for funding the research.</p>'
+            '</ack></back></article>'
+        )
+        assert [v.field_name for v in fvs] == [
+            JatsFieldNames.ACK_SECTION_TITLE,
+            JatsFieldNames.ACK_SECTION_PARAGRAPH,
+        ]
+
 
 class TestFunding:
     def test_extracts_funding_statement(self):

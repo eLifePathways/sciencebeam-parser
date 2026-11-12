@@ -514,3 +514,73 @@ class TestASecondKeywordList:
             'Introduction: the argument begins'
         )
         assert derive_labels(doc, annotated)[id(second)] != SEG_FRONT
+
+
+class TestDeclarationPrintedAfterTheArticle:
+    """A typeset journal files its declarations in the front matter and prints
+    them at the end."""
+
+    def _make_doc(self):
+        title = make_line('A', 'title', y=100.0)
+        affiliation = make_line('A', 'university', 'somewhere', y=120.0)
+        body = [
+            make_line('The', 'argument', f'runs{index}', y=200.0 + 20 * index)
+            for index in range(8)
+        ]
+        late_affiliation = make_line(
+            'Another', 'university', 'elsewhere', y=100.0, page_number=2
+        )
+        more_body = [
+            make_line('and', 'goes', f'on{index}', y=200.0 + 20 * index, page_number=2)
+            for index in range(8)
+        ]
+        conflict = make_line(
+            'The', 'authors', 'declare', 'none', y=400.0, page_number=2
+        )
+        table = make_line('Macrodomain', 'Proposal', y=420.0, page_number=2)
+        ethics = make_line(
+            'The', 'study', 'needed', 'no', 'approval', y=440.0, page_number=2
+        )
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[title, affiliation] + body)],
+                meta=make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[LayoutBlock(
+                    lines=[late_affiliation] + more_body + [conflict, table, ethics]
+                )],
+                meta=make_page_meta(2),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(title): JatsFieldNames.TITLE,
+            lines.index(affiliation): JatsFieldNames.AUTHOR_AFF,
+            lines.index(late_affiliation): JatsFieldNames.AUTHOR_AFF,
+            lines.index(conflict): JatsFieldNames.CONFLICT_NOTE,
+            lines.index(ethics): JatsFieldNames.AUTHOR_NOTES,
+        }
+        for line in body + more_body:
+            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), {
+            'conflict': conflict, 'ethics': ethics,
+            'table': table, 'late_affiliation': late_affiliation,
+        }
+
+    def test_a_declaration_takes_the_label_it_names(self):
+        doc, annotated, lines = self._make_doc()
+        assert derive_labels(doc, annotated)[id(lines['conflict'])] == SEG_CONFLICT
+
+    def test_a_note_naming_no_declaration_is_back_matter(self):
+        doc, annotated, lines = self._make_doc()
+        assert derive_labels(doc, annotated)[id(lines['ethics'])] == SEG_ANNEX
+
+    def test_what_the_page_sets_between_two_declarations_is_let_go(self):
+        doc, annotated, lines = self._make_doc()
+        assert derive_labels(doc, annotated)[id(lines['table'])] == SEG_BODY
+
+    def test_front_matter_printed_past_the_first_body_line_is_left_alone(self):
+        doc, annotated, lines = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert labels[id(lines['late_affiliation'])] == SEG_FRONT

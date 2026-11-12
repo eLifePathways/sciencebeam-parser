@@ -156,6 +156,15 @@ def match_fn_keywords(heading: str) -> Optional[str]:
     return None
 
 
+def match_fn_kinds(heading: str) -> Set[str]:
+    """Every declaration a heading names."""
+    folded = _fold(heading)[:_FN_HEADING_LENGTH]
+    return {
+        kind for kind, keywords in _FN_KIND_KEYWORDS
+        if any(keyword in folded for keyword in keywords)
+    }
+
+
 def _get_fn_heading(el: etree._Element) -> Optional[str]:
     """What the footnote calls itself, wherever the publisher wrote it.
 
