@@ -1,8 +1,8 @@
 /*
- * Runs the profile menu's choice of options over a profile list on stdin.
+ * Runs the profile menu's choice, order and headings over a profile list on stdin.
  */
 import {
-  getProfileOptions,
+  getProfileOptionGroups,
   getTrackedProfile
 } from '../../../sciencebeam_parser/service/static/profile-options.js';
 
@@ -11,7 +11,10 @@ process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
   const profiles = JSON.parse(input);
   process.stdout.write(JSON.stringify({
-    options: getProfileOptions(profiles).map((profile) => profile.name),
+    groups: getProfileOptionGroups(profiles).map((group) => ({
+      label: group.label,
+      profiles: group.profiles.map((profile) => profile.name)
+    })),
     tracked: Object.fromEntries(profiles.map((profile) => [
       profile.name,
       (getTrackedProfile(profiles, profile) || {}).name || null

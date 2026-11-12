@@ -7,7 +7,7 @@ import { parseJatsViewModel } from './jats-to-html.js';
 import { parseTeiViewModel } from './tei-to-html.js';
 import { getZipSourceForBlob, readZipEntries } from './read-zip.js';
 import { addSvgViewBox } from './svg-view-box.js';
-import { getProfileOptions, getTrackedProfile } from './profile-options.js';
+import { getProfileOptionGroups, getTrackedProfile } from './profile-options.js';
 
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
@@ -122,12 +122,19 @@ function checkSelectedFile() {
   convertButton.disabled = rejected;
 }
 
-function addOption(select, value, label) {
+function addOption(parent, value, label) {
   const option = document.createElement('option');
   option.value = value;
   option.textContent = label;
-  select.appendChild(option);
+  parent.appendChild(option);
   return option;
+}
+
+function addOptionGroup(select, label) {
+  const group = document.createElement('optgroup');
+  group.label = label;
+  select.appendChild(group);
+  return group;
 }
 
 function setUpOutputSelect() {
@@ -174,9 +181,12 @@ function getSelectedIncludes() {
 }
 
 function addProfileOptions(profiles) {
-  getProfileOptions(profiles).forEach((profile) => {
-    const option = addOption(profileSelect, profile.name, profile.label || profile.name);
-    option.selected = profile.is_default;
+  getProfileOptionGroups(profiles).forEach((group) => {
+    const parent = group.label ? addOptionGroup(profileSelect, group.label) : profileSelect;
+    group.profiles.forEach((profile) => {
+      const option = addOption(parent, profile.name, profile.label || profile.name);
+      option.selected = profile.is_default;
+    });
   });
 }
 
