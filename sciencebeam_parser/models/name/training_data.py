@@ -1,6 +1,6 @@
 import logging
 from typing import Iterable, Set, Union
-from sciencebeam_parser.document.semantic_document import SemanticAuthor
+from sciencebeam_parser.document.semantic_document import SemanticAuthor, SemanticNote
 
 from sciencebeam_parser.models.data import LayoutModelData
 from sciencebeam_parser.models.model import (
@@ -64,6 +64,10 @@ def iter_model_data_with_reset_instruction_iterable(
         name_type=SemanticAuthor
     )):
         if index == 0:
+            continue
+        if isinstance(semantic_content, SemanticNote):
+            # text between or after the names, which GROBID's AuthorParser gives
+            # no author of its own: it stays with the name before it
             continue
         for semantic_token in semantic_content.iter_tokens():
             reset_token_ids.add(id(semantic_token))

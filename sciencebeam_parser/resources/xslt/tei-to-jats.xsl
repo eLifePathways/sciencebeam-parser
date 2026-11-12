@@ -82,19 +82,22 @@
                 </email>
               </xsl:if>
 
-              <xsl:if test="tei:affiliation">
+              <!-- one cross reference per affiliation attached to the author -->
+              <xsl:for-each select="tei:affiliation">
                 <xref ref-type="aff">
                   <xsl:attribute name='rid'>
-                    <xsl:value-of select="tei:affiliation/@key"/>
+                    <xsl:value-of select="@key"/>
                   </xsl:attribute>
                 </xref>
-              </xsl:if>
+              </xsl:for-each>
             </contrib>
           </xsl:for-each>
         </contrib-group>
       </xsl:if>
 
-      <xsl:for-each select="tei:fileDesc/tei:sourceDesc/tei:biblStruct/tei:analytic/tei:author/tei:affiliation">
+      <!-- an affiliation attached to several authors is written out under each of
+           them in the TEI; the JATS carries it once, under its key -->
+      <xsl:for-each select="tei:fileDesc/tei:sourceDesc/tei:biblStruct/tei:analytic/tei:author/tei:affiliation[not(@key = preceding::tei:affiliation/@key)]">
         <aff>
           <xsl:attribute name='id'>
             <xsl:value-of select="@key"/>

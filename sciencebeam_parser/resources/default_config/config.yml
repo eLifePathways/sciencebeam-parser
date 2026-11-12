@@ -278,6 +278,14 @@ sequence_model_profiles:
     header:
       path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/86795599d16fc238a7a7c233c55d289ced5270a7/header/delft/2026-11-06_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore_b30_flex'
       engine: 'delft'
+    # GROBID's header name model retrained for coverage (grobidOrg/grobid#1641), then again
+    # with Spanish and Portuguese names added (grobidOrg/grobid@3f3f463); the same model
+    # file, published with its training record. It is run as GROBID runs it there: the
+    # author list is featured as one line, since the model never saw a line break inside one.
+    name_header:
+      path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/8ec54ceae6aeb0b5862984272644bdefb55dd4b9/name-header/wapiti/2026-11-10_wapiti_grobid_multilang'
+      engine: 'wapiti'
+      ignore_line_breaks: true
   # Every retrained model of an engine at once. The pair above it --
   # wapiti_references_scielo_preprints_ore and delft_references_scielo_preprints_ore -- stays the
   # reference models alone, so a change in the references can still be read
@@ -533,7 +541,7 @@ profiles:
           enabled: false
   delft_header_scielo_preprints_ore:
     label: 'DeLFT header, SciELO preprints and ORE'
-    description: 'GROBID 0.9.0 with the header model retrained as a DeLFT model on SciELO preprints and ORE.'
+    description: 'GROBID 0.9.0 with the header model retrained as a DeLFT model on SciELO preprints and ORE, and the header name model from GROBID master retrained with Spanish and Portuguese names (grobidOrg/grobid@3f3f463).'
     sequence_models: delft_header_scielo_preprints_ore
     processors:
       fulltext:
@@ -549,7 +557,7 @@ profiles:
           enabled: false
   delft_all_scielo_preprints_ore:
     label: 'DeLFT retrained models, SciELO preprints and ORE'
-    description: 'GROBID 0.9.0 with segmentation, the header and both reference models retrained as DeLFT models on SciELO preprints and ORE.'
+    description: 'GROBID 0.9.0 with segmentation, the header and both reference models retrained as DeLFT models on SciELO preprints and ORE, and the header name model from GROBID master retrained with Spanish and Portuguese names (grobidOrg/grobid@3f3f463).'
     sequence_models: delft_all_scielo_preprints_ore
     processors:
       fulltext:

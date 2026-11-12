@@ -8,7 +8,6 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticMarker,
     SemanticMiddleName,
     SemanticMixedContentWrapper,
-    SemanticNamePart,
     SemanticNameSuffix,
     SemanticNameTitle,
     SemanticNote,
@@ -24,9 +23,6 @@ from sciencebeam_parser.models.extract import SimpleModelSemanticExtractor
 LOGGER = logging.getLogger(__name__)
 
 
-SPLIT_ON_SECOND_ENTIY_NAME = {'<title>', '<forename>', '<surname>'}
-
-
 SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
     '<title>': SemanticNameTitle,
     '<forename>': SemanticGivenName,
@@ -34,6 +30,23 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
     '<surname>': SemanticSurname,
     '<suffix>': SemanticNameSuffix
 }
+
+# The name parts GROBID's Person.notNull looks at: an author exists once it has
+# one of them (a suffix or a marker alone does not make one)
+NAME_PART_TYPES = (SemanticNameTitle, SemanticGivenName, SemanticMiddleName, SemanticSurname)
+
+# GROBID's AuthorParser starts a new author on a second one of these; a second
+# middle name or suffix is appended to the current author instead
+NAME_PART_TYPES_STARTING_NEW_AUTHOR = (SemanticNameTitle, SemanticGivenName, SemanticSurname)
+
+# GROBID's Person.NAME_DELIMITERS: a name part is capitalised at its start and
+# after any of these characters, and lower cased elsewhere
+NAME_DELIMITERS = '-.,;:/_ '
+
+# GROBID's TEI output leaves out an author whose surname is a single character
+MIN_SURNAME_LENGTH = 2
+
+INVALID_AUTHOR_NAME_NOTE_TYPE = 'invalid_author_name'
 
 
 def tokenize_individual_characters(text: str) -> List[str]:
@@ -74,44 +87,84 @@ def convert_two_letter_uppercase_given_name_to_given_middle_name(
     )
 
 
-def convert_name_parts_to_title_case(name: T_SemanticName):
+def capitalize_fully(text: str, delimiters: str = NAME_DELIMITERS) -> str:
+    """GROBID's TextUtilities.capitalizeFully: upper case at the start and after
+    a delimiter, lower case elsewhere ("jean-pierre" is "Jean-Pierre", "McDONALD"
+    is "Mcdonald", "o'neil" is "O'neil")."""
+    result: List[str] = []
+    to_upper = True
+    for ch in text:
+        if ch in delimiters:
+            to_upper = True
+            result.append(ch)
+        elif to_upper:
+            result.append(ch.upper())
+            to_upper = False
+        else:
+            result.append(ch.lower())
+    return ''.join(result)
+
+
+def capitalize_name_parts(name: T_SemanticName):
+    # GROBID's Person.normalizeName capitalises the forename, middle name and
+    # surname; a title or a suffix is left as written
     for semantic_content in name:
-        if not isinstance(semantic_content, SemanticNamePart):
-            continue
-        semantic_content.value = semantic_content.get_text().title()
+        if isinstance(semantic_content, (SemanticGivenName, SemanticMiddleName, SemanticSurname)):
+            semantic_content.value = capitalize_fully(semantic_content.get_text())
+
+
+def is_valid_name(name: T_SemanticName) -> bool:
+    # GROBID's Person.sanityCheck drops a person without a surname, and its TEI
+    # output one whose surname is a single character
+    return len(name.surname_text.strip()) >= MIN_SURNAME_LENGTH
 
 
 # based on:
-# https://github.com/kermitt2/grobid/blob/0.6.2/grobid-core/src/main/java/org/grobid/core/data/Person.java#L375-L391
-# and:
-# https://github.com/kermitt2/grobid/blob/0.6.2/grobid-core/src/main/java/org/grobid/core/data/Person.java#L756-L775
+# https://github.com/kermitt2/grobid/blob/0.9.0/grobid-core/src/main/java/org/grobid/core/data/Person.java
+# (normalizeName, sanityCheck) and the author block of BiblioItem.toTEIAuthorBlock
 def normalize_name_parts(name: T_SemanticName):
-    if not list(name.iter_by_type(SemanticSurname)):
+    if not is_valid_name(name):
         return SemanticNote(
             layout_block=LayoutBlock.merge_blocks(name.iter_blocks()),
-            note_type='invalid_author_name'
+            note_type=INVALID_AUTHOR_NAME_NOTE_TYPE
         )
     convert_two_letter_uppercase_given_name_to_given_middle_name(name)
-    convert_name_parts_to_title_case(name)
+    capitalize_name_parts(name)
     return name
+
+
+# GROBID 0.9.1's AuthorParser.MARKER_SPLIT_PATTERN: a marker is a run of letters
+# or digits, a run of two or more commas, or a run of one repeated other
+# character ("**", "††"); a single comma or whitespace between markers is not one
+MARKER_PATTERN = re.compile(r'[0-9a-zA-Z]+|,{2,}|([^0-9a-zA-Z,\s])\1*')
+
+MARKER_DELIMITER_NOTE_TYPE = 'marker_delimiter'
+
+
+def _get_local_block(text: str) -> LayoutBlock:
+    return LayoutBlock.for_tokens([LayoutToken(text, whitespace='')])
 
 
 def iter_semantic_markers_for_layout_block(
     layout_block: LayoutBlock
 ) -> Iterable[Union[SemanticMarker, SemanticContentWrapper]]:
-    for text in re.split(r'(\D)', layout_block.text):
-        if not text:
-            continue
-        local_block = LayoutBlock.for_tokens([
-            LayoutToken(text, whitespace='')
-        ])
-        if text == ',' or text.isspace():
+    """The markers of a marker cluster, cut as GROBID's AuthorParser.splitMarkers
+    cuts them; the text between them, which GROBID drops, is kept as notes."""
+    text = layout_block.text
+    last_end = 0
+    for match in MARKER_PATTERN.finditer(text):
+        if match.start() > last_end:
             yield SemanticNote(
-                layout_block=local_block,
-                note_type='marker_delimiter'
+                layout_block=_get_local_block(text[last_end:match.start()]),
+                note_type=MARKER_DELIMITER_NOTE_TYPE
             )
-            continue
-        yield SemanticMarker(layout_block=local_block)
+        yield SemanticMarker(layout_block=_get_local_block(match.group()))
+        last_end = match.end()
+    if last_end < len(text):
+        yield SemanticNote(
+            layout_block=_get_local_block(text[last_end:]),
+            note_type=MARKER_DELIMITER_NOTE_TYPE
+        )
 
 
 def append_semantic_markers_for_layout_block(
@@ -121,6 +174,11 @@ def append_semantic_markers_for_layout_block(
     semantic_markers = list(iter_semantic_markers_for_layout_block(layout_block))
     for semantic_marker in semantic_markers:
         parent_semantic_content.add_content(semantic_marker)
+
+
+def has_name_part(name: SemanticMixedContentWrapper) -> bool:
+    """GROBID's Person.notNull: the author has a title, forename, middle name or surname."""
+    return any(isinstance(content, NAME_PART_TYPES) for content in name)
 
 
 class NameSemanticExtractor(SimpleModelSemanticExtractor):
@@ -133,6 +191,12 @@ class NameSemanticExtractor(SimpleModelSemanticExtractor):
         name_type: Optional[Type[T_SemanticName]] = None,
         **kwargs
     ) -> Iterable[T_SemanticName]:
+        """Cuts the labelled sequence into names the way GROBID's
+        AuthorParser.processing does: a marker closes the author it follows and is
+        recorded on that author (GROBID notes a marker usually belongs to the author
+        before it, rarely to the one after); a second title, forename or surname
+        starts a new author, where middle names and suffixes accumulate on the
+        current one. Text labelled as other stays with the author it falls in."""
         _name_type: Type[T_SemanticName] = cast(
             Type[T_SemanticName],
             name_type if name_type is not None else SemanticAuthor
@@ -140,54 +204,31 @@ class NameSemanticExtractor(SimpleModelSemanticExtractor):
         entity_tokens = list(entity_tokens)
         LOGGER.debug('entity_tokens: %s', entity_tokens)
         semantic_name: Optional[T_SemanticName] = None
-        seen_entity_tokens: List[Tuple[str, LayoutBlock]] = []
-        seen_name_labels: List[str] = []
-        has_tail_marker: bool = False
         for name, layout_block in entity_tokens:
-            seen_entity_tokens.append((name, layout_block,))
-            if name == '<marker>':
-                if not semantic_name:
-                    LOGGER.debug('new semantic_name with marker in the beginning')
-                    semantic_name = _name_type()
-                    append_semantic_markers_for_layout_block(semantic_name, layout_block)
-                    continue
-                if len(seen_entity_tokens) >= 2 and seen_name_labels and not has_tail_marker:
-                    previous_layout_block = seen_entity_tokens[-2][1]
-                    if previous_layout_block.text.strip().endswith(','):
-                        LOGGER.debug(
-                            'new semantic_name marker after comma, seen_name_labels=%s',
-                            seen_name_labels
-                        )
-                        yield normalize_name_parts(semantic_name)
-                        seen_name_labels = []
-                        semantic_name = _name_type()
-                        append_semantic_markers_for_layout_block(semantic_name, layout_block)
-                        continue
-                append_semantic_markers_for_layout_block(semantic_name, layout_block)
-                has_tail_marker = True
+            if not layout_block.text.strip():
                 continue
-            if semantic_name and name in SPLIT_ON_SECOND_ENTIY_NAME and name in seen_name_labels:
-                LOGGER.debug(
-                    'starting new semantic_name after having seen name part again, name=%r',
-                    name
-                )
-                yield normalize_name_parts(semantic_name)
-                seen_name_labels = []
-                has_tail_marker = False
-                semantic_name = None
+            if name == '<marker>':
+                if semantic_name is None:
+                    semantic_name = _name_type()
+                append_semantic_markers_for_layout_block(semantic_name, layout_block)
+                if has_name_part(semantic_name):
+                    LOGGER.debug('marker closes the author it follows')
+                    yield normalize_name_parts(semantic_name)
+                    semantic_name = None
+                continue
             semantic_content = self.get_semantic_content_for_entity_name(
                 name, layout_block
             )
-            if not isinstance(semantic_content, SemanticNote):
-                if has_tail_marker and semantic_name:
-                    LOGGER.debug('starting new semantic_name after tail markers, name=%r', name)
-                    yield normalize_name_parts(semantic_name)
-                    seen_name_labels = []
-                    has_tail_marker = False
-                    semantic_name = None
-                seen_name_labels.append(name)
-            if not semantic_name:
+            if (
+                semantic_name is not None
+                and isinstance(semantic_content, NAME_PART_TYPES_STARTING_NEW_AUTHOR)
+                and semantic_name.has_type(type(semantic_content))
+            ):
+                LOGGER.debug('starting new author on a second name part, name=%r', name)
+                yield normalize_name_parts(semantic_name)
+                semantic_name = None
+            if semantic_name is None:
                 semantic_name = _name_type()
             semantic_name.add_content(semantic_content)
-        if semantic_name:
+        if semantic_name is not None:
             yield normalize_name_parts(semantic_name)

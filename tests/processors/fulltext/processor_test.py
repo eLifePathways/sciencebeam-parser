@@ -24,7 +24,6 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticEditor,
     SemanticFigure,
     SemanticFigureCitation,
-    SemanticGivenName,
     SemanticGraphic,
     SemanticInstitution,
     SemanticInvalidReference,
@@ -37,15 +36,10 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticReferenceCitation,
     SemanticReferenceList,
     SemanticSectionTypes,
-    SemanticSurname,
     SemanticTable,
     SemanticTableCitation,
     SemanticTitle,
     iter_by_semantic_type_recursively
-)
-from sciencebeam_parser.processors.fulltext.processor import (
-    _authors_match,
-    _is_initial
 )
 from sciencebeam_parser.processors.fulltext import processor as processor_module
 from sciencebeam_parser.processors.fulltext.processor import (
@@ -456,77 +450,79 @@ class TestFullTextProcessor:
         authors = semantic_document.front.authors
         assert len(authors) == 2
 
+    def test_should_deduplicate_when_raw_authors_are_merged(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        # GROBID labels the header's author blocks as one sequence and then
+        # deduplicates, so merging them is no reason to skip it
+        given1 = LayoutBlock.for_text('Richard')
+        sur1 = LayoutBlock.for_text('Coward')
+        authors_block = LayoutBlock.merge_blocks([given1, sur1])
+        given2 = LayoutBlock.for_text('Richard')
+        sur2 = LayoutBlock.for_text('Coward')
+        corresp_block = LayoutBlock.merge_blocks([given2, sur2])
 
-class TestIsInitial:
-    def test_single_letter(self):
-        assert _is_initial('R') is True
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            LayoutBlock.merge_blocks([authors_block, corresp_block]), '<header>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            authors_block, '<author>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            corresp_block, '<author>'
+        )
+        self._setup_author_blocks(fulltext_models_mock, given1, sur1)
+        self._setup_author_blocks(fulltext_models_mock, given2, sur2)
 
-    def test_single_letter_with_dot(self):
-        assert _is_initial('R.') is True
+        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock.merge_blocks([authors_block, corresp_block])
+        ])])
+        semantic_document = FullTextProcessor(
+            fulltext_models_mock,
+            config=FullTextProcessorConfig(merge_raw_authors=True)
+        ).get_semantic_document_for_layout_document(layout_document=layout_document)
+        authors = semantic_document.front.authors
+        assert len(authors) == 1
 
-    def test_two_letters(self):
-        assert _is_initial('JM') is True
+    def test_should_merge_a_later_mention_labelled_with_a_middle_name_and_marker(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        # "Wanga Zembe" in the author list, then "1. Wanga Zembe" further down,
+        # where the name model labels the forename after the marker a middle name
+        given1 = LayoutBlock.for_text('Wanga')
+        sur1 = LayoutBlock.for_text('Zembe')
+        authors_block = LayoutBlock.merge_blocks([given1, sur1])
+        marker2 = LayoutBlock.for_text('1')
+        middle2 = LayoutBlock.for_text('Wanga')
+        sur2 = LayoutBlock.for_text('Zembe')
+        later_block = LayoutBlock.merge_blocks([marker2, middle2, sur2])
 
-    def test_full_name(self):
-        assert _is_initial('Richard') is False
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            LayoutBlock.merge_blocks([authors_block, later_block]), '<header>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            authors_block, '<author>'
+        )
+        fulltext_models_mock.header_model_mock.update_label_by_layout_block(
+            later_block, '<author>'
+        )
+        self._setup_author_blocks(fulltext_models_mock, given1, sur1)
+        name_model_mock = fulltext_models_mock.name_header_model_mock
+        name_model_mock.update_label_by_layout_block(marker2, '<marker>')
+        name_model_mock.update_label_by_layout_block(middle2, '<middlename>')
+        name_model_mock.update_label_by_layout_block(sur2, '<surname>')
 
-    def test_short_name_three_chars(self):
-        assert _is_initial('Jan') is False
-
-
-class TestAuthorsMatch:
-    def _make_author(self, given_name: str, surname: str) -> SemanticAuthor:
-        a = SemanticAuthor()
-        if given_name:
-            a.add_content(SemanticGivenName(layout_block=LayoutBlock.for_text(given_name)))
-        if surname:
-            a.add_content(SemanticSurname(layout_block=LayoutBlock.for_text(surname)))
-        return a
-
-    def test_exact_full_name_match(self):
-        a = self._make_author('Richard', 'Coward')
-        b = self._make_author('Richard', 'Coward')
-        assert _authors_match(a, b, use_initial_fallback=True) is True
-
-    def test_different_surnames_no_match(self):
-        a = self._make_author('Richard', 'Coward')
-        b = self._make_author('Richard', 'Smith')
-        assert _authors_match(a, b, use_initial_fallback=True) is False
-
-    def test_different_full_first_names_no_match(self):
-        a = self._make_author('James', 'Smith')
-        b = self._make_author('John', 'Smith')
-        assert _authors_match(a, b, use_initial_fallback=True) is False
-
-    def test_initial_vs_full_name_with_fallback(self):
-        a = self._make_author('R', 'Coward')
-        b = self._make_author('Richard', 'Coward')
-        assert _authors_match(a, b, use_initial_fallback=True) is True
-
-    def test_initial_vs_full_name_without_fallback(self):
-        a = self._make_author('R', 'Coward')
-        b = self._make_author('Richard', 'Coward')
-        assert _authors_match(a, b, use_initial_fallback=False) is False
-
-    def test_case_insensitive(self):
-        a = self._make_author('richard', 'coward')
-        b = self._make_author('Richard', 'Coward')
-        assert _authors_match(a, b, use_initial_fallback=True) is True
-
-    def test_both_surname_only_match(self):
-        a = self._make_author('', 'Basit')
-        b = self._make_author('', 'Basit')
-        assert _authors_match(a, b, use_initial_fallback=True) is True
-
-    def test_one_surname_only_no_match(self):
-        a = self._make_author('', 'Coward')
-        b = self._make_author('Richard', 'Coward')
-        assert _authors_match(a, b, use_initial_fallback=True) is False
-
-    def test_missing_surname_no_match(self):
-        a = self._make_author('Richard', '')
-        b = self._make_author('Richard', 'Coward')
-        assert _authors_match(a, b, use_initial_fallback=True) is False
+        layout_document = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock.merge_blocks([authors_block, later_block])
+        ])])
+        semantic_document = FullTextProcessor(
+            fulltext_models_mock
+        ).get_semantic_document_for_layout_document(layout_document=layout_document)
+        authors = semantic_document.front.authors
+        assert [
+            (author.given_name_text, author.surname_text) for author in authors
+        ] == [('Wanga', 'Zembe')]
+        assert authors[0].view_by_type(SemanticMarker).get_text_list() == ['1']
 
 
 class TestFullTextProcessorAffiliation:

@@ -91,6 +91,13 @@ ones the biorxiv models were trained on. A model entry says which it was trained
 `feature_flavour` (`sciencebeam`, the default, or `grobid`); `delft_hub` sets `grobid` on its
 header model. So far only the header model reads it.
 
+Authors are read off the name model's labels the way GROBID 0.9.1 reads them. A marker closes
+the author it follows, and a second title, forename or surname starts a new author. An author
+the header names more than once, by surname and forename initial, is merged into their first
+mention as GROBID's `Person.deduplicate` merges them, keeping the fullest form of the name and
+every marker; two mentions whose forenames clash ("James" and "John") are left apart. The JATS
+carries each affiliation once, with a cross reference from each of its authors.
+
 A model directory can hold its weights in more than one file. A delft model entry may name the
 one to load with `weight_file` (for instance `model.safetensors`); left out, the loader's
 default is used.

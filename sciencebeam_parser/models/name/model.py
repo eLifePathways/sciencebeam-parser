@@ -21,7 +21,8 @@ class NameModel(Model):
         document_features_context: DocumentFeaturesContext
     ) -> NameDataGenerator:
         return NameDataGenerator(
-            document_features_context=document_features_context
+            document_features_context=document_features_context,
+            ignore_line_breaks=self.model_config.get('ignore_line_breaks', False)
         )
 
     def get_semantic_extractor(self) -> NameSemanticExtractor:
