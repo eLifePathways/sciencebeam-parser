@@ -1,4 +1,5 @@
 import logging
+import signal
 import threading
 import time
 from pathlib import Path
@@ -69,6 +70,17 @@ class TestPdfRenderWorker:
             assert worker.render(99, 1.0, str(tmp_path / 'missing.png')) is None
         with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
             assert worker.render(1, 1.0, str(tmp_path / 'page.png'))
+
+    def test_should_render_nothing_where_a_worker_stops_answering(self, tmp_path: Path):
+        worker = PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH, timeout=2)
+        try:
+            assert worker.render(1, 1.0, str(tmp_path / 'first.png'))
+            process = worker._process  # pylint: disable=protected-access
+            assert process is not None
+            process.send_signal(signal.SIGSTOP)
+            assert worker.render(1, 1.0, str(tmp_path / 'second.png')) is None
+        finally:
+            worker.close()
 
     def test_should_render_nothing_where_a_worker_cannot_be_started(self, tmp_path: Path):
         with patch('subprocess.Popen', side_effect=OSError('cannot fork')):

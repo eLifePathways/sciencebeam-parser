@@ -6,8 +6,9 @@ a document open for as long as the request it serves, and a process
 answering many at once would otherwise hold one for each.
 """
 
-import json
 import logging
+import multiprocessing.connection
+import socket
 import subprocess
 import sys
 import threading
@@ -65,7 +66,7 @@ class PdfRenderWorker:
         self.timeout = timeout
         self.limit = limit if limit is not None else get_render_worker_limit()
         self._process: Optional[subprocess.Popen] = None
-        self._exchange_thread: Optional[threading.Thread] = None
+        self._connection: Optional[multiprocessing.connection.Connection] = None
         self._has_slot = False
         self._failed = False
 
@@ -75,11 +76,11 @@ class PdfRenderWorker:
     def __exit__(self, *args):
         self.close()
 
-    def _start(self) -> Optional[subprocess.Popen]:
-        if self._process is not None:
-            return self._process
+    def _start(self) -> bool:
+        if self._connection is not None:
+            return True
         if self._failed:
-            return None
+            return False
         if not self._has_slot:
             wait_start = monotonic()
             if not self.limit.acquire(timeout=self.timeout):
@@ -88,16 +89,19 @@ class PdfRenderWorker:
                     self.timeout, self.pdf_path
                 )
                 self._failed = True
-                return None
+                return False
             self._has_slot = True
             waited = monotonic() - wait_start
             if waited > 1:
                 LOGGER.info('waited %.1fs for a render worker', waited)
+        parent_socket, child_socket = socket.socketpair()
         try:
             self._process = subprocess.Popen(  # pylint: disable=consider-using-with
-                [sys.executable, '-m', WORKER_MODULE, self.pdf_path],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                [
+                    sys.executable, '-m', WORKER_MODULE,
+                    self.pdf_path, str(child_socket.fileno())
+                ],
+                pass_fds=(child_socket.fileno(),),
                 stderr=subprocess.PIPE,
                 text=True
             )
@@ -105,28 +109,30 @@ class PdfRenderWorker:
             LOGGER.warning(
                 'unable to start a render worker for %r', self.pdf_path, exc_info=True
             )
+            parent_socket.close()
+            child_socket.close()
             self._failed = True
-            return None
-        return self._process
+            return False
+        finally:
+            child_socket.close()
+        self._connection = multiprocessing.connection.Connection(parent_socket.detach())
+        return True
 
-    def _stop_process(self):
+    def _stop(self):
+        connection = self._connection
+        self._connection = None
+        if connection is not None:
+            try:
+                connection.close()
+            except OSError:
+                pass
         process = self._process
         self._process = None
         if process is None:
             return
         try:
             process.kill()
-        except OSError:
-            pass
-        # an exchange left blocked on the pipe is reading what communicate
-        # would read, so it is given the chance to end before we do
-        thread = self._exchange_thread
-        self._exchange_thread = None
-        if thread is not None and thread.is_alive():
-            thread.join(5)
-            if thread.is_alive():
-                return
-        try:
+            # nothing else reads these, the protocol having a socket of its own
             _, error_output = process.communicate(timeout=5)
         except Exception:  # pylint: disable=broad-except
             return
@@ -137,7 +143,7 @@ class PdfRenderWorker:
             )
 
     def close(self):
-        self._stop_process()
+        self._stop()
         if self._has_slot:
             self._has_slot = False
             self.limit.release()
@@ -151,44 +157,26 @@ class PdfRenderWorker:
             pass
 
     def _request(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        process = self._start()
-        if process is None or process.stdin is None or process.stdout is None:
+        if not self._start():
             return None
-        reply_holder: Dict[str, Any] = {}
-
-        def _exchange():
-            try:
-                assert process.stdin and process.stdout
-                process.stdin.write(json.dumps(request) + '\n')
-                process.stdin.flush()
-                line = process.stdout.readline()
-                if line:
-                    reply_holder['reply'] = json.loads(line)
-            except Exception as exc:  # pylint: disable=broad-except
-                reply_holder['error'] = exc
-
-        thread = threading.Thread(target=_exchange, daemon=True)
-        self._exchange_thread = thread
-        thread.start()
-        thread.join(self.timeout)
-        if thread.is_alive():
-            LOGGER.warning(
-                'render worker did not answer within %.0fs for %r',
-                self.timeout, self.pdf_path
-            )
+        connection = self._connection
+        assert connection is not None
+        try:
+            connection.send(request)
+            if not connection.poll(self.timeout):
+                LOGGER.warning(
+                    'render worker did not answer within %.0fs for %r',
+                    self.timeout, self.pdf_path
+                )
+                self._failed = True
+                self._stop()
+                return None
+            return connection.recv()
+        except (EOFError, OSError) as exc:
+            LOGGER.warning('render worker failed for %r: %r', self.pdf_path, exc)
             self._failed = True
-            self._stop_process()
+            self._stop()
             return None
-        self._exchange_thread = None
-        if 'error' in reply_holder or 'reply' not in reply_holder:
-            LOGGER.warning(
-                'render worker failed for %r: %r',
-                self.pdf_path, reply_holder.get('error')
-            )
-            self._failed = True
-            self._stop_process()
-            return None
-        return reply_holder['reply']
 
     def get_page_count(self) -> Optional[int]:
         reply = self._request({'page_count': True})

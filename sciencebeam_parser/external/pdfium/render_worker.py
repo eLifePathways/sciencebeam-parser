@@ -2,21 +2,22 @@
 
 pdfium parses the document in the process that calls it, so a document it
 cannot survive takes that process with it. Run as `python -m` against one
-document, this is the process that can be lost.
+document and the file descriptor of a socket to answer on, this is the
+process that can be lost.
 
-A request is one JSON object a line on stdin, a reply one on stdout:
+Requests and replies are dictionaries over a `multiprocessing.connection`:
 
-    {"page_count": true}
-    {"page_number": 7, "scale": 1.39, "image_path": "/tmp/p7.png"}
-    {"page_number": 7, "scale": 1.39, "image_path": "/tmp/r7.png",
-     "crop": [12.0, 30.0, 220.0, 190.0]}
+    {'page_count': True}
+    {'page_number': 7, 'scale': 1.39, 'image_path': '/tmp/p7.png'}
+    {'page_number': 7, 'scale': 1.39, 'image_path': '/tmp/r7.png',
+     'crop': (12.0, 30.0, 220.0, 190.0)}
 
 The document is opened on the first request, so one it cannot read is a
 reply rather than a death, and stays open across the rest; the last page
 rendered is kept, so several regions of one page cost one render.
 """
 
-import json
+import multiprocessing.connection
 import sys
 from typing import Any, Dict, Optional, Tuple
 
@@ -79,37 +80,37 @@ class PageRenderer:
         if not image.width or not image.height:
             return {'ok': False, 'error': 'empty image'}
         image.save(image_path)
-        return {
-            'ok': True,
-            'image_path': image_path,
-            'width': image.width,
-            'height': image.height
-        }
+        return {'ok': True, 'image_path': image_path}
+
+
+def get_reply(renderer: PageRenderer, request: Dict[str, Any]) -> Dict[str, Any]:
+    if request.get('page_count'):
+        return {'ok': True, 'page_count': renderer.get_page_count()}
+    return renderer.render(
+        page_number=request['page_number'],
+        scale=request['scale'],
+        image_path=request['image_path'],
+        crop=request.get('crop')
+    )
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     renderer = PageRenderer(argv[0])
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        reply: Dict[str, Any]
+    connection = multiprocessing.connection.Connection(int(argv[1]))
+    while True:
         try:
-            request = json.loads(line)
-            if request.get('page_count'):
-                reply = {'ok': True, 'page_count': renderer.get_page_count()}
-            else:
-                reply = renderer.render(
-                    page_number=request['page_number'],
-                    scale=request['scale'],
-                    image_path=request['image_path'],
-                    crop=tuple(request['crop']) if request.get('crop') else None
-                )
+            request = connection.recv()
+        except (EOFError, OSError):
+            return
+        try:
+            reply = get_reply(renderer, request)
         except Exception as exc:  # pylint: disable=broad-except
             reply = {'ok': False, 'error': '%s: %s' % (type(exc).__name__, exc)}
-        sys.stdout.write(json.dumps(reply) + '\n')
-        sys.stdout.flush()
+        try:
+            connection.send(reply)
+        except (EOFError, OSError):
+            return
 
 
 if __name__ == '__main__':
