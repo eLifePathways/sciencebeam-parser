@@ -31,7 +31,7 @@ export SCIENCEBEAM_PARSER__CORS__ALLOWED_ORIGINS='*'
 
 Only `/api` answers cross-origin; the page at `/` does not.
 
-Beside the body, a permitted page may read the headers naming what served the request — `X-ScienceBeam-Profile`, `X-ScienceBeam-Profile-Digest` and `X-ScienceBeam-LLM-Usage`. Failures carry the same access headers as a success, so a 406 for an unsupported media type, or a 500, reaches the page as the error it is.
+Beside the body, a permitted page may read the headers naming what served the request — `X-ScienceBeam-Profile`, `X-ScienceBeam-Profile-Digest`, `X-ScienceBeam-Profile-Requested` and `X-ScienceBeam-LLM-Usage`. Failures carry the same access headers as a success, so a 406 for an unsupported media type, or a 500, reaches the page as the error it is.
 
 Credentials are never permitted: a browser may not send cookies or an `Authorization` header to the API, whatever origin it is on.
 

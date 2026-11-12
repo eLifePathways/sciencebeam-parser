@@ -436,10 +436,9 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-  # The default profile with one setting changed, so that comparing either with it
+  # `grobid_crf_0_9_0` with one setting changed, so that comparing either with it
   # measures `abstracts_mode` and nothing else. Their models and their noise filter are
-  # restated rather than inherited: a profile overlays the base config, not another
-  # profile.
+  # restated rather than inherited: a profile that extends another may add only prose.
   grobid_crf_abstract_variants:
     label: 'GROBID CRF 0.9.0, abstracts as variants'
     description: 'The default models, emitting each abstract the header model labels as a variant of its own.'
@@ -629,17 +628,44 @@ profiles:
         noise_filter:
           enabled: false
 
-profile_aliases:
-  grobid_crf: grobid_crf_0_9_0
+  # The names a deployment points at. Each tracks a profile declared above and
+  # adds only its prose, so it resolves to exactly what it names and reports it.
+  grobid_crf:
+    extends: grobid_crf_0_9_0
+    label: 'GROBID CRF'
+    description: 'The CRF models GROBID ships, as a baseline. Tracks the GROBID release we build against.'
+  grobid_dl:
+    extends: delft_hub
+    label: 'GROBID deep learning'
+    description: 'The deep-learning models GROBID publishes to the Hugging Face Hub, where it publishes one.'
+  recommended:
+    extends: delft_all_scielo_preprints_ore
+    label: 'Recommended'
+    description: 'The combination we currently recommend. Its models change between releases, and the profile digest on each response identifies them.'
+  recommended_cv:
+    extends: delft_all_scielo_preprints_ore_cv
+    label: 'Recommended, with computer vision'
+    description: 'The recommended combination, locating figures and tables on the rendered page. Slower.'
+  lightweight:
+    extends: wapiti_all_scielo_preprints_ore
+    label: 'Lightweight'
+    description: 'Retrained CRF models throughout, for a deployment that will not run deep-learning models.'
 
-profile: grobid_crf
+profile_aliases: {}
+
+profile: recommended
 
 # Which profiles a request may name with `?profile=`, beside `profile` above,
 # which is always selectable and is what a request naming nothing gets. Empty by
 # default: a process holds only what it was started for until a deployment says
 # it may hold more. `all` means every profile declared above, still bounded by
 # `max_loaded_models`.
-selectable_profiles: []
+selectable_profiles:
+  - recommended
+  - recommended_cv
+  - lightweight
+  - grobid_crf
+  - grobid_dl
 
 # How many distinct sequence models one process will hold across every profile
 # it has served. Counted in models rather than profiles because profiles overlap:

@@ -37,8 +37,15 @@ def get_resolved_models(profile_name: str) -> dict:
 
 
 class TestShippedDefaults:
-    def test_should_not_change_the_default_profile(self):
-        assert get_shipped_config()['profile'] == 'grobid_crf'
+    def test_should_not_serve_the_llm_engine_by_default(self):
+        """An image started with no API key still converts a document."""
+        shipped_config = get_shipped_config()
+        engines = {
+            model_config.get('engine')
+            for model_config in get_resolved_models(shipped_config['profile']).values()
+            if isinstance(model_config, dict)
+        }
+        assert 'llm' not in engines
 
     def test_should_not_use_the_llm_engine_in_the_default_models(self):
         engines = {

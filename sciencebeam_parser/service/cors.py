@@ -6,7 +6,8 @@ from starlette.types import ASGIApp
 
 from sciencebeam_parser.app.profiles import (
     PROFILE_DIGEST_HEADER_NAME,
-    PROFILE_HEADER_NAME
+    PROFILE_HEADER_NAME,
+    PROFILE_REQUESTED_HEADER_NAME
 )
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.models.llm.usage import USAGE_HEADER_NAME
@@ -25,6 +26,7 @@ ANY_HEADER = '*'
 EXPOSED_HEADER_NAMES = [
     PROFILE_HEADER_NAME,
     PROFILE_DIGEST_HEADER_NAME,
+    PROFILE_REQUESTED_HEADER_NAME,
     USAGE_HEADER_NAME
 ]
 

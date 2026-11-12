@@ -7,11 +7,14 @@ import { parseJatsViewModel } from './jats-to-html.js';
 import { parseTeiViewModel } from './tei-to-html.js';
 import { getZipSourceForBlob, readZipEntries } from './read-zip.js';
 import { addSvgViewBox } from './svg-view-box.js';
+import { getProfileOptionGroups, getTrackedProfile } from './profile-options.js';
+
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
 
 const PROFILE_HEADER = 'x-sciencebeam-profile';
 const PROFILE_DIGEST_HEADER = 'x-sciencebeam-profile-digest';
+const PROFILE_REQUESTED_HEADER = 'x-sciencebeam-profile-requested';
 const LLM_USAGE_HEADER = 'x-sciencebeam-llm-usage';
 const SLOW_REQUEST_SECONDS = 10;
 const PDF_MEDIA_TYPE = 'application/pdf';
@@ -119,12 +122,19 @@ function checkSelectedFile() {
   convertButton.disabled = rejected;
 }
 
-function addOption(select, value, label) {
+function addOption(parent, value, label) {
   const option = document.createElement('option');
   option.value = value;
   option.textContent = label;
-  select.appendChild(option);
+  parent.appendChild(option);
   return option;
+}
+
+function addOptionGroup(select, label) {
+  const group = document.createElement('optgroup');
+  group.label = label;
+  select.appendChild(group);
+  return group;
 }
 
 function setUpOutputSelect() {
@@ -170,9 +180,32 @@ function getSelectedIncludes() {
     .flatMap((checkbox) => checkbox.value.split(','));
 }
 
+function addProfileOptions(profiles) {
+  getProfileOptionGroups(profiles).forEach((group) => {
+    const parent = group.label ? addOptionGroup(profileSelect, group.label) : profileSelect;
+    group.profiles.forEach((profile) => {
+      const option = addOption(parent, profile.name, profile.label || profile.name);
+      option.selected = profile.is_default;
+    });
+  });
+}
+
+function getProfileHint(profiles, profile) {
+  if (!profile) {
+    return '';
+  }
+  const tracked = getTrackedProfile(profiles, profile);
+  // Which combination it is today, since the response will name that one rather
+  // than the name picked here.
+  const serves = tracked
+    ? 'Currently serves ' + (tracked.label || tracked.name) + '.'
+    : '';
+  return [profile.description || '', serves].filter((part) => part).join(' ');
+}
+
 function showProfileDescription(profiles) {
   const profile = profiles.find((item) => item.name === profileSelect.value);
-  profileHint.textContent = profile ? (profile.description || '') : '';
+  profileHint.textContent = getProfileHint(profiles, profile);
 }
 
 async function loadProfiles() {
@@ -192,10 +225,7 @@ async function loadProfiles() {
     addOption(profileSelect, '', 'default');
     return;
   }
-  profiles.forEach((profile) => {
-    const option = addOption(profileSelect, profile.name, profile.label || profile.name);
-    option.selected = profile.is_default;
-  });
+  addProfileOptions(profiles);
   profileSelect.addEventListener('change', () => showProfileDescription(profiles));
   showProfileDescription(profiles);
 }
@@ -720,9 +750,20 @@ function setUpXmlDownload(content, output, file) {
   };
 }
 
+// The name asked for leads, since that is the one the reader chose; the profile
+// that answered follows it, because that is the one that stays meaningful.
+function describeServingProfile(response) {
+  const served = response.headers.get(PROFILE_HEADER);
+  const requested = response.headers.get(PROFILE_REQUESTED_HEADER);
+  if (!served) {
+    return requested || null;
+  }
+  return requested ? requested + ' (served by ' + served + ')' : served;
+}
+
 function showResultSummary(response, blob, elapsedSeconds) {
   resultSummary.textContent = [
-    response.headers.get(PROFILE_HEADER) || 'the default profile',
+    describeServingProfile(response) || 'the default profile',
     describeBytes(blob.size),
     elapsedSeconds + 's'
   ].join(' · ');
@@ -732,7 +773,7 @@ async function showResult(response, blob, file, elapsedSeconds) {
   showResultSummary(response, blob, elapsedSeconds);
   const metaElement = document.getElementById('result-meta');
   metaElement.replaceChildren();
-  addMetaRow(metaElement, 'Served by profile', response.headers.get(PROFILE_HEADER));
+  addMetaRow(metaElement, 'Profile', describeServingProfile(response));
   addMetaRow(metaElement, 'Profile digest', response.headers.get(PROFILE_DIGEST_HEADER));
   addMetaRow(metaElement, 'LLM usage', response.headers.get(LLM_USAGE_HEADER));
   addMetaRow(metaElement, 'Content type', response.headers.get('content-type'));
@@ -772,7 +813,7 @@ async function showFailure(response, file) {
   const metaElement = document.getElementById('failure-meta');
   metaElement.replaceChildren();
   addMetaRow(metaElement, 'Status', response.status + ' ' + response.statusText);
-  addMetaRow(metaElement, 'Served by profile', response.headers.get(PROFILE_HEADER));
+  addMetaRow(metaElement, 'Profile', describeServingProfile(response));
   const body = await response.text();
   let detail = body;
   try {

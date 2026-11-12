@@ -1,19 +1,24 @@
 import logging
 import threading
-from typing import Dict, Iterator, List, Optional, Type
+from typing import Any, Dict, Iterator, List, Optional, Type
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from sciencebeam_parser.app import profiles as profiles_module
 from sciencebeam_parser.app.profiles import (
+    PROFILE_HEADER_NAME,
+    PROFILE_REQUESTED_HEADER_NAME,
     ProfileDescription,
     ProfileNotSelectableError,
     ProfileRegistry,
     SequenceModelCache,
     TooManyLoadedModelsError,
     get_model_cache_key,
-    get_selectable_profile_names
+    get_request_profile_headers,
+    get_selectable_profile_names,
+    record_request_profile,
+    start_request_profile
 )
 from sciencebeam_parser.config.config import AppConfig, UnknownProfileError
 from sciencebeam_parser.models.model import Model
@@ -33,7 +38,7 @@ def get_models_config(prefix: str) -> dict:
 
 # `b` extends `a` and changes one model of ten, the shape the shipped profiles
 # have; `c` shares nothing with either.
-BASE_CONFIG_PROPS = {
+BASE_CONFIG_PROPS: Dict[str, Any] = {
     'models': get_models_config('base'),
     'sequence_model_profiles': {
         'a': get_models_config('a'),
@@ -457,3 +462,109 @@ class TestSelectableAllProfiles:
             'selectable_profiles': 'all'
         })
         assert get_selectable_profile_names(config, 'a') == ['a']
+
+
+POINTER_CONFIG_PROPS = {
+    **BASE_CONFIG_PROPS,
+    'profiles': {
+        **BASE_CONFIG_PROPS['profiles'],
+        'tracking_b': {'extends': 'b', 'label': 'Tracking b'},
+    },
+}
+
+
+class TestProfileRegistryPointers:
+    """A name that tracks a profile, and what it reports once it has served."""
+
+    def create_pointer_registry(self, **kwargs) -> ProfileRegistry:
+        return create_registry(AppConfig(POINTER_CONFIG_PROPS), **kwargs)
+
+    def test_should_serve_a_pointer_as_the_profile_it_names(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['a', 'b', 'tracking_b']
+        )
+        assert registry.get_resolved_profile_name('tracking_b') == 'b'
+
+    def test_should_hold_one_bundle_for_a_pointer_and_what_it_names(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['a', 'b', 'tracking_b']
+        )
+        assert registry.get_bundle('tracking_b') is registry.get_bundle('b')
+
+    def test_should_attribute_a_document_to_the_profile_a_pointer_names(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['a', 'b', 'tracking_b']
+        )
+        attribution = registry.get_bundle('tracking_b').get_document_attribution()
+        assert attribution.profile_name == 'b'
+
+    def test_should_serve_a_pointer_that_is_the_default(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['b', 'tracking_b'],
+            default_profile_name='tracking_b'
+        )
+        assert registry.get_default_bundle().name == 'b'
+
+    def test_should_report_the_name_a_request_asked_for_beside_what_served_it(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['a', 'b', 'tracking_b']
+        )
+        start_request_profile()
+        record_request_profile(registry.get_bundle('tracking_b'), requested_name='tracking_b')
+        headers = get_request_profile_headers()
+        assert headers[PROFILE_HEADER_NAME] == 'b'
+        assert headers[PROFILE_REQUESTED_HEADER_NAME] == 'tracking_b'
+
+    def test_should_not_repeat_the_name_where_it_is_what_served(self):
+        registry = self.create_pointer_registry(selectable_profile_names=['a', 'b'])
+        start_request_profile()
+        record_request_profile(registry.get_bundle('b'), requested_name='b')
+        assert PROFILE_REQUESTED_HEADER_NAME not in get_request_profile_headers()
+
+    def test_should_say_nothing_was_asked_for_where_nothing_was(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['b', 'tracking_b'],
+            default_profile_name='tracking_b'
+        )
+        start_request_profile()
+        record_request_profile(registry.get_default_bundle())
+        assert PROFILE_REQUESTED_HEADER_NAME not in get_request_profile_headers()
+
+    def test_should_say_what_a_pointer_tracks(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['a', 'b', 'tracking_b']
+        )
+        assert {
+            description.name: description.tracks
+            for description in registry.get_profile_descriptions()
+        } == {'a': None, 'b': None, 'tracking_b': 'b'}
+
+    def test_should_refuse_a_pointer_this_deployment_does_not_serve(self):
+        registry = self.create_pointer_registry(selectable_profile_names=['a'])
+        with pytest.raises(ProfileNotSelectableError):
+            registry.get_resolved_profile_name('tracking_b')
+
+
+class TestSelectableProfilePointers:
+    def test_should_accept_a_pointer_beside_the_profile_it_names(self):
+        config = AppConfig({
+            **POINTER_CONFIG_PROPS,
+            'selectable_profiles': ['b', 'tracking_b'],
+        })
+        assert get_selectable_profile_names(config, 'a') == ['a', 'b', 'tracking_b']
+
+    def test_should_serve_the_profile_a_selectable_pointer_names(self):
+        """Attribution reports it, so a caller must be able to send it."""
+        config = AppConfig({
+            **POINTER_CONFIG_PROPS,
+            'selectable_profiles': ['tracking_b'],
+        })
+        assert get_selectable_profile_names(config, 'a') == ['a', 'b', 'tracking_b']
+
+    def test_should_serve_the_profile_a_default_pointer_names(self):
+        config = AppConfig({**POINTER_CONFIG_PROPS, 'selectable_profiles': []})
+        assert get_selectable_profile_names(config, 'tracking_b') == ['b', 'tracking_b']
+
+    def test_should_accept_every_profile_when_all_are_selectable(self):
+        config = AppConfig({**POINTER_CONFIG_PROPS, 'selectable_profiles': 'all'})
+        assert get_selectable_profile_names(config, 'a') == ['a', 'b', 'c', 'tracking_b']

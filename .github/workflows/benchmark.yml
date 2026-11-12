@@ -32,7 +32,7 @@ on:
 # to keep those in one group with a dispatch that names it -- it must stay in
 # step with `Resolve benchmark profile`.
 concurrency:
-  group: benchmark-${{ github.ref }}-${{ inputs.profile || 'grobid_crf' }}
+  group: benchmark-${{ github.ref }}-${{ inputs.profile || 'recommended' }}
   cancel-in-progress: true
 
 jobs:
@@ -125,7 +125,7 @@ jobs:
           DISPATCH_PROFILE: ${{ inputs.profile }}
         run: |
           LABEL_PROFILE=$(echo "$PR_LABELS_JSON" | jq -r '.[]? | select(startswith("profile:")) | sub("^profile:"; "")' | head -n1)
-          PROFILE="${LABEL_PROFILE:-${DISPATCH_PROFILE:-grobid_crf}}"
+          PROFILE="${LABEL_PROFILE:-${DISPATCH_PROFILE:-recommended}}"
           if [ -n "$LABEL_PROFILE" ]; then
             PROFILE_SOURCE="profile:$LABEL_PROFILE label"
           elif [ -n "$DISPATCH_PROFILE" ]; then

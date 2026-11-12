@@ -30,6 +30,7 @@ LOGGER = logging.getLogger(__name__)
 
 PROFILE_HEADER_NAME = 'X-ScienceBeam-Profile'
 PROFILE_DIGEST_HEADER_NAME = 'X-ScienceBeam-Profile-Digest'
+PROFILE_REQUESTED_HEADER_NAME = 'X-ScienceBeam-Profile-Requested'
 
 
 # Four profiles' worth of models, for a deployment that opted in without saying
@@ -167,12 +168,18 @@ class ProfileDescription(NamedTuple):
 
     `label` and `description` are optional because a profile is not waiting for
     prose to be selectable; a client building a menu falls back to the name.
+
+    `tracks` is what separates the two kinds of choice in one list: a name whose
+    models change between releases, and a combination that stays where it is. A
+    menu that offered both as one undifferentiated list would be offering the
+    same models twice.
     """
     name: str
     label: Optional[str]
     description: Optional[str]
     alias_names: Sequence[str]
     is_default: bool
+    tracks: Optional[str] = None
 
 
 def get_selectable_profile_names(
@@ -185,6 +192,10 @@ def get_selectable_profile_names(
     change what one process may be asked to hold until a deployment opts in.
     `all` opts in to every profile the config declares, which `max_loaded_models`
     still bounds.
+
+    A profile that tracks another brings it: attribution reports what a pointer
+    names, so a deployment serving the pointer alone would answer with a name it
+    then refuses.
     """
     configured = config.get('selectable_profiles') or []
     if isinstance(configured, str):
@@ -200,6 +211,11 @@ def get_selectable_profile_names(
     names.discard(None)
     if default_profile_name:
         names.add(default_profile_name)
+    names.update(
+        config.get_pinned_profile_name(name)
+        for name in list(names)
+        if name and config.is_profile_pointer(name)
+    )
     return sorted(name for name in names if name)
 
 
@@ -249,20 +265,31 @@ class ProfileRegistry:
                 label=self.base_config.get_profile_label(name),
                 description=self.base_config.get_profile_description(name),
                 alias_names=alias_names_map.get(name, []),
-                is_default=name == self.default_profile_name
+                is_default=name == self.default_profile_name,
+                tracks=(
+                    self.base_config.get_pinned_profile_name(name)
+                    if self.base_config.is_profile_pointer(name)
+                    else None
+                )
             )
             for name in self.get_available_profile_names()
         ]
 
     def get_resolved_profile_name(self, profile_name: Optional[str]) -> Optional[str]:
-        """The name a request asked for, after aliases, checked against what is served.
+        """The pinned profile a request is served by, checked against what is served.
+
+        Aliases and pointers are followed, so a bundle is held once however many
+        names reach it, and what attribution reports is a name that keeps meaning
+        the models it meant.
 
         Both refusals list what is selectable rather than what the config
         declares: a caller can only ask for the former, and a deployment serving
         one of nine profiles should not answer a typo with the other eight.
         """
         if not profile_name:
-            return self.default_profile_name
+            if not self.default_profile_name:
+                return None
+            return self.base_config.get_pinned_profile_name(self.default_profile_name)
         resolved_name = self.base_config.get_active_profile_name(profile_name)
         available = self.get_available_profile_names()
         if resolved_name not in self.base_config.get_profile_names():
@@ -273,7 +300,7 @@ class ProfileRegistry:
             raise ProfileNotSelectableError(
                 f'Profile {profile_name!r} is not selectable. Available: {available}'
             )
-        return resolved_name
+        return self.base_config.get_pinned_profile_name(resolved_name)
 
     def get_config(self, resolved_name: Optional[str]) -> AppConfig:
         with self._lock:
@@ -342,6 +369,7 @@ class RequestProfile:
     """
     name: Optional[str] = None
     digest: Optional[str] = None
+    requested_name: Optional[str] = None
 
 
 REQUEST_PROFILE: contextvars.ContextVar[Optional[RequestProfile]] = (
@@ -355,11 +383,15 @@ def start_request_profile() -> RequestProfile:
     return request_profile
 
 
-def record_request_profile(bundle: ProfileBundle) -> None:
+def record_request_profile(
+    bundle: ProfileBundle,
+    requested_name: Optional[str] = None
+) -> None:
     request_profile = REQUEST_PROFILE.get()
     if request_profile is not None:
         request_profile.name = bundle.name
         request_profile.digest = bundle.models_digest
+        request_profile.requested_name = requested_name
 
 
 def get_request_profile_headers() -> Dict[str, str]:
@@ -370,6 +402,11 @@ def get_request_profile_headers() -> Dict[str, str]:
     same profile name with different models. It is also there when the name is
     not, so that a deployment without a `profile:` key answers with the same
     fact its documents carry.
+
+    The requested name is there only where it is not the answer: a request that
+    named a profile tracking another, or an alias, is told both what it asked
+    for and what ran, rather than being handed a name it did not use and left to
+    work out the connection.
     """
     request_profile = REQUEST_PROFILE.get()
     if request_profile is None:
@@ -379,4 +416,6 @@ def get_request_profile_headers() -> Dict[str, str]:
         headers[PROFILE_HEADER_NAME] = request_profile.name
     if request_profile.digest:
         headers[PROFILE_DIGEST_HEADER_NAME] = request_profile.digest
+    if request_profile.requested_name and request_profile.requested_name != request_profile.name:
+        headers[PROFILE_REQUESTED_HEADER_NAME] = request_profile.requested_name
     return headers
