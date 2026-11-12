@@ -1,3 +1,5 @@
+from typing import List
+
 from sciencebeam_parser.document.semantic_document import (
     SemanticAbstract,
     SemanticFront,
@@ -12,6 +14,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutFont,
     LayoutLine,
     LayoutLineMeta,
+    LayoutPageCoordinates,
     LayoutToken,
     join_layout_tokens
 )
@@ -312,6 +315,91 @@ class TestIterTitlesSplitByLanguageAmongTheDocumentsLanguages:
             frozenset({'en'})
         ))
         assert len(titles) == 1
+
+
+def _get_abstract_block(text: str, page_number: int) -> LayoutBlock:
+    coordinates = LayoutPageCoordinates(
+        x=0, y=0, width=1, height=1, page_number=page_number
+    )
+    return LayoutBlock(lines=[
+        LayoutLine(tokens=[
+            token._replace(coordinates=coordinates) for token in line.tokens
+        ])
+        for line in LayoutBlock.for_text(text).lines
+    ])
+
+
+def _get_abstracts(entity_tokens, **kwargs) -> List[str]:
+    front = SemanticFront(list(
+        HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+            entity_tokens, **kwargs
+        )
+    ))
+    return [abstract.get_text() for abstract in front.iter_by_type(SemanticAbstract)]
+
+
+class TestHeaderSemanticExtractorContinuedAbstract:
+    def test_should_join_a_block_continuing_the_abstract_on_the_next_page(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('continues on the next page.', 2))
+        ]) == ['The abstract begins here and continues on the next page.']
+
+    def test_should_join_it_where_the_default_mode_would_have_dropped_it(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('continues on the next page.', 2))
+        ], abstracts_mode=AbstractsMode.FIRST) == [
+            'The abstract begins here and continues on the next page.'
+        ]
+
+    def test_should_keep_a_block_with_a_heading_above_it_apart(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('O', _get_abstract_block('Plain language summary', 2)),
+            ('<abstract>', _get_abstract_block(
+                'this summary says the same thing in fewer words.', 2
+            ))
+        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+            'The abstract begins here and',
+            'this summary says the same thing in fewer words.'
+        ]
+
+    def test_should_keep_a_block_apart_where_the_abstract_above_it_is_finished(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins and ends here.', 1)),
+            ('<abstract>', _get_abstract_block(
+                'bioetica, aspectos legales y politicos del asunto.', 2
+            ))
+        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+            'The abstract begins and ends here.',
+            'bioetica, aspectos legales y politicos del asunto.'
+        ]
+
+    def test_should_keep_a_block_opening_a_new_sentence_apart(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('O resumo comeca aqui tambem.', 2))
+        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+            'The abstract begins here and', 'O resumo comeca aqui tambem.'
+        ]
+
+    def test_should_keep_a_block_pages_away_apart(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('continues much later on.', 5))
+        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+            'The abstract begins here and', 'continues much later on.'
+        ]
+
+    def test_should_keep_a_long_block_above_it_from_counting_as_a_heading(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('O', _get_abstract_block(
+                'This manuscript was compiled on the fourth of July in the year', 2
+            )),
+            ('<abstract>', _get_abstract_block('continues on the next page.', 2))
+        ]) == ['The abstract begins here and continues on the next page.']
 
 
 class TestHeaderSemanticExtractorTitles:
