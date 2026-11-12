@@ -92,13 +92,20 @@ class PdfRenderWorker:
             waited = monotonic() - wait_start
             if waited > 1:
                 LOGGER.info('waited %.1fs for a render worker', waited)
-        self._process = subprocess.Popen(  # pylint: disable=consider-using-with
-            [sys.executable, '-m', WORKER_MODULE, self.pdf_path],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        try:
+            self._process = subprocess.Popen(  # pylint: disable=consider-using-with
+                [sys.executable, '-m', WORKER_MODULE, self.pdf_path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+        except OSError:
+            LOGGER.warning(
+                'unable to start a render worker for %r', self.pdf_path, exc_info=True
+            )
+            self._failed = True
+            return None
         return self._process
 
     def _stop_process(self):
@@ -176,7 +183,7 @@ class PdfRenderWorker:
         reply = self._request({'page_count': True})
         if reply is None or not reply.get('ok'):
             return None
-        return reply['page_count']
+        return reply.get('page_count')
 
     def render(
         self,
@@ -201,4 +208,4 @@ class PdfRenderWorker:
                 page_number, self.pdf_path, reply.get('error')
             )
             return None
-        return reply['image_path']
+        return reply.get('image_path')

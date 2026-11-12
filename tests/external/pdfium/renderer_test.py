@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from unittest.mock import patch
 
 import PIL.Image
 
@@ -66,6 +67,12 @@ class TestPdfRenderWorker:
             assert worker.render(99, 1.0, str(tmp_path / 'missing.png')) is None
         with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
             assert worker.render(1, 1.0, str(tmp_path / 'page.png'))
+
+    def test_should_render_nothing_where_a_worker_cannot_be_started(self, tmp_path: Path):
+        with patch('subprocess.Popen', side_effect=OSError('cannot fork')):
+            with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH, timeout=5) as worker:
+                assert worker.render(1, 1.0, str(tmp_path / 'page.png')) is None
+                assert worker.get_page_count() is None
 
 
 class TestRenderWorkerLimit:
