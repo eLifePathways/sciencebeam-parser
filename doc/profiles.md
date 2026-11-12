@@ -202,7 +202,7 @@ without following a chain.
 
 ## Which profile served a response
 
-Two response headers say what answered a request:
+Three response headers say what answered a request:
 
 | header | value |
 | --- | --- |

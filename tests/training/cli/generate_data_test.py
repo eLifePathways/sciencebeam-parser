@@ -65,6 +65,7 @@ from sciencebeam_parser.training.cli.generate_data import (
     TrainingDataDocumentContext,
     _split_references_by_jats_instance,
     generate_training_data_for_layout_document,
+    DEFAULT_GENERATION_PROFILE,
     get_generation_config,
     main,
 )
@@ -1893,9 +1894,14 @@ class TestNameCitationModelJatsPath:
 
 
 class TestGetGenerationConfig:
-    def test_should_leave_the_default_profile_in_place_when_none_is_named(self):
+    def test_should_generate_under_grobid_crf_when_none_is_named(self):
+        """Not the profile the service serves, which moves for reasons of its own."""
         config = get_generation_config(None)
-        assert config.get_active_profile_name() == 'recommended'
+        assert config.get_active_profile_name() == DEFAULT_GENERATION_PROFILE
+        assert (
+            config.resolve_profile(None)['models']
+            == config.resolve_profile('grobid_crf_0_9_0')['models']
+        )
 
     def test_should_select_the_profile_the_parser_will_resolve(self):
         # Not a merged overlay: ScienceBeamParser resolves the default profile

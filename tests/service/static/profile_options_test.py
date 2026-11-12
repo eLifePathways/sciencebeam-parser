@@ -32,9 +32,14 @@ def get_menu(profiles: List[dict]) -> dict:
     return json.loads(result.stdout)
 
 
-def profile(name: str, tracks: Optional[str] = None, label: Optional[str] = None) -> dict:
+def profile(
+    name: str,
+    tracks: Optional[str] = None,
+    label: Optional[str] = None,
+    is_default: bool = False
+) -> dict:
     return {
-        'name': name, 'label': label or name, 'tracks': tracks, 'is_default': False
+        'name': name, 'label': label or name, 'tracks': tracks, 'is_default': is_default
     }
 
 
@@ -55,6 +60,14 @@ class TestGetProfileOptionGroups:
         """Dropping it would leave a deployment that narrowed the list with nothing."""
         menu = get_menu([profile('tracking_a', tracks='pinned_a')])
         assert get_option_names(menu) == ['tracking_a']
+
+    def test_should_offer_the_deployment_default_even_where_another_tracks_it(self):
+        """Dropping it leaves nothing selected, and the browser picks the first instead."""
+        menu = get_menu([
+            profile('pinned_a', is_default=True),
+            profile('tracking_a', tracks='pinned_a')
+        ])
+        assert get_option_names(menu) == ['tracking_a', 'pinned_a']
 
     def test_should_offer_nothing_where_the_service_lists_nothing(self):
         assert get_menu([])['groups'] == []

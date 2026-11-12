@@ -7,7 +7,10 @@
  * the profile it tracks; a response still reports the profile that answered, so
  * which combination ran is not lost.
  *
- * A profile nothing tracks is a choice of its own and stays. A deployment that
+ * A profile nothing tracks is a choice of its own and stays, and so does the
+ * deployment's own default even where something tracks it: dropping it would
+ * leave the menu with nothing selected, and the browser would then pick the
+ * first option and convert under a profile the deployment did not choose. A deployment that
  * makes every profile selectable has far more of those than of the others --
  * one per model whose contribution can be measured -- so the names maintained
  * as a recommendation lead, and the headings say which to pick rather than how
@@ -39,7 +42,9 @@ export function getProfileOptionGroups(profiles) {
   const tracked = new Set(
     profiles.map((profile) => profile.tracks).filter((name) => name)
   );
-  const offered = profiles.filter((profile) => !tracked.has(profile.name));
+  const offered = profiles.filter(
+    (profile) => profile.is_default || !tracked.has(profile.name)
+  );
   const tracking = offered.filter((profile) => profile.tracks).sort(byLabel);
   const pinned = offered.filter((profile) => !profile.tracks).sort(byLabel);
   if (!tracking.length || !pinned.length) {

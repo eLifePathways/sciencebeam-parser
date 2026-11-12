@@ -628,8 +628,8 @@ profiles:
         noise_filter:
           enabled: false
 
-# The names a deployment points at. Each tracks a profile declared above and adds
-# only its prose, so it resolves to exactly what it names and reports that name.
+  # The names a deployment points at. Each tracks a profile declared above and
+  # adds only its prose, so it resolves to exactly what it names and reports it.
   grobid_crf:
     extends: grobid_crf_0_9_0
     label: 'GROBID CRF'
