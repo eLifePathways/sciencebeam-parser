@@ -35,4 +35,15 @@ A page prints `Abstract`, `Resumo` or `Plain language summary` above the abstrac
 
 A note of that type is the heading of the abstract that follows it, and an abstract with no heading above it has no note. The heading is not part of the abstract's own text.
 
+The JATS route puts it where JATS carries it, inside the abstract:
+
+```xml
+<abstract xml:lang="en">
+  <title>Plain language summary</title>
+  <p>Human induced pluripotent stem cells …</p>
+</abstract>
+```
+
+The reading view shows it above the abstract it belongs to, in place of the word `Abstract` it falls back to otherwise.
+
 Headings printed inside a structured abstract — `Background`, `Methods`, `Results` — are part of the abstract's text and are not separated from it.

@@ -236,15 +236,40 @@ function getBackDivision(back, type) {
   ) || null;
 }
 
-function getAbstract(abstract) {
-  const language = getLanguage(abstract);
-  const value = {
-    label: abstract.name,
-    path: abstract.path,
-    title: null,
-    paragraphs: getChildElements(abstract, 'p').map(getParagraph)
-  };
-  return language ? { ...value, language } : value;
+/* The heading a page printed above an abstract, which TEI gives the abstract
+ * nowhere to carry, so it is noted immediately before the one it belongs to. */
+function getAbstractHeading(node) {
+  if (node.name !== 'note' || getAttribute(node, 'type') !== 'abstract-heading') {
+    return null;
+  }
+  const text = getTextContent(node).trim();
+  return text ? { label: node.name, path: node.path, text } : null;
+}
+
+
+function getAbstracts(profileDesc) {
+  const abstracts = [];
+  let heading = null;
+  getChildElements(profileDesc).forEach((child) => {
+    const childHeading = getAbstractHeading(child);
+    if (childHeading) {
+      heading = childHeading;
+      return;
+    }
+    if (child.name !== 'abstract') {
+      return;
+    }
+    const language = getLanguage(child);
+    const value = {
+      label: child.name,
+      path: child.path,
+      title: heading,
+      paragraphs: getChildElements(child, 'p').map(getParagraph)
+    };
+    abstracts.push(language ? { ...value, language } : value);
+    heading = null;
+  });
+  return abstracts;
 }
 
 
@@ -288,9 +313,7 @@ export function getTeiArticleViewModel(article) {
     affiliations: authors.flatMap(
       (author) => getChildElements(author, 'affiliation').map(getAffiliation)
     ),
-    abstracts: profileDesc
-      ? getChildElements(profileDesc, 'abstract').map(getAbstract)
-      : [],
+    abstracts: profileDesc ? getAbstracts(profileDesc) : [],
     sections: body ? getDivisionBlocks(body) : [],
     acknowledgements: acknowledgement
       ? getDivisionBlocks(acknowledgement)
