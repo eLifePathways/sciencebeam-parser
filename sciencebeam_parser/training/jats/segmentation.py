@@ -127,8 +127,30 @@ def _is_valid_page_number_candidate(text: str) -> bool:
     return _parse_page_number(text) is not None
 
 
+# What a float prints at the top or the foot of a page it runs over: its label
+# again, and the word saying the table goes on.  GROBID's corpus never files
+# either as page furniture -- a bare "Table N" line sits in `<body>` 3 times and
+# in an annex 5, which is the region its table is in, and "Table N (continued)"
+# in `<body>` 66 times.
+_FLOAT_CARRY_OVER_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"(?:tab(?:le|\.|ela|la)?|fig(?:ure|\.|ura)?|quadro|gr[a\u00e1]fico)\s*\.?\s*\d+\s*\.?"
+    r"|\(?\s*(?:continued?|continua(?:[c\u00e7][a\u00e3]o)?"
+    r"|continuaci[o\u00f3]n|cont'd|cont\.)\s*\)?\.?"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _carries_a_float_over_the_page(text: str) -> bool:
+    """Whether the line is a float saying it goes on, rather than page furniture."""
+    return bool(_FLOAT_CARRY_OVER_PATTERN.match(text))
+
+
 def _is_valid_headnote_candidate(text: str, count: int, min_count: int = 2) -> bool:
     if count < min_count:
+        return False
+    if _carries_a_float_over_the_page(text):
         return False
     if re.match(r'^(\d|\s|\.)+$', text):
         return False
@@ -313,6 +335,8 @@ def _tag_by_coordinates(
             seg_line.seg_label = SEG_FRONT
             continue
         if not is_unclaimed_margin_line(seg_line):
+            continue
+        if _carries_a_float_over_the_page(seg_line.text):
             continue
         y_ratio = y_ratio_by_line[id(seg_line)]
         if id(seg_line) in page_number_lines:
@@ -2386,6 +2410,43 @@ def _release_front_after_the_body(
             seg_lines[index].seg_label = None
 
 
+def _claim_the_banner_above_the_front_matter(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+    config: SegmentationConfig,
+) -> None:
+    """The block a page sets in its top margin above the front matter.
+
+    A journal prints its licence there -- "This is an open access article under
+    the CC BY license" -- and GROBID's corpus holds that sentence in `<front>`
+    363 times against 91 as a headnote and 74 as a foot.  A running head is a
+    headnote by now, having repeated across the pages; what is left in the top
+    margin of the page the front matter begins on belongs to it.
+
+    The block, not the line: a column whose first line starts in the zone is
+    the page's own content carrying on below it.
+    """
+    first = next((sl for sl in seg_lines if sl.seg_label == SEG_FRONT), None)
+    if first is None:
+        return
+    page_number = _get_page_number(first)
+    in_zone: Dict[int, bool] = {}
+    for seg_line in seg_lines:
+        if _get_page_number(seg_line) != page_number:
+            continue
+        in_zone[seg_line.block_index] = (
+            in_zone.get(seg_line.block_index, True)
+            and _is_in_header_zone(seg_line, page_meta_by_number, config)
+        )
+    for seg_line in seg_lines:
+        if seg_line.seg_label is not None:
+            continue
+        if _get_page_number(seg_line) != page_number:
+            continue
+        if in_zone.get(seg_line.block_index):
+            seg_line.seg_label = SEG_FRONT
+
+
 class SegmentationLabelDeriver:
     """Derives one segmentation label per LayoutLine from token-level JATS annotations."""
 
@@ -2500,6 +2561,10 @@ class SegmentationLabelDeriver:
         _claim_appendix_region(seg_lines)
         _tag_publication_dates(seg_lines)
         _claim_lines_sharing_a_row(seg_lines, page_meta_by_number)
+
+        _claim_the_banner_above_the_front_matter(
+            seg_lines, page_meta_by_number, self.config
+        )
 
         # After every pass that builds the front run, because what it reads is
         # the run as it ends up rather than the lines the JATS vote claimed.

@@ -826,3 +826,105 @@ class TestAShortLineAtTheFootOfAPage:
     def test_it_is_not_claimed_by_the_same_fragment_elsewhere(self):
         doc, annotated, in_the_margin = self._make_doc()
         assert derive_labels(doc, annotated)[id(in_the_margin)] == SEG_FOOTNOTE
+
+
+class TestTheBannerAboveTheFrontMatter:
+    """A journal prints its licence in the top margin of the first page."""
+
+    def _make_doc(self, in_the_top_margin: bool):
+        banner = [
+            make_line('This', 'is', 'an', 'open', 'access', 'article',
+                      y=20.0 if in_the_top_margin else 420.0, x=400.0),
+            make_line('under', 'the', 'CC', 'BY', 'license',
+                      y=40.0 if in_the_top_margin else 440.0, x=400.0),
+        ]
+        title = make_line('A', 'title', y=100.0)
+        abstract = make_line('What', 'the', 'article', 'found', y=120.0)
+        body = [
+            make_line('The', 'argument', f'runs{index}', y=200.0 + 20 * index)
+            for index in range(6)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[title, abstract]),
+                    LayoutBlock(lines=body),
+                    LayoutBlock(lines=banner),
+                ],
+                meta=make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[
+                    make_line('and', 'goes', f'on{index}', y=200.0 + 20 * index,
+                              page_number=2)
+                    for index in range(4)
+                ])],
+                meta=make_page_meta(2),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(title): JatsFieldNames.TITLE,
+            lines.index(abstract): JatsFieldNames.ABSTRACT,
+        }
+        for line in body:
+            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), banner
+
+    def test_it_is_the_front_matter_s(self):
+        doc, annotated, banner = self._make_doc(in_the_top_margin=True)
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in banner] == [SEG_FRONT] * 2
+
+    def test_a_block_below_the_margin_is_left_to_the_regions(self):
+        doc, annotated, banner = self._make_doc(in_the_top_margin=False)
+        labels = derive_labels(doc, annotated)
+        assert labels[id(banner[0])] != SEG_FRONT
+
+
+class TestATableCarriedOverThePage:
+    """A table running over a page break repeats its label and says so."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'argument', 'of', f'page{page_number}', f'line{index}',
+                      y=200.0 + 20 * index, page_number=page_number)
+            for page_number in (1, 2, 3)
+            for index in range(6)
+        ]
+        by_page = {
+            page_number: [line for line in body
+                          if _page_number_of(line) == page_number]
+            for page_number in (1, 2, 3)
+        }
+        carried = [
+            make_line('Table', '9', y=20.0, page_number=page_number)
+            for page_number in (2, 3)
+        ]
+        marker = [
+            make_line('(continued)', y=40.0, page_number=page_number)
+            for page_number in (2, 3)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=by_page[1])],
+                       meta=make_page_meta(1)),
+        ] + [
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[carried[index], marker[index]]),
+                    LayoutBlock(lines=by_page[page_number]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for index, page_number in enumerate((2, 3))
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
+        }
+        return doc, annotate(doc, fields), carried + marker
+
+    def test_its_label_and_its_marker_are_not_page_furniture(self):
+        doc, annotated, carried = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in carried] == [SEG_BODY] * 4
