@@ -13,8 +13,9 @@ import socket
 import subprocess
 import sys
 import threading
+from contextlib import contextmanager
 from time import monotonic
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 
 LOGGER = logging.getLogger(__name__)
@@ -28,31 +29,16 @@ DEFAULT_RENDER_TIMEOUT = 120.0
 T_Crop = Tuple[float, float, float, float]
 
 
-class RenderWorkerLimit:
-    def __init__(self, max_workers: int):
-        self.max_workers = max_workers
-        self._semaphore = threading.BoundedSemaphore(max(1, max_workers))
-
-    def acquire(self, timeout: float) -> bool:
-        return self._semaphore.acquire(timeout=timeout)  # pylint: disable=consider-using-with
-
-    def release(self):
-        self._semaphore.release()
-
-
 class PdfRenderWorker:
     def __init__(
         self,
         pdf_path: str,
-        timeout: float = DEFAULT_RENDER_TIMEOUT,
-        limit: Optional[RenderWorkerLimit] = None
+        timeout: float = DEFAULT_RENDER_TIMEOUT
     ):
         self.pdf_path = pdf_path
         self.timeout = timeout
-        self.limit = limit
         self._process: Optional[subprocess.Popen] = None
         self._connection: Optional[multiprocessing.connection.Connection] = None
-        self._has_slot = False
         self._failed = False
 
     def __enter__(self) -> 'PdfRenderWorker':
@@ -66,19 +52,6 @@ class PdfRenderWorker:
             return True
         if self._failed:
             return False
-        if self.limit is not None and not self._has_slot:
-            wait_start = monotonic()
-            if not self.limit.acquire(timeout=self.timeout):
-                LOGGER.warning(
-                    'no render worker available within %.0fs for %r',
-                    self.timeout, self.pdf_path
-                )
-                self._failed = True
-                return False
-            self._has_slot = True
-            waited = monotonic() - wait_start
-            if waited > 1:
-                LOGGER.info('waited %.1fs for a render worker', waited)
         parent_socket, child_socket = socket.socketpair()
         try:
             self._process = subprocess.Popen(  # pylint: disable=consider-using-with
@@ -129,13 +102,8 @@ class PdfRenderWorker:
 
     def close(self):
         self._stop()
-        if self._has_slot and self.limit is not None:
-            self._has_slot = False
-            self.limit.release()
 
     def __del__(self):
-        # a slot held for the life of a worker wedges the process where a
-        # caller forgets to give it back, so collection is the backstop
         try:
             self.close()
         except Exception:  # pylint: disable=broad-except
@@ -193,3 +161,58 @@ class PdfRenderWorker:
             )
             return None
         return reply.get('image_path')
+
+
+class PdfRenderWorkerPool:
+    """Hands out render workers, no more than `max_workers` of them at a time.
+
+    A worker holds a document open for as long as it serves one, so what is
+    bounded is documents in flight. Asking when none is free waits; waiting
+    longer than `timeout` gives no worker rather than no end of waiting.
+    """
+
+    def __init__(
+        self,
+        max_workers: int,
+        timeout: float = DEFAULT_RENDER_TIMEOUT
+    ):
+        self.max_workers = max_workers
+        self.timeout = timeout
+        self._semaphore = threading.BoundedSemaphore(max(1, max_workers))
+
+    @contextmanager
+    def worker(self, pdf_path: str) -> Iterator[Optional[PdfRenderWorker]]:
+        wait_start = monotonic()
+        if not self._semaphore.acquire(timeout=self.timeout):  # noqa pylint: disable=consider-using-with
+            LOGGER.warning(
+                'no render worker free within %.0fs for %r', self.timeout, pdf_path
+            )
+            yield None
+            return
+        waited = monotonic() - wait_start
+        if waited > 1:
+            LOGGER.info('waited %.1fs for a render worker', waited)
+        worker = PdfRenderWorker(pdf_path, timeout=self.timeout)
+        try:
+            yield worker
+        finally:
+            worker.close()
+            self._semaphore.release()
+
+
+@contextmanager
+def open_render_worker(
+    pdf_path: str,
+    timeout: float = DEFAULT_RENDER_TIMEOUT,
+    pool: Optional[PdfRenderWorkerPool] = None
+) -> Iterator[Optional[PdfRenderWorker]]:
+    """A worker from `pool` where there is one, otherwise one of its own."""
+    if pool is not None:
+        with pool.worker(pdf_path) as worker:
+            yield worker
+        return
+    worker = PdfRenderWorker(pdf_path, timeout=timeout)
+    try:
+        yield worker
+    finally:
+        worker.close()

@@ -17,7 +17,8 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.external.pdfium.renderer import (
     DEFAULT_RENDER_TIMEOUT,
     PdfRenderWorker,
-    RenderWorkerLimit
+    PdfRenderWorkerPool,
+    open_render_worker
 )
 from sciencebeam_parser.processors.graphic_provider import (
     get_page_numbers_with_uncommon_page_dimension
@@ -102,25 +103,9 @@ class PageRegionRenderer:
     several regions of one page cost one render.
     """
 
-    def __init__(
-        self,
-        pdf_path: str,
-        dpi: float,
-        timeout: float = DEFAULT_RENDER_TIMEOUT,
-        limit: Optional[RenderWorkerLimit] = None
-    ):
-        self.pdf_path = pdf_path
+    def __init__(self, worker: PdfRenderWorker, dpi: float):
         self.scale = dpi / 72.0
-        self._worker = PdfRenderWorker(pdf_path, timeout=timeout, limit=limit)
-
-    def close(self):
-        self._worker.close()
-
-    def __enter__(self) -> 'PageRegionRenderer':
-        return self
-
-    def __exit__(self, *args):
-        self.close()
+        self._worker = worker
 
     def render(self, page_number: int, box: '_Box', image_path: str) -> Optional[str]:
         return self._worker.render(
@@ -589,6 +574,33 @@ def get_layout_page_as_one_region(
     )])
 
 
+def _get_layout_document_with_graphic_regions(
+    layout_document: LayoutDocument,
+    config: GraphicRegionConfig,
+    temp_dir: Optional[str],
+    require_file: bool,
+    renderer: Optional[PageRegionRenderer]
+) -> LayoutDocument:
+    uncommon_page_numbers = (
+        set(get_page_numbers_with_uncommon_page_dimension(layout_document))
+        if config.uncommon_page_as_one_region
+        else set()
+    )
+    return layout_document.replace(pages=[
+        (
+            get_layout_page_as_one_region(
+                page, temp_dir=temp_dir, require_file=require_file, renderer=renderer
+            )
+            if page.meta and page.meta.page_number in uncommon_page_numbers
+            else get_layout_page_with_graphic_regions(
+                page, config=config, temp_dir=temp_dir,
+                require_file=require_file, renderer=renderer
+            )
+        )
+        for page in layout_document.pages
+    ])
+
+
 def get_layout_document_with_graphic_regions(
     layout_document: LayoutDocument,
     config: GraphicRegionConfig,
@@ -596,37 +608,26 @@ def get_layout_document_with_graphic_regions(
     require_file: bool = False,
     pdf_path: Optional[str] = None,
     render_timeout: float = DEFAULT_RENDER_TIMEOUT,
-    render_worker_limit: Optional[RenderWorkerLimit] = None
+    render_worker_pool: Optional[PdfRenderWorkerPool] = None
 ) -> LayoutDocument:
     if not config.enabled:
         return layout_document
-    renderer = (
-        PageRegionRenderer(
-            pdf_path, config.render_dpi,
-            timeout=render_timeout, limit=render_worker_limit
+    is_rendering_wanted = bool(
+        require_file and pdf_path and temp_dir and os.path.exists(pdf_path)
+    )
+    if not is_rendering_wanted:
+        return _get_layout_document_with_graphic_regions(
+            layout_document, config, temp_dir, require_file, renderer=None
         )
-        if require_file and pdf_path and temp_dir and os.path.exists(pdf_path)
-        else None
-    )
-    uncommon_page_numbers = (
-        set(get_page_numbers_with_uncommon_page_dimension(layout_document))
-        if config.uncommon_page_as_one_region
-        else set()
-    )
-    try:
-        return layout_document.replace(pages=[
-            (
-                get_layout_page_as_one_region(
-                    page, temp_dir=temp_dir, require_file=require_file, renderer=renderer
-                )
-                if page.meta and page.meta.page_number in uncommon_page_numbers
-                else get_layout_page_with_graphic_regions(
-                    page, config=config, temp_dir=temp_dir,
-                    require_file=require_file, renderer=renderer
-                )
+    assert pdf_path
+    with open_render_worker(
+        pdf_path, timeout=render_timeout, pool=render_worker_pool
+    ) as worker:
+        return _get_layout_document_with_graphic_regions(
+            layout_document, config, temp_dir, require_file,
+            renderer=(
+                PageRegionRenderer(worker, config.render_dpi)
+                if worker is not None
+                else None
             )
-            for page in layout_document.pages
-        ])
-    finally:
-        if renderer is not None:
-            renderer.close()
+        )

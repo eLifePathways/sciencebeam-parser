@@ -27,7 +27,7 @@ from sciencebeam_parser.external.pdfalto.wrapper import (
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 from sciencebeam_parser.external.pdfium.renderer import (
     DEFAULT_MAX_RENDER_WORKERS,
-    RenderWorkerLimit
+    PdfRenderWorkerPool
 )
 from sciencebeam_parser.external.wapiti.wrapper import LazyWapitiBinaryWrapper
 from sciencebeam_parser.lookup.loader import load_lookup_from_config
@@ -303,7 +303,7 @@ class ScienceBeamBaseParser:
             selectable_profile_names=selectable_profile_names,
             max_models=config.get('max_loaded_models', DEFAULT_MAX_LOADED_MODELS)
         )
-        self.render_worker_limit = RenderWorkerLimit(
+        self.render_worker_pool = PdfRenderWorkerPool(
             config.get('max_render_workers', DEFAULT_MAX_RENDER_WORKERS)
         )
         LOGGER.info(
@@ -522,7 +522,7 @@ class ScienceBeamParserSessionParsedLayoutDocument(_ScienceBeamParserSessionDeri
         context = FullTextProcessorDocumentContext(
             pdf_path=self.pdf_path,
             temp_dir=self.temp_dir,
-            render_worker_limit=self.session.parser.render_worker_limit
+            render_worker_pool=self.session.parser.render_worker_pool
         )
         semantic_document = (
             fulltext_processor

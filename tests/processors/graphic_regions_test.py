@@ -12,6 +12,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPageCoordinates,
     LayoutPageMeta
 )
+from sciencebeam_parser.external.pdfium.renderer import open_render_worker
 from sciencebeam_parser.processors.graphic_regions import (
     _Box,
     GraphicRegionConfig,
@@ -373,26 +374,25 @@ class TestGetLayoutDocumentWithGraphicRegions:
 
 class TestPageRegionRenderer:
     def test_should_render_a_region_of_a_page(self, tmp_path: Path):
-        with PageRegionRenderer(
-            MINIMAL_EXAMPLE_PDF_PATH, dpi=72.0
-        ) as renderer:
-            image_path = renderer.render(1, _BOX_FOR_RENDER, str(tmp_path / 'region.png'))
+        with open_render_worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
+            assert worker is not None
+            image_path = PageRegionRenderer(worker, dpi=72.0).render(
+                1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
+            )
         assert image_path
         with PIL.Image.open(image_path) as rendered_image:
             assert (rendered_image.width, rendered_image.height) == (100, 50)
 
     def test_should_return_none_for_a_page_that_is_not_there(self, tmp_path: Path):
-        with PageRegionRenderer(
-            MINIMAL_EXAMPLE_PDF_PATH, dpi=72.0
-        ) as renderer:
-            assert renderer.render(
+        with open_render_worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
+            assert worker is not None
+            assert PageRegionRenderer(worker, dpi=72.0).render(
                 99, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
             ) is None
 
     def test_should_return_none_for_a_document_it_cannot_read(self, tmp_path: Path):
-        with PageRegionRenderer(
-            str(tmp_path / 'not-there.pdf'), dpi=72.0
-        ) as renderer:
-            assert renderer.render(
+        with open_render_worker(str(tmp_path / 'not-there.pdf'), timeout=20) as worker:
+            assert worker is not None
+            assert PageRegionRenderer(worker, dpi=72.0).render(
                 1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
             ) is None

@@ -90,7 +90,7 @@ from sciencebeam_parser.processors.graphic_matching import (
     GraphicRelatedBlockTextGraphicMatcher,
     OpticalCharacterRecognitionGraphicMatcher
 )
-from sciencebeam_parser.external.pdfium.renderer import RenderWorkerLimit
+from sciencebeam_parser.external.pdfium.renderer import PdfRenderWorkerPool
 from sciencebeam_parser.processors.graphic_regions import (
     get_layout_document_with_graphic_regions
 )
@@ -118,7 +118,7 @@ NOISE_SEGMENTATION_LABEL = '<page>'
 class FullTextProcessorDocumentContext(NamedTuple):
     pdf_path: Optional[str] = None
     temp_dir: Optional[str] = None
-    render_worker_limit: Optional[RenderWorkerLimit] = None
+    render_worker_pool: Optional[PdfRenderWorkerPool] = None
 
 
 def get_cv_document_graphic_provider(
@@ -141,7 +141,7 @@ def get_cv_document_graphic_provider(
             page_numbers=page_numbers,
             dpi=cv_render_dpi,
             timeout=render_timeout,
-            limit=context.render_worker_limit
+            pool=context.render_worker_pool
         ),
         temp_dir=context.temp_dir
     )
@@ -401,7 +401,7 @@ class FullTextProcessor:
             require_file=self.config.extract_graphic_assets,
             pdf_path=context.pdf_path,
             render_timeout=self.config.render_timeout,
-            render_worker_limit=context.render_worker_limit
+            render_worker_pool=context.render_worker_pool
         )
         candidate_semantic_content_list = list(
             document.iter_by_types_recursively((SemanticFigure, SemanticTable,))
