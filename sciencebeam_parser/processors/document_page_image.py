@@ -1,8 +1,12 @@
 import logging
+import os
 from time import monotonic
 from typing import Iterable, NamedTuple, Optional, Sequence
 
-import pdf2image
+from sciencebeam_parser.external.pdfium.renderer import (
+    DEFAULT_RENDER_TIMEOUT,
+    PdfRenderWorker
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -19,39 +23,45 @@ class DocumentPageImage(NamedTuple):
 def iter_pdf_document_page_images(
     pdf_path: str,
     output_dir: str,
-    thread_count: int = 1,
     dpi: float = DEFAULT_PDF_RENDER_DPI,
-    page_numbers: Optional[Sequence[int]] = None
+    page_numbers: Optional[Sequence[int]] = None,
+    timeout: float = DEFAULT_RENDER_TIMEOUT
 ) -> Iterable[DocumentPageImage]:
-    first_page: int = 1
-    last_page: Optional[int] = None
-    if page_numbers:
-        first_page = min(page_numbers)
-        last_page = max(page_numbers)
     render_start = monotonic()
-    output_files = pdf2image.convert_from_path(
-        pdf_path=pdf_path,
-        first_page=first_page,
-        last_page=last_page,
-        dpi=dpi,
-        paths_only=True,
-        output_folder=output_dir,
-        thread_count=thread_count
-    )
-    render_end = monotonic()
+    rendered_count = 0
+    with PdfRenderWorker(pdf_path, timeout=timeout) as worker:
+        for page_number in _iter_page_numbers(pdf_path, page_numbers):
+            image_path = worker.render(
+                page_number=page_number,
+                scale=dpi / 72.0,
+                image_path=os.path.join(output_dir, 'page-%d.png' % page_number)
+            )
+            if image_path is None:
+                continue
+            rendered_count += 1
+            yield DocumentPageImage(
+                page_number=page_number,
+                page_image_path=image_path
+            )
     LOGGER.info(
-        'rendered PDF pages, took=%.3fs, page_count=%d, dpi=%s, thread_count=%d',
-        render_end - render_start,
-        len(output_files),
-        dpi,
-        thread_count
+        'rendered PDF pages, took=%.3fs, page_count=%d, dpi=%s',
+        monotonic() - render_start, rendered_count, dpi
     )
-    for page_index, output_file in enumerate(output_files):
-        page_number = first_page + page_index
-        if page_numbers is not None and page_number not in page_numbers:
-            LOGGER.debug('ignoring deselected page: %d (%s)', page_number, page_numbers)
-            continue
-        yield DocumentPageImage(
-            page_number=page_number,
-            page_image_path=output_file
-        )
+
+
+def _iter_page_numbers(
+    pdf_path: str,
+    page_numbers: Optional[Sequence[int]]
+) -> Iterable[int]:
+    if page_numbers:
+        return sorted(page_numbers)
+    return range(1, get_pdf_page_count(pdf_path) + 1)
+
+
+def get_pdf_page_count(pdf_path: str) -> int:
+    import pypdfium2  # noqa pylint: disable=import-outside-toplevel
+    pdf_document = pypdfium2.PdfDocument(pdf_path)
+    try:
+        return len(pdf_document)
+    finally:
+        pdf_document.close()

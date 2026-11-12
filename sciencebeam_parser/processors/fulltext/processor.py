@@ -1,5 +1,4 @@
 import logging
-import multiprocessing
 from typing import (
     Iterable,
     Iterator,
@@ -91,6 +90,7 @@ from sciencebeam_parser.processors.graphic_matching import (
     GraphicRelatedBlockTextGraphicMatcher,
     OpticalCharacterRecognitionGraphicMatcher
 )
+from sciencebeam_parser.external.pdfium.renderer import configure_max_render_workers
 from sciencebeam_parser.processors.graphic_regions import (
     get_layout_document_with_graphic_regions
 )
@@ -124,7 +124,8 @@ def get_cv_document_graphic_provider(
     cv_model: ComputerVisionModel,
     context: FullTextProcessorDocumentContext,
     page_numbers: Optional[Sequence[int]],
-    cv_render_dpi: float
+    cv_render_dpi: float,
+    render_timeout: float
 ) -> DocumentGraphicProvider:
     from sciencebeam_parser.processors.cv_graphic_provider import (  # noqa pylint: disable=import-outside-toplevel
         ComputerVisionDocumentGraphicProvider
@@ -138,7 +139,7 @@ def get_cv_document_graphic_provider(
             output_dir=context.temp_dir,
             page_numbers=page_numbers,
             dpi=cv_render_dpi,
-            thread_count=multiprocessing.cpu_count()
+            timeout=render_timeout
         ),
         temp_dir=context.temp_dir
     )
@@ -156,6 +157,7 @@ class FullTextProcessor:
         if not config:
             config = FullTextProcessorConfig()
         self.config = config
+        configure_max_render_workers(config.max_render_workers)
 
     @property
     def segmentation_model(self) -> SegmentationModel:
@@ -396,7 +398,8 @@ class FullTextProcessor:
             config=self.config.graphic_regions,
             temp_dir=context.temp_dir,
             require_file=self.config.extract_graphic_assets,
-            pdf_path=context.pdf_path
+            pdf_path=context.pdf_path,
+            render_timeout=self.config.render_timeout
         )
         candidate_semantic_content_list = list(
             document.iter_by_types_recursively((SemanticFigure, SemanticTable,))
@@ -436,7 +439,8 @@ class FullTextProcessor:
                 cv_model=self.fulltext_models.cv_model,
                 context=context,
                 page_numbers=page_numbers,
-                cv_render_dpi=self.config.cv_render_dpi
+                cv_render_dpi=self.config.cv_render_dpi,
+                render_timeout=self.config.render_timeout
             )
         return SimpleDocumentGraphicProvider()
 

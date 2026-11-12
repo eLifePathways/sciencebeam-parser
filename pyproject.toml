@@ -9,10 +9,10 @@ dependencies = [
     "fsspec>=2022.1.0",
     "gcsfs>=2022.1.0",
     "lxml>=6.0.2",
-    "pdf2image==1.16.0",
     "pyyaml>=6.0.3",
     "sciencebeam-judge>=0.0.26",
-    "pdfalto==0.6.3"
+    "pdfalto==0.6.3",
+    "pypdfium2>=5.0.3"
 ]
 
 [project.optional-dependencies]

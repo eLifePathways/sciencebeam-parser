@@ -5,7 +5,6 @@ FROM ghcr.io/astral-sh/uv:python3.11-bookworm AS base
 RUN apt-get update \
     && apt-get install --assume-yes --no-install-recommends \
         dumb-init \
-        poppler-utils \
         libgl1 \
         build-essential \
         # install LibreOffice Write to convert Word to PDF

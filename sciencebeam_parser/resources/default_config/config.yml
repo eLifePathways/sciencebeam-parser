@@ -122,6 +122,9 @@ processors:
     max_graphic_distance: 0.3
     # A graphic enclosing this much of a candidate's own text is its ruling, not its image.
     max_enclosed_text_ratio: 0.5
+    # Rendering runs in a worker per document; this bounds how many live at once.
+    max_render_workers: 2
+    render_timeout: 120
     # Ratios are shares of the page, so they hold at any page size.
     graphic_regions:
       enabled: true

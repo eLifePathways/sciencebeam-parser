@@ -373,22 +373,26 @@ class TestGetLayoutDocumentWithGraphicRegions:
 
 class TestPageRegionRenderer:
     def test_should_render_a_region_of_a_page(self, tmp_path: Path):
-        renderer = PageRegionRenderer(
+        with PageRegionRenderer(
             MINIMAL_EXAMPLE_PDF_PATH, dpi=72.0, temp_dir=str(tmp_path)
-        )
-        image_path = renderer.render(1, _BOX_FOR_RENDER, str(tmp_path / 'region.png'))
+        ) as renderer:
+            image_path = renderer.render(1, _BOX_FOR_RENDER, str(tmp_path / 'region.png'))
         assert image_path
         with PIL.Image.open(image_path) as rendered_image:
             assert (rendered_image.width, rendered_image.height) == (100, 50)
 
     def test_should_return_none_for_a_page_that_is_not_there(self, tmp_path: Path):
-        renderer = PageRegionRenderer(
+        with PageRegionRenderer(
             MINIMAL_EXAMPLE_PDF_PATH, dpi=72.0, temp_dir=str(tmp_path)
-        )
-        assert renderer.render(99, _BOX_FOR_RENDER, str(tmp_path / 'region.png')) is None
+        ) as renderer:
+            assert renderer.render(
+                99, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
+            ) is None
 
     def test_should_return_none_for_a_document_it_cannot_read(self, tmp_path: Path):
-        renderer = PageRegionRenderer(
+        with PageRegionRenderer(
             str(tmp_path / 'not-there.pdf'), dpi=72.0, temp_dir=str(tmp_path)
-        )
-        assert renderer.render(1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')) is None
+        ) as renderer:
+            assert renderer.render(
+                1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
+            ) is None

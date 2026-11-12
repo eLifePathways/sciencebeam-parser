@@ -14,8 +14,9 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPage,
     LayoutPageCoordinates
 )
-from sciencebeam_parser.processors.document_page_image import (
-    iter_pdf_document_page_images
+from sciencebeam_parser.external.pdfium.renderer import (
+    DEFAULT_RENDER_TIMEOUT,
+    PdfRenderWorker
 )
 from sciencebeam_parser.processors.graphic_provider import (
     get_page_numbers_with_uncommon_page_dimension
@@ -94,57 +95,40 @@ class _Box(NamedTuple):
 
 
 class PageRegionRenderer:
-    """Renders a region of a page, through the same renderer the detector uses.
+    """Renders a region of a page through a worker of its own.
 
-    `pdf2image` runs `pdftoppm` as a process of its own, so a document that
-    defeats the renderer cannot take the caller down with it.
+    The worker holds the document open and keeps the page it last drew, so
+    several regions of one page cost one render.
     """
 
-    def __init__(self, pdf_path: str, dpi: float, temp_dir: str):
+    def __init__(
+        self,
+        pdf_path: str,
+        dpi: float,
+        temp_dir: str,
+        timeout: float = DEFAULT_RENDER_TIMEOUT
+    ):
         self.pdf_path = pdf_path
-        self.dpi = dpi
         self.scale = dpi / 72.0
         self.temp_dir = temp_dir
-        self._page_number: Optional[int] = None
-        self._page_image: Optional[PIL.Image.Image] = None
+        self._worker = PdfRenderWorker(pdf_path, timeout=timeout)
 
-    def _get_page_image(self, page_number: int) -> Optional[PIL.Image.Image]:
-        if self._page_number == page_number and self._page_image is not None:
-            return self._page_image
-        page_images = list(iter_pdf_document_page_images(
-            pdf_path=self.pdf_path,
-            output_dir=self.temp_dir,
-            dpi=self.dpi,
-            page_numbers=[page_number]
-        ))
-        if not page_images:
-            return None
-        page_image = PIL.Image.open(page_images[0].page_image_path).convert('RGB')
-        page_image.load()
-        self._page_number = page_number
-        self._page_image = page_image
-        return page_image
+    def close(self):
+        self._worker.close()
+
+    def __enter__(self) -> 'PageRegionRenderer':
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     def render(self, page_number: int, box: '_Box', image_path: str) -> Optional[str]:
-        try:
-            page_image = self._get_page_image(page_number)
-            if page_image is None:
-                return None
-            cropped_image = page_image.crop((
-                max(0, round(box.x1 * self.scale)),
-                max(0, round(box.y1 * self.scale)),
-                min(page_image.width, round(box.x2 * self.scale)),
-                min(page_image.height, round(box.y2 * self.scale))
-            ))
-            if not cropped_image.width or not cropped_image.height:
-                return None
-            cropped_image.save(image_path)
-            return image_path
-        except Exception:  # pylint: disable=broad-except
-            LOGGER.warning(
-                'unable to render page %d of %r', page_number, self.pdf_path, exc_info=True
-            )
-            return None
+        return self._worker.render(
+            page_number=page_number,
+            scale=self.scale,
+            image_path=image_path,
+            crop=(box.x1, box.y1, box.x2, box.y2)
+        )
 
 
 def _get_box_for_coordinates(coordinates: LayoutPageCoordinates) -> _Box:
@@ -610,12 +594,15 @@ def get_layout_document_with_graphic_regions(
     config: GraphicRegionConfig,
     temp_dir: Optional[str] = None,
     require_file: bool = False,
-    pdf_path: Optional[str] = None
+    pdf_path: Optional[str] = None,
+    render_timeout: float = DEFAULT_RENDER_TIMEOUT
 ) -> LayoutDocument:
     if not config.enabled:
         return layout_document
     renderer = (
-        PageRegionRenderer(pdf_path, config.render_dpi, temp_dir=temp_dir)
+        PageRegionRenderer(
+            pdf_path, config.render_dpi, temp_dir=temp_dir, timeout=render_timeout
+        )
         if require_file and pdf_path and temp_dir and os.path.exists(pdf_path)
         else None
     )
@@ -624,16 +611,20 @@ def get_layout_document_with_graphic_regions(
         if config.uncommon_page_as_one_region
         else set()
     )
-    return layout_document.replace(pages=[
-        (
-            get_layout_page_as_one_region(
-                page, temp_dir=temp_dir, require_file=require_file, renderer=renderer
+    try:
+        return layout_document.replace(pages=[
+            (
+                get_layout_page_as_one_region(
+                    page, temp_dir=temp_dir, require_file=require_file, renderer=renderer
+                )
+                if page.meta and page.meta.page_number in uncommon_page_numbers
+                else get_layout_page_with_graphic_regions(
+                    page, config=config, temp_dir=temp_dir,
+                    require_file=require_file, renderer=renderer
+                )
             )
-            if page.meta and page.meta.page_number in uncommon_page_numbers
-            else get_layout_page_with_graphic_regions(
-                page, config=config, temp_dir=temp_dir,
-                require_file=require_file, renderer=renderer
-            )
-        )
-        for page in layout_document.pages
-    ])
+            for page in layout_document.pages
+        ])
+    finally:
+        if renderer is not None:
+            renderer.close()

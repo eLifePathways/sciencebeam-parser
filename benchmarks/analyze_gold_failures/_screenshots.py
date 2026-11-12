@@ -402,16 +402,17 @@ def render_region_screenshot(  # pylint: disable=too-many-locals
     """Render a highlighted region from a PDF page. Returns PNG bytes or None."""
     try:
         # pylint: disable=import-outside-toplevel
-        from pdf2image import convert_from_path  # type: ignore[import-untyped]
+        import pypdfium2
         from PIL import Image, ImageDraw
     except ImportError:
         return None
 
+    # rendering here answers to nobody waiting, so it needs no worker of its own
     try:
-        images = convert_from_path(
-            str(pdf_path), dpi=dpi,
-            first_page=coords.page, last_page=coords.page,
-        )
+        pdf_document = pypdfium2.PdfDocument(str(pdf_path))
+        images = [
+            pdf_document[coords.page - 1].render(scale=dpi / 72).to_pil().convert('RGB')
+        ]
     except Exception:  # pylint: disable=broad-exception-caught
         return None
 
