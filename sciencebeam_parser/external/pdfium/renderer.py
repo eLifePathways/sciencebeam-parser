@@ -1,9 +1,10 @@
 """Renders pages of a PDF through a worker process.
 
 One worker serves one document and is reused across its pages, so the
-document is opened once. How many live at a time is bounded: a worker holds
-a document open for as long as the request it serves, and a process
-answering many at once would otherwise hold one for each.
+document is opened once. A `RenderWorkerLimit` bounds how many live at a
+time, since a worker holds a document open for as long as the request it
+serves; whoever owns the process passes one in, and a caller rendering for
+itself needs none.
 """
 
 import logging
@@ -39,22 +40,6 @@ class RenderWorkerLimit:
         self._semaphore.release()
 
 
-_limit = RenderWorkerLimit(DEFAULT_MAX_RENDER_WORKERS)
-_limit_lock = threading.Lock()
-
-
-def configure_max_render_workers(max_workers: int):
-    """Sets how many render workers this process may have alive at once."""
-    global _limit  # pylint: disable=global-statement
-    with _limit_lock:
-        if max_workers != _limit.max_workers:
-            _limit = RenderWorkerLimit(max_workers)
-
-
-def get_render_worker_limit() -> RenderWorkerLimit:
-    return _limit
-
-
 class PdfRenderWorker:
     def __init__(
         self,
@@ -64,7 +49,7 @@ class PdfRenderWorker:
     ):
         self.pdf_path = pdf_path
         self.timeout = timeout
-        self.limit = limit if limit is not None else get_render_worker_limit()
+        self.limit = limit
         self._process: Optional[subprocess.Popen] = None
         self._connection: Optional[multiprocessing.connection.Connection] = None
         self._has_slot = False
@@ -81,7 +66,7 @@ class PdfRenderWorker:
             return True
         if self._failed:
             return False
-        if not self._has_slot:
+        if self.limit is not None and not self._has_slot:
             wait_start = monotonic()
             if not self.limit.acquire(timeout=self.timeout):
                 LOGGER.warning(
@@ -144,7 +129,7 @@ class PdfRenderWorker:
 
     def close(self):
         self._stop()
-        if self._has_slot:
+        if self._has_slot and self.limit is not None:
             self._has_slot = False
             self.limit.release()
 

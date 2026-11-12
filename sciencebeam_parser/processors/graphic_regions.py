@@ -16,7 +16,8 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.external.pdfium.renderer import (
     DEFAULT_RENDER_TIMEOUT,
-    PdfRenderWorker
+    PdfRenderWorker,
+    RenderWorkerLimit
 )
 from sciencebeam_parser.processors.graphic_provider import (
     get_page_numbers_with_uncommon_page_dimension
@@ -105,11 +106,12 @@ class PageRegionRenderer:
         self,
         pdf_path: str,
         dpi: float,
-        timeout: float = DEFAULT_RENDER_TIMEOUT
+        timeout: float = DEFAULT_RENDER_TIMEOUT,
+        limit: Optional[RenderWorkerLimit] = None
     ):
         self.pdf_path = pdf_path
         self.scale = dpi / 72.0
-        self._worker = PdfRenderWorker(pdf_path, timeout=timeout)
+        self._worker = PdfRenderWorker(pdf_path, timeout=timeout, limit=limit)
 
     def close(self):
         self._worker.close()
@@ -593,12 +595,16 @@ def get_layout_document_with_graphic_regions(
     temp_dir: Optional[str] = None,
     require_file: bool = False,
     pdf_path: Optional[str] = None,
-    render_timeout: float = DEFAULT_RENDER_TIMEOUT
+    render_timeout: float = DEFAULT_RENDER_TIMEOUT,
+    render_worker_limit: Optional[RenderWorkerLimit] = None
 ) -> LayoutDocument:
     if not config.enabled:
         return layout_document
     renderer = (
-        PageRegionRenderer(pdf_path, config.render_dpi, timeout=render_timeout)
+        PageRegionRenderer(
+            pdf_path, config.render_dpi,
+            timeout=render_timeout, limit=render_worker_limit
+        )
         if require_file and pdf_path and temp_dir and os.path.exists(pdf_path)
         else None
     )

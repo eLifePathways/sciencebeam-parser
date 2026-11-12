@@ -5,7 +5,8 @@ from typing import Iterable, NamedTuple, Optional, Sequence
 
 from sciencebeam_parser.external.pdfium.renderer import (
     DEFAULT_RENDER_TIMEOUT,
-    PdfRenderWorker
+    PdfRenderWorker,
+    RenderWorkerLimit
 )
 
 
@@ -25,11 +26,12 @@ def iter_pdf_document_page_images(
     output_dir: str,
     dpi: float = DEFAULT_PDF_RENDER_DPI,
     page_numbers: Optional[Sequence[int]] = None,
-    timeout: float = DEFAULT_RENDER_TIMEOUT
+    timeout: float = DEFAULT_RENDER_TIMEOUT,
+    limit: Optional[RenderWorkerLimit] = None
 ) -> Iterable[DocumentPageImage]:
     render_start = monotonic()
     rendered_count = 0
-    with PdfRenderWorker(pdf_path, timeout=timeout) as worker:
+    with PdfRenderWorker(pdf_path, timeout=timeout, limit=limit) as worker:
         if page_numbers is None:
             page_count = worker.get_page_count()
             selected_page_numbers: Sequence[int] = (
