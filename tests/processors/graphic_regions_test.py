@@ -327,6 +327,26 @@ class TestGetLayoutDocumentWithGraphicRegions:
         assert result[0].local_file_path
         assert os.path.exists(result[0].local_file_path)
 
+    def test_should_require_a_file_still_where_no_worker_is_free(self, tmp_path: Path):
+        svg_path = _write_svg(tmp_path / 'page.svg', _get_shape_paths(20))
+        graphics = [
+            LayoutGraphic(
+                local_file_path=svg_path,
+                coordinates=_get_coordinates(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                graphic_type='svg', page_meta=PAGE_META_1
+            )
+        ]
+        pool = PdfRenderWorkerPool(max_workers=1, timeout=1)
+        with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
+            result = _get_graphics(get_layout_document_with_graphic_regions(
+                _get_layout_document(graphics), config=CONFIG,
+                temp_dir=str(tmp_path), require_file=True,
+                pdf_path=MINIMAL_EXAMPLE_PDF_PATH,
+                render_worker_pool=pool
+            ))
+        assert result
+        assert all(graphic.local_file_path for graphic in result)
+
     def test_should_read_a_page_of_its_own_size_as_one_region(self):
         other_page_meta = LayoutPageMeta(
             page_number=2,
