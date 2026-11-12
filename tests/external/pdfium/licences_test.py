@@ -2,7 +2,7 @@ from importlib.metadata import distribution
 
 
 class TestPdfiumLicences:
-    def test_should_carry_the_licences_a_binary_distribution_has_to_ship(self):
+    def test_should_find_the_licences_in_the_installed_wheel(self):
         """PDFium's licence and its dependencies' ship with the wheel; an image
         that drops `dist-info` drops them, so their presence is asserted."""
         files = distribution('pypdfium2').files or []
