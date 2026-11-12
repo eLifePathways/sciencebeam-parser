@@ -122,8 +122,6 @@ processors:
     max_graphic_distance: 0.3
     # A graphic enclosing this much of a candidate's own text is its ruling, not its image.
     max_enclosed_text_ratio: 0.5
-    # Rendering runs in a worker per document; this bounds how many live at once.
-    max_render_workers: 2
     render_timeout: 120
     # Ratios are shares of the page, so they hold at any page size.
     graphic_regions:
@@ -675,6 +673,11 @@ selectable_profiles:
 # the wapiti ones differ from their base by one model of ten. Over this, a
 # request for a profile not already resolved is refused rather than loaded.
 max_loaded_models: 40
+
+# How many render workers one process will have alive at once, across every
+# profile it serves. A worker lasts a document and holds it open, so this
+# bounds documents in flight rather than CPU. Over this, a request waits.
+max_render_workers: 2
 
 # Which origins a browser page may call the API from, matched exactly, or `*`
 # for every origin. Empty permits none. See doc/cors.md.

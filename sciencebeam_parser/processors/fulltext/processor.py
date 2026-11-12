@@ -90,7 +90,6 @@ from sciencebeam_parser.processors.graphic_matching import (
     GraphicRelatedBlockTextGraphicMatcher,
     OpticalCharacterRecognitionGraphicMatcher
 )
-from sciencebeam_parser.external.pdfium.renderer import configure_max_render_workers
 from sciencebeam_parser.processors.graphic_regions import (
     get_layout_document_with_graphic_regions
 )
@@ -157,7 +156,6 @@ class FullTextProcessor:
         if not config:
             config = FullTextProcessorConfig()
         self.config = config
-        configure_max_render_workers(config.max_render_workers)
 
     @property
     def segmentation_model(self) -> SegmentationModel:

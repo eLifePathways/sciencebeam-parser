@@ -30,7 +30,14 @@ def iter_pdf_document_page_images(
     render_start = monotonic()
     rendered_count = 0
     with PdfRenderWorker(pdf_path, timeout=timeout) as worker:
-        for page_number in _iter_page_numbers(pdf_path, page_numbers):
+        if page_numbers is None:
+            page_count = worker.get_page_count()
+            selected_page_numbers: Sequence[int] = (
+                range(1, page_count + 1) if page_count else []
+            )
+        else:
+            selected_page_numbers = sorted(page_numbers)
+        for page_number in selected_page_numbers:
             image_path = worker.render(
                 page_number=page_number,
                 scale=dpi / 72.0,
@@ -47,21 +54,3 @@ def iter_pdf_document_page_images(
         'rendered PDF pages, took=%.3fs, page_count=%d, dpi=%s',
         monotonic() - render_start, rendered_count, dpi
     )
-
-
-def _iter_page_numbers(
-    pdf_path: str,
-    page_numbers: Optional[Sequence[int]]
-) -> Iterable[int]:
-    if page_numbers:
-        return sorted(page_numbers)
-    return range(1, get_pdf_page_count(pdf_path) + 1)
-
-
-def get_pdf_page_count(pdf_path: str) -> int:
-    import pypdfium2  # noqa pylint: disable=import-outside-toplevel
-    pdf_document = pypdfium2.PdfDocument(pdf_path)
-    try:
-        return len(pdf_document)
-    finally:
-        pdf_document.close()

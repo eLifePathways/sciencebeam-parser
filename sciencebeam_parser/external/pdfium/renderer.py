@@ -96,6 +96,7 @@ class PdfRenderWorker:
             [sys.executable, '-m', WORKER_MODULE, self.pdf_path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True
         )
         return self._process
@@ -110,9 +111,14 @@ class PdfRenderWorker:
         except OSError:
             pass
         try:
-            process.communicate(timeout=5)
+            _, error_output = process.communicate(timeout=5)
         except (subprocess.TimeoutExpired, ValueError, OSError):
-            pass
+            return
+        if error_output and error_output.strip():
+            LOGGER.warning(
+                'render worker for %r said: %s',
+                self.pdf_path, error_output.strip().splitlines()[-1]
+            )
 
     def close(self):
         self._stop_process()
@@ -165,6 +171,12 @@ class PdfRenderWorker:
             self._stop_process()
             return None
         return reply_holder['reply']
+
+    def get_page_count(self) -> Optional[int]:
+        reply = self._request({'page_count': True})
+        if reply is None or not reply.get('ok'):
+            return None
+        return reply['page_count']
 
     def render(
         self,

@@ -6,12 +6,14 @@ document, this is the process that can be lost.
 
 A request is one JSON object a line on stdin, a reply one on stdout:
 
+    {"page_count": true}
     {"page_number": 7, "scale": 1.39, "image_path": "/tmp/p7.png"}
     {"page_number": 7, "scale": 1.39, "image_path": "/tmp/r7.png",
      "crop": [12.0, 30.0, 220.0, 190.0]}
 
-The document stays open across requests and the last page rendered is kept,
-so several regions of one page cost one render.
+The document is opened on the first request, so one it cannot read is a
+reply rather than a death, and stays open across the rest; the last page
+rendered is kept, so several regions of one page cost one render.
 """
 
 import json
@@ -27,10 +29,20 @@ T_Crop = Tuple[float, float, float, float]
 
 class PageRenderer:
     def __init__(self, pdf_path: str):
-        self.pdf_document = pypdfium2.PdfDocument(pdf_path)
+        self.pdf_path = pdf_path
+        self._pdf_document: Optional[pypdfium2.PdfDocument] = None
         self._page_number: Optional[int] = None
         self._scale: Optional[float] = None
         self._page_image: Optional[PIL.Image.Image] = None
+
+    @property
+    def pdf_document(self) -> pypdfium2.PdfDocument:
+        if self._pdf_document is None:
+            self._pdf_document = pypdfium2.PdfDocument(self.pdf_path)
+        return self._pdf_document
+
+    def get_page_count(self) -> int:
+        return len(self.pdf_document)
 
     def get_page_image(self, page_number: int, scale: float) -> PIL.Image.Image:
         if (
@@ -82,14 +94,18 @@ def main(argv=None):
         line = line.strip()
         if not line:
             continue
+        reply: Dict[str, Any]
         try:
             request = json.loads(line)
-            reply = renderer.render(
-                page_number=request['page_number'],
-                scale=request['scale'],
-                image_path=request['image_path'],
-                crop=tuple(request['crop']) if request.get('crop') else None
-            )
+            if request.get('page_count'):
+                reply = {'ok': True, 'page_count': renderer.get_page_count()}
+            else:
+                reply = renderer.render(
+                    page_number=request['page_number'],
+                    scale=request['scale'],
+                    image_path=request['image_path'],
+                    crop=tuple(request['crop']) if request.get('crop') else None
+                )
         except Exception as exc:  # pylint: disable=broad-except
             reply = {'ok': False, 'error': '%s: %s' % (type(exc).__name__, exc)}
         sys.stdout.write(json.dumps(reply) + '\n')

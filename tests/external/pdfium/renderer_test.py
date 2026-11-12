@@ -35,6 +35,24 @@ class TestPdfRenderWorker:
             second = worker.render(1, 1.0, str(tmp_path / 'b.png'), crop=(50, 50, 120, 120))
         assert first and second
 
+    def test_should_report_the_page_count(self):
+        with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
+            assert worker.get_page_count() == 1
+
+    def test_should_report_no_page_count_for_a_document_it_cannot_read(self, tmp_path: Path):
+        bad_pdf_path = tmp_path / 'bad.pdf'
+        bad_pdf_path.write_bytes(b'not a pdf at all')
+        with PdfRenderWorker(str(bad_pdf_path), timeout=20) as worker:
+            assert worker.get_page_count() is None
+
+    def test_should_answer_a_second_request_after_one_it_could_not_read(self, tmp_path: Path):
+        bad_pdf_path = tmp_path / 'bad.pdf'
+        bad_pdf_path.write_bytes(b'not a pdf at all')
+        with PdfRenderWorker(str(bad_pdf_path), timeout=20) as worker:
+            assert worker.render(1, 1.0, str(tmp_path / 'page.png')) is None
+        with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
+            assert worker.get_page_count() == 1
+
     def test_should_return_none_for_a_document_it_cannot_read(self, tmp_path: Path):
         with PdfRenderWorker(str(tmp_path / 'not-there.pdf'), timeout=20) as worker:
             assert worker.render(1, 1.0, str(tmp_path / 'page.png')) is None

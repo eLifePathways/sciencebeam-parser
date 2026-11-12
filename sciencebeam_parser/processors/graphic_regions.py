@@ -105,12 +105,10 @@ class PageRegionRenderer:
         self,
         pdf_path: str,
         dpi: float,
-        temp_dir: str,
         timeout: float = DEFAULT_RENDER_TIMEOUT
     ):
         self.pdf_path = pdf_path
         self.scale = dpi / 72.0
-        self.temp_dir = temp_dir
         self._worker = PdfRenderWorker(pdf_path, timeout=timeout)
 
     def close(self):
@@ -600,9 +598,7 @@ def get_layout_document_with_graphic_regions(
     if not config.enabled:
         return layout_document
     renderer = (
-        PageRegionRenderer(
-            pdf_path, config.render_dpi, temp_dir=temp_dir, timeout=render_timeout
-        )
+        PageRegionRenderer(pdf_path, config.render_dpi, timeout=render_timeout)
         if require_file and pdf_path and temp_dir and os.path.exists(pdf_path)
         else None
     )

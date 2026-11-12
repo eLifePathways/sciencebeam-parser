@@ -25,6 +25,10 @@ from sciencebeam_parser.external.pdfalto.wrapper import (
     get_default_pdfalto_binary_path
 )
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
+from sciencebeam_parser.external.pdfium.renderer import (
+    DEFAULT_MAX_RENDER_WORKERS,
+    configure_max_render_workers
+)
 from sciencebeam_parser.external.wapiti.wrapper import LazyWapitiBinaryWrapper
 from sciencebeam_parser.lookup.loader import load_lookup_from_config
 from sciencebeam_parser.lookup.phrase_match import load_phrase_match_from_path
@@ -298,6 +302,9 @@ class ScienceBeamBaseParser:
             default_profile_name=default_profile_name,
             selectable_profile_names=selectable_profile_names,
             max_models=config.get('max_loaded_models', DEFAULT_MAX_LOADED_MODELS)
+        )
+        configure_max_render_workers(
+            config.get('max_render_workers', DEFAULT_MAX_RENDER_WORKERS)
         )
         LOGGER.info(
             'default profile: %r, selectable: %r',
