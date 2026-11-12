@@ -145,6 +145,8 @@ RUN ./scripts/dev/start-and-run-end-to-end-tests.sh
 # runtime image
 FROM base AS runtime
 
+# whole, because pypdfium2's dist-info carries PDFium's licence and those of its
+# dependencies, which have to ship with a binary distribution of them
 COPY --from=builder /opt/venv /opt/venv
 
 COPY sciencebeam_parser ./sciencebeam_parser
@@ -173,6 +175,8 @@ RUN apt-get update \
         tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
+# whole, because pypdfium2's dist-info carries PDFium's licence and those of its
+# dependencies, which have to ship with a binary distribution of them
 COPY --from=builder /opt/venv /opt/venv
 
 COPY sciencebeam_parser ./sciencebeam_parser
