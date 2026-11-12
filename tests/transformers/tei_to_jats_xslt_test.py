@@ -436,6 +436,14 @@ class TestTeiToJatsXslt:
                 for node in jats.xpath('front/article-meta/abstract')
             ] == [VALUE_1]
 
+        def test_should_keep_the_empty_abstract_where_the_tei_has_none(
+                self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei()))
+            assert [
+                get_text_content(node)
+                for node in jats.xpath('front/article-meta/abstract')
+            ] == ['']
+
         def test_should_keep_the_language_of_each_abstract(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
                 _tei(abstracts=[(VALUE_1, 'en'), (VALUE_2, 'pt')])

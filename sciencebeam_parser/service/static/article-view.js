@@ -373,7 +373,9 @@ export function renderArticleViewModel(viewModel, document, options) {
       ? appendValue(section, abstract.title, 'h2')
       : appendElement(section, 'h2', '');
     if (!abstract.title) {
+      // The word is this page's, not the document's, so it says so itself.
       heading.textContent = 'Abstract';
+      heading.setAttribute('lang', 'en');
     }
     if (abstract.language) {
       section.setAttribute('lang', abstract.language);

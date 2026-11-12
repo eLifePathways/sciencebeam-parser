@@ -402,8 +402,8 @@ like one that reads the article's own, and that block is where it shows.
 
 `abstract_language` scores the declaration rather than the text, and is empty
 unless the run's profile sets `abstracts_mode` to `variants` or
-`merged_by_language`: `recommended` does, and a profile serving the GROBID CRF
-models does not. The `grobid_crf_abstract_variants` and
+`merged_by_language`: `recommended` does, and every other shipped profile does
+not. The `grobid_crf_abstract_variants` and
 `grobid_crf_abstract_merged_by_language` profiles are `grobid_crf_0_9_0` with
 that one setting changed, so a run against either and a run against it differ in
 nothing else. The two sides are paired

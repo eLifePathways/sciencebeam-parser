@@ -323,6 +323,8 @@ OTHER_LABEL = 'O'
 
 NO_ABSTRACT_YET = -1
 
+LETTER_PATTERN = re.compile(r'[^\W\d_]')
+
 
 # A heading is printed on its own line, where a grant statement or a submission
 # date labelled `<other>` beside it runs longer.
@@ -342,6 +344,8 @@ def get_abstract_heading_block(
         return None
     heading_block = LayoutBlock(lines=layout_block.lines[-1:])
     if not 0 < _get_token_count(heading_block) <= MAX_ABSTRACT_HEADING_TOKEN_COUNT:
+        return None
+    if not LETTER_PATTERN.search(str(LayoutTokensText(heading_block))):
         return None
     return heading_block
 

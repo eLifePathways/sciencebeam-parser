@@ -130,6 +130,9 @@
         </aff>
       </xsl:for-each>
 
+      <xsl:if test="not(tei:profileDesc/tei:abstract)">
+        <abstract/>
+      </xsl:if>
       <xsl:for-each select="tei:profileDesc/tei:abstract">
         <abstract>
           <xsl:copy-of select="@xml:lang"/>

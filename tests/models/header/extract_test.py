@@ -379,6 +379,12 @@ class TestHeaderSemanticExtractorAbstractHeading:
             ))
         ], abstracts_mode=AbstractsMode.MERGED_BY_LANGUAGE) == ['Abstract']
 
+    def test_should_carry_no_heading_where_the_line_above_carries_no_letter(self):
+        assert self._get_headings([
+            ('O', LayoutBlock.for_text('1 .')),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == [None]
+
     def test_should_carry_no_heading_where_the_block_above_is_too_long(self):
         assert self._get_headings([
             ('O', LayoutBlock.for_text(

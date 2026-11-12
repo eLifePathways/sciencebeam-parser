@@ -12,7 +12,7 @@ The header model labels every region it reads as an abstract, and `abstracts_mod
 | `variants` | every abstract that is at least 0.15 of the first one's length, each declaring its own language |
 | `merged_by_language` | the same, with abstracts sharing a language joined into one |
 
-The `recommended` profile asks for `variants`; a profile serving the GROBID CRF models asks for `first`. A profile sets it under `processors.fulltext`.
+The `recommended` and `recommended_cv` profiles ask for `variants`; every other shipped profile leaves it at `first`. A profile sets it under `processors.fulltext`.
 
 An abstract the page prints in two pieces — the second half carried over a page break — is one abstract in every mode. The second block is joined to the first where it opens mid-sentence under an abstract that ends unfinished, carries no heading of its own, and begins on the page the abstract ended on or the next.
 
