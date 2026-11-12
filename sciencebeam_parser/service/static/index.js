@@ -14,6 +14,7 @@ const deployment = JSON.parse(document.getElementById('deployment').textContent)
 
 const PROFILE_HEADER = 'x-sciencebeam-profile';
 const PROFILE_DIGEST_HEADER = 'x-sciencebeam-profile-digest';
+const PROFILE_REQUESTED_HEADER = 'x-sciencebeam-profile-requested';
 const LLM_USAGE_HEADER = 'x-sciencebeam-llm-usage';
 const SLOW_REQUEST_SECONDS = 10;
 const PDF_MEDIA_TYPE = 'application/pdf';
@@ -739,9 +740,20 @@ function setUpXmlDownload(content, output, file) {
   };
 }
 
+// The name asked for leads, since that is the one the reader chose; the profile
+// that answered follows it, because that is the one that stays meaningful.
+function describeServingProfile(response) {
+  const served = response.headers.get(PROFILE_HEADER);
+  const requested = response.headers.get(PROFILE_REQUESTED_HEADER);
+  if (!served) {
+    return requested || null;
+  }
+  return requested ? requested + ' (served by ' + served + ')' : served;
+}
+
 function showResultSummary(response, blob, elapsedSeconds) {
   resultSummary.textContent = [
-    response.headers.get(PROFILE_HEADER) || 'the default profile',
+    describeServingProfile(response) || 'the default profile',
     describeBytes(blob.size),
     elapsedSeconds + 's'
   ].join(' · ');
@@ -751,7 +763,7 @@ async function showResult(response, blob, file, elapsedSeconds) {
   showResultSummary(response, blob, elapsedSeconds);
   const metaElement = document.getElementById('result-meta');
   metaElement.replaceChildren();
-  addMetaRow(metaElement, 'Served by profile', response.headers.get(PROFILE_HEADER));
+  addMetaRow(metaElement, 'Profile', describeServingProfile(response));
   addMetaRow(metaElement, 'Profile digest', response.headers.get(PROFILE_DIGEST_HEADER));
   addMetaRow(metaElement, 'LLM usage', response.headers.get(LLM_USAGE_HEADER));
   addMetaRow(metaElement, 'Content type', response.headers.get('content-type'));
@@ -791,7 +803,7 @@ async function showFailure(response, file) {
   const metaElement = document.getElementById('failure-meta');
   metaElement.replaceChildren();
   addMetaRow(metaElement, 'Status', response.status + ' ' + response.statusText);
-  addMetaRow(metaElement, 'Served by profile', response.headers.get(PROFILE_HEADER));
+  addMetaRow(metaElement, 'Profile', describeServingProfile(response));
   const body = await response.text();
   let detail = body;
   try {

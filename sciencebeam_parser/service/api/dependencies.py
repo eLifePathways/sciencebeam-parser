@@ -174,7 +174,7 @@ def get_profile_bundle(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
-    record_request_profile(bundle)
+    record_request_profile(bundle, requested_name=profile)
     return bundle
 
 

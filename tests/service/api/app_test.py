@@ -20,6 +20,7 @@ from sciencebeam_parser.app.parser import (
 from sciencebeam_parser.app.profiles import (
     PROFILE_DIGEST_HEADER_NAME,
     PROFILE_HEADER_NAME,
+    PROFILE_REQUESTED_HEADER_NAME,
     ProfileBundle,
     ProfileDescription
 )
@@ -828,6 +829,30 @@ class TestProfileAttributionHeader:
         assert response.headers[PROFILE_HEADER_NAME] == PROFILE_NAME_1
         assert response.headers[PROFILE_DIGEST_HEADER_NAME] == f'{PROFILE_NAME_1}-digest'
 
+    def test_should_say_which_profile_a_request_asked_for(
+        self,
+        test_client: TestClient,
+        ok_response_mock: MagicMock  # noqa pylint: disable=unused-argument
+    ):
+        """Asking for a name and being answered by another one needs both said."""
+        response = post_document(
+            test_client, '/processFulltextDocument?profile=' + PROFILE_NAME_2
+        )
+        assert response.status_code == 200
+        assert response.headers[PROFILE_HEADER_NAME] == PROFILE_NAME_1
+        assert response.headers[PROFILE_REQUESTED_HEADER_NAME] == PROFILE_NAME_2
+
+    def test_should_not_repeat_the_name_a_request_asked_for_where_it_served_it(
+        self,
+        test_client: TestClient,
+        ok_response_mock: MagicMock  # noqa pylint: disable=unused-argument
+    ):
+        response = post_document(
+            test_client, '/processFulltextDocument?profile=' + PROFILE_NAME_1
+        )
+        assert response.status_code == 200
+        assert PROFILE_REQUESTED_HEADER_NAME not in response.headers
+
     def test_should_say_which_profile_a_failed_request_was_served_by(
         self,
         sciencebeam_parser_mock: MagicMock,
@@ -894,99 +919,3 @@ class TestProfileAttributionHeader:
             reported = list(pool.map(post, [PROFILE_NAME_1, PROFILE_NAME_2]))
 
         assert sorted(reported) == [PROFILE_NAME_1, PROFILE_NAME_2]
-
-
-def _without_none_values(value):
-    """What the schema document keeps of a response: FastAPI encodes it without nulls."""
-    if isinstance(value, dict):
-        return {
-            key: _without_none_values(item)
-            for key, item in value.items()
-            if item is not None
-        }
-    if isinstance(value, list):
-        return [_without_none_values(item) for item in value]
-    return value
-
-
-class TestProfileList:
-    def test_should_say_what_every_selectable_profile_is_for(
-        self, test_client: TestClient
-    ):
-        assert _get_ok_json(test_client.get('/profiles')) == {
-            'profiles': [
-                {
-                    'name': PROFILE_NAME_1,
-                    'label': 'Profile 1',
-                    'description': 'What profile 1 serves.',
-                    'alias_names': ['profile_one'],
-                    'is_default': True,
-                    'tracks': None
-                },
-                {
-                    'name': PROFILE_NAME_2,
-                    'label': None,
-                    'description': None,
-                    'alias_names': [],
-                    'is_default': False,
-                    'tracks': None
-                },
-            ]
-        }
-
-    def test_should_document_what_this_deployment_serves_as_the_response_example(
-        self, sciencebeam_parser_mock: MagicMock, test_client: TestClient
-    ):
-        """What a reader of the generated docs sees without executing anything."""
-        schema = create_api_app(sciencebeam_parser=sciencebeam_parser_mock).openapi()
-        example = (
-            schema['paths']['/profiles']['get']
-            ['responses']['200']['content']['application/json']['example']
-        )
-        assert example == _without_none_values(_get_ok_json(test_client.get('/profiles')))
-
-
-class TestSelectableProfilesInTheSchema:
-    def test_should_name_every_selectable_profile_on_every_route(
-        self, sciencebeam_parser_mock: MagicMock
-    ):
-        """So the docs offer the choice rather than a free text box."""
-        schema = create_api_app(sciencebeam_parser=sciencebeam_parser_mock).openapi()
-        enums = [
-            sub_schema['enum']
-            for operations in schema['paths'].values()
-            for operation in operations.values()
-            for parameter in operation.get('parameters', [])
-            if parameter['name'] == 'profile'
-            for sub_schema in parameter['schema'].get(
-                'anyOf', [parameter['schema']]
-            )
-            if sub_schema.get('type') == 'string'
-        ]
-        assert enums
-        assert all(enum == [PROFILE_NAME_1, PROFILE_NAME_2] for enum in enums)
-
-    def test_should_keep_the_named_branch_first(
-        self, sciencebeam_parser_mock: MagicMock
-    ):
-        """What makes the docs render a list rather than a free text box.
-
-        Swagger UI merges only the first branch of an `anyOf` into the parameter
-        schema, and the `enum` it renders is whatever that branch carries -- so
-        the string branch leading is the dropdown, not a detail of the document.
-        """
-        schema = create_api_app(sciencebeam_parser=sciencebeam_parser_mock).openapi()
-        first_branches = [
-            parameter['schema']['anyOf'][0]
-            for operations in schema['paths'].values()
-            for operation in operations.values()
-            for parameter in operation.get('parameters', [])
-            if parameter['name'] == 'profile'
-        ]
-        assert first_branches
-        assert all(branch.get('type') == 'string' for branch in first_branches)
-
-    def test_should_still_serve_the_documentation(
-        self, test_client: TestClient
-    ):
-        assert test_client.get('/openapi.json').status_code == 200

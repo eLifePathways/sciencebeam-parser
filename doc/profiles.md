@@ -204,12 +204,27 @@ Two response headers say what answered a request:
 | --- | --- |
 | `X-ScienceBeam-Profile` | the profile name, after aliases and after a profile that tracks another |
 | `X-ScienceBeam-Profile-Digest` | a digest of the models that profile resolved to |
+| `X-ScienceBeam-Profile-Requested` | the name the request named, where that is not the one above |
 
 A request naming `recommended` is answered with the profile `recommended`
 tracks, so a document saved today names a combination that still means that
 combination once `recommended` has moved. That is also why a deployment serving
 a tracking profile serves what it tracks: the name in the header is one a caller
 may send, so naming the tracking profile is enough to get both.
+
+Being handed a name it did not use would leave a caller to work out the
+connection, so a request that named something else is told both:
+
+```http
+X-ScienceBeam-Profile-Requested: recommended
+X-ScienceBeam-Profile: delft_all_scielo_preprints_ore
+X-ScienceBeam-Profile-Digest: f5d45b3293c9
+```
+
+The requested header is absent where the name a request sent is the one that
+served it, so its presence is what says a name resolved to another. It is a
+property of the exchange rather than of the document: a converted document
+records what produced it, below, and not what it was asked for.
 
 The digest is there because the name alone is not enough to identify what ran:
 environment variables are applied after the profile is resolved and so win over

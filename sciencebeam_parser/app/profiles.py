@@ -30,6 +30,7 @@ LOGGER = logging.getLogger(__name__)
 
 PROFILE_HEADER_NAME = 'X-ScienceBeam-Profile'
 PROFILE_DIGEST_HEADER_NAME = 'X-ScienceBeam-Profile-Digest'
+PROFILE_REQUESTED_HEADER_NAME = 'X-ScienceBeam-Profile-Requested'
 
 
 # Four profiles' worth of models, for a deployment that opted in without saying
@@ -368,6 +369,7 @@ class RequestProfile:
     """
     name: Optional[str] = None
     digest: Optional[str] = None
+    requested_name: Optional[str] = None
 
 
 REQUEST_PROFILE: contextvars.ContextVar[Optional[RequestProfile]] = (
@@ -381,11 +383,15 @@ def start_request_profile() -> RequestProfile:
     return request_profile
 
 
-def record_request_profile(bundle: ProfileBundle) -> None:
+def record_request_profile(
+    bundle: ProfileBundle,
+    requested_name: Optional[str] = None
+) -> None:
     request_profile = REQUEST_PROFILE.get()
     if request_profile is not None:
         request_profile.name = bundle.name
         request_profile.digest = bundle.models_digest
+        request_profile.requested_name = requested_name
 
 
 def get_request_profile_headers() -> Dict[str, str]:
@@ -396,6 +402,11 @@ def get_request_profile_headers() -> Dict[str, str]:
     same profile name with different models. It is also there when the name is
     not, so that a deployment without a `profile:` key answers with the same
     fact its documents carry.
+
+    The requested name is there only where it is not the answer: a request that
+    named a profile tracking another, or an alias, is told both what it asked
+    for and what ran, rather than being handed a name it did not use and left to
+    work out the connection.
     """
     request_profile = REQUEST_PROFILE.get()
     if request_profile is None:
@@ -405,4 +416,6 @@ def get_request_profile_headers() -> Dict[str, str]:
         headers[PROFILE_HEADER_NAME] = request_profile.name
     if request_profile.digest:
         headers[PROFILE_DIGEST_HEADER_NAME] = request_profile.digest
+    if request_profile.requested_name and request_profile.requested_name != request_profile.name:
+        headers[PROFILE_REQUESTED_HEADER_NAME] = request_profile.requested_name
     return headers

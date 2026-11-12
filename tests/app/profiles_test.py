@@ -7,13 +7,18 @@ import pytest
 
 from sciencebeam_parser.app import profiles as profiles_module
 from sciencebeam_parser.app.profiles import (
+    PROFILE_HEADER_NAME,
+    PROFILE_REQUESTED_HEADER_NAME,
     ProfileDescription,
     ProfileNotSelectableError,
     ProfileRegistry,
     SequenceModelCache,
     TooManyLoadedModelsError,
     get_model_cache_key,
-    get_selectable_profile_names
+    get_request_profile_headers,
+    get_selectable_profile_names,
+    record_request_profile,
+    start_request_profile
 )
 from sciencebeam_parser.config.config import AppConfig, UnknownProfileError
 from sciencebeam_parser.models.model import Model
@@ -499,6 +504,31 @@ class TestProfileRegistryPointers:
             default_profile_name='tracking_b'
         )
         assert registry.get_default_bundle().name == 'b'
+
+    def test_should_report_the_name_a_request_asked_for_beside_what_served_it(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['a', 'b', 'tracking_b']
+        )
+        start_request_profile()
+        record_request_profile(registry.get_bundle('tracking_b'), requested_name='tracking_b')
+        headers = get_request_profile_headers()
+        assert headers[PROFILE_HEADER_NAME] == 'b'
+        assert headers[PROFILE_REQUESTED_HEADER_NAME] == 'tracking_b'
+
+    def test_should_not_repeat_the_name_where_it_is_what_served(self):
+        registry = self.create_pointer_registry(selectable_profile_names=['a', 'b'])
+        start_request_profile()
+        record_request_profile(registry.get_bundle('b'), requested_name='b')
+        assert PROFILE_REQUESTED_HEADER_NAME not in get_request_profile_headers()
+
+    def test_should_say_nothing_was_asked_for_where_nothing_was(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['b', 'tracking_b'],
+            default_profile_name='tracking_b'
+        )
+        start_request_profile()
+        record_request_profile(registry.get_default_bundle())
+        assert PROFILE_REQUESTED_HEADER_NAME not in get_request_profile_headers()
 
     def test_should_say_what_a_pointer_tracks(self):
         registry = self.create_pointer_registry(
