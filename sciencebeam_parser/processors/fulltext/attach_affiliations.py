@@ -26,12 +26,8 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticAffiliationAddress,
     SemanticAuthor,
     SemanticMarker,
-    SemanticMixedContentWrapper,
     SemanticNamePart,
-    SemanticNote,
-    SemanticRawAffiliation,
-    SemanticRawAffiliationAddress,
-    SemanticRawAuthors
+    SemanticNote
 )
 
 
@@ -61,24 +57,19 @@ CONTENT_DUPLICATE_MIN_RATIO = 0.8
 Centroid = Tuple[float, float, int]
 
 
-def get_header_clusters(semantic_front: SemanticMixedContentWrapper) -> List[HeaderCluster]:
-    """The header's labelled clusters in document order, before the raw author and
-    affiliation blocks of the front are parsed: the author blocks, the affiliation
-    and address blocks, and anything else in between."""
+def get_header_clusters(
+    entity_blocks: Iterable[Tuple[str, LayoutBlock]]
+) -> List[HeaderCluster]:
+    """The header's labelled clusters in the order the header model labelled them, as
+    GROBID's HeaderParser hands them to the pre-link: the author blocks, the
+    affiliation and address blocks, and anything else in between. Read off the
+    labelled sequence rather than the front, which need not keep that order (the
+    titles, for one, are added after the rest)."""
     header_clusters: List[HeaderCluster] = []
-    for semantic_content in semantic_front:
-        if isinstance(semantic_content, SemanticRawAuthors):
-            header_clusters.append((HEADER_AUTHOR_LABEL, semantic_content.merged_block))
-            continue
-        if isinstance(semantic_content, SemanticRawAffiliationAddress):
-            for raw_content in semantic_content:
-                label = (
-                    HEADER_AFFILIATION_LABEL if isinstance(raw_content, SemanticRawAffiliation)
-                    else HEADER_ADDRESS_LABEL
-                )
-                header_clusters.append((label, raw_content.merged_block))
-            continue
-        header_clusters.append((HEADER_OTHER_LABEL, semantic_content.merged_block))
+    for label, layout_block in entity_blocks:
+        if label not in {HEADER_AUTHOR_LABEL, HEADER_AFFILIATION_LABEL, HEADER_ADDRESS_LABEL}:
+            label = HEADER_OTHER_LABEL
+        header_clusters.append((label, layout_block))
     return header_clusters
 
 

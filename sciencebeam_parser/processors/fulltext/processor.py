@@ -339,15 +339,15 @@ class FullTextProcessor:
             app_features_context=self.app_features_context
         )
         LOGGER.debug('labeled_layout_tokens: %r', labeled_layout_tokens)
-        entity_blocks = self.header_model.iter_entity_layout_blocks_for_labeled_layout_tokens(
+        entity_blocks = list(self.header_model.iter_entity_layout_blocks_for_labeled_layout_tokens(
             labeled_layout_tokens
-        )
+        ))
+        header_clusters = get_header_clusters(entity_blocks)
         self.header_model.update_semantic_document_with_entity_blocks(
             semantic_document, entity_blocks,
             abstracts_mode=self.config.abstracts_mode,
             titles_mode=self.config.titles_mode
         )
-        header_clusters = get_header_clusters(semantic_document.front)
         original_authors_text: Optional[str] = None
         if self.config.extract_authors:
             original_authors_text = self._process_raw_authors(semantic_document.front)
