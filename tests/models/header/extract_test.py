@@ -366,6 +366,19 @@ class TestHeaderSemanticExtractorAbstractHeading:
             ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
         ]) == ['ABSTRACT']
 
+    def test_should_keep_the_heading_where_abstracts_are_merged_by_language(self):
+        assert self._get_headings([
+            ('O', LayoutBlock.for_text('Abstract')),
+            ('<abstract>', LayoutBlock.for_text(
+                'This study examines the way in which the words of a language'
+                ' are used by the people who speak it.'
+            )),
+            ('<abstract>', LayoutBlock.for_text(
+                'The results show that the words of a language are used in the'
+                ' way that the people who speak it expect them to be.'
+            ))
+        ], abstracts_mode=AbstractsMode.MERGED_BY_LANGUAGE) == ['Abstract']
+
     def test_should_carry_no_heading_where_the_block_above_is_too_long(self):
         assert self._get_headings([
             ('O', LayoutBlock.for_text(

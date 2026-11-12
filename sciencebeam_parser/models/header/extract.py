@@ -3,7 +3,7 @@ import re
 from collections import OrderedDict
 from itertools import groupby
 from typing import (
-    AbstractSet, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
+    AbstractSet, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 )
 
 from sciencebeam_parser.document.semantic_document import (
@@ -293,6 +293,7 @@ def merge_abstracts_by_language(
     group it by, and guessing which group it belongs to is what detection declined to do.
     """
     blocks_by_language: "OrderedDict[str, List[LayoutBlock]]" = OrderedDict()
+    heading_by_language: Dict[str, Optional[LayoutBlock]] = {}
     order: List[Tuple[Optional[str], Optional[SemanticAbstract]]] = []
     for semantic_abstract in semantic_abstracts:
         language = semantic_abstract.language
@@ -301,6 +302,7 @@ def merge_abstracts_by_language(
             continue
         if language not in blocks_by_language:
             blocks_by_language[language] = []
+            heading_by_language[language] = semantic_abstract.heading_block
             order.append((language, None))
         blocks_by_language[language].append(semantic_abstract.merged_block)
     merged: List[SemanticAbstract] = []
@@ -311,7 +313,8 @@ def merge_abstracts_by_language(
             continue
         merged.append(SemanticAbstract(
             layout_block=LayoutBlock.merge_blocks(blocks_by_language[language]),
-            language=language
+            language=language,
+            heading_block=heading_by_language[language]
         ))
     return merged
 
