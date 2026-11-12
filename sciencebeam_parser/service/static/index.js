@@ -7,6 +7,8 @@ import { parseJatsViewModel } from './jats-to-html.js';
 import { parseTeiViewModel } from './tei-to-html.js';
 import { getZipSourceForBlob, readZipEntries } from './read-zip.js';
 import { addSvgViewBox } from './svg-view-box.js';
+import { getProfileOptionGroups } from './profile-options.js';
+
 
 const deployment = JSON.parse(document.getElementById('deployment').textContent);
 
@@ -119,12 +121,19 @@ function checkSelectedFile() {
   convertButton.disabled = rejected;
 }
 
-function addOption(select, value, label) {
+function addOption(parent, value, label) {
   const option = document.createElement('option');
   option.value = value;
   option.textContent = label;
-  select.appendChild(option);
+  parent.appendChild(option);
   return option;
+}
+
+function addOptionGroup(select, label) {
+  const group = document.createElement('optgroup');
+  group.label = label;
+  select.appendChild(group);
+  return group;
 }
 
 function setUpOutputSelect() {
@@ -170,6 +179,16 @@ function getSelectedIncludes() {
     .flatMap((checkbox) => checkbox.value.split(','));
 }
 
+function addProfileOptions(profiles) {
+  getProfileOptionGroups(profiles).forEach((group) => {
+    const parent = group.label ? addOptionGroup(profileSelect, group.label) : profileSelect;
+    group.profiles.forEach((profile) => {
+      const option = addOption(parent, profile.name, profile.label || profile.name);
+      option.selected = profile.is_default;
+    });
+  });
+}
+
 function showProfileDescription(profiles) {
   const profile = profiles.find((item) => item.name === profileSelect.value);
   profileHint.textContent = profile ? (profile.description || '') : '';
@@ -192,10 +211,7 @@ async function loadProfiles() {
     addOption(profileSelect, '', 'default');
     return;
   }
-  profiles.forEach((profile) => {
-    const option = addOption(profileSelect, profile.name, profile.label || profile.name);
-    option.selected = profile.is_default;
-  });
+  addProfileOptions(profiles);
   profileSelect.addEventListener('change', () => showProfileDescription(profiles));
   showProfileDescription(profiles);
 }

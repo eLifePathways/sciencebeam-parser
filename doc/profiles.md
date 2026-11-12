@@ -128,14 +128,16 @@ curl --fail --show-error 'http://localhost:8080/api/profiles'
       "label": "DeLFT retrained models, SciELO preprints and ORE",
       "description": "GROBID 0.9.0 with segmentation, the header and both reference models retrained as DeLFT models on SciELO preprints and ORE.",
       "alias_names": [],
-      "is_default": false
+      "is_default": false,
+      "tracks": null
     },
     {
       "name": "recommended",
       "label": "Recommended",
       "description": "The combination we currently recommend. Its models change between releases, and the profile digest on each response identifies them.",
       "alias_names": [],
-      "is_default": true
+      "is_default": true,
+      "tracks": "delft_all_scielo_preprints_ore"
     }
   ]
 }
@@ -145,6 +147,12 @@ It lists what this deployment declares selectable, so a deployment that narrows
 `selectable_profiles` advertises only what it serves. A profile that tracks
 another is listed beside what it tracks rather than in place of it, because the
 two are different offers: one follows what we would choose, the other stays put.
+
+`tracks` is what tells them apart: the profile this one currently serves the
+models of, or `null` where it declares its own. The two resolve to the same
+models, so a client offering a menu should separate them rather than list them
+flat — the page this service serves groups them under "Recommended" and "A
+specific combination".
 
 `profile_aliases` is for a name a profile no longer has — an old name kept
 working after a rename. An alias is reported as `alias_names` of the profile it

@@ -36,6 +36,15 @@ class ProfileResponse(BaseModel):
         default=False,
         description='Whether a request naming no profile is served by this one.'
     )
+    tracks: Optional[str] = Field(
+        default=None,
+        description=(
+            'The profile this one tracks, whose models it currently serves and whose '
+            'name a response reports, or null where this profile declares its own '
+            'models. What a profile tracks changes between releases, so a client '
+            'offering a choice may present the two differently.'
+        )
+    )
 
 
 class ProfileListResponse(BaseModel):
@@ -51,7 +60,8 @@ def get_profile_list_response(
             label=profile_description.label,
             description=profile_description.description,
             alias_names=list(profile_description.alias_names),
-            is_default=profile_description.is_default
+            is_default=profile_description.is_default,
+            tracks=profile_description.tracks
         )
         for profile_description in profile_descriptions
     ])

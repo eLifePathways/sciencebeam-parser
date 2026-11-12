@@ -167,12 +167,18 @@ class ProfileDescription(NamedTuple):
 
     `label` and `description` are optional because a profile is not waiting for
     prose to be selectable; a client building a menu falls back to the name.
+
+    `tracks` is what separates the two kinds of choice in one list: a name whose
+    models change between releases, and a combination that stays where it is. A
+    menu that offered both as one undifferentiated list would be offering the
+    same models twice.
     """
     name: str
     label: Optional[str]
     description: Optional[str]
     alias_names: Sequence[str]
     is_default: bool
+    tracks: Optional[str] = None
 
 
 def get_selectable_profile_names(
@@ -258,7 +264,12 @@ class ProfileRegistry:
                 label=self.base_config.get_profile_label(name),
                 description=self.base_config.get_profile_description(name),
                 alias_names=alias_names_map.get(name, []),
-                is_default=name == self.default_profile_name
+                is_default=name == self.default_profile_name,
+                tracks=(
+                    self.base_config.get_pinned_profile_name(name)
+                    if self.base_config.is_profile_pointer(name)
+                    else None
+                )
             )
             for name in self.get_available_profile_names()
         ]

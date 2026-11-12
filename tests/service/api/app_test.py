@@ -920,14 +920,16 @@ class TestProfileList:
                     'label': 'Profile 1',
                     'description': 'What profile 1 serves.',
                     'alias_names': ['profile_one'],
-                    'is_default': True
+                    'is_default': True,
+                    'tracks': None
                 },
                 {
                     'name': PROFILE_NAME_2,
                     'label': None,
                     'description': None,
                     'alias_names': [],
-                    'is_default': False
+                    'is_default': False,
+                    'tracks': None
                 },
             ]
         }

@@ -500,6 +500,15 @@ class TestProfileRegistryPointers:
         )
         assert registry.get_default_bundle().name == 'b'
 
+    def test_should_say_what_a_pointer_tracks(self):
+        registry = self.create_pointer_registry(
+            selectable_profile_names=['a', 'b', 'tracking_b']
+        )
+        assert {
+            description.name: description.tracks
+            for description in registry.get_profile_descriptions()
+        } == {'a': None, 'b': None, 'tracking_b': 'b'}
+
     def test_should_refuse_a_pointer_this_deployment_does_not_serve(self):
         registry = self.create_pointer_registry(selectable_profile_names=['a'])
         with pytest.raises(ProfileNotSelectableError):
