@@ -5,7 +5,11 @@ from typing import List
 from lxml import etree
 
 from benchmarks.matched_property_scoring import PROPERTY_SEPARATOR
-from benchmarks.variant_xpath import abstract_variants, title_language_pairs
+from benchmarks.variant_xpath import (
+    abstract_variants,
+    fn_jats_abstract_language_pairs,
+    title_language_pairs
+)
 
 
 def _article_meta(inner: str) -> etree.ElementBase:
@@ -106,10 +110,37 @@ def _article(inner: str, language: str = "pt") -> etree.ElementBase:
     )
 
 
+class TestAbstractLanguagePairs:
+    def test_should_give_an_abstract_the_articles_language(self):
+        article = etree.fromstring(
+            '<article xml:lang="pt"><front><article-meta>'
+            "<abstract>O resumo</abstract>"
+            "</article-meta></front></article>"
+        )
+        assert fn_jats_abstract_language_pairs(None, [article]) == [_pair("pt", "O resumo")]
+
+    def test_should_prefer_a_language_on_the_abstract_itself(self):
+        article = etree.fromstring(
+            '<article xml:lang="pt"><front><article-meta>'
+            '<abstract xml:lang="es">El resumen</abstract>'
+            "</article-meta></front></article>"
+        )
+        assert fn_jats_abstract_language_pairs(None, [article]) == [_pair("es", "El resumen")]
+
+
 class TestTitleLanguagePairs:
     def test_should_give_the_article_its_own_language(self):
         article = _article("<article-title>O titulo</article-title>")
         assert title_language_pairs(article) == [_pair("pt", "O titulo")]
+
+    def test_should_prefer_a_language_on_the_article_title_itself(self):
+        article = _article(
+            '<article-title xml:lang="es">El titulo</article-title>'
+            '<article-title xml:lang="en">The title</article-title>'
+        )
+        assert title_language_pairs(article) == [
+            _pair("es", "El titulo"), _pair("en", "The title")
+        ]
 
     def test_should_read_a_translation_language_from_its_group(self):
         article = _article(

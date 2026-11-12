@@ -82,16 +82,33 @@ def fn_jats_abstract_variants(_, nodes):
     ]
 
 
-def _language_pair(node: ET.ElementBase) -> str:
-    """A value's language and the text that identifies it, for `matched_property`."""
-    return (node.get(XML_LANG) or "") + PROPERTY_SEPARATOR + get_text_content(node)
+def _first_declared_language(*elements: Optional[ET.ElementBase]) -> str:
+    for element in elements:
+        language = element.get(XML_LANG) if element is not None else None
+        if language:
+            return language
+    return ""
+
+
+def _language_pair(node: ET.ElementBase, *fallbacks: Optional[ET.ElementBase]) -> str:
+    return (
+        _first_declared_language(node, *fallbacks)
+        + PROPERTY_SEPARATOR + get_text_content(node)
+    )
+
+
+def abstract_language_pairs(article: ET.ElementBase) -> List[str]:
+    article_meta = article.find("front/article-meta")
+    if article_meta is None:
+        return []
+    return [
+        _language_pair(variant, article)
+        for variant in abstract_variants(article_meta)
+    ]
 
 
 def fn_jats_abstract_language_pairs(_, nodes):
-    return [
-        _language_pair(variant)
-        for node in nodes for variant in abstract_variants(node)
-    ]
+    return [pair for node in nodes for pair in abstract_language_pairs(node)]
 
 
 def fn_tei_abstract_language_pairs(_, nodes):
@@ -99,26 +116,16 @@ def fn_tei_abstract_language_pairs(_, nodes):
 
 
 def title_language_pairs(article: ET.ElementBase) -> List[str]:
-    """Each title of an article with the language it is written in.
-
-    `article-title` carries no language of its own and takes the article's, which is why
-    this reads the article rather than `article-meta`; a `trans-title` carries its own.
-    """
-    language = article.get(XML_LANG) or ""
     title_group = article.find("front/article-meta/title-group")
     if title_group is None:
         return []
-    pairs = [
-        language + PROPERTY_SEPARATOR + get_text_content(node)
+    return [
+        _language_pair(node, article)
         for node in title_group.findall("article-title")
+    ] + [
+        _language_pair(node, node.getparent())
+        for node in title_group.iter("trans-title")
     ]
-    for node in title_group.iter("trans-title"):
-        parent = node.getparent()
-        pairs.append(
-            (node.get(XML_LANG) or parent.get(XML_LANG) or "")
-            + PROPERTY_SEPARATOR + get_text_content(node)
-        )
-    return pairs
 
 
 def fn_jats_title_language_pairs(_, nodes):
