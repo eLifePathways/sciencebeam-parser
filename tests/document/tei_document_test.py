@@ -98,7 +98,7 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
         tei_document = get_tei_for_semantic_document(semantic_document)
         LOGGER.debug('tei xml: %r', etree.tostring(tei_document.root))
         assert tei_document.get_xpath_text_content_list(
-            '//tei:abstract/tei:p'
+            '//tei:abstract/tei:div/tei:p'
         ) == [TOKEN_1]
 
     def test_should_add_further_abstract_as_further_abstract_element(self):
@@ -112,7 +112,7 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
         tei_document = get_tei_for_semantic_document(semantic_document)
         LOGGER.debug('tei xml: %r', etree.tostring(tei_document.root))
         assert tei_document.get_xpath_text_content_list(
-            '//tei:profileDesc/tei:abstract/tei:p'
+            '//tei:profileDesc/tei:abstract/tei:div/tei:p'
         ) == [TOKEN_1, TOKEN_2]
         assert tei_document.get_abstract() == TOKEN_1
 

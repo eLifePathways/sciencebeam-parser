@@ -39,7 +39,7 @@ class TestTeiDocument:
         document.set_abstract('test')
         LOGGER.debug('xml: %r', etree.tostring(document.root))
         nodes = document.root.xpath(
-            '//tei:abstract/tei:p', namespaces=TEI_NS_MAP
+            '//tei:abstract/tei:div/tei:p', namespaces=TEI_NS_MAP
         )
         assert [e.text for e in nodes] == ['test']
         assert document.get_abstract() == 'test'
@@ -122,39 +122,36 @@ def _get_tei_header_child_names(document: TeiDocument) -> list:
 
 
 class TestTeiDocumentAbstractHeading:
-    def _get_profile_desc_children(self, document: TeiDocument):
+    def _get_abstract_children(self, document: TeiDocument):
         return [
-            (etree.QName(child).localname, child.get('type'), child.text)
+            (etree.QName(child).localname, child.text)
             for child in document.root.xpath(
-                '//tei:profileDesc/*', namespaces=TEI_NS_MAP
+                '//tei:profileDesc/tei:abstract/tei:div/*', namespaces=TEI_NS_MAP
             )
         ]
 
-    def test_should_add_the_heading_as_a_note_before_its_abstract(self):
+    def test_should_add_the_heading_as_the_head_of_the_abstract_div(self):
         document = TeiDocument()
         document.add_abstract_layout_block(
             LayoutBlock.for_text('The abstract.'),
             heading_block=LayoutBlock.for_text('Plain language summary')
         )
-        assert self._get_profile_desc_children(document) == [
-            ('note', 'abstract-heading', 'Plain language summary'),
-            ('abstract', None, None)
+        assert self._get_abstract_children(document) == [
+            ('head', 'Plain language summary'), ('p', 'The abstract.')
         ]
 
-    def test_should_add_no_note_where_there_is_no_heading(self):
+    def test_should_add_no_head_where_there_is_no_heading(self):
         document = TeiDocument()
         document.add_abstract_layout_block(LayoutBlock.for_text('The abstract.'))
-        assert self._get_profile_desc_children(document) == [('abstract', None, None)]
+        assert self._get_abstract_children(document) == [('p', 'The abstract.')]
 
-    def test_should_keep_the_abstract_text_out_of_the_note(self):
+    def test_should_keep_the_heading_out_of_what_the_parser_reads_back(self):
         document = TeiDocument()
         document.add_abstract_layout_block(
             LayoutBlock.for_text('The abstract.'),
             heading_block=LayoutBlock.for_text('Plain language summary')
         )
-        assert get_tei_xpath_text_content_list(
-            document.root, '//tei:profileDesc/tei:abstract'
-        ) == ['The abstract.']
+        assert document.get_abstract() == 'The abstract.'
 
 
 class TestTeiDocumentAttribution:

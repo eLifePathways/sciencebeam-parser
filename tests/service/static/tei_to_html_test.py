@@ -183,7 +183,10 @@ class TestAffiliations:
 class TestAbstract:
     def test_should_read_every_paragraph_of_the_abstract(self):
         view_model = get_tei_view_model(get_tei_xml(
-            header='<profileDesc><abstract><p>First.</p><p>Second.</p></abstract></profileDesc>'
+            header=(
+                '<profileDesc><abstract><div><p>First.</p><p>Second.</p></div>'
+                '</abstract></profileDesc>'
+            )
         ))
         assert get_paragraph_texts(
             view_model['abstracts'][0]['paragraphs']
@@ -192,20 +195,20 @@ class TestAbstract:
     def test_should_read_the_heading_noted_before_an_abstract_as_its_title(self):
         view_model = get_tei_view_model(get_tei_xml(header=(
             '<profileDesc>'
-            '<note type="abstract-heading">Plain language summary</note>'
-            '<abstract><p>The summary.</p></abstract>'
-            '<abstract><p>Another abstract.</p></abstract>'
+            '<abstract><div><head>Plain language summary</head>'
+            '<p>The summary.</p></div></abstract>'
+            '<abstract><div><p>Another abstract.</p></div></abstract>'
             '</profileDesc>'
         )))
         assert [
             without_paths(abstract['title']) for abstract in view_model['abstracts']
-        ] == [{'label': 'note', 'text': 'Plain language summary'}, None]
+        ] == [{'label': 'head', 'text': 'Plain language summary'}, None]
 
     def test_should_read_every_abstract_with_the_language_it_declares(self):
         view_model = get_tei_view_model(get_tei_xml(header=(
             '<profileDesc>'
-            '<abstract xml:lang="en"><p>The abstract.</p></abstract>'
-            '<abstract xml:lang="pt"><p>O resumo.</p></abstract>'
+            '<abstract xml:lang="en"><div><p>The abstract.</p></div></abstract>'
+            '<abstract xml:lang="pt"><div><p>O resumo.</p></div></abstract>'
             '</profileDesc>'
         )))
         assert [
@@ -215,7 +218,10 @@ class TestAbstract:
 
     def test_should_carry_no_language_where_the_abstract_declares_none(self):
         view_model = get_tei_view_model(get_tei_xml(
-            header='<profileDesc><abstract><p>The abstract.</p></abstract></profileDesc>'
+            header=(
+                '<profileDesc><abstract><div><p>The abstract.</p></div></abstract>'
+                '</profileDesc>'
+            )
         ))
         assert 'language' not in view_model['abstracts'][0]
 
@@ -391,7 +397,7 @@ class TestReferences:
 
 FULL_TEI_XML = get_tei_xml(
     header=TITLE_STMT + AUTHORS_HEADER + (
-        '<profileDesc><abstract><p>An abstract.</p></abstract></profileDesc>'
+        '<profileDesc><abstract><div><p>An abstract.</p></div></abstract></profileDesc>'
     ),
     body='<div><head>Methods</head><p>A paragraph.</p></div>' + FIGURE_BODY,
     back=REFERENCE_BACK
@@ -433,8 +439,8 @@ class TestRenderedTei:
     def test_should_show_the_heading_noted_before_an_abstract(self):
         html = get_rendered_tei(get_tei_xml(header=(
             '<profileDesc>'
-            '<note type="abstract-heading">Plain language summary</note>'
-            '<abstract xml:lang="en"><p>The summary.</p></abstract>'
+            '<abstract xml:lang="en"><div><head>Plain language summary</head>'
+            '<p>The summary.</p></div></abstract>'
             '</profileDesc>'
         )))
         text_only = get_text_without_labels(html)
@@ -444,8 +450,8 @@ class TestRenderedTei:
     def test_should_show_each_abstract_with_the_language_it_declares(self):
         html = get_rendered_tei(get_tei_xml(header=(
             '<profileDesc>'
-            '<abstract xml:lang="en"><p>The abstract.</p></abstract>'
-            '<abstract xml:lang="pt"><p>O resumo.</p></abstract>'
+            '<abstract xml:lang="en"><div><p>The abstract.</p></div></abstract>'
+            '<abstract xml:lang="pt"><div><p>O resumo.</p></div></abstract>'
             '</profileDesc>'
         )))
         assert 'lang="en"' in html
