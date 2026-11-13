@@ -682,6 +682,9 @@ max_render_workers: 2
 # Seconds to wait for a free render worker, and for one to answer a request.
 render_timeout: 120
 
+# 0 or blank for no limit
+max_upload_bytes: 67108864
+
 # Which origins a browser page may call the API from, matched exactly, or `*`
 # for every origin. Empty permits none. See doc/cors.md.
 cors:
