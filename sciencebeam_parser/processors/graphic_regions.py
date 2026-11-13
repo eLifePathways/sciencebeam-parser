@@ -47,6 +47,7 @@ class GraphicRegionConfig:
     min_vector_content_size: float = 10.0
     max_text_ratio_without_content: float = 0.2
     min_page_border_rule_ratio: float = 0.85
+    max_vector_region_aspect_ratio: float = 10.0
     render_dpi: float = 150.0
     min_text_over_graphic_ratio: float = 0.5
     uncommon_page_as_one_region: bool = True
@@ -227,6 +228,14 @@ def _is_text_box_rather_than_drawing(
     return covered_area / region_box.area >= config.max_text_ratio_without_content
 
 
+def _is_band_rather_than_drawing(region_box: _Box, config: GraphicRegionConfig) -> bool:
+    """A strip far wider than it is high — a table's shaded heading, not a drawing."""
+    height = region_box.y2 - region_box.y1
+    if height <= 0:
+        return True
+    return (region_box.x2 - region_box.x1) / height > config.max_vector_region_aspect_ratio
+
+
 def iter_vector_region_graphics(
     layout_graphic: LayoutGraphic,
     page_coordinates: Optional[LayoutPageCoordinates],
@@ -271,6 +280,9 @@ def iter_vector_region_graphics(
             region_box = region_box.union(box)
         if _is_text_box_rather_than_drawing(region_box, cluster_boxes, text_boxes, config):
             LOGGER.debug('skipping a framed text box: %r', region_box)
+            continue
+        if _is_band_rather_than_drawing(region_box, config):
+            LOGGER.debug('skipping a band: %r', region_box)
             continue
         region_graphics.append(LayoutGraphic(
             coordinates=_get_coordinates_for_box(region_box, page_number=page_number),
