@@ -340,6 +340,7 @@ class SemanticExternalUrl(SemanticOptionalValueSemanticMixedContentWrapper):
 @dataclass
 class SemanticAbstract(SemanticSimpleContentWrapper):
     language: Optional[str] = None
+    heading_block: Optional[LayoutBlock] = None
 
 
 class SemanticRawNameList(SemanticMixedContentWrapper):

@@ -73,7 +73,8 @@ def get_tei_for_semantic_document(  # noqa pylint: disable=too-many-branches, to
         if semantic_abstract.merged_block:
             tei_document.add_abstract_layout_block(
                 semantic_abstract.merged_block,
-                language=semantic_abstract.language
+                language=semantic_abstract.language,
+                heading_block=semantic_abstract.heading_block
             )
 
     affiliations_by_marker: Dict[str, List[SemanticAffiliationAddress]] = {}

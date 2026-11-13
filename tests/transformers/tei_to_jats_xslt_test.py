@@ -126,7 +126,8 @@ def _tei(  # pylint: disable=too-many-arguments
     back: Optional[etree.ElementBase] = None,
     references: Optional[List[etree.ElementBase]] = None,
     application: Optional[etree.ElementBase] = None,
-    abstracts: Optional[List[Any]] = None
+    abstracts: Optional[List[Any]] = None,
+    abstract_headings: Optional[List[Any]] = None
 ) -> etree.ElementBase:
     if authors is None:
         authors = []
@@ -165,6 +166,16 @@ def _tei(  # pylint: disable=too-many-arguments
             if isinstance(abstract, tuple)
             else TEI_E.abstract(TEI_E.p(abstract))
             for abstract in abstracts
+        ]))
+    if abstract_headings is not None:
+        teiHeader.append(TEI_E.profileDesc(*[
+            element
+            for heading, abstract in abstract_headings
+            for element in (
+                [TEI_E.note(heading, type='abstract-heading'), TEI_E.abstract(TEI_E.p(abstract))]
+                if heading
+                else [TEI_E.abstract(TEI_E.p(abstract))]
+            )
         ]))
     if application is not None:
         teiHeader.append(TEI_E.encodingDesc(TEI_E.appInfo(application)))
@@ -403,6 +414,35 @@ class TestTeiToJatsXslt:
                 get_text_content(node)
                 for node in jats.xpath('front/article-meta/abstract')
             ] == [VALUE_1]
+
+        def test_should_give_the_abstract_the_heading_noted_before_it(
+                self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(abstract_headings=[
+                ('Abstract', VALUE_1), ('Plain language summary', VALUE_2)
+            ])))
+            assert [
+                get_text_content(node)
+                for node in jats.xpath('front/article-meta/abstract/title')
+            ] == ['Abstract', 'Plain language summary']
+
+        def test_should_add_no_title_where_no_heading_was_noted(
+                self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(abstract_headings=[
+                (None, VALUE_1)
+            ])))
+            assert jats.xpath('front/article-meta/abstract/title') == []
+            assert [
+                get_text_content(node)
+                for node in jats.xpath('front/article-meta/abstract')
+            ] == [VALUE_1]
+
+        def test_should_keep_the_empty_abstract_where_the_tei_has_none(
+                self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei()))
+            assert [
+                get_text_content(node)
+                for node in jats.xpath('front/article-meta/abstract')
+            ] == ['']
 
         def test_should_keep_the_language_of_each_abstract(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(

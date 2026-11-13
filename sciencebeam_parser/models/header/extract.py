@@ -3,7 +3,7 @@ import re
 from collections import OrderedDict
 from itertools import groupby
 from typing import (
-    AbstractSet, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
+    AbstractSet, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 )
 
 from sciencebeam_parser.document.semantic_document import (
@@ -17,6 +17,7 @@ from sciencebeam_parser.document.semantic_document import (
     T_SemanticContentFactory
 )
 from sciencebeam_parser.document.layout_document import (
+    EMPTY_BLOCK,
     LayoutBlock,
     LayoutLine,
     LayoutTokensText
@@ -106,11 +107,13 @@ def _get_token_count(layout_block: LayoutBlock) -> int:
 
 def get_semantic_abstract_for_layout_block(
     layout_block: LayoutBlock,
-    with_language: bool = True
+    with_language: bool = True,
+    heading_block: Optional[LayoutBlock] = None
 ) -> SemanticAbstract:
     return SemanticAbstract(
         layout_block=layout_block,
-        language=detect_language(str(LayoutTokensText(layout_block))) if with_language else None
+        language=detect_language(str(LayoutTokensText(layout_block))) if with_language else None,
+        heading_block=heading_block
     )
 
 
@@ -290,6 +293,7 @@ def merge_abstracts_by_language(
     group it by, and guessing which group it belongs to is what detection declined to do.
     """
     blocks_by_language: "OrderedDict[str, List[LayoutBlock]]" = OrderedDict()
+    heading_by_language: Dict[str, Optional[LayoutBlock]] = {}
     order: List[Tuple[Optional[str], Optional[SemanticAbstract]]] = []
     for semantic_abstract in semantic_abstracts:
         language = semantic_abstract.language
@@ -298,6 +302,7 @@ def merge_abstracts_by_language(
             continue
         if language not in blocks_by_language:
             blocks_by_language[language] = []
+            heading_by_language[language] = semantic_abstract.heading_block
             order.append((language, None))
         blocks_by_language[language].append(semantic_abstract.merged_block)
     merged: List[SemanticAbstract] = []
@@ -308,9 +313,112 @@ def merge_abstracts_by_language(
             continue
         merged.append(SemanticAbstract(
             layout_block=LayoutBlock.merge_blocks(blocks_by_language[language]),
-            language=language
+            language=language,
+            heading_block=heading_by_language[language]
         ))
     return merged
+
+
+OTHER_LABEL = 'O'
+
+NO_ABSTRACT_YET = -1
+
+LETTER_PATTERN = re.compile(r'[^\W\d_]')
+
+
+# A heading is printed on its own line, where a grant statement or a submission
+# date labelled `<other>` beside it runs longer.
+MAX_ABSTRACT_HEADING_TOKEN_COUNT = 8
+
+
+def get_abstract_heading_block(
+    name: str,
+    layout_block: LayoutBlock
+) -> Optional[LayoutBlock]:
+    """The heading an abstract is printed under, where the block before it carries one.
+
+    A heading is printed on its own line, and the block the model labels `<other>`
+    above an abstract often runs a word count or a doi into it from the line above.
+    """
+    if name != OTHER_LABEL or not layout_block.lines:
+        return None
+    heading_block = LayoutBlock(lines=layout_block.lines[-1:])
+    if not 0 < _get_token_count(heading_block) <= MAX_ABSTRACT_HEADING_TOKEN_COUNT:
+        return None
+    if not LETTER_PATTERN.search(str(LayoutTokensText(heading_block))):
+        return None
+    return heading_block
+
+
+def _iter_page_numbers(layout_block: LayoutBlock) -> Iterable[int]:
+    return (
+        token.coordinates.page_number
+        for token in layout_block.iter_all_tokens()
+        if token.coordinates is not None
+    )
+
+
+def _opens_mid_sentence(layout_block: LayoutBlock) -> bool:
+    text = str(LayoutTokensText(layout_block)).lstrip()
+    return bool(text) and text[:1].islower()
+
+
+def _ends_unfinished(layout_block: LayoutBlock) -> bool:
+    text = str(LayoutTokensText(layout_block)).rstrip().rstrip(')]"\u201d\u2019')
+    return bool(text) and text[-1:] not in {'.', '!', '?'}
+
+
+def is_abstract_continuation(
+    layout_block: LayoutBlock,
+    previous_abstract_block: LayoutBlock,
+    has_heading_above: bool
+) -> bool:
+    """Whether the block is the rest of the abstract before it, cut where the page broke.
+
+    A sentence runs across the cut, so the abstract stops unfinished and the block
+    opens mid-sentence. A title in another language opens the same way, and the
+    abstract above it does not stop mid-sentence.
+    """
+    if has_heading_above or not _opens_mid_sentence(layout_block):
+        return False
+    if not _ends_unfinished(previous_abstract_block):
+        return False
+    page_numbers = sorted(_iter_page_numbers(layout_block))
+    previous_page_numbers = sorted(_iter_page_numbers(previous_abstract_block))
+    if not page_numbers or not previous_page_numbers:
+        return False
+    previous_end_page = previous_page_numbers[-1]
+    return page_numbers[0] in (previous_end_page, previous_end_page + 1)
+
+
+def join_continued_abstracts(
+    entity_tokens: List[Tuple[str, LayoutBlock]]
+) -> List[Tuple[str, LayoutBlock]]:
+    """The same sequence, with a block continuing an abstract joined to that abstract."""
+    joined: List[Tuple[str, LayoutBlock]] = []
+    abstract_index = NO_ABSTRACT_YET
+    previous_name = ''
+    previous_block = EMPTY_BLOCK
+    for name, layout_block in entity_tokens:
+        if name == '<abstract>' and abstract_index != NO_ABSTRACT_YET:
+            abstract_block = joined[abstract_index][1]
+            if is_abstract_continuation(
+                layout_block,
+                abstract_block,
+                get_abstract_heading_block(previous_name, previous_block) is not None
+            ):
+                joined[abstract_index] = (
+                    name, LayoutBlock.merge_blocks([abstract_block, layout_block])
+                )
+                previous_name = name
+                previous_block = layout_block
+                continue
+        joined.append((name, layout_block))
+        if name == '<abstract>':
+            abstract_index = len(joined) - 1
+        previous_name = name
+        previous_block = layout_block
+    return joined
 
 
 def is_abstract_variant(
@@ -391,7 +499,7 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         titles_mode: str = DEFAULT_TITLES_MODE,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
-        entity_tokens = list(entity_tokens)
+        entity_tokens = join_continued_abstracts(list(entity_tokens))
         LOGGER.debug('entity_tokens: %s', entity_tokens)
         carry_variants = abstracts_mode != AbstractsMode.FIRST
         merge_by_language = abstracts_mode == AbstractsMode.MERGED_BY_LANGUAGE
@@ -401,9 +509,12 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         semantic_abstracts: List[SemanticAbstract] = []
         aff_address: Optional[SemanticRawAffiliationAddress] = None
         next_previous_label: str = ''
+        next_previous_block: LayoutBlock = EMPTY_BLOCK
         for name, layout_block in entity_tokens:
             previous_label = next_previous_label
+            previous_block = next_previous_block
             next_previous_label = name
+            next_previous_block = layout_block
             if name == '<title>':
                 title_blocks.append(_split_trailing_title_punct(layout_block))
                 continue
@@ -422,7 +533,11 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                     and is_abstract_variant(abstract_layout_block, primary_abstract_block)
                 ):
                     semantic_abstract = get_semantic_abstract_for_layout_block(
-                        abstract_layout_block, with_language=carry_variants
+                        abstract_layout_block,
+                        with_language=carry_variants,
+                        heading_block=get_abstract_heading_block(
+                            previous_label, previous_block
+                        )
                     )
                     if primary_abstract_block is None:
                         primary_abstract_block = abstract_layout_block

@@ -562,6 +562,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        abstracts_mode: 'variants'
   delft_all_scielo_preprints_ore_cv:
     label: 'DeLFT retrained models, SciELO preprints and ORE, graphics located by the cv model'
     description: 'The retrained DeLFT models, with figures and tables located on the rendered page by the computer-vision model.'
@@ -570,6 +571,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        abstracts_mode: 'variants'
         use_cv_model: true
   llm_reference_segmenter:
     label: 'LLM reference segmenter'
