@@ -1,7 +1,8 @@
 dataset:
   # One sciencebeam-dataset-* repo per entry, pinned to a release tag and the commit
   # it pointed at: a run fails if the tag has moved. Scored against that tag's
-  # corrected `xml`. A mode takes the first N documents of the pinned releases.
+  # corrected `xml`. A mode takes the first N documents of each repo's
+  # releases/v1.0.0.csv shuffled with the sample seed, then of later additions.
   # `variant` changes only when PDFs do.
   # Move the pins with `make docker-benchmark-update-dataset`.
   repos:

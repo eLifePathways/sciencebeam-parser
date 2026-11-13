@@ -60,6 +60,8 @@ LOCAL_ROOT_ENV_VAR = "BENCH_LOCAL_PARQUET_DIR"
 # The layout every sciencebeam-dataset-* repo shares.
 RELEASE_DATA_DIR = "pdf-jats"
 RELEASES_DIR = "releases"
+# The release whose list is shuffled to order a released corpus.
+FIRST_RELEASE = "v1.0.0"
 
 
 class CorpusConfigError(ValueError):

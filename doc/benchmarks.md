@@ -27,9 +27,12 @@ public before restricted. Each repo is pinned in `eval.yml` to a release tag and
 its commit, and a run fails if the tag has moved. Gold is the pinned tag's
 corrected `xml`. The restricted repos are private, so `HF_TOKEN` needs read access.
 
-A mode takes the first N documents in the pinned release's order. Where a corpus
-has a public and a restricted repo, they take turns, so both count equally until
-one runs out. A smaller mode is the start of a larger one.
+A mode takes the first N documents of a fixed order: each repo's
+`releases/v1.0.0.csv` shuffled with the sample seed, since release order can be by
+date. Documents added later come after those, so they only reach a mode larger
+than the first release. A removed document gives its place to the next. Where a
+corpus has a public and a restricted repo, they take turns, so both count equally
+until one runs out. A smaller mode is the start of a larger one.
 
 The cache under `benchmarks/data/` records each document's commit and checksums,
 so a corrected document is fetched again. `run.json` records the documents, their

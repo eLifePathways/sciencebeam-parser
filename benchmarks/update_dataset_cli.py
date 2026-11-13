@@ -188,6 +188,7 @@ def _mode_lines(
     corrected: Mapping[Tuple[str, str], Set[str]],
 ) -> List[str]:
     lines: List[str] = []
+    seed = cfg["seeds"]["sample"]
     for split in SPLITS:
         if split not in cfg["dataset"]["splits"]:
             continue
@@ -204,9 +205,9 @@ def _mode_lines(
                 if corpus.corpus not in sizes:
                     continue
                 n = sizes[corpus.corpus]
-                before, _ = select_released_ids(reader, corpus, n, check_pins=False)
+                before, _ = select_released_ids(reader, corpus, n, seed, check_pins=False)
                 after, _ = select_released_ids(
-                    reader, _with_repos(corpus, newest), n, check_pins=False
+                    reader, _with_repos(corpus, newest), n, seed, check_pins=False
                 )
                 effects.append(f"{mode}: {mode_effect(before, after, fixed).describe()}")
             lines.append(f"{split} {corpus.corpus}")

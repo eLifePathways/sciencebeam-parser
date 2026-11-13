@@ -120,7 +120,8 @@ class TestResolveReleased:
 class TestSelection:
     def test_public_and_restricted_take_turns(self, root: Path):
         records = fetch_gold(_config(BOTH), "smoke", "validation", root / "out")
-        assert _ids(records) == release_ids([PUBLIC_FIRST, RESTRICTED_FIRST], 6)
+        first = [PUBLIC_FIRST, RESTRICTED_FIRST]
+        assert _ids(records) == release_ids(first, first, 6, 42)
         assert [r["repo_id"] for r in records].count(RESTRICTED) == 3
 
     def test_is_identical_across_runs(self, root: Path, tmp_path: Path):
@@ -155,15 +156,19 @@ class TestSelection:
         assert removed not in _ids(after)
         assert len(after) == len(before)
 
-    def test_a_moved_document_is_read_from_its_new_repo(self, root: Path):
-        moved = PUBLIC_FIRST[0]
-        _write_release(root, PUBLIC, "v2.0.0", PUBLIC_FIRST[1:])
-        _write_release(root, RESTRICTED, "v1.1.0", [moved] + RESTRICTED_FIRST)
-        _write_data(root, RESTRICTED, [moved] + RESTRICTED_FIRST)
+    def test_a_moved_document_keeps_its_place_and_is_read_from_its_new_repo(
+        self, root: Path
+    ):
+        before = fetch_gold(_config(BOTH), "smoke", "validation", root / "out")
+        moved = next(r["record_id"] for r in before if r["repo_id"] == PUBLIC)
+        _write_release(root, PUBLIC, "v2.0.0", [i for i in PUBLIC_FIRST if i != moved])
+        _write_release(root, RESTRICTED, "v1.1.0", RESTRICTED_FIRST + [moved])
+        _write_data(root, RESTRICTED, RESTRICTED_FIRST + [moved])
         sources = [
             _source(PUBLIC, "v2.0.0", "c-pub-2"), _source(RESTRICTED, "v1.1.0", "c-res-2"),
         ]
         after = fetch_gold(_config(sources), "smoke", "validation", root / "out")
+        assert _ids(after) == _ids(before)
         assert next(r for r in after if r["record_id"] == moved)["repo_id"] == RESTRICTED
 
     def test_rejects_an_unknown_mode(self, root: Path):

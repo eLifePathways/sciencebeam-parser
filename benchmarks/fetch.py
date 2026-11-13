@@ -19,6 +19,7 @@ from typing import (
 )
 
 from benchmarks.corpus_source import (
+    FIRST_RELEASE,
     AnySource,
     CorpusConfigError,
     CorpusSource,
@@ -126,6 +127,7 @@ def _describe_source(source: AnySource) -> Dict[str, Any]:
         return {
             "sources": [repo.to_dict() for repo in source.repos],
             "location": source.location,
+            "order": f"releases/{FIRST_RELEASE}.csv, shuffled",
         }
     return {
         "repo_id": source.repo_id,
@@ -253,28 +255,35 @@ def _iter_missing_rows(
 RELEASE_CACHE_FILE = ".release-cache.json"
 
 
-def select_released_ids(
+def select_released_ids(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     reader: RepoReader,
     corpus: ReleasedCorpus,
     raw_n: Optional[int],
+    seed: int,
     check_pins: bool = True,
 ) -> Tuple[List[str], Dict[str, ReleaseRepo]]:
     """The ids this mode selects, and the repo that holds each at its pinned tag."""
-    ids_by_repo: List[List[str]] = []
+    first_by_repo: List[List[str]] = []
+    current_by_repo: List[List[str]] = []
     repo_by_id: Dict[str, ReleaseRepo] = {}
     for repo in corpus.repos:
         if check_pins:
             reader.check_pinned(repo)
-        ids = read_release_ids(reader, repo, repo.revision, corpus.split)
-        for record_id in ids:
+        first_by_repo.append(read_release_ids(reader, repo, FIRST_RELEASE, corpus.split))
+        current = read_release_ids(reader, repo, repo.revision, corpus.split)
+        for record_id in current:
             if record_id in repo_by_id:
                 raise CorpusConfigError(
                     f"corpus {corpus.corpus!r}: a document is listed by both "
                     f"{repo_by_id[record_id].describe()} and {repo.describe()}"
                 )
             repo_by_id[record_id] = repo
-        ids_by_repo.append(ids)
-    return release_ids(ids_by_repo, raw_n), repo_by_id
+        current_by_repo.append(current)
+    try:
+        picked = release_ids(first_by_repo, current_by_repo, raw_n, seed)
+    except ValueError as error:
+        raise CorpusConfigError(f"corpus {corpus.corpus!r}: {error}") from error
+    return picked, repo_by_id
 
 
 def _sha256(path: Path) -> str:
@@ -404,6 +413,7 @@ def _fetch_released_corpus(  # pylint: disable=too-many-arguments,too-many-posit
     reader: RepoReader,
     corpus: ReleasedCorpus,
     raw_n: Optional[int],
+    seed: int,
     mode: str,
     corpus_dir: Path,
     with_pdf: bool,
@@ -413,7 +423,7 @@ def _fetch_released_corpus(  # pylint: disable=too-many-arguments,too-many-posit
         corpus.corpus, corpus.describe(), mode,
         raw_n if raw_n is not None else "all",
     )
-    picked, repo_by_id = select_released_ids(reader, corpus, raw_n)
+    picked, repo_by_id = select_released_ids(reader, corpus, raw_n, seed)
     corpus_dir.mkdir(parents=True, exist_ok=True)
     records = _materialise_released(
         reader, corpus, picked, repo_by_id, corpus_dir, with_pdf
@@ -483,7 +493,7 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                     f"training-source fetch doesn't support yet"
                 )
             records.extend(_fetch_released_corpus(
-                reader, source, sample_sizes[source.corpus], mode,
+                reader, source, sample_sizes[source.corpus], seed, mode,
                 data_dir / split / source.corpus, with_pdf,
             ))
             continue
