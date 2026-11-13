@@ -3,16 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from benchmarks.comparison_config import (
+    baseline_index,
     load_comparison,
     primary_index,
     variant_descriptions,
     resolve_variants,
     to_selection,
 )
+from benchmarks.report_budget import COMMENT_BUDGET, dropped_corpora_note, fit
 from benchmarks.report_chart_section import render_declared_chart
 from benchmarks.report_charts import (
     ChartOutput,
@@ -20,6 +23,7 @@ from benchmarks.report_charts import (
     chart_specs,
     render_charts,
 )
+from benchmarks.report_movement import default_baseline
 from benchmarks.report_grid import (
     GridRow,
     Selection,
@@ -40,9 +44,10 @@ from benchmarks.gold_presence import (
     merge_presence,
     produced_row,
 )
-from benchmarks.llm_usage import usage_for_corpora
 from benchmarks.report_cost import render_cost_section
 from benchmarks.report_legend import keyed, render_legend
+from benchmarks.report_tables import render_split_tables
+from benchmarks.report_usage import render_usage_section
 from benchmarks.shared_documents import on_shared_documents
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
@@ -113,14 +118,6 @@ def _get_overall_gold_f1(
     return weighted / total if total else None
 
 
-def _fmt_f1(f1: Optional[float]) -> str:
-    return f"{f1:.3f}" if f1 is not None else "—"
-
-
-def _fmt_delta(delta: Optional[float]) -> str:
-    return f"{delta:+.3f}" if delta is not None else "—"
-
-
 def _gold_presence(summary: dict, corpus: str, field: str) -> Optional[dict]:
     """None for a summary written before the split, which then reads as unknown."""
     return summary.get("corpora", {}).get(corpus, {}).get(GOLD_PRESENCE_KEY, {}).get(field)
@@ -135,183 +132,6 @@ def _corpus_f1_getter(corpus: str) -> Callable[[dict, str, str], Optional[float]
             return None
         return _get_f1(summary, corpus, field, method)
     return get_f1
-
-
-def _fmt_count(value: Optional[float]) -> str:
-    return f"{round(value):,}" if value else "—"
-
-
-def _fmt_credits(value: Optional[float], places: int = 4) -> str:
-    return f"{value:.{places}f}" if value is not None else "—"
-
-
-def _all_calls(usage: Optional[Dict[str, Any]]) -> int:
-    """Every completion the engine made, replayed ones included. The token and
-    credit figures beside it are what was *spent*, which excludes them."""
-    if not usage:
-        return 0
-    return (usage.get("calls") or 0) + ((usage.get("replayed") or {}).get("calls") or 0)
-
-
-def _usage_bullets(usage: Dict[str, Any]) -> List[str]:
-    """Calls, tokens, credits and tasks, a line each.
-
-    Absent figures are left out rather than dashed: most of a line would
-    otherwise be dashes for a backend that reports only calls.
-    """
-    recorded = usage.get("n_with_usage") or 0
-    attempted = usage.get("n_attempted") or 0
-    bullets = [
-        f"{_all_calls(usage):,} calls"
-        + (f" over {recorded} of {attempted} docs" if recorded else "")
-    ]
-
-    tokens = [
-        f"{usage[key]:,} tokens {name}"
-        for key, name in (("input_tokens", "in"), ("output_tokens", "out"))
-        if usage.get(key)
-    ]
-    if tokens:
-        bullets.append(", ".join(tokens))
-    if usage.get("cost_credits") is not None:
-        bullets.append(f"{usage['cost_credits']:.4f} credits")
-
-    by_task = usage.get("by_task") or {}
-    if len(by_task) > 1:
-        for task, entry in sorted(by_task.items()):
-            line = f"{task}: {entry.get('calls', 0):,} calls"
-            if entry.get("output_tokens"):
-                line += f", {entry['output_tokens']:,} tokens out"
-            bullets.append(line)
-    return bullets
-
-
-def _render_usage_lines(labeled_usage: List[Tuple[str, Optional[dict]]]) -> List[str]:
-    """A block per variant that spent something.
-
-    Only those: a row per variant made most of the old table dashes, since the
-    CRF tools spend nothing.
-    """
-    lines: List[str] = []
-    for label, usage in labeled_usage:
-        if not usage or not _all_calls(usage):
-            continue
-        if lines:
-            lines.append("")
-        lines.append(f"**{label}**")
-        lines += [f"* {bullet}" for bullet in _usage_bullets(usage)]
-    return lines
-
-
-def _cached_input_note(labeled_usage: List[Tuple[str, Optional[dict]]]) -> str:
-    """Only where it happened, since a cost difference it explains is otherwise
-    attributed to the variant."""
-    cached = sum((usage or {}).get("cached_input_tokens") or 0 for _, usage in labeled_usage)
-    if not cached:
-        return ""
-    return (
-        f" Input tokens include {cached:,} served from the provider's own prefix"
-        " cache, which is where a credit difference over the same input comes from."
-    )
-
-
-def _replayed_note(labeled_usage: List[Tuple[str, Optional[dict]]]) -> str:
-    """Only where it happened, so a cold report is byte-for-byte unchanged.
-
-    The credits named are what those responses cost when they were generated, not
-    a forecast of a cold run: prices and providers move, and generation is not
-    reproducible, so a fresh run would not make exactly the same calls.
-    """
-    replayed = [(usage or {}).get("replayed") or {} for _, usage in labeled_usage]
-    replayed_calls = sum(entry.get("calls") or 0 for entry in replayed)
-    if not replayed_calls:
-        return ""
-    total_calls = sum(_all_calls(usage) for _, usage in labeled_usage)
-    costs = [
-        entry["cost_credits"] for entry in replayed
-        if entry.get("cost_credits") is not None
-    ]
-    when_generated = (
-        f" Those responses cost {sum(costs):.4f} credits when they were generated,"
-        " at whatever prices and providers applied then, which is a record of one"
-        " cold run rather than a forecast of another."
-        if costs else ""
-    )
-    return (
-        f" Of {total_calls:,} calls, {replayed_calls:,} were replayed from the"
-        " on-disk response cache and spent nothing, so the tokens and credits here"
-        f" are what these runs spent rather than what a cold run would cost.{when_generated}"
-    )
-
-
-def _render_usage_section(
-    labeled_summaries: List[Tuple[str, dict]],
-    corpora: List[str],
-    note: str,
-) -> List[str]:
-    """Empty unless some variant recorded usage, so a CRF-only report is unchanged."""
-    labeled_usage = [
-        (label, usage_for_corpora(summary, corpora))
-        for label, summary in labeled_summaries
-    ]
-    if not any(_all_calls(usage) for _, usage in labeled_usage):
-        return []
-    return [
-        note + _cached_input_note(labeled_usage) + _replayed_note(labeled_usage),
-        "",
-        *_render_usage_lines(labeled_usage),
-    ]
-
-
-def _score_cells(values: Sequence[Optional[float]], primary: int = -1) -> List[str]:
-    """Every column in the order it is declared, then a delta per other column.
-
-    Which column the deltas measure against is stated rather than taken from the order,
-    so that moving a variant for the sake of reading moves nothing else.
-    """
-    primary_f1 = values[primary]
-    others = [value for index, value in enumerate(values) if index != primary % len(values)]
-    deltas = [
-        _fmt_delta(primary_f1 - f1 if primary_f1 is not None and f1 is not None else None)
-        for f1 in others
-    ]
-    return [_fmt_f1(f1) for f1 in values] + deltas
-
-
-def _render_field_table(
-    labeled_summaries: List[Tuple[str, dict]],
-    rows: Sequence[GridRow],
-    field_scoring_types: dict,
-    primary: int = -1,
-) -> List[str]:
-    """Render the comparison table from cells that were already computed.
-
-    A field some document's gold records nothing for gets a second row, over the documents
-    that can answer the extraction question. `Docs` says which documents each row covers,
-    so neither is read as the other.
-    """
-    labels = [label for label, _ in labeled_summaries]
-    other_labels = [
-        label for index, label in enumerate(labels)
-        if index != primary % len(labels)
-    ]
-
-    col_labels = labels + [f"Δ {label}" for label in other_labels]
-    n_cols = 2 * len(other_labels) + 3
-    lines = [
-        "| Field (method, type) | Docs | " + " | ".join(col_labels) + " |",
-        "|" + "|".join(["---"] * n_cols) + "|",
-    ]
-
-    for row in rows:
-        field_type = field_scoring_types.get(row.field, "string")
-        cells = _score_cells(row.values, primary)
-        lines.append(
-            f"| {row.field} ({row.method}, {field_type}) | {row.docs_label} | "
-            + " | ".join(cells) + " |"
-        )
-
-    return lines
 
 
 def _gold_totals(
@@ -559,6 +379,7 @@ def _render_corpus_section(  # pylint: disable=too-many-arguments
     rows: Sequence[GridRow],
     field_scoring_types: dict,
     primary: int = -1,
+    baseline: Optional[int] = None,
 ) -> List[str]:
     counts_by_label = [
         (label, s.get("corpora", {}).get(corpus, {}).get("n", 0))
@@ -567,8 +388,8 @@ def _render_corpus_section(  # pylint: disable=too-many-arguments
     counts = " | ".join(f"**{label}**: {n} docs" for label, n in counts_by_label)
     lines = [counts, ""] + _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, [corpus], field_names)
-    lines.extend(_render_field_table(
-        labeled_summaries, rows, field_scoring_types, primary
+    lines.extend(render_split_tables(
+        labeled_summaries, rows, field_scoring_types, primary, baseline
     ))
     produced = _render_produced_section(labeled_summaries, field_names, [corpus])
     if produced:
@@ -576,7 +397,7 @@ def _render_corpus_section(  # pylint: disable=too-many-arguments
     variants = _render_variant_match_section(labeled_summaries, field_names, [corpus])
     if variants:
         lines += ["", *variants[:-1]]
-    usage_lines = _render_usage_section(
+    usage_lines = render_usage_section(
         labeled_summaries, [corpus],
         "**LLM usage**, over every document attempted in this corpus.",
     )
@@ -608,6 +429,7 @@ def _render_overall_section(  # pylint: disable=too-many-locals,too-many-argumen
     corpora: List[str],
     common: List[str],
     primary: int = -1,
+    baseline: Optional[int] = None,
 ) -> List[str]:
     _, primary_summary = labeled_summaries[-1]
     omitted = [corpus for corpus in corpora if corpus not in common]
@@ -633,8 +455,8 @@ def _render_overall_section(  # pylint: disable=too-many-locals,too-many-argumen
         ]
     lines += _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, common, field_names)
-    lines.extend(_render_field_table(
-        labeled_summaries, rows, field_scoring_types, primary
+    lines.extend(render_split_tables(
+        labeled_summaries, rows, field_scoring_types, primary, baseline
     ))
     produced = _render_produced_section(labeled_summaries, field_names, common)
     if produced:
@@ -650,6 +472,19 @@ def _field_definition(summary: dict, field: str) -> Tuple[str, List[str]]:
         summary.get("field_scoring_types", {}).get(field, "string"),
         summary.get("field_sources", {}).get(field, [field, field]),
     )
+
+
+def _no_baseline_note(n_columns: int, baseline: Optional[int]) -> List[str]:
+    """Why a comparison of several columns is one table rather than two."""
+    if baseline is not None or n_columns < 2:
+        return []
+    return [
+        "> **Not split by what moved**: no column here is comparable with this one."
+        " A benchmark run measures movement against `sciencebeam-parser main` under"
+        " its own profile; a comparison file names its own with `baseline: true`, and"
+        " `--baseline` names one for a `--summary` pair.",
+        "",
+    ]
 
 
 def _differently_scored_note(
@@ -684,6 +519,37 @@ def _differently_scored_note(
     ]
 
 
+def _render_charts_section(  # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-positional-arguments
+    selection: Selection,
+    labels: List[str],
+    labeled_summaries: List[Tuple[str, dict]],
+    corpus_grids: Dict[str, List[GridRow]],
+    overall_rows: Sequence[GridRow],
+    common: List[str],
+    charts: ChartOutput,
+) -> List[str]:
+    """The declared charts, then whatever `--chart` named.
+
+    A single corpus puts one group of bars on the axis, which says nothing the table
+    does not, so `--chart` draws nothing there.
+    """
+    lines: List[str] = []
+    for declared in selection.declared_charts:
+        lines += render_declared_chart(
+            declared, labels, labeled_summaries, corpus_grids, overall_rows,
+            common, charts,
+        )
+    if selection.charts and len(common) > 1:
+        specs = chart_specs(selection, labels, corpus_grids, overall_rows, common)
+        if charts.out_dir is not None:
+            render_charts(specs, charts.out_dir, charts.prefix)
+        lines += chart_markdown(
+            specs, charts.rel_dir, charts.prefix, charts.base_url
+        )[2:]
+    return ["### Charts", "", *lines] if lines else []
+
+
 def _render_comparison_report(  # pylint: disable=too-many-locals
     labeled_summaries: List[Tuple[str, dict]],
     labeled_run_records: Optional[List[Tuple[str, Optional[dict]]]] = None,
@@ -691,6 +557,9 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     charts: ChartOutput = ChartOutput(),
     primary: int = -1,
     variants: Sequence[Tuple[str, str]] = (),
+    budget: Optional[int] = None,
+    report_location: str = "",
+    baseline: Optional[int] = None,
 ) -> str:
     if not labeled_summaries:
         return ""
@@ -724,37 +593,20 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     lines += render_legend(labels, primary, variants)
     lines += _coverage_lines(labeled_run_records or [])
     lines += _differently_scored_note(labeled_summaries, field_names)
+    lines += _no_baseline_note(len(labeled_summaries), baseline)
 
     if len(corpora) > 1:
         lines.extend(_render_overall_section(
             keyed_summaries, field_names, overall_rows, field_scoring_types,
-            corpora, common, primary,
+            corpora, common, primary, baseline,
         ))
         lines.append("")
 
-    # A single corpus puts one group of bars on the axis, which says nothing the table
-    # does not.
-    chart_lines: List[str] = []
-    for declared in selection.declared_charts:
-        chart_lines += render_declared_chart(
-            declared, labels, labeled_summaries, corpus_grids, overall_rows,
-            common, charts,
-        )
-    # `--chart` names fields rather than charts, so it cannot interleave with the file's
-    # order and is drawn after whatever that declared.
-    if selection.charts and len(common) > 1:
-        specs = chart_specs(
-            selection, labels, corpus_grids, overall_rows, common,
-        )
-        if charts.out_dir is not None:
-            render_charts(specs, charts.out_dir, charts.prefix)
-        chart_lines += chart_markdown(
-            specs, charts.rel_dir, charts.prefix, charts.base_url
-        )[2:]
-    if chart_lines:
-        lines += ["### Charts", "", *chart_lines]
+    lines += _render_charts_section(
+        selection, labels, labeled_summaries, corpus_grids, overall_rows, common, charts
+    )
 
-    usage_lines = _render_usage_section(
+    usage_lines = render_usage_section(
         labeled_summaries, corpora,
         "### LLM usage\n\nWhat producing these predictions spent, over every document"
         " attempted — deliberately a wider set than the scores above, since an errored"
@@ -778,13 +630,14 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     if cost_lines:
         lines += [*cost_lines, ""]
 
+    sections: List[Tuple[str, List[str]]] = []
     for corpus in corpora:
         n_primary = primary_summary.get("corpora", {}).get(corpus, {}).get("n", 0)
         corpus_lines = _render_corpus_section(
             corpus, keyed_summaries, field_names, corpus_grids[corpus],
-            field_scoring_types, primary,
+            field_scoring_types, primary, baseline,
         )
-        lines += [
+        sections.append((corpus, [
             "<details>",
             f"<summary><b>{corpus}</b> ({n_primary} docs)</summary>",
             "",
@@ -792,9 +645,30 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
             "",
             "</details>",
             "",
-        ]
+        ]))
 
-    return "\n".join(lines)
+    if budget is None:
+        return "\n".join(
+            lines + [line for _, block in sections for line in block]
+        )
+    return fit(
+        lines, sections, budget,
+        lambda dropped: dropped_corpora_note(dropped, report_location),
+    )
+
+
+def _baseline_from_label(
+    label: Optional[str], labeled_paths: Sequence[Tuple[str, Path]]
+) -> Optional[int]:
+    if label is None:
+        return None
+    for index, (name, _) in enumerate(labeled_paths):
+        if name == label:
+            return index
+    raise SelectionError(
+        f"--baseline {label!r} names no variant; declared are "
+        + ", ".join(repr(name) for name, _ in labeled_paths)
+    )
 
 
 def _parse_labeled_summary(spec: str) -> Tuple[str, Path]:
@@ -804,7 +678,35 @@ def _parse_labeled_summary(spec: str) -> Tuple[str, Path]:
     return label, Path(path_str)
 
 
-def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def _write_comment_report(  # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-positional-arguments
+    out_path: Path,
+    budget: int,
+    report_location: str,
+    baseline: Optional[int],
+    labeled_summaries: List[Tuple[str, dict]],
+    labeled_run_records: List[Tuple[str, Optional[dict]]],
+    selection: Selection,
+    charts: ChartOutput,
+    primary: int,
+    variants: Sequence[Tuple[str, str]],
+    documents_note: Optional[str] = None,
+) -> None:
+    """The report a PR comment can carry, beside the full one."""
+    comment = _render_comparison_report(
+        labeled_summaries, labeled_run_records, selection, charts, primary, variants,
+        budget, report_location, baseline,
+    )
+    if documents_note:
+        # Kept only where it fits; the full report always has it.
+        with_note = comment.rstrip("\n") + "\n\n" + documents_note + "\n"
+        comment = with_note if len(with_note) <= budget else comment
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(comment)
+    LOGGER.info("Comment report written to %s (%d characters)", out_path, len(comment))
+
+
+def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     labeled_summary_paths: List[Tuple[str, Path]],
     out_path: Optional[Path],
     selection: Selection = Selection(),
@@ -812,6 +714,10 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
     chart_base_url: str = "",
     primary: int = -1,
     variants: Sequence[Tuple[str, str]] = (),
+    comment_out: Optional[Path] = None,
+    comment_budget: int = COMMENT_BUDGET,
+    report_location: str = "",
+    baseline: Optional[int] = None,
 ) -> None:
     labeled_summaries = [
         (label, json.loads(path.read_text()))
@@ -827,9 +733,11 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         )
         for label, path in labeled_summary_paths
     ]
-    wants_charts = bool(selection.charts or selection.declared_charts)
     charts = ChartOutput(
-        out_dir=out_path.parent / "charts" if out_path and wants_charts else None,
+        out_dir=(
+            out_path.parent / "charts"
+            if out_path and (selection.charts or selection.declared_charts) else None
+        ),
         prefix=chart_prefix,
         base_url=chart_base_url,
     )
@@ -837,7 +745,8 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         labeled_summaries, [path for _, path in labeled_summary_paths]
     )
     report = _render_comparison_report(
-        labeled_summaries, labeled_run_records, selection, charts, primary, variants
+        labeled_summaries, labeled_run_records, selection, charts, primary, variants,
+        baseline=baseline,
     )
     if documents_note:
         report = report.rstrip("\n") + "\n\n" + documents_note + "\n"
@@ -845,6 +754,13 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(report)
         LOGGER.info("Comparison report written to %s", out_path)
+    if comment_out:
+        _write_comment_report(
+            comment_out, comment_budget, report_location, baseline,
+            labeled_summaries, labeled_run_records, selection,
+            # The images are already drawn; this wants their markdown, not another pass.
+            replace(charts, out_dir=None), primary, variants, documents_note,
+        )
     print(report)
 
 
@@ -864,6 +780,31 @@ def main(argv: Optional[List[str]] = None) -> None:
         ),
     )
     parser.add_argument("--out", default=None, help="Output path (default: stdout only)")
+    parser.add_argument(
+        "--comment-out", default=None, metavar="PATH",
+        help=(
+            "Also write the report a PR comment can carry: the same report with whole"
+            " corpus sections left out where it would not fit"
+        ),
+    )
+    parser.add_argument(
+        "--comment-budget", type=int, default=COMMENT_BUDGET, metavar="CHARS",
+        help="Characters --comment-out may use (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--baseline", default=None, metavar="LABEL",
+        help=(
+            "The variant movement is measured against, where more than two are"
+            " compared. Two variants need no flag; more without one are not split"
+        ),
+    )
+    parser.add_argument(
+        "--report-location", default="", metavar="TEXT",
+        help=(
+            "Where the full report can be read, named in the note a shortened comment"
+            " carries (e.g. 'in the [job summary](URL)')"
+        ),
+    )
     parser.add_argument(
         "--comparison", default=None, metavar="NAME_OR_PATH",
         help=(
@@ -941,6 +882,11 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     try:
         if args.comparison:
+            if args.baseline:
+                parser.error(
+                    "--baseline is for --summary; a comparison file names its own"
+                    " with `baseline: true`"
+                )
             config = load_comparison(args.comparison)
             labeled_paths = resolve_variants(
                 config, Path(args.runs), args.split,
@@ -949,9 +895,15 @@ def main(argv: Optional[List[str]] = None) -> None:
             selection = to_selection(config)
             primary = primary_index(config)
             variants = variant_descriptions(config)
+            baseline = baseline_index(config)
+            if baseline is None:
+                baseline = default_baseline(len(labeled_paths), primary)
         else:
             labeled_paths = [_parse_labeled_summary(s) for s in args.summaries]
             primary = -1
+            baseline = _baseline_from_label(args.baseline, labeled_paths)
+            if baseline is None:
+                baseline = default_baseline(len(labeled_paths), primary)
             # A `--summary` pair has no coordinates, so the path is what names it.
             variants = [(label, f"`{path}`") for label, path in labeled_paths]
             selection = Selection(
@@ -964,6 +916,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         run_compare(
             labeled_paths, Path(args.out) if args.out else None,
             selection, args.chart_prefix, args.chart_base_url, primary, variants,
+            Path(args.comment_out) if args.comment_out else None,
+            args.comment_budget, args.report_location, baseline,
         )
     except SelectionError as error:
         parser.error(str(error))

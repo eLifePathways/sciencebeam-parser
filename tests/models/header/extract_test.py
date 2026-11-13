@@ -1,3 +1,5 @@
+from typing import List
+
 from sciencebeam_parser.document.semantic_document import (
     SemanticAbstract,
     SemanticFront,
@@ -12,6 +14,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutFont,
     LayoutLine,
     LayoutLineMeta,
+    LayoutPageCoordinates,
     LayoutToken,
     join_layout_tokens
 )
@@ -312,6 +315,153 @@ class TestIterTitlesSplitByLanguageAmongTheDocumentsLanguages:
             frozenset({'en'})
         ))
         assert len(titles) == 1
+
+
+def _get_abstract_block(text: str, page_number: int) -> LayoutBlock:
+    coordinates = LayoutPageCoordinates(
+        x=0, y=0, width=1, height=1, page_number=page_number
+    )
+    return LayoutBlock(lines=[
+        LayoutLine(tokens=[
+            token._replace(coordinates=coordinates) for token in line.tokens
+        ])
+        for line in LayoutBlock.for_text(text).lines
+    ])
+
+
+def _get_abstracts(entity_tokens, **kwargs) -> List[str]:
+    front = SemanticFront(list(
+        HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+            entity_tokens, **kwargs
+        )
+    ))
+    return [abstract.get_text() for abstract in front.iter_by_type(SemanticAbstract)]
+
+
+class TestHeaderSemanticExtractorAbstractHeading:
+    def _get_headings(self, entity_tokens, **kwargs):
+        front = SemanticFront(list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                entity_tokens, **kwargs
+            )
+        ))
+        return [
+            abstract.heading_block.text if abstract.heading_block is not None else None
+            for abstract in front.iter_by_type(SemanticAbstract)
+        ]
+
+    def test_should_carry_the_heading_labelled_above_the_abstract(self):
+        assert self._get_headings([
+            ('O', LayoutBlock.for_text('Plain language summary')),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == ['Plain language summary']
+
+    def test_should_take_the_heading_from_the_last_line_above_the_abstract(self):
+        heading_block = LayoutBlock(lines=[
+            LayoutBlock.for_text('Word Count: 1,215').lines[0],
+            LayoutBlock.for_text('ABSTRACT').lines[0]
+        ])
+        assert self._get_headings([
+            ('O', heading_block),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == ['ABSTRACT']
+
+    def test_should_keep_the_heading_where_abstracts_are_merged_by_language(self):
+        assert self._get_headings([
+            ('O', LayoutBlock.for_text('Abstract')),
+            ('<abstract>', LayoutBlock.for_text(
+                'This study examines the way in which the words of a language'
+                ' are used by the people who speak it.'
+            )),
+            ('<abstract>', LayoutBlock.for_text(
+                'The results show that the words of a language are used in the'
+                ' way that the people who speak it expect them to be.'
+            ))
+        ], abstracts_mode=AbstractsMode.MERGED_BY_LANGUAGE) == ['Abstract']
+
+    def test_should_carry_no_heading_where_the_line_above_carries_no_letter(self):
+        assert self._get_headings([
+            ('O', LayoutBlock.for_text('1 .')),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == [None]
+
+    def test_should_carry_no_heading_where_the_block_above_is_too_long(self):
+        assert self._get_headings([
+            ('O', LayoutBlock.for_text(
+                'This manuscript was compiled on the fourth of July in the year'
+            )),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == [None]
+
+    def test_should_carry_no_heading_where_another_label_sits_above(self):
+        assert self._get_headings([
+            ('<title>', LayoutBlock.for_text(TITLE_1)),
+            ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
+        ]) == [None]
+
+
+class TestHeaderSemanticExtractorContinuedAbstract:
+    def test_should_join_a_block_continuing_the_abstract_on_the_next_page(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('continues on the next page.', 2))
+        ]) == ['The abstract begins here and continues on the next page.']
+
+    def test_should_join_it_where_the_default_mode_would_have_dropped_it(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('continues on the next page.', 2))
+        ], abstracts_mode=AbstractsMode.FIRST) == [
+            'The abstract begins here and continues on the next page.'
+        ]
+
+    def test_should_keep_a_block_with_a_heading_above_it_apart(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('O', _get_abstract_block('Plain language summary', 2)),
+            ('<abstract>', _get_abstract_block(
+                'this summary says the same thing in fewer words.', 2
+            ))
+        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+            'The abstract begins here and',
+            'this summary says the same thing in fewer words.'
+        ]
+
+    def test_should_keep_a_block_apart_where_the_abstract_above_it_is_finished(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins and ends here.', 1)),
+            ('<abstract>', _get_abstract_block(
+                'bioetica, aspectos legales y politicos del asunto.', 2
+            ))
+        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+            'The abstract begins and ends here.',
+            'bioetica, aspectos legales y politicos del asunto.'
+        ]
+
+    def test_should_keep_a_block_opening_a_new_sentence_apart(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('O resumo comeca aqui tambem.', 2))
+        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+            'The abstract begins here and', 'O resumo comeca aqui tambem.'
+        ]
+
+    def test_should_keep_a_block_pages_away_apart(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('continues much later on.', 5))
+        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+            'The abstract begins here and', 'continues much later on.'
+        ]
+
+    def test_should_keep_a_long_block_above_it_from_counting_as_a_heading(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('O', _get_abstract_block(
+                'This manuscript was compiled on the fourth of July in the year', 2
+            )),
+            ('<abstract>', _get_abstract_block('continues on the next page.', 2))
+        ]) == ['The abstract begins here and continues on the next page.']
 
 
 class TestHeaderSemanticExtractorTitles:

@@ -7,17 +7,19 @@ from unittest.mock import patch
 
 import yaml
 
-from benchmarks.comparison_config import parse_comparison
+from benchmarks.comparison_config import baseline_index, parse_comparison
 from benchmarks.fetch import get_corpus_variants
 from benchmarks.predictions_store import LocalPredictionsStore
 from benchmarks.run import (
     _baseline_env_vars,
+    _comparison_baseline,
     _comparison_only_variants,
     _coverage,
     _run_baseline,
     _make_label,
     _same_profile_main_baseline,
     _tool_docker_config,
+    _write_posted_report,
     run_benchmark,
     run_stored_comparison,
 )
@@ -813,3 +815,95 @@ class TestRunStoredComparison:
         )
 
         assert mock_compare.call_args[0][1] == runs_dir / "train/comparison-stored.md"
+
+
+def _summary_file(path: Path, f1: float) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "fields": ["title"],
+        "field_measures": {"title": ["levenshtein"]},
+        "field_scoring_types": {"title": "string"},
+        "corpora": {"biorxiv": {"n": 5, "aggregated": [{
+            "scoring_type": "string",
+            "scoring_method": "levenshtein",
+            "summary_scores": {"by-field": {"title": {"scores": {"f1": f1}}}},
+        }]}},
+    }))
+    return path
+
+
+class TestWritePostedReport:
+    def _paths(self, tmp_path: Path):
+        return [
+            ("base", _summary_file(tmp_path / "base" / "summary.json", 0.5)),
+            ("head", _summary_file(tmp_path / "head" / "summary.json", 0.9)),
+        ]
+
+    def test_writes_the_comment_report_beside_the_full_one(self, tmp_path: Path):
+        run_dir = tmp_path / "head"
+        _write_posted_report(self._paths(tmp_path), run_dir, None)
+        assert (run_dir / "comparison.md").exists()
+        assert (run_dir / "comparison-comment.md").exists()
+
+    def test_appends_the_missing_main_note_to_both(self, tmp_path: Path):
+        run_dir = tmp_path / "head"
+        _write_posted_report(self._paths(tmp_path), run_dir, "recommended")
+        for name in ("comparison.md", "comparison-comment.md"):
+            assert "has no stored predictions" in (run_dir / name).read_text()
+
+
+class TestMovementBaseline:
+    def _config(self) -> dict:
+        return {
+            **_CONFIG,
+            "baselines": [
+                {"tool": "grobid", "version": "0.9.1-crf", "profile": "default"},
+                {"tool": "sciencebeam-parser", "version": "main",
+                 "profile": "recommended", "generate": False},
+            ],
+        }
+
+    def test_the_main_column_is_what_movement_is_measured_against(self):
+        config = self._config()
+        indices = [
+            index for index, baseline in enumerate(config["baselines"])
+            if (baseline["tool"], baseline["version"]) == ("sciencebeam-parser", "main")
+        ]
+        assert indices == [1]
+
+    def test_a_comparison_declares_its_own(self):
+        config = parse_comparison(yaml.safe_load("""
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf}
+  - {label: main, tool: sciencebeam-parser, version: main, baseline: true}
+  - {label: head, current: true}
+"""), "movement")
+        assert baseline_index(config) == 1
+
+    def test_a_comparison_without_one_names_no_column(self):
+        config = parse_comparison(yaml.safe_load(_COMPARISON_YAML), "none")
+        assert baseline_index(config) is None
+
+
+class TestComparisonBaseline:
+    def test_takes_what_the_comparison_declares(self):
+        config = parse_comparison(yaml.safe_load("""
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf}
+  - {label: main, tool: sciencebeam-parser, version: main, baseline: true}
+  - {label: head, current: true}
+"""), "declared")
+        assert _comparison_baseline(config) == 1
+
+    def test_takes_the_only_candidate_of_a_pair(self):
+        config = parse_comparison(yaml.safe_load(_COMPARISON_YAML), "pair")
+        assert _comparison_baseline(config) == 0
+
+    def test_names_none_where_three_variants_declare_none(self):
+        config = parse_comparison(yaml.safe_load("""
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf}
+  - {label: main, tool: sciencebeam-parser, version: main}
+  - {label: head, current: true}
+"""), "undeclared")
+        assert _comparison_baseline(config) is None

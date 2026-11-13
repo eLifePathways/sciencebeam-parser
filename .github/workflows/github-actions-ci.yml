@@ -112,11 +112,7 @@ jobs:
   native-test:
     strategy:
       matrix:
-        include:
-          - runs-on: macos-latest
-            install-poppler: brew install poppler
-          - runs-on: ubuntu-24.04-arm
-            install-poppler: sudo apt-get update && sudo apt-get install -y poppler-utils
+        runs-on: [macos-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Check out repository code
@@ -126,9 +122,6 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.11'
-
-      - name: Install poppler (required by pdf2image)
-        run: ${{ matrix.install-poppler }}
 
       - name: Install dependencies
         run: uv sync --frozen --group dev --extra delft

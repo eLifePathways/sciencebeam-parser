@@ -38,6 +38,7 @@ from benchmarks.judge_setup import prepare_judge
 from benchmarks.compute_cost import aggregate_cost
 from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
 from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
+from benchmarks.report_budget import COMMENT_BUDGET, dropped_corpora_note, fit
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
     render_variant_match_table,
@@ -444,64 +445,78 @@ def _render_produced_table(
     ]
 
 
-def _render_report(  # pylint: disable=too-many-locals
+def _corpus_section(
+    corpus: str,
+    result: Dict[str, Any],
+    field_names: List[str],
+    field_scoring_types: Dict[str, str],
+) -> List[str]:
+    n = result.get("n", 0)
+    aggregated = result.get("aggregated")
+    lines = [f"### {corpus} ({n} docs)", ""]
+    if not aggregated:
+        return lines + ["_No results._", ""]
+
+    unique_methods = _unique_methods(aggregated)
+    presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
+    conditional = result.get(GOLD_PRESENT_AGGREGATED_KEY) or []
+    lines.append(
+        "| Field | Type | Docs |" + "".join(f" {m} F1 |" for m in unique_methods)
+    )
+    lines.append("|---|---|---|" + "---|" * len(unique_methods))
+
+    for field in field_names:
+        field_type = field_scoring_types.get(field, "string")
+        presence = presence_by_field.get(field)
+        split = bool(
+            presence and presence["n_gold"] and is_split_worth_reporting([presence])
+        )
+        n_docs = presence["n"] if presence else n
+        lines.append(_score_row(
+            field, field_type, f"all {n_docs}" if split else str(n_docs),
+            aggregated if has_gold(presence) else [], unique_methods,
+        ))
+        if split and presence:
+            lines.append(_score_row(
+                field, field_type, f"gold {presence['n_gold']}",
+                conditional, unique_methods,
+            ))
+
+    lines.append("")
+    lines += _render_produced_table(result, field_names)
+    lines += render_variant_match_table(result.get(VARIANT_MATCH_KEY) or {}, field_names)
+    return lines
+
+
+def _render_report(
     corpus_results: Dict[str, Any],
     field_names: List[str],
     field_scoring_types: Dict[str, str],
     run_record: Optional[dict],
+    budget: Optional[int] = None,
+    report_location: str = "",
 ) -> str:
-    lines = ["## ScienceBeam Parser Evaluation", ""]
+    head = ["## ScienceBeam Parser Evaluation", ""]
 
     if run_record:
         image = run_record.get("parser_image") or "local"
         cfg = run_record.get("profile") or run_record.get("parser_config") or "default"
         mode = run_record.get("mode", "?")
-        lines += [f"**Image:** `{image}`  **Config:** `{cfg}`  **Mode:** {mode}", ""]
+        head += [f"**Image:** `{image}`  **Config:** `{cfg}`  **Mode:** {mode}", ""]
         coverage = _coverage_note(run_record)
         if coverage:
-            lines += [coverage, ""]
+            head += [coverage, ""]
 
-    for corpus, result in corpus_results.items():
-        n = result.get("n", 0)
-        aggregated = result.get("aggregated")
-        lines.append(f"### {corpus} ({n} docs)")
-        lines.append("")
-
-        if not aggregated:
-            lines += ["_No results._", ""]
-            continue
-
-        unique_methods = _unique_methods(aggregated)
-        presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
-
-        conditional = result.get(GOLD_PRESENT_AGGREGATED_KEY) or []
-        lines.append(
-            "| Field | Type | Docs |" + "".join(f" {m} F1 |" for m in unique_methods)
-        )
-        lines.append("|---|---|---|" + "---|" * len(unique_methods))
-
-        for field in field_names:
-            field_type = field_scoring_types.get(field, "string")
-            presence = presence_by_field.get(field)
-            split = bool(
-                presence and presence["n_gold"] and is_split_worth_reporting([presence])
-            )
-            n_docs = presence["n"] if presence else n
-            lines.append(_score_row(
-                field, field_type, f"all {n_docs}" if split else str(n_docs),
-                aggregated if has_gold(presence) else [], unique_methods,
-            ))
-            if split and presence:
-                lines.append(_score_row(
-                    field, field_type, f"gold {presence['n_gold']}",
-                    conditional, unique_methods,
-                ))
-
-        lines.append("")
-        lines += _render_produced_table(result, field_names)
-        lines += render_variant_match_table(result.get(VARIANT_MATCH_KEY) or {}, field_names)
-
-    return "\n".join(lines)
+    sections = [
+        (corpus, _corpus_section(corpus, result, field_names, field_scoring_types))
+        for corpus, result in corpus_results.items()
+    ]
+    if budget is None:
+        return "\n".join(head + [line for _, block in sections for line in block])
+    return fit(
+        head, sections, budget,
+        lambda dropped: dropped_corpora_note(dropped, report_location),
+    )
 
 
 def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
@@ -512,6 +527,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     split_override: Optional[str] = None,
     include: Optional[Iterable[str]] = None,
     from_scores: bool = False,
+    report_location: str = "",
     record_ids: Optional[Collection[Tuple[str, str]]] = None,
 ) -> None:
     """Score a run's predictions; `record_ids` limits it to a mode's documents."""
@@ -601,7 +617,14 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     report_path = out_path or run_dir / "report.md"
     report_path.write_text(report)
 
-    LOGGER.info("Report written to %s", report_path)
+    comment = _render_report(
+        corpus_results, field_names, field_scoring_types, run_record,
+        COMMENT_BUDGET, report_location,
+    )
+    comment_path = report_path.with_name(f"{report_path.stem}-comment.md")
+    comment_path.write_text(comment)
+
+    LOGGER.info("Report written to %s (comment: %s)", report_path, comment_path)
     print(report)
 
 

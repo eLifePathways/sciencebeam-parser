@@ -265,6 +265,7 @@ jobs:
             --parser-image "${{ steps.image_tag.outputs.value }}" \
             --profile "${{ env.BENCHMARK_PROFILE }}" \
             --retry-passes ${{ env.BENCHMARK_RETRY_PASSES }} \
+            --report-location "in the [job summary](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
             ${{ env.BENCHMARK_CORPORA }} \
             "${PUSH_CURRENT_ARG[@]}"
 
@@ -310,6 +311,9 @@ jobs:
           if [ -f ${{ env.BENCHMARK_RUN }}/comparison.md ]; then
             REPORT=${{ env.BENCHMARK_RUN }}/comparison.md
           fi
+          # The comment-sized report beside it: the same thing with whole corpus
+          # sections left out where the full one would exceed what GitHub accepts.
+          REPORT="${REPORT%.md}-comment.md"
           PR=${{ github.event.pull_request.number }}
           LABEL="${{ steps.image_tag.outputs.value }} (${{ env.BENCHMARK_MODE }}, ${{ env.BENCHMARK_SPLIT }})"
 

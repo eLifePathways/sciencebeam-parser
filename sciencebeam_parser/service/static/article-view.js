@@ -369,10 +369,18 @@ export function renderArticleViewModel(viewModel, document, options) {
     const section = appendElement(
       article, 'section', 'jats-abstract', abstract
     );
-    if (abstract.title) {
-      appendValue(section, abstract.title, 'h2');
-    } else {
-      appendElement(section, 'h2', '').textContent = 'Abstract';
+    const heading = abstract.title
+      ? appendValue(section, abstract.title, 'h2')
+      : appendElement(section, 'h2', '');
+    if (!abstract.title) {
+      // The word is this page's, not the document's, so it says so itself.
+      heading.textContent = 'Abstract';
+      heading.setAttribute('lang', 'en');
+    }
+    if (abstract.language) {
+      section.setAttribute('lang', abstract.language);
+      appendElement(heading, 'span', 'jats-language')
+        .textContent = abstract.language;
     }
     abstract.paragraphs.forEach(
       (paragraph) => appendParagraph(section, paragraph)

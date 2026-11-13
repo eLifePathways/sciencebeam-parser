@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Dict, List, Sequence
 from unittest.mock import patch
 
-from benchmarks.score import _doc_scores_to_dict, run_score
+from benchmarks.report import run_compare
+from benchmarks.score import _doc_scores_to_dict, run_score, summarise_scored_documents
 from benchmarks.shared_documents import on_shared_documents, shared_documents
 
 
@@ -108,3 +109,19 @@ def test_scoring_is_limited_to_the_mode_documents(tmp_path: Path):
     summary = json.loads((run_dir / "summary.json").read_text())
     assert summary["scored_documents"] == {"c": ["d1"]}
     assert summary["corpora"]["c"]["n"] == 1
+
+
+def test_the_pr_comment_carries_the_documents_note(tmp_path: Path):
+    paths = []
+    for index, scored in enumerate([{"c": {"d1": 1, "d2": 1}}, {"c": {"d1": 1}}]):
+        run_dir = tmp_path / f"run{index}"
+        summary = _scored_run(run_dir, scored)
+        summary["corpora"] = {
+            corpus: summarise_scored_documents(summary, run_dir, corpus, ids)
+            for corpus, ids in summary["scored_documents"].items()
+        }
+        (run_dir / "summary.json").write_text(json.dumps(summary))
+        paths.append((f"run{index}", run_dir / "summary.json"))
+    comment = tmp_path / "comment.md"
+    run_compare(paths, None, comment_out=comment)
+    assert "`c`: compared on 1 of 2" in comment.read_text(encoding="utf-8")

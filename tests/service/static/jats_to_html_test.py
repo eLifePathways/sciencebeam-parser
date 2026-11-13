@@ -259,6 +259,15 @@ class TestAbstract:
             'label': 'title', 'text': 'Summary'
         }
 
+    def test_should_read_every_abstract_with_the_language_it_declares(self):
+        view_model = get_article_view_model(get_article_xml(front=(
+            '<abstract xml:lang="en"><p>The abstract.</p></abstract>'
+            '<abstract xml:lang="pt"><p>O resumo.</p></abstract>'
+        )))
+        assert [
+            abstract.get('language') for abstract in view_model['abstracts']
+        ] == ['en', 'pt']
+
 
 class TestSections:
     def test_should_keep_the_order_the_document_has(self):

@@ -118,6 +118,44 @@ generates.
 **Overall** covers only corpora every column scored, so a column missing one
 drops it from the aggregate for all of them.
 
+Each table is two sections: the fields that moved, open, and the rest, shut.
+Each names the column it was measured against and its share of the fields, so a
+run that moved everything or nothing still says which it was rather than reading
+as a table the split never reached. A field moves when any of its rows does, so a field whose
+`exact` moved and whose `levenshtein` did not is read in one place, and the
+threshold is `MOVED_THRESHOLD` in
+[`benchmarks/report_movement.py`](../benchmarks/report_movement.py), set to what
+the printed delta rounds to `+0.000` -- so a row called unmoved never carries a
+visible one.
+
+Movement is measured against one named column, because another tool's column
+differs on nearly every field whatever the run did. A benchmark run names
+`sciencebeam-parser main` under its own profile, falling back to the one
+`eval.yml` declares, and names nothing where the store holds neither -- it never
+falls back to a column that is not comparable, so a run with only a GROBID column
+beside it is not split at all. A comparison file names its own with
+`baseline: true` and `--baseline` does it for a `--summary` pair; either of those
+comparing exactly two variants needs no name, the pairing being deliberate.
+
+Where no column is named the table is not split, and says so rather than leaving
+the absence to be read as "nothing moved". `train` is where this shows: the
+predictions store holds `main` for `validation`, so a `train` run usually has no
+comparable column, and neither has a comparison of several tools. To see what a
+change moved locally, compare two runs of your own:
+
+```sh
+uv run python -m benchmarks.report \
+  --summary before=benchmarks/runs/<before>/summary.json \
+  --summary after=benchmarks/runs/<after>/summary.json
+```
+
+A PR comment is capped by GitHub at 65,536 characters, so what CI posts is a
+second file written beside the report: the same thing with whole per-corpus
+sections left out where the full one would not fit, naming the ones it left out
+and where to read them. `--comment-out` writes it, `--comment-budget` sizes it
+and `--report-location` says where the full report is. The job summary and the
+run artifact always carry every corpus.
+
 A document the parser fails on writes no prediction, and scoring iterates
 prediction files, so it is left out rather than scored zero. The report states
 each run's coverage — how many documents a retry recovered, and how many ended
@@ -178,6 +216,8 @@ variants:
   - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
   - {label: crf, tool: sciencebeam-parser, version: main, profile: grobid_crf,
      primary: true}                       # the deltas are to this one
+  - {label: prev, tool: sciencebeam-parser, version: main, profile: delft_old,
+     baseline: true}                      # and "what moved" is against this one
   - {label: retrained, tool: sciencebeam-parser, version: main,
      profile: delft_all_scielo_preprints_ore}
 
@@ -394,8 +434,9 @@ that, and both are scored:
 | --- | --- | --- |
 | `abstract` | the article's own abstract, always one value | the abstract it filed as the article's own |
 | `abstract_anywhere` | the article's own abstract, always one value | any abstract it carries |
-| `abstract_any_language` | every language the document carries it in, the article's own first | any abstract it carries |
-| `abstract_all_languages` | the same | every abstract it carries, paired with the gold |
+| `abstract_any_language` | every language the document carries it in, the article's own first | the same, read from the prediction |
+| `abstract_all_languages` | the same | the same, paired with the gold |
+| `abstract_all` | every abstract the document offers, the article's own first | every abstract it carries |
 | `abstract_language` | the language each abstract is declared to be in | the language it declared for the abstract that matches |
 
 `abstract` is the headline and is literal: the article's own abstract on both
@@ -413,9 +454,17 @@ one only if it carries the same `abstract-type` and declares a different
 `abstract_any_language` credits any language, so the gap between it and the rows
 above is what not requiring the article's own is worth.
 
+The language rows read a prediction the way they read the gold: the first
+abstract, and then each one naming a language no earlier abstract named. A
+prediction carrying a plain-language summary beside the abstract in the same
+language therefore offers one value to those rows, as the document does, rather
+than being charged for a second. `abstract_all` is where such a summary is
+measured, since it reads every abstract on both sides — so an abstract the
+document does not carry is charged there, and a summary the document does carry
+is credited.
+
 `abstract_all_languages` asks the opposite question — did the prediction reproduce
-every language the document carries — and is the only abstract row that charges
-for an abstract the gold has none of. A format that can hold one abstract cannot
+every language the document carries. A format that can hold one abstract cannot
 score well on it, which is why it reads low on the multilingual corpora today. Its
 denominator counts values rather than documents, so a paper carrying four
 languages weighs four times one carrying a single abstract, and its figure is not
@@ -426,10 +475,11 @@ like one that reads the article's own, and that block is where it shows.
 
 `abstract_language` scores the declaration rather than the text, and is empty
 unless the run's profile sets `abstracts_mode` to `variants` or
-`merged_by_language`: the shipped default declares no language. The
-`grobid_crf_abstract_variants` and `grobid_crf_abstract_merged_by_language`
-profiles are the default with that one setting changed, so a run against either
-and a run against the default differ in nothing else. The two sides are paired
+`merged_by_language`: `recommended` does, and every other shipped profile does
+not. The `grobid_crf_abstract_variants` and
+`grobid_crf_abstract_merged_by_language` profiles are `grobid_crf_0_9_0` with
+that one setting changed, so a run against either and a run against it differ in
+nothing else. The two sides are paired
 by the abstract's text, since neither the order nor the count can be relied on,
 and a gold abstract declaring no language is left out of the
 comparison rather than counted as a miss: `biorxiv`, `ore` and `pkp` declare

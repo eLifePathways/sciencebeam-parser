@@ -188,6 +188,7 @@ fields:
   - abstract_anywhere
   - abstract_any_language
   - abstract_all_languages
+  - abstract_all
   - abstract_legacy
   - abstract_language
   - author_full_names
@@ -247,6 +248,11 @@ scoring:
     abstract_all_languages:
       expected: abstracts
       actual: abstracts
+      methods: [levenshtein, edit_sim]
+      type: partial_ulist
+    abstract_all:
+      expected: abstracts_all
+      actual: abstracts_all
       methods: [levenshtein, edit_sim]
       type: partial_ulist
     abstract_language:

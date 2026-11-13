@@ -14,8 +14,10 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPage,
     LayoutPageCoordinates
 )
-from sciencebeam_parser.processors.document_page_image import (
-    iter_pdf_document_page_images
+from sciencebeam_parser.external.pdfium.renderer import (
+    PdfRenderWorker,
+    PdfRenderWorkerPool,
+    RenderWorkerUnavailableError
 )
 from sciencebeam_parser.processors.graphic_provider import (
     get_page_numbers_with_uncommon_page_dimension
@@ -45,6 +47,7 @@ class GraphicRegionConfig:
     min_vector_content_size: float = 10.0
     max_text_ratio_without_content: float = 0.2
     min_page_border_rule_ratio: float = 0.85
+    max_vector_region_aspect_ratio: float = 10.0
     render_dpi: float = 150.0
     min_text_over_graphic_ratio: float = 0.5
     uncommon_page_as_one_region: bool = True
@@ -94,57 +97,23 @@ class _Box(NamedTuple):
 
 
 class PageRegionRenderer:
-    """Renders a region of a page, through the same renderer the detector uses.
+    """Renders a region of a page through a worker of its own.
 
-    `pdf2image` runs `pdftoppm` as a process of its own, so a document that
-    defeats the renderer cannot take the caller down with it.
+    The worker holds the document open and keeps the page it last drew, so
+    several regions of one page cost one render.
     """
 
-    def __init__(self, pdf_path: str, dpi: float, temp_dir: str):
-        self.pdf_path = pdf_path
-        self.dpi = dpi
+    def __init__(self, worker: PdfRenderWorker, dpi: float):
         self.scale = dpi / 72.0
-        self.temp_dir = temp_dir
-        self._page_number: Optional[int] = None
-        self._page_image: Optional[PIL.Image.Image] = None
-
-    def _get_page_image(self, page_number: int) -> Optional[PIL.Image.Image]:
-        if self._page_number == page_number and self._page_image is not None:
-            return self._page_image
-        page_images = list(iter_pdf_document_page_images(
-            pdf_path=self.pdf_path,
-            output_dir=self.temp_dir,
-            dpi=self.dpi,
-            page_numbers=[page_number]
-        ))
-        if not page_images:
-            return None
-        page_image = PIL.Image.open(page_images[0].page_image_path).convert('RGB')
-        page_image.load()
-        self._page_number = page_number
-        self._page_image = page_image
-        return page_image
+        self._worker = worker
 
     def render(self, page_number: int, box: '_Box', image_path: str) -> Optional[str]:
-        try:
-            page_image = self._get_page_image(page_number)
-            if page_image is None:
-                return None
-            cropped_image = page_image.crop((
-                max(0, round(box.x1 * self.scale)),
-                max(0, round(box.y1 * self.scale)),
-                min(page_image.width, round(box.x2 * self.scale)),
-                min(page_image.height, round(box.y2 * self.scale))
-            ))
-            if not cropped_image.width or not cropped_image.height:
-                return None
-            cropped_image.save(image_path)
-            return image_path
-        except Exception:  # pylint: disable=broad-except
-            LOGGER.warning(
-                'unable to render page %d of %r', page_number, self.pdf_path, exc_info=True
-            )
-            return None
+        return self._worker.render(
+            page_number=page_number,
+            scale=self.scale,
+            image_path=image_path,
+            crop=(box.x1, box.y1, box.x2, box.y2)
+        )
 
 
 def _get_box_for_coordinates(coordinates: LayoutPageCoordinates) -> _Box:
@@ -259,6 +228,14 @@ def _is_text_box_rather_than_drawing(
     return covered_area / region_box.area >= config.max_text_ratio_without_content
 
 
+def _is_band_rather_than_drawing(region_box: _Box, config: GraphicRegionConfig) -> bool:
+    """A strip far wider than it is high — a table's shaded heading, not a drawing."""
+    height = region_box.y2 - region_box.y1
+    if height <= 0:
+        return True
+    return (region_box.x2 - region_box.x1) / height > config.max_vector_region_aspect_ratio
+
+
 def iter_vector_region_graphics(
     layout_graphic: LayoutGraphic,
     page_coordinates: Optional[LayoutPageCoordinates],
@@ -303,6 +280,9 @@ def iter_vector_region_graphics(
             region_box = region_box.union(box)
         if _is_text_box_rather_than_drawing(region_box, cluster_boxes, text_boxes, config):
             LOGGER.debug('skipping a framed text box: %r', region_box)
+            continue
+        if _is_band_rather_than_drawing(region_box, config):
+            LOGGER.debug('skipping a band: %r', region_box)
             continue
         region_graphics.append(LayoutGraphic(
             coordinates=_get_coordinates_for_box(region_box, page_number=page_number),
@@ -605,20 +585,13 @@ def get_layout_page_as_one_region(
     )])
 
 
-def get_layout_document_with_graphic_regions(
+def _get_layout_document_with_graphic_regions(
     layout_document: LayoutDocument,
     config: GraphicRegionConfig,
-    temp_dir: Optional[str] = None,
-    require_file: bool = False,
-    pdf_path: Optional[str] = None
+    temp_dir: Optional[str],
+    require_file: bool,
+    renderer: Optional[PageRegionRenderer]
 ) -> LayoutDocument:
-    if not config.enabled:
-        return layout_document
-    renderer = (
-        PageRegionRenderer(pdf_path, config.render_dpi, temp_dir=temp_dir)
-        if require_file and pdf_path and temp_dir and os.path.exists(pdf_path)
-        else None
-    )
     uncommon_page_numbers = (
         set(get_page_numbers_with_uncommon_page_dimension(layout_document))
         if config.uncommon_page_as_one_region
@@ -637,3 +610,37 @@ def get_layout_document_with_graphic_regions(
         )
         for page in layout_document.pages
     ])
+
+
+def get_layout_document_with_graphic_regions(
+    layout_document: LayoutDocument,
+    config: GraphicRegionConfig,
+    temp_dir: Optional[str] = None,
+    require_file: bool = False,
+    pdf_path: Optional[str] = None,
+    render_worker_pool: Optional[PdfRenderWorkerPool] = None
+) -> LayoutDocument:
+    if not config.enabled:
+        return layout_document
+    is_rendering_wanted = bool(
+        require_file and pdf_path and temp_dir and os.path.exists(pdf_path)
+    )
+    if not is_rendering_wanted:
+        return _get_layout_document_with_graphic_regions(
+            layout_document, config, temp_dir, require_file, renderer=None
+        )
+    assert pdf_path
+    assert render_worker_pool is not None, (
+        'rendering a region asks for a worker, which a pool hands out'
+    )
+    try:
+        with render_worker_pool.worker(pdf_path) as worker:
+            return _get_layout_document_with_graphic_regions(
+                layout_document, config, temp_dir, require_file,
+                renderer=PageRegionRenderer(worker, config.render_dpi)
+            )
+    except RenderWorkerUnavailableError:
+        LOGGER.warning('deriving graphic regions without rendering', exc_info=True)
+        return _get_layout_document_with_graphic_regions(
+            layout_document, config, temp_dir, require_file, renderer=None
+        )

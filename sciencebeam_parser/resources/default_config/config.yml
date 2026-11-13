@@ -134,6 +134,8 @@ processors:
       min_vector_content_size: 10
       max_text_ratio_without_content: 0.2
       min_page_border_rule_ratio: 0.85
+      # Width over height. A table's shaded heading is a strip; a drawing is not.
+      max_vector_region_aspect_ratio: 10
       # An asset is rendered from the page where text is drawn over the region.
       render_dpi: 150
       min_text_over_graphic_ratio: 0.5
@@ -562,6 +564,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        abstracts_mode: 'variants'
   delft_all_scielo_preprints_ore_cv:
     label: 'DeLFT retrained models, SciELO preprints and ORE, graphics located by the cv model'
     description: 'The retrained DeLFT models, with figures and tables located on the rendered page by the computer-vision model.'
@@ -570,6 +573,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        abstracts_mode: 'variants'
         use_cv_model: true
   llm_reference_segmenter:
     label: 'LLM reference segmenter'
@@ -672,6 +676,16 @@ selectable_profiles:
 # the wapiti ones differ from their base by one model of ten. Over this, a
 # request for a profile not already resolved is refused rather than loaded.
 max_loaded_models: 40
+
+# Render workers alive at once, across every profile. Each holds a document
+# open for as long as it serves one. Over this, a request waits.
+max_render_workers: 2
+
+# Seconds to wait for a free render worker, and for one to answer a request.
+render_timeout: 120
+
+# 0 or blank for no limit
+max_upload_bytes: 67108864
 
 # Which origins a browser page may call the API from, matched exactly, or `*`
 # for every origin. Empty permits none. See doc/cors.md.
