@@ -95,7 +95,9 @@ generates.
 drops it from the aggregate for all of them.
 
 Each table leads with the fields that moved and collapses the rest, stating how
-many there were. A field moves when any of its rows does, so a field whose
+many there were -- including where every field moved or none did, since the
+count is the finding there and a bare table would read as the split not having
+run. A field moves when any of its rows does, so a field whose
 `exact` moved and whose `levenshtein` did not is read in one place, and the
 threshold is `MOVED_THRESHOLD` in
 [`benchmarks/report_movement.py`](../benchmarks/report_movement.py), set to what

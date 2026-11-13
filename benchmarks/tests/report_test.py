@@ -903,9 +903,10 @@ class TestMovementBaseline:
         assert "1 of 2 fields moved against **B**." in report
 
     def test_another_tools_column_does_not_make_a_field_move(self):
+        # The first column differs on every field; the run matches its baseline.
         report = _render_comparison_report(self._columns(0.1, 0.5, 0.5), baseline=1)
+        assert "0 of 2 fields moved against **B**." in report
         assert "Did not move" not in report
-        assert "fields moved against" not in report
 
     def test_two_columns_are_not_split_without_one_either(self):
         # The renderer invents no baseline: a benchmark run whose only other column
@@ -940,3 +941,24 @@ class TestNoBaselineNote:
     def test_says_nothing_about_a_single_column(self):
         report = _render_comparison_report(self._columns(0.5))
         assert "Not split by what moved" not in report
+
+
+class TestEveryFieldOrNoneMoved:
+    """The count is the finding; a bare table reads as the split never having run."""
+
+    def _columns(self, *title_f1: float) -> List[Tuple[str, dict]]:
+        return _labeled(*[
+            _fields_summary({"title": f1, "abstract": 0.7 if f1 == 0.5 else 0.9},
+                            ["biorxiv", "ore"])
+            for f1 in title_f1
+        ])
+
+    def test_says_so_where_every_field_moved(self):
+        report = _render_comparison_report(self._columns(0.5, 0.9), baseline=0)
+        assert "2 of 2 fields moved against **A**." in report
+        assert "Did not move" not in report
+
+    def test_says_so_where_none_did(self):
+        report = _render_comparison_report(self._columns(0.5, 0.5), baseline=0)
+        assert "0 of 2 fields moved against **A**." in report
+        assert "Did not move" not in report
