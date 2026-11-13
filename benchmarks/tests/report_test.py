@@ -774,3 +774,108 @@ class TestDifferentlyScoredNote:
         after["fields"] = ["abstract", "abstract_legacy"]
         report = _render_comparison_report([("before", before), ("after", after)])
         assert "Scored differently between runs" not in report
+
+
+def _fields_summary(f1_by_field: dict, corpora_names: list, n: int = 10) -> dict:
+    fields = list(f1_by_field)
+    return _summary(
+        fields=fields,
+        field_measures={field: ["levenshtein"] for field in fields},
+        field_scoring_types={field: "string" for field in fields},
+        corpora={
+            name: {"n": n, "aggregated": [_agg("string", "levenshtein", f1_by_field)]}
+            for name in corpora_names
+        },
+    )
+
+
+def _labeled(*summaries) -> List[Tuple[str, dict]]:
+    return [(chr(ord("A") + i), s) for i, s in enumerate(summaries)]
+
+
+class TestMovedAndUnmoved:
+    def test_leads_with_the_fields_that_moved(self):
+        report = _render_comparison_report(_labeled(
+            _fields_summary({"title": 0.5, "abstract": 0.7}, ["biorxiv", "ore"]),
+            _fields_summary({"title": 0.9, "abstract": 0.7}, ["biorxiv", "ore"]),
+        ))
+        overall = report.split("### Overall")[1].split("<details>")[0]
+        assert "1 of 2 fields moved against **B**." in overall
+        assert "title" in overall
+        assert "abstract" not in overall
+
+    def test_states_what_did_not_move(self):
+        report = _render_comparison_report(_labeled(
+            _fields_summary({"title": 0.5, "abstract": 0.7}, ["biorxiv", "ore"]),
+            _fields_summary({"title": 0.9, "abstract": 0.7}, ["biorxiv", "ore"]),
+        ))
+        assert "<summary>Did not move (1 field, 1 row)</summary>" in report
+
+    def test_a_field_with_a_moved_method_is_read_in_one_place(self):
+        fields = ["title"]
+        corpora = ["biorxiv", "ore"]
+
+        def summary(exact: float) -> dict:
+            return _summary(
+                fields=fields,
+                field_measures={"title": ["exact", "levenshtein"]},
+                field_scoring_types={"title": "string"},
+                corpora={
+                    name: {"n": 10, "aggregated": [
+                        _agg("string", "exact", {"title": exact}),
+                        _agg("string", "levenshtein", {"title": 0.7}),
+                    ]}
+                    for name in corpora
+                },
+            )
+
+        report = _render_comparison_report(_labeled(summary(0.5), summary(0.9)))
+        overall = report.split("### Overall")[1].split("<details>")[0]
+        assert "title (exact, string)" in overall
+        assert "title (levenshtein, string)" in overall
+        assert "Did not move" not in report
+
+    def test_nothing_moving_leaves_one_table(self):
+        report = _render_comparison_report(_labeled(
+            _fields_summary({"title": 0.5}, ["biorxiv", "ore"]),
+            _fields_summary({"title": 0.5}, ["biorxiv", "ore"]),
+        ))
+        assert "Did not move" not in report
+        assert "fields moved against" not in report
+
+
+class TestCommentBudget:
+    CORPORA = [f"corpus_{i}" for i in range(8)]
+
+    def _report(self, budget=None, location=""):
+        fields = {f"field_{i}": 0.5 for i in range(12)}
+        moved = {**fields, "field_0": 0.9}
+        return _render_comparison_report(
+            _labeled(
+                _fields_summary(fields, self.CORPORA),
+                _fields_summary(moved, self.CORPORA),
+            ),
+            budget=budget, report_location=location,
+        )
+
+    def test_the_full_report_carries_every_corpus(self):
+        report = self._report()
+        for corpus in self.CORPORA:
+            assert f"<b>{corpus}</b>" in report
+
+    def test_the_budgeted_report_stays_within_it(self):
+        assert len(self._report(budget=6000)) <= 6000
+
+    def test_the_budgeted_report_closes_every_section_it_opened(self):
+        report = self._report(budget=6000)
+        assert report.count("<details>") == report.count("</details>")
+
+    def test_the_budgeted_report_names_what_it_dropped(self):
+        report = self._report(budget=6000, location="in the [job summary](http://x/1)")
+        dropped = [c for c in self.CORPORA if f"<b>{c}</b>" not in report]
+        assert dropped
+        assert ", ".join(dropped) in report
+        assert "The full report is in the [job summary](http://x/1)." in report
+
+    def test_a_report_that_fits_says_nothing_about_dropping(self):
+        assert "not in this comment" not in self._report(budget=100000)

@@ -94,6 +94,20 @@ generates.
 **Overall** covers only corpora every column scored, so a column missing one
 drops it from the aggregate for all of them.
 
+Each table leads with the fields that moved against the primary run and
+collapses the rest, stating how many there were. A field moves when any of its
+rows does, so a field whose `exact` moved and whose `levenshtein` did not is
+read in one place, and the threshold is `MOVED_THRESHOLD` in
+[`benchmarks/report_movement.py`](../benchmarks/report_movement.py) -- below it
+a difference prints as `+0.000`.
+
+A PR comment is capped by GitHub at 65,536 characters, so what CI posts is a
+second file written beside the report: the same thing with whole per-corpus
+sections left out where the full one would not fit, naming the ones it left out
+and where to read them. `--comment-out` writes it, `--comment-budget` sizes it
+and `--report-location` says where the full report is. The job summary and the
+run artifact always carry every corpus.
+
 A document the parser fails on writes no prediction, and scoring iterates
 prediction files, so it is left out rather than scored zero. The report states
 each run's coverage — how many documents a retry recovered, and how many ended

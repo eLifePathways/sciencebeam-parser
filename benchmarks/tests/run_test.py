@@ -18,6 +18,7 @@ from benchmarks.run import (
     _make_label,
     _same_profile_main_baseline,
     _tool_docker_config,
+    _write_posted_report,
     run_benchmark,
     run_stored_comparison,
 )
@@ -813,3 +814,38 @@ class TestRunStoredComparison:
         )
 
         assert mock_compare.call_args[0][1] == runs_dir / "train/comparison-stored.md"
+
+
+def _summary_file(path: Path, f1: float) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "fields": ["title"],
+        "field_measures": {"title": ["levenshtein"]},
+        "field_scoring_types": {"title": "string"},
+        "corpora": {"biorxiv": {"n": 5, "aggregated": [{
+            "scoring_type": "string",
+            "scoring_method": "levenshtein",
+            "summary_scores": {"by-field": {"title": {"scores": {"f1": f1}}}},
+        }]}},
+    }))
+    return path
+
+
+class TestWritePostedReport:
+    def _paths(self, tmp_path: Path):
+        return [
+            ("base", _summary_file(tmp_path / "base" / "summary.json", 0.5)),
+            ("head", _summary_file(tmp_path / "head" / "summary.json", 0.9)),
+        ]
+
+    def test_writes_the_comment_report_beside_the_full_one(self, tmp_path: Path):
+        run_dir = tmp_path / "head"
+        _write_posted_report(self._paths(tmp_path), run_dir, None)
+        assert (run_dir / "comparison.md").exists()
+        assert (run_dir / "comparison-comment.md").exists()
+
+    def test_appends_the_missing_main_note_to_both(self, tmp_path: Path):
+        run_dir = tmp_path / "head"
+        _write_posted_report(self._paths(tmp_path), run_dir, "recommended")
+        for name in ("comparison.md", "comparison-comment.md"):
+            assert "has no stored predictions" in (run_dir / name).read_text()

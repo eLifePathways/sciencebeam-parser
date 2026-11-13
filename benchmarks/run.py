@@ -281,25 +281,36 @@ def _append_note(path: Path, note: str) -> None:
     path.write_text(text + separator + note, encoding="utf-8")
 
 
+def _comment_path(report_path: Path) -> Path:
+    return report_path.with_name(f"{report_path.stem}-comment.md")
+
+
 def _write_posted_report(
     labeled_paths: List[Tuple[str, Path]],
     primary_run_dir: Path,
     missing_main_profile: Optional[str],
+    report_location: str = "",
 ) -> None:
     """The report CI posts: `comparison.md` where there is anything to compare with,
-    else the run's own `report.md`."""
+    else the run's own `report.md`, each with the comment-sized one beside it."""
     if len(labeled_paths) >= 2:
         # No charts: this is the report CI has always posted, and a comparison file is
         # how a run asks for one of its own.
-        run_compare(labeled_paths, primary_run_dir / "comparison.md")
+        run_compare(
+            labeled_paths, primary_run_dir / "comparison.md",
+            comment_out=_comment_path(primary_run_dir / "comparison.md"),
+            report_location=report_location,
+        )
         posted_report = primary_run_dir / "comparison.md"
     else:
         LOGGER.info("Only one summary available; skipping comparison report")
         posted_report = primary_run_dir / "report.md"
 
     # In the report itself, since a log line on a finished runner is read by no one.
+    # The budget leaves room for it rather than the note being fitted into it.
     if missing_main_profile is not None:
-        _append_note(posted_report, _missing_main_note(missing_main_profile))
+        for path in (posted_report, _comment_path(posted_report)):
+            _append_note(path, _missing_main_note(missing_main_profile))
 
 
 def _comparison_only_variants(
@@ -334,6 +345,7 @@ def run_stored_comparison(  # pylint: disable=too-many-arguments,too-many-positi
     include: Optional[Iterable[str]] = None,
     chart_prefix: str = "",
     chart_base_url: str = "",
+    report_location: str = "",
 ) -> None:
     """Render a comparison from predictions the store already holds.
 
@@ -357,11 +369,14 @@ def run_stored_comparison(  # pylint: disable=too-many-arguments,too-many-positi
         )
 
     out_dir = out_dir or runs_dir / split
+    comparison_path = out_dir / f"comparison-{comparison_config.name}.md"
     run_compare(
         resolve_variants(comparison_config, runs_dir, split, current_run),
-        out_dir / f"comparison-{comparison_config.name}.md",
+        comparison_path,
         to_selection(comparison_config), chart_prefix, chart_base_url,
         primary_index(comparison_config), variant_descriptions(comparison_config),
+        comment_out=_comment_path(comparison_path),
+        report_location=report_location,
     )
 
 
@@ -383,6 +398,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     comparison: Optional[str] = None,
     chart_prefix: str = "",
     chart_base_url: str = "",
+    report_location: str = "",
 ) -> None:
     # pylint: disable=too-many-locals
     corpus_variants = get_corpus_variants(config, split, include)
@@ -465,6 +481,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
                 parser_url, parser_image, parser_profile, concurrency,
                 include=include, retry_passes=retry_passes)
     run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split,
+              report_location=report_location,
               include=include)
 
     if push_current:
@@ -479,16 +496,23 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     current_label = _make_label("sciencebeam-parser", parser_image or "local", profile, None)
     labeled_paths.append((current_label, primary_run_dir / "summary.json"))
 
-    _write_posted_report(labeled_paths, primary_run_dir, missing_main_profile)
+    _write_posted_report(
+        labeled_paths, primary_run_dir, missing_main_profile, report_location
+    )
 
     # Beside the report CI always posts, never instead of it: a named comparison answers
     # a question of its own, and the regression check stays what it was.
     if comparison_config is not None:
+        named_comparison = (
+            primary_run_dir / f"comparison-{comparison_config.name}.md"
+        )
         run_compare(
             resolve_variants(comparison_config, runs_dir, split, primary_run_dir),
-            primary_run_dir / f"comparison-{comparison_config.name}.md",
+            named_comparison,
             to_selection(comparison_config), chart_prefix, chart_base_url,
             primary_index(comparison_config), variant_descriptions(comparison_config),
+            comment_out=_comment_path(named_comparison),
+            report_location=report_location,
         )
 
 
@@ -541,6 +565,13 @@ def main(argv=None) -> None:
     parser.add_argument("--split", default="train")
     parser.add_argument("--data", default="benchmarks/data")
     parser.add_argument("--runs", default="benchmarks/runs")
+    parser.add_argument(
+        "--report-location", default="", metavar="TEXT",
+        help=(
+            "Where the full report can be read, named in the note a shortened comment"
+            " carries (e.g. 'in the [job summary](URL)')"
+        ),
+    )
     parser.add_argument(
         "--predictions-repo", default=None,
         help="Path to checked-out sciencebeam-eval-predictions repo (enables repo store)",
@@ -638,6 +669,7 @@ def main(argv=None) -> None:
                 include=args.include_corpus,
                 chart_prefix=args.chart_prefix,
                 chart_base_url=args.chart_base_url,
+                report_location=args.report_location,
             )
         except SelectionError as error:
             parser.error(str(error))
@@ -661,6 +693,7 @@ def main(argv=None) -> None:
         comparison=args.comparison,
         chart_prefix=args.chart_prefix,
         chart_base_url=args.chart_base_url,
+        report_location=args.report_location,
     )
 
 

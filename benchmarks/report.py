@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -13,6 +14,7 @@ from benchmarks.comparison_config import (
     resolve_variants,
     to_selection,
 )
+from benchmarks.report_budget import COMMENT_BUDGET, dropped_corpora_note, fit
 from benchmarks.report_chart_section import render_declared_chart
 from benchmarks.report_charts import (
     ChartOutput,
@@ -43,6 +45,7 @@ from benchmarks.gold_presence import (
 from benchmarks.llm_usage import usage_for_corpora
 from benchmarks.report_cost import render_cost_section
 from benchmarks.report_legend import keyed, render_legend
+from benchmarks.report_tables import render_split_tables
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
     concatenation_row,
@@ -110,14 +113,6 @@ def _get_overall_gold_f1(
         weighted += presence["n_gold"] * f1
         total += presence["n_gold"]
     return weighted / total if total else None
-
-
-def _fmt_f1(f1: Optional[float]) -> str:
-    return f"{f1:.3f}" if f1 is not None else "—"
-
-
-def _fmt_delta(delta: Optional[float]) -> str:
-    return f"{delta:+.3f}" if delta is not None else "—"
 
 
 def _gold_presence(summary: dict, corpus: str, field: str) -> Optional[dict]:
@@ -260,57 +255,6 @@ def _render_usage_section(
         "",
         *_render_usage_lines(labeled_usage),
     ]
-
-
-def _score_cells(values: Sequence[Optional[float]], primary: int = -1) -> List[str]:
-    """Every column in the order it is declared, then a delta per other column.
-
-    Which column the deltas measure against is stated rather than taken from the order,
-    so that moving a variant for the sake of reading moves nothing else.
-    """
-    primary_f1 = values[primary]
-    others = [value for index, value in enumerate(values) if index != primary % len(values)]
-    deltas = [
-        _fmt_delta(primary_f1 - f1 if primary_f1 is not None and f1 is not None else None)
-        for f1 in others
-    ]
-    return [_fmt_f1(f1) for f1 in values] + deltas
-
-
-def _render_field_table(
-    labeled_summaries: List[Tuple[str, dict]],
-    rows: Sequence[GridRow],
-    field_scoring_types: dict,
-    primary: int = -1,
-) -> List[str]:
-    """Render the comparison table from cells that were already computed.
-
-    A field some document's gold records nothing for gets a second row, over the documents
-    that can answer the extraction question. `Docs` says which documents each row covers,
-    so neither is read as the other.
-    """
-    labels = [label for label, _ in labeled_summaries]
-    other_labels = [
-        label for index, label in enumerate(labels)
-        if index != primary % len(labels)
-    ]
-
-    col_labels = labels + [f"Δ {label}" for label in other_labels]
-    n_cols = 2 * len(other_labels) + 3
-    lines = [
-        "| Field (method, type) | Docs | " + " | ".join(col_labels) + " |",
-        "|" + "|".join(["---"] * n_cols) + "|",
-    ]
-
-    for row in rows:
-        field_type = field_scoring_types.get(row.field, "string")
-        cells = _score_cells(row.values, primary)
-        lines.append(
-            f"| {row.field} ({row.method}, {field_type}) | {row.docs_label} | "
-            + " | ".join(cells) + " |"
-        )
-
-    return lines
 
 
 def _gold_totals(
@@ -566,7 +510,7 @@ def _render_corpus_section(  # pylint: disable=too-many-arguments
     counts = " | ".join(f"**{label}**: {n} docs" for label, n in counts_by_label)
     lines = [counts, ""] + _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, [corpus], field_names)
-    lines.extend(_render_field_table(
+    lines.extend(render_split_tables(
         labeled_summaries, rows, field_scoring_types, primary
     ))
     produced = _render_produced_section(labeled_summaries, field_names, [corpus])
@@ -632,7 +576,7 @@ def _render_overall_section(  # pylint: disable=too-many-locals,too-many-argumen
         ]
     lines += _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, common, field_names)
-    lines.extend(_render_field_table(
+    lines.extend(render_split_tables(
         labeled_summaries, rows, field_scoring_types, primary
     ))
     produced = _render_produced_section(labeled_summaries, field_names, common)
@@ -690,6 +634,8 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     charts: ChartOutput = ChartOutput(),
     primary: int = -1,
     variants: Sequence[Tuple[str, str]] = (),
+    budget: Optional[int] = None,
+    report_location: str = "",
 ) -> str:
     if not labeled_summaries:
         return ""
@@ -777,13 +723,14 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     if cost_lines:
         lines += [*cost_lines, ""]
 
+    sections: List[Tuple[str, List[str]]] = []
     for corpus in corpora:
         n_primary = primary_summary.get("corpora", {}).get(corpus, {}).get("n", 0)
         corpus_lines = _render_corpus_section(
             corpus, keyed_summaries, field_names, corpus_grids[corpus],
             field_scoring_types, primary,
         )
-        lines += [
+        sections.append((corpus, [
             "<details>",
             f"<summary><b>{corpus}</b> ({n_primary} docs)</summary>",
             "",
@@ -791,9 +738,16 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
             "",
             "</details>",
             "",
-        ]
+        ]))
 
-    return "\n".join(lines)
+    if budget is None:
+        return "\n".join(
+            lines + [line for _, block in sections for line in block]
+        )
+    return fit(
+        lines, sections, budget,
+        lambda dropped: dropped_corpora_note(dropped, report_location),
+    )
 
 
 def _parse_labeled_summary(spec: str) -> Tuple[str, Path]:
@@ -801,6 +755,28 @@ def _parse_labeled_summary(spec: str) -> Tuple[str, Path]:
         raise argparse.ArgumentTypeError(f"Expected 'label=path', got {spec!r}")
     label, _, path_str = spec.partition("=")
     return label, Path(path_str)
+
+
+def _write_comment_report(  # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-positional-arguments
+    out_path: Path,
+    budget: int,
+    report_location: str,
+    labeled_summaries: List[Tuple[str, dict]],
+    labeled_run_records: List[Tuple[str, Optional[dict]]],
+    selection: Selection,
+    charts: ChartOutput,
+    primary: int,
+    variants: Sequence[Tuple[str, str]],
+) -> None:
+    """The report a PR comment can carry, beside the full one."""
+    comment = _render_comparison_report(
+        labeled_summaries, labeled_run_records, selection, charts, primary, variants,
+        budget, report_location,
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(comment)
+    LOGGER.info("Comment report written to %s (%d characters)", out_path, len(comment))
 
 
 def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -811,6 +787,9 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
     chart_base_url: str = "",
     primary: int = -1,
     variants: Sequence[Tuple[str, str]] = (),
+    comment_out: Optional[Path] = None,
+    comment_budget: int = COMMENT_BUDGET,
+    report_location: str = "",
 ) -> None:
     labeled_summaries = [
         (label, json.loads(path.read_text()))
@@ -839,6 +818,13 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(report)
         LOGGER.info("Comparison report written to %s", out_path)
+    if comment_out:
+        _write_comment_report(
+            comment_out, comment_budget, report_location,
+            labeled_summaries, labeled_run_records, selection,
+            # The images are already drawn; this wants their markdown, not another pass.
+            replace(charts, out_dir=None), primary, variants,
+        )
     print(report)
 
 
@@ -858,6 +844,24 @@ def main(argv: Optional[List[str]] = None) -> None:
         ),
     )
     parser.add_argument("--out", default=None, help="Output path (default: stdout only)")
+    parser.add_argument(
+        "--comment-out", default=None, metavar="PATH",
+        help=(
+            "Also write the report a PR comment can carry: the same report with whole"
+            " corpus sections left out where it would not fit"
+        ),
+    )
+    parser.add_argument(
+        "--comment-budget", type=int, default=COMMENT_BUDGET, metavar="CHARS",
+        help="Characters --comment-out may use (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--report-location", default="", metavar="TEXT",
+        help=(
+            "Where the full report can be read, named in the note a shortened comment"
+            " carries (e.g. 'in the [job summary](URL)')"
+        ),
+    )
     parser.add_argument(
         "--comparison", default=None, metavar="NAME_OR_PATH",
         help=(
@@ -958,6 +962,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         run_compare(
             labeled_paths, Path(args.out) if args.out else None,
             selection, args.chart_prefix, args.chart_base_url, primary, variants,
+            Path(args.comment_out) if args.comment_out else None,
+            args.comment_budget, args.report_location,
         )
     except SelectionError as error:
         parser.error(str(error))
