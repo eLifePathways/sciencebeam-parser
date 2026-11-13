@@ -43,6 +43,7 @@ from benchmarks.gold_presence import (
 from benchmarks.llm_usage import usage_for_corpora
 from benchmarks.report_cost import render_cost_section
 from benchmarks.report_legend import keyed, render_legend
+from benchmarks.shared_documents import on_shared_documents
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
     concatenation_row,
@@ -832,9 +833,14 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         prefix=chart_prefix,
         base_url=chart_base_url,
     )
+    labeled_summaries, documents_note = on_shared_documents(
+        labeled_summaries, [path for _, path in labeled_summary_paths]
+    )
     report = _render_comparison_report(
         labeled_summaries, labeled_run_records, selection, charts, primary, variants
     )
+    if documents_note:
+        report = report.rstrip("\n") + "\n\n" + documents_note + "\n"
     if out_path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(report)
