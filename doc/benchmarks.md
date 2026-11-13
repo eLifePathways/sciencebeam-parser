@@ -370,8 +370,9 @@ that, and both are scored:
 | --- | --- | --- |
 | `abstract` | the article's own abstract, always one value | the abstract it filed as the article's own |
 | `abstract_anywhere` | the article's own abstract, always one value | any abstract it carries |
-| `abstract_any_language` | every language the document carries it in, the article's own first | any abstract it carries |
-| `abstract_all_languages` | the same | every abstract it carries, paired with the gold |
+| `abstract_any_language` | every language the document carries it in, the article's own first | the same, read from the prediction |
+| `abstract_all_languages` | the same | the same, paired with the gold |
+| `abstract_all` | every abstract the document offers, the article's own first | every abstract it carries |
 | `abstract_language` | the language each abstract is declared to be in | the language it declared for the abstract that matches |
 
 `abstract` is the headline and is literal: the article's own abstract on both
@@ -389,9 +390,17 @@ one only if it carries the same `abstract-type` and declares a different
 `abstract_any_language` credits any language, so the gap between it and the rows
 above is what not requiring the article's own is worth.
 
+The language rows read a prediction the way they read the gold: the first
+abstract, and then each one naming a language no earlier abstract named. A
+prediction carrying a plain-language summary beside the abstract in the same
+language therefore offers one value to those rows, as the document does, rather
+than being charged for a second. `abstract_all` is where such a summary is
+measured, since it reads every abstract on both sides — so an abstract the
+document does not carry is charged there, and a summary the document does carry
+is credited.
+
 `abstract_all_languages` asks the opposite question — did the prediction reproduce
-every language the document carries — and is the only abstract row that charges
-for an abstract the gold has none of. A format that can hold one abstract cannot
+every language the document carries. A format that can hold one abstract cannot
 score well on it, which is why it reads low on the multilingual corpora today. Its
 denominator counts values rather than documents, so a paper carrying four
 languages weighs four times one carrying a single abstract, and its figure is not
@@ -402,10 +411,11 @@ like one that reads the article's own, and that block is where it shows.
 
 `abstract_language` scores the declaration rather than the text, and is empty
 unless the run's profile sets `abstracts_mode` to `variants` or
-`merged_by_language`: the shipped default declares no language. The
-`grobid_crf_abstract_variants` and `grobid_crf_abstract_merged_by_language`
-profiles are the default with that one setting changed, so a run against either
-and a run against the default differ in nothing else. The two sides are paired
+`merged_by_language`: `recommended` does, and every other shipped profile does
+not. The `grobid_crf_abstract_variants` and
+`grobid_crf_abstract_merged_by_language` profiles are `grobid_crf_0_9_0` with
+that one setting changed, so a run against either and a run against it differ in
+nothing else. The two sides are paired
 by the abstract's text, since neither the order nor the count can be relied on,
 and a gold abstract declaring no language is left out of the
 comparison rather than counted as a miss: `biorxiv`, `ore` and `pkp` declare

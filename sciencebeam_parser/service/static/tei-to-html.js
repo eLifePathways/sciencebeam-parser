@@ -15,6 +15,7 @@ import {
   getFirstChildElement,
   getFirstDescendantElement,
   getInlineRuns,
+  getLanguage,
   getTextContent,
   getValue,
   getValuesWithLanguage,
@@ -235,6 +236,43 @@ function getBackDivision(back, type) {
   ) || null;
 }
 
+/* The heading a page printed above an abstract, which TEI gives the abstract
+ * nowhere to carry, so it is noted immediately before the one it belongs to. */
+function getAbstractHeading(node) {
+  if (node.name !== 'note' || getAttribute(node, 'type') !== 'abstract-heading') {
+    return null;
+  }
+  const text = getTextContent(node).trim();
+  return text ? { label: node.name, path: node.path, text } : null;
+}
+
+
+function getAbstracts(profileDesc) {
+  const abstracts = [];
+  let heading = null;
+  getChildElements(profileDesc).forEach((child) => {
+    const childHeading = getAbstractHeading(child);
+    if (childHeading) {
+      heading = childHeading;
+      return;
+    }
+    if (child.name !== 'abstract') {
+      return;
+    }
+    const language = getLanguage(child);
+    const value = {
+      label: child.name,
+      path: child.path,
+      title: heading,
+      paragraphs: getChildElements(child, 'p').map(getParagraph)
+    };
+    abstracts.push(language ? { ...value, language } : value);
+    heading = null;
+  });
+  return abstracts;
+}
+
+
 export function getTeiArticleViewModel(article) {
   if (!article.path) {
     article.path = `/${article.name}`;
@@ -248,8 +286,8 @@ export function getTeiArticleViewModel(article) {
   const text = getFirstChildElement(article, 'text');
   const body = text ? getFirstChildElement(text, 'body') : null;
   const back = text ? getFirstChildElement(text, 'back') : null;
-  const abstract = header
-    ? getFirstDescendantElement(header, 'abstract')
+  const profileDesc = header
+    ? getFirstDescendantElement(header, 'profileDesc')
     : null;
   const journalTitle = header
     ? getChildByAttribute(
@@ -275,14 +313,7 @@ export function getTeiArticleViewModel(article) {
     affiliations: authors.flatMap(
       (author) => getChildElements(author, 'affiliation').map(getAffiliation)
     ),
-    abstracts: abstract
-      ? [{
-        label: abstract.name,
-        path: abstract.path,
-        title: null,
-        paragraphs: getChildElements(abstract, 'p').map(getParagraph)
-      }]
-      : [],
+    abstracts: profileDesc ? getAbstracts(profileDesc) : [],
     sections: body ? getDivisionBlocks(body) : [],
     acknowledgements: acknowledgement
       ? getDivisionBlocks(acknowledgement)

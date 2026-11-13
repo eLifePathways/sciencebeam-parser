@@ -69,6 +69,53 @@ def abstract_variants(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
     ]
 
 
+def abstracts_offered(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
+    """Every abstract the document carries, the article's own first.
+
+    `abstract_variants` answers which languages a document offers its abstract in;
+    this answers which abstracts it offers at all, so a plain-language summary
+    beside the abstract belongs here and not there.
+    """
+    main = main_abstract(article_meta)
+    if not main:
+        return []
+    return main + [node for node in _candidates(article_meta) if node is not main[0]]
+
+
+def tei_abstract_variants(abstracts: List[ET.ElementBase]) -> List[ET.ElementBase]:
+    """The abstracts a TEI offers as languages: the first, and each one naming another.
+
+    The gold counts a translation and not a summary printed in the same language, so
+    the prediction is read the same way and the two sides compare like with like.
+    """
+    variants: List[ET.ElementBase] = []
+    languages = set()
+    for node in abstracts:
+        language = node.get(XML_LANG)
+        if not variants:
+            variants.append(node)
+            if language:
+                languages.add(language)
+            continue
+        if language and language in languages:
+            continue
+        variants.append(node)
+        if language:
+            languages.add(language)
+    return variants
+
+
+def fn_jats_abstracts_all(_, nodes):
+    return [
+        get_text_content(abstract)
+        for node in nodes for abstract in abstracts_offered(node)
+    ]
+
+
+def fn_tei_abstract_variants(_, nodes):
+    return [get_text_content(node) for node in tei_abstract_variants(list(nodes))]
+
+
 def fn_jats_main_abstract(_, nodes):
     return [get_text_content(variant) for node in nodes for variant in main_abstract(node)]
 
@@ -141,6 +188,8 @@ def register_variant_functions(ns: Optional[ET.FunctionNamespace] = None) -> Non
         ns = ET.FunctionNamespace(None)
     ns["jats-main-abstract"] = fn_jats_main_abstract
     ns["jats-abstract-variants"] = fn_jats_abstract_variants
+    ns["jats-abstracts-all"] = fn_jats_abstracts_all
+    ns["tei-abstract-variants"] = fn_tei_abstract_variants
     ns["jats-abstract-language-pairs"] = fn_jats_abstract_language_pairs
     ns["tei-abstract-language-pairs"] = fn_tei_abstract_language_pairs
     ns["jats-title-language-pairs"] = fn_jats_title_language_pairs

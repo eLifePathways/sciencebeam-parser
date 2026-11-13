@@ -7,6 +7,8 @@ from lxml import etree
 from benchmarks.matched_property_scoring import PROPERTY_SEPARATOR
 from benchmarks.variant_xpath import (
     abstract_variants,
+    abstracts_offered,
+    tei_abstract_variants,
     fn_jats_abstract_language_pairs,
     title_language_pairs
 )
@@ -18,6 +20,49 @@ def _article_meta(inner: str) -> etree.ElementBase:
 
 def _texts(nodes: List[etree.ElementBase]) -> List[str]:
     return [node.text for node in nodes]
+
+
+def _tei_abstracts(inner: str) -> List[etree.ElementBase]:
+    return list(etree.fromstring(f"<profileDesc>{inner}</profileDesc>"))
+
+
+class TestAbstractsOffered:
+    def test_should_return_a_summary_the_variants_leave_out(self):
+        article_meta = _article_meta(
+            '<abstract xml:lang="en">main</abstract>'
+            '<abstract abstract-type="plain-language-summary" xml:lang="en">pls</abstract>'
+        )
+        assert _texts(abstract_variants(article_meta)) == ["main"]
+        assert _texts(abstracts_offered(article_meta)) == ["main", "pls"]
+
+    def test_should_return_the_translations_as_well(self):
+        article_meta = _article_meta(
+            "<abstract>pt</abstract><trans-abstract xml:lang=\"en\">en</trans-abstract>"
+        )
+        assert _texts(abstracts_offered(article_meta)) == ["pt", "en"]
+
+    def test_should_return_nothing_where_there_is_no_abstract(self):
+        assert abstracts_offered(_article_meta("<title-group/>")) == []
+
+
+class TestTeiAbstractVariants:
+    def test_should_keep_an_abstract_naming_another_language(self):
+        abstracts = _tei_abstracts(
+            '<abstract xml:lang="pt">pt</abstract><abstract xml:lang="en">en</abstract>'
+        )
+        assert _texts(tei_abstract_variants(abstracts)) == ["pt", "en"]
+
+    def test_should_leave_out_a_second_abstract_in_the_language_already_named(self):
+        abstracts = _tei_abstracts(
+            '<abstract xml:lang="en">main</abstract><abstract xml:lang="en">pls</abstract>'
+        )
+        assert _texts(tei_abstract_variants(abstracts)) == ["main"]
+
+    def test_should_keep_an_abstract_naming_no_language(self):
+        abstracts = _tei_abstracts(
+            '<abstract xml:lang="en">main</abstract><abstract>unnamed</abstract>'
+        )
+        assert _texts(tei_abstract_variants(abstracts)) == ["main", "unnamed"]
 
 
 class TestAbstractVariants:
