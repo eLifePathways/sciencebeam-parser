@@ -93,17 +93,24 @@ def get_profile_bundle_mock(name: Optional[str] = PROFILE_NAME_1) -> ProfileBund
     )
 
 
-@pytest.fixture(name='sciencebeam_parser_mock')
-def _sciencebeam_parser_mock() -> MagicMock:
-    mock = MagicMock(
-        name='sciencebeam_parser_mock'
-    )
+def configure_sciencebeam_parser_mock(mock: MagicMock) -> MagicMock:
     mock.profile_registry.get_bundle.return_value = get_profile_bundle_mock()
     mock.profile_registry.get_available_profile_names.return_value = [
         PROFILE_NAME_1, PROFILE_NAME_2
     ]
     mock.profile_registry.get_profile_descriptions.return_value = PROFILE_DESCRIPTIONS
     return mock
+
+
+@pytest.fixture(name='sciencebeam_parser_mock', scope='session')
+def _sciencebeam_parser_mock() -> MagicMock:
+    return configure_sciencebeam_parser_mock(MagicMock(name='sciencebeam_parser_mock'))
+
+
+@pytest.fixture(autouse=True)
+def _reset_sciencebeam_parser_mock(sciencebeam_parser_mock: MagicMock) -> None:
+    sciencebeam_parser_mock.reset_mock(return_value=True, side_effect=True)
+    configure_sciencebeam_parser_mock(sciencebeam_parser_mock)
 
 
 @pytest.fixture(name='sciencebeam_parser_session_mock')
@@ -142,10 +149,15 @@ def create_test_client(
     return client
 
 
-@pytest.fixture(name='test_client')
+@pytest.fixture(name='test_client', scope='session')
 def _test_client(
     sciencebeam_parser_mock: MagicMock
 ) -> TestClient:
+    """One app for the module: `create_api_app` costs more than the tests do.
+
+    The routers capture the parser they are built with, so the mock is shared
+    and reset per test rather than rebuilt.
+    """
     return create_test_client(
         sciencebeam_parser_mock=sciencebeam_parser_mock
     )
