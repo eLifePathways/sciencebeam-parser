@@ -77,6 +77,17 @@ def _get_rule_paths(count: int) -> Sequence[str]:
     ]
 
 
+def _get_band_paths(count: int, height: float = 12.0) -> Sequence[str]:
+    """Cells of one shaded table heading, side by side at a single height."""
+    return [
+        'M%.1f,100.0 L%.1f,100.0 L%.1f,%.1f L%.1f,%.1f Z' % (
+            50.0 + index * 50, 95.0 + index * 50,
+            95.0 + index * 50, 100.0 + height, 50.0 + index * 50, 100.0 + height
+        )
+        for index in range(count)
+    ]
+
+
 def _get_shape_paths(count: int) -> Sequence[str]:
     return [
         'M%.1f,%.1f L%.1f,%.1f L%.1f,%.1f Z' % (
@@ -198,6 +209,35 @@ class TestGetLayoutDocumentWithGraphicRegions:
             _get_layout_document(graphics), config=CONFIG
         ))
         assert not result
+
+    def test_should_report_no_region_for_a_shaded_table_heading(self, tmp_path: Path):
+        svg_path = _write_svg(tmp_path / 'band.svg', _get_band_paths(9))
+        graphics = [
+            LayoutGraphic(
+                local_file_path=svg_path,
+                coordinates=_get_coordinates(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                graphic_type='svg', page_meta=PAGE_META_1
+            )
+        ]
+        result = _get_graphics(get_layout_document_with_graphic_regions(
+            _get_layout_document(graphics), config=CONFIG
+        ))
+        assert not result
+
+    def test_should_report_a_region_no_wider_than_the_aspect_ratio_allows(self, tmp_path: Path):
+        svg_path = _write_svg(tmp_path / 'tall-band.svg', _get_band_paths(9, height=120.0))
+        graphics = [
+            LayoutGraphic(
+                local_file_path=svg_path,
+                coordinates=_get_coordinates(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                graphic_type='svg', page_meta=PAGE_META_1
+            )
+        ]
+        result = _get_graphics(get_layout_document_with_graphic_regions(
+            _get_layout_document(graphics), config=CONFIG
+        ))
+        assert len(result) == 1
+        assert result[0].graphic_type == VECTOR_REGION_GRAPHIC_TYPE
 
     def test_should_report_no_region_for_a_page_border(self, tmp_path: Path):
         svg_path = _write_svg(

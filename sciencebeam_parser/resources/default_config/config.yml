@@ -134,6 +134,8 @@ processors:
       min_vector_content_size: 10
       max_text_ratio_without_content: 0.2
       min_page_border_rule_ratio: 0.85
+      # Width over height. A table's shaded heading is a strip; a drawing is not.
+      max_vector_region_aspect_ratio: 10
       # An asset is rendered from the page where text is drawn over the region.
       render_dpi: 150
       min_text_over_graphic_ratio: 0.5
