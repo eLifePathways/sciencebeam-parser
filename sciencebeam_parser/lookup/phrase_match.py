@@ -1,5 +1,6 @@
 import logging
 import re
+from functools import cache
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -133,6 +134,7 @@ class SequencePhraseMatch:
         return results
 
 
+@cache
 def load_phrase_match_from_text_file(path: str) -> SequencePhraseMatch:
     """Load a SequencePhraseMatch from a plain-text file with one phrase per line."""
     LOGGER.info('loading phrase match from: %r', path)
