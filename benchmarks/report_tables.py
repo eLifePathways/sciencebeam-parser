@@ -82,8 +82,8 @@ def render_split_tables(  # pylint: disable=too-many-arguments
 
     By field rather than by row, so a field whose `exact` moved and whose `levenshtein`
     did not is read in one place. One table where no column answers for movement, and
-    one that still states the count where every field moved or none did -- the count is
-    the finding there, and a bare table would read as the split never having run.
+    one that still states the count where every field moved or none did. What moved is
+    expanded and what did not is collapsed, whichever of them is all of it.
     """
     if baseline is None or not rows:
         return render_field_table(labeled_summaries, rows, field_scoring_types, primary)
@@ -91,23 +91,25 @@ def render_split_tables(  # pylint: disable=too-many-arguments
     reference = labeled_summaries[baseline][0]
     n_moved = len({row.field for row in moved})
     n_unmoved = len({row.field for row in unmoved})
-    lead = [
+    lines = [
         f"{n_moved} of {n_moved + n_unmoved} fields moved against **{reference}**.",
         "",
     ]
-    if not moved or not unmoved:
-        return lead + render_field_table(
-            labeled_summaries, rows, field_scoring_types, primary
+    if moved:
+        lines += render_field_table(
+            labeled_summaries, moved, field_scoring_types, primary
         )
-    return [
-        *lead,
-        *render_field_table(labeled_summaries, moved, field_scoring_types, primary),
-        "",
-        "<details>",
-        f"<summary>Did not move ({_plural(n_unmoved, 'field')},"
-        f" {_plural(len(unmoved), 'row')})</summary>",
-        "",
-        *render_field_table(labeled_summaries, unmoved, field_scoring_types, primary),
-        "",
-        "</details>",
-    ]
+    if unmoved:
+        lines += [
+            *([""] if moved else []),
+            "<details>",
+            f"<summary>Did not move ({_plural(n_unmoved, 'field')},"
+            f" {_plural(len(unmoved), 'row')})</summary>",
+            "",
+            *render_field_table(
+                labeled_summaries, unmoved, field_scoring_types, primary
+            ),
+            "",
+            "</details>",
+        ]
+    return lines

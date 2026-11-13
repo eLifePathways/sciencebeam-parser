@@ -906,7 +906,7 @@ class TestMovementBaseline:
         # The first column differs on every field; the run matches its baseline.
         report = _render_comparison_report(self._columns(0.1, 0.5, 0.5), baseline=1)
         assert "0 of 2 fields moved against **B**." in report
-        assert "Did not move" not in report
+        assert "<summary>Did not move (2 fields, 2 rows)</summary>" in report
 
     def test_two_columns_are_not_split_without_one_either(self):
         # The renderer invents no baseline: a benchmark run whose only other column
@@ -958,7 +958,7 @@ class TestEveryFieldOrNoneMoved:
         assert "2 of 2 fields moved against **A**." in report
         assert "Did not move" not in report
 
-    def test_says_so_where_none_did(self):
+    def test_collapses_the_whole_table_where_none_did(self):
         report = _render_comparison_report(self._columns(0.5, 0.5), baseline=0)
         assert "0 of 2 fields moved against **A**." in report
-        assert "Did not move" not in report
+        assert "<summary>Did not move (2 fields, 2 rows)</summary>" in report
