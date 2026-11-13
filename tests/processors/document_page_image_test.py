@@ -11,6 +11,8 @@ from sciencebeam_parser.processors.document_page_image import (
 
 LOGGER = logging.getLogger(__name__)
 
+pytestmark = pytest.mark.integration
+
 MINIMAL_EXAMPLE_PDF_PATH = 'test-data/minimal-example.pdf'
 
 

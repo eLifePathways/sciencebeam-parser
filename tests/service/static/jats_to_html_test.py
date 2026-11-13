@@ -17,10 +17,10 @@ XML_NS = 'http://www.w3.org/XML/1998/namespace'
 PREFIX_BY_NAMESPACE = {XLINK_NS: 'xlink', XML_NS: 'xml'}
 
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.integration, pytest.mark.skipif(
     shutil.which('node') is None,
     reason='node runs the reading view that the page runs in a browser'
-)
+)]
 
 
 def get_attribute_name(name: str) -> str:

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Sequence
 
 import PIL.Image
+import pytest
 
 from sciencebeam_parser.document.layout_document import (
     LayoutDocument,
@@ -347,6 +348,7 @@ class TestGetLayoutDocumentWithGraphicRegions:
         assert len(result) == 1
         assert result[0].graphic_type == VECTOR_REGION_GRAPHIC_TYPE
 
+    @pytest.mark.integration
     def test_should_render_a_vector_region_when_a_file_is_required(self, tmp_path: Path):
         svg_path = _write_svg(tmp_path / 'page.svg', _get_shape_paths(20))
         graphics = [
@@ -367,6 +369,7 @@ class TestGetLayoutDocumentWithGraphicRegions:
         assert result[0].local_file_path
         assert os.path.exists(result[0].local_file_path)
 
+    @pytest.mark.integration
     def test_should_require_a_file_still_where_no_worker_is_free(self, tmp_path: Path):
         svg_path = _write_svg(tmp_path / 'page.svg', _get_shape_paths(20))
         graphics = [
@@ -436,6 +439,7 @@ class TestGetLayoutDocumentWithGraphicRegions:
         assert result is layout_document
 
 
+@pytest.mark.integration
 class TestPageRegionRenderer:
     def test_should_render_a_region_of_a_page(self, tmp_path: Path):
         with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:

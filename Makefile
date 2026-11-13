@@ -9,7 +9,11 @@ PYTHON = PATH=$(VENV)/bin:$$PATH $(VENV)/bin/python
 
 ARGS =
 
-NOT_SLOW_PYTEST_ARGS = -m 'not slow'
+UNIT_PYTEST_ARGS = -m 'not slow and not integration'
+
+# More than four workers loses to the delft import each one pays.
+PYTEST_WORKERS ?= 4
+PYTEST_PARALLEL_ARGS = -n $(PYTEST_WORKERS) --dist worksteal
 
 SCIENCEBEAM_PARSER_PORT = 8080
 
@@ -186,7 +190,11 @@ dev-lint: dev-flake8 dev-pylint dev-mypy
 
 
 dev-pytest:
-	$(PYTHON) -m pytest -p no:cacheprovider $(ARGS)
+	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_PARALLEL_ARGS) $(ARGS)
+
+
+dev-pytest-unit:
+	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_PARALLEL_ARGS) $(UNIT_PYTEST_ARGS) $(ARGS)
 
 
 dev-watch:
@@ -195,7 +203,7 @@ dev-watch:
 		--runner=$(VENV)/bin/python \
 		. \
 		-m pytest \
-		$(NOT_SLOW_PYTEST_ARGS) \
+		$(UNIT_PYTEST_ARGS) $(PYTEST_PARALLEL_ARGS) \
 		-p no:cacheprovider -p no:warnings $(ARGS)
 
 
@@ -205,6 +213,7 @@ dev-watch-slow:
 		--runner=$(VENV)/bin/python \
 		. \
 		-m pytest \
+		$(PYTEST_PARALLEL_ARGS) \
 		-p no:cacheprovider -p no:warnings $(ARGS)
 
 

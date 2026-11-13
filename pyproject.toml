@@ -63,6 +63,7 @@ dev = [
     "pylint>=3.3.9",
     "pytest>=8.4.2",
     "pytest-watcher>=0.4.3",
+    "pytest-xdist>=3.8.0",
     "types-pyyaml>=6.0.12.12",
     "types-setuptools==57.4.9",
 ]

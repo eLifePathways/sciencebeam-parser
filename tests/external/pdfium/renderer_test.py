@@ -20,6 +20,9 @@ LOGGER = logging.getLogger(__name__)
 MINIMAL_EXAMPLE_PDF_PATH = 'test-data/minimal-example.pdf'
 
 
+pytestmark = pytest.mark.integration
+
+
 class TestPdfRenderWorker:
     def test_should_render_a_whole_page(self, tmp_path: Path):
         image_path = str(tmp_path / 'page.png')

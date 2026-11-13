@@ -15,10 +15,10 @@ import pytest
 HARNESS_FILE = Path(__file__).parent / 'get_profile_options.mjs'
 
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.integration, pytest.mark.skipif(
     shutil.which('node') is None,
     reason='node runs the profile menu that the page runs in a browser'
-)
+)]
 
 
 def get_menu(profiles: List[dict]) -> dict:
