@@ -124,8 +124,14 @@ _FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     # conflict is matched first, so "financial competing interests" is still a
     # conflict.
     ('funding', ('funding', 'financ', 'grant', 'apoyo financiero')),
+    # "Author roles: J.H.: Conceptualization, methodology" is a contribution
+    # section in GROBID's corpus, and 296 of them open with a heading of this
+    # kind.  Only beside the authors, because a role is named in prose as well.
     ('contribution', ('contribution', 'contribuicao', 'contribucion',
-                      'colabora', 'authorship')),
+                      'colabora', 'authorship',
+                      'author role', 'authors role', "author's role",
+                      'roles and responsibilit', 'roles & responsibilit',
+                      'papeis dos autores', 'funciones de los autores')),
     ('acknowledgement', ('acknowledg', 'agradecimento', 'agradecimiento')),
     # The same statement the `data-availability` sec-type marks, filed as a
     # footnote instead -- which is where a preprint server puts it.
@@ -285,6 +291,18 @@ _NOTICE_TITLES = frozenset({
     'declaraciones',
     'declaracoes',
 })
+
+
+def match_notice_title(heading: str) -> bool:
+    """Whether a heading names a declaration GROBID files under `<annex>`.
+
+    By what it opens with rather than by the whole of it: a journal writes
+    "Abbreviations, acronyms & symbols" where GROBID's corpus has
+    "Abbreviations", which it holds under that type 22 times against 1 in the
+    body.
+    """
+    folded = _fold(heading).strip()
+    return any(folded.startswith(title) for title in _NOTICE_TITLES)
 
 
 def _get_notice_sections(root: etree._Element) -> Set[etree._Element]:

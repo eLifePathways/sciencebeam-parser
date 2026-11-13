@@ -19,6 +19,7 @@ from sciencebeam_parser.training.jats.back_matter import (
     is_bold_heading,
     match_fn_keywords,
     match_fn_kinds,
+    match_notice_title,
     statement_text,
 )
 from sciencebeam_parser.training.jats.field_vocab import (
@@ -565,6 +566,36 @@ def _iter_note_prose(text: str) -> Iterator[str]:
     yield from segments
 
 
+# How much of a table laid out as a declaration says which declaration it is.
+# Its own name opens it, where a numbered table opens with "Table 1".
+_DECLARATION_HEADING_LENGTH = 60
+
+
+def _declaration_fields_for_caption(
+    caption: str,
+) -> Optional[Tuple[str, str]]:
+    """The fields a table carries where its caption names a declaration.
+
+    A journal lays a declaration out as a table -- a grid of authors against
+    what each did, a list of abbreviations -- and the caption is what says so.
+    GROBID files both under the declaration rather than under the float: 296 of
+    its contribution sections open with a heading of that kind, and an
+    abbreviations block sits in `<div type="annex">` 22 times against 1 in body.
+    """
+    if not caption:
+        return None
+    heading = caption[:_DECLARATION_HEADING_LENGTH]
+    kind = match_fn_keywords(heading)
+    if kind in TITLE_FIELD_BY_KIND and kind in PARAGRAPH_FIELD_BY_KIND:
+        return TITLE_FIELD_BY_KIND[kind], PARAGRAPH_FIELD_BY_KIND[kind]
+    if match_notice_title(heading):
+        return (
+            JatsFieldNames.BACK_SECTION_TITLE,
+            JatsFieldNames.BACK_SECTION_PARAGRAPH,
+        )
+    return None
+
+
 def _iter_table_values(
     el: etree._Element, position: Dict[etree._Element, int]
 ) -> List[Tuple[int, JatsFieldValue]]:
@@ -578,6 +609,21 @@ def _iter_table_values(
     text = (element_text(el) if not children
             else ' '.join(element_text(c) for c in children if element_text(c)))
     entries: List[Tuple[int, JatsFieldValue]] = []
+    # Only a table with neither a label nor a caption: a publisher lays a
+    # declaration out as a table and numbers it among nothing, where every
+    # table of the article proper carries its "Table 1" and the caption under
+    # it, which may mention a declaration without being one.
+    declared = None if children else _declaration_fields_for_caption(text)
+    if declared is not None:
+        title_field, paragraph_field = declared
+        entries.append((position[el], JatsFieldValue(
+            text=text, field_name=title_field)))
+        for p_el in el.xpath('.//td | .//p'):
+            p_text = element_text(p_el)
+            if p_text:
+                entries.append((position[p_el], JatsFieldValue(
+                    text=p_text, field_name=paragraph_field)))
+        return entries
     if text:
         entries.append((position[el], JatsFieldValue(
             text=text, field_name=JatsFieldNames.BODY_TABLE)))
@@ -589,6 +635,69 @@ def _iter_table_values(
             entries.append((position[foot], JatsFieldValue(
                 text=foot_text, field_name=JatsFieldNames.BODY_TABLE)))
     return entries
+
+
+# What a translated article's own parts are, read in the order the sub-article
+# sets them.  The front stub carries the title and the abstract, the body the
+# argument, and the back the reference list the translation repeats.
+_TRANSLATION_FIELD_BY_XPATH = (
+    ('front-stub//title-group//article-title', JatsFieldNames.TITLE),
+    ('front-stub//abstract//p', JatsFieldNames.ABSTRACT),
+    ('front-stub//kwd-group//kwd', JatsFieldNames.KEYWORDS),
+    ('body//sec/title', JatsFieldNames.BODY_SECTION_TITLE),
+    ('body//p', JatsFieldNames.BODY_SECTION_PARAGRAPH),
+    ('back//ref-list/title', JatsFieldNames.REFERENCE_LIST_TITLE),
+)
+
+
+def _iter_translation_values(
+    sub_article: etree._Element, position: Dict[etree._Element, int]
+) -> List[Tuple[int, JatsFieldValue]]:
+    """A translated article's content, under the fields the article's own has."""
+    entries: List[Tuple[int, JatsFieldValue]] = []
+    for xpath, field_name in _TRANSLATION_FIELD_BY_XPATH:
+        for el in sub_article.xpath(xpath):
+            text = element_text(el)
+            if text:
+                entries.append(
+                    (position[el], JatsFieldValue(text=text, field_name=field_name))
+                )
+    for ref_el in sub_article.xpath('back/ref-list/ref'):
+        text = _reference_parent_text(ref_el)
+        if text:
+            entries.append((position[ref_el], JatsFieldValue(
+                text=text, field_name=JatsFieldNames.REFERENCE)))
+    return entries
+
+
+# The month names a journal sets a date in, beside the English ones `strftime`
+# gives.  These publishers print the history in their own language.
+_MONTH_NAMES_BY_LANGUAGE = {
+    'pt': ('janeiro', 'fevereiro', 'mar\u00e7o', 'abril', 'maio', 'junho',
+           'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'),
+    'es': ('enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+           'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'),
+}
+
+
+def _iter_printed_date_forms(day: int, month: int, year: int) -> Iterator[str]:
+    """A date in the forms a journal prints it, one value per form.
+
+    Five documents of one corpus print their submission history five ways --
+    "May 12, 2020", "March 7th, 2018", "Novembro 16, 2020", "25/06/2015",
+    "02/08/2024" -- so the date is offered in each rather than in the one the
+    publication date happens to use.
+    """
+    printed = date(year, month, day)
+    yield printed.strftime('%d/%m/%Y')
+    yield printed.strftime('%d %b %Y')
+    english = printed.strftime('%B')
+    yield f'{english} {day}, {year}'
+    yield f'{english} {day}'
+    for names in _MONTH_NAMES_BY_LANGUAGE.values():
+        name = names[month - 1]
+        yield f'{name.capitalize()} {day}, {year}'
+        yield f'{day} de {name} de {year}'
 
 
 class JatsFieldExtractor:
@@ -853,6 +962,32 @@ class JatsFieldExtractor:
                 exact_only=True,
             )
 
+    def _iter_history_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
+        """When the journal received and accepted the article, as the page says.
+
+        The JATS carries the day, the month and the year apart and says nothing
+        about how they are set, so each date is offered in the forms a journal
+        prints: whichever the page uses is the one that matches.
+        """
+        for el in root.xpath('front/article-meta/history/date'):
+            day, month, year = (
+                (el.findtext('day') or '').strip(),
+                (el.findtext('month') or '').strip(),
+                (el.findtext('year') or '').strip(),
+            )
+            if not (day and month and year):
+                continue
+            try:
+                forms = list(_iter_printed_date_forms(int(day), int(month), int(year)))
+            except ValueError:
+                continue
+            for text in forms:
+                yield JatsFieldValue(
+                    text=text,
+                    field_name=JatsFieldNames.HISTORY_DATE,
+                    exact_only=True,
+                )
+
     def _iter_front_identifier_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
         """The article's own DOI, as the page prints it.
 
@@ -1010,6 +1145,7 @@ class JatsFieldExtractor:
         yield from self._iter_front_identifier_values(root)
 
         yield from self._iter_publication_date_values(root)
+        yield from self._iter_history_values(root)
 
         yield from self._iter_front_notes_values(root)
 
@@ -1215,17 +1351,24 @@ class JatsFieldExtractor:
     # ── Sub-articles (ORE peer-review reports, etc.) ──────────────────────────
 
     def _iter_sub_article_values(self, root: etree._Element) -> Iterator[JatsFieldValue]:
-        """Yield paragraph/title text from <sub-article> elements as SUB_ARTICLE values.
+        """Yield the content of each `<sub-article>` under the field it is.
 
-        ORE papers embed peer-review reports as sub-articles.  Extracting their
-        content in document order lets the aligner map those PDF pages to the
-        SUB_ARTICLE field, which the segmentation model labels as <other> rather
-        than <body>.
+        A peer-review report is the SUB_ARTICLE field, which segmentation labels
+        `<review>`: ORE files each report as a sub-article, and taking its
+        content in document order maps those pages to the region.
+
+        A translation is not.  It is the article again in another language, and
+        a journal prints both in one PDF, so its title, its argument and its
+        reference list are the article's own fields -- labelling them `<review>`
+        teaches a model that a translated article is peer review.
         """
         position: Dict[etree._Element, int] = {el: i for i, el in enumerate(root.iter())}
         entries: List[Tuple[int, JatsFieldValue]] = []
 
         for sub_article in root.xpath('.//sub-article'):
+            if sub_article.get('article-type') == 'translation':
+                entries.extend(_iter_translation_values(sub_article, position))
+                continue
             for el in sub_article.xpath('.//title | .//p'):
                 text = element_text(el)
                 if text:

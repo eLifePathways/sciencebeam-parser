@@ -379,6 +379,53 @@ def _tag_headnotes_by_text_repetition(
 _PAGE_NUMBER_POSITION_PRECISION = 2
 
 
+_RUNNING_HEAD_MAX_Y_RATIO = 0.5
+_RUNNING_HEAD_Y_TOLERANCE = 0.01
+
+# A running head prints on page after page, where a sentence the argument
+# happens to repeat prints twice.
+_RUNNING_HEAD_MIN_PAGES = 3
+
+
+def _tag_running_heads_by_position(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+) -> None:
+    """Take the head a document prints in the same spot on page after page.
+
+    The headnote zone is a fixed share of the page and a journal can set its
+    running head below it -- one sets it at an eighth of the way down -- where
+    position alone says nothing.  Printing the same words in the same place on
+    more than one page says it instead, which is what the page-number pass reads
+    for a number that differs on every page.
+
+    It carries over a region the JATS vote has already named, because a running
+    head of the authors' surnames is matched by the byline on every page it
+    prints on: the guidelines ask for a running title not to be labelled at all.
+    """
+    by_text: Dict[str, List[Tuple[_SegLine, int, float]]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+        if page_number is None or y_ratio is None or not seg_line.text.strip():
+            continue
+        if y_ratio > _RUNNING_HEAD_MAX_Y_RATIO:
+            continue
+        by_text.setdefault(seg_line.text, []).append((seg_line, page_number, y_ratio))
+    for text, occurrences in by_text.items():
+        pages = {page_number for _, page_number, _ in occurrences}
+        if len(pages) < _RUNNING_HEAD_MIN_PAGES:
+            continue
+        if not _is_valid_headnote_candidate(text, len(occurrences)):
+            continue
+        spread = max(y for _, _, y in occurrences) - min(y for _, _, y in occurrences)
+        if spread > _RUNNING_HEAD_Y_TOLERANCE:
+            continue
+        for seg_line, _, _ in occurrences:
+            if seg_line.seg_label != SEG_COVER:
+                seg_line.seg_label = SEG_HEADNOTE
+
+
 def _tag_page_numbers_by_position(
     seg_lines: List[_SegLine],
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -1051,21 +1098,30 @@ def _reclaim_repeated_headnotes(
     The same absorption the page-number pass undoes: a JATS match reaching across
     a page break labels the running header between its halves, although the
     field's own text does not contain it.  A line is reclaimed only when the same
-    text is already headnote at least twice elsewhere in the document *and* the
-    line itself sits in the header zone.  Repetition alone is not enough: a
-    running header carrying the article's title repeats, and would otherwise take
-    the title out of the front matter, where it prints below the header zone.
+    text is set in the header zone on at least two pages *and* the line itself
+    sits in that zone.  The zone rather than an existing headnote, because a
+    running head of the authors' surnames is matched by the byline on every
+    page it prints on, and so is never left for the coordinate rules to name.
+    Repetition alone is not enough: a running header carrying the article's
+    title repeats, and would otherwise take the title out of the front matter,
+    where it prints below the header zone.
 
     A cover page keeps everything it has: GROBID asks for the whole of one under
     the one label, and the banner across the top of it is the publisher's too.
     """
-    headnote_counts: Counter = Counter(
-        sl.text for sl in seg_lines if sl.seg_label == SEG_HEADNOTE
-    )
+    pages_by_text: Dict[str, Set[int]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is None:
+            continue
+        if seg_line.seg_label == SEG_HEADNOTE or _is_in_header_zone(
+            seg_line, page_meta_by_number, config
+        ):
+            pages_by_text.setdefault(seg_line.text, set()).add(page_number)
     for seg_line in seg_lines:
         if seg_line.seg_label in (SEG_HEADNOTE, SEG_COVER, None):
             continue
-        count = headnote_counts.get(seg_line.text, 0)
+        count = len(pages_by_text.get(seg_line.text, ()))
         if count < 2 or not _is_valid_headnote_candidate(seg_line.text, count, min_count=2):
             continue
         if not _is_in_header_zone(seg_line, page_meta_by_number, config):
@@ -2395,7 +2451,7 @@ def _release_front_after_the_body(
         )
         if label is not None:
             seg_line.seg_label = label
-    back_labels = set(_BACK_LABEL_BY_FRONT_FIELD.values())
+    back_labels = set(_BACK_LABEL_BY_FRONT_FIELD.values()) | {SEG_CONTRIBUTION}
     for run in list(_iter_label_runs(seg_lines, SEG_FRONT)):
         if run[0] < body_start:
             continue
@@ -2404,10 +2460,23 @@ def _release_front_after_the_body(
             for index in run
         ):
             continue
-        if _enclosing_label(seg_lines, run[0], -1) not in back_labels:
+        above = _enclosing_label(seg_lines, run[0], -1)
+        if above not in back_labels:
             continue
+        # A contribution statement names each author and what they did, so the
+        # byline matches inside it and carries the line into the front matter.
+        # Under that heading the run is the statement's rather than nothing's;
+        # GROBID's corpus has 296 contribution sections opening this way.
+        names_the_authors = any(
+            JatsFieldNames.AUTHOR in fields_of(seg_lines[index]) for index in run
+        )
+        taken = (
+            SEG_CONTRIBUTION
+            if above == SEG_CONTRIBUTION and names_the_authors
+            else None
+        )
         for index in run:
-            seg_lines[index].seg_label = None
+            seg_lines[index].seg_label = taken
 
 
 def _claim_the_banner_above_the_front_matter(
@@ -2555,6 +2624,7 @@ class SegmentationLabelDeriver:
         # the lines after it with nothing to bridge from.
         _reclaim_repeated_headnotes(seg_lines, page_meta_by_number, self.config)
         _reclaim_repeated_running_feet(seg_lines, page_meta_by_number)
+        _tag_running_heads_by_position(seg_lines, page_meta_by_number)
         _reclaim_margin_lines_the_deposit_places_elsewhere(seg_lines, annotated)
 
         _claim_amendments_box(seg_lines)
