@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
-from typing import List, Optional, Sequence, Set
+from typing import FrozenSet, List, Optional, Sequence, Set
 from zipfile import ZipFile
 
 from lxml import etree
@@ -40,6 +40,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticGraphic
 )
 from sciencebeam_parser.document.tei.attribution import DocumentAttribution
+from sciencebeam_parser.document.tei.common import TEI_NS
 from sciencebeam_parser.document.tei_document import get_tei_for_semantic_document
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
 from sciencebeam_parser.resources.xslt import TEI_TO_JATS_XSLT_FILE
@@ -179,21 +180,34 @@ _TEI_BLOCK_ELEMENT_NAMES = frozenset({
     'figure', 'table', 'row',
 })
 
+_JATS_BLOCK_ELEMENT_NAMES = frozenset({
+    'article', 'front', 'body', 'back',
+    'journal-meta', 'article-meta', 'contrib-group', 'custom-meta-group',
+    'abstract', 'sec', 'fig', 'caption', 'table-wrap', 'table', 'tbody',
+    'ref-list', 'app-group', 'app', 'ack',
+})
 
-def _indent_tei_element(
+_BLOCK_ELEMENT_NAMES_BY_NAMESPACE = {
+    TEI_NS: _TEI_BLOCK_ELEMENT_NAMES,
+    None: _JATS_BLOCK_ELEMENT_NAMES,
+}
+
+_XML_SPACE_ATTRIB_NAME = '{http://www.w3.org/XML/1998/namespace}space'
+
+
+def _indent_element(
     element: etree.ElementBase,
+    block_element_names: FrozenSet[str],
     space: str,
     level: int
 ) -> None:
-    # Only add indentation inside known structural/block TEI elements.
-    # Content elements (title, p, hi, ref, …) are left completely untouched
-    # so their text content can never be corrupted by inserted whitespace.
-    # The tail of a content element is still set by its parent block element,
-    # so it still appears on its own indented line.
-    local_name = etree.QName(element).localname
-    if local_name not in _TEI_BLOCK_ELEMENT_NAMES:
+    # A preserve subtree is returned from rather than descended into, which is
+    # why the inherited value needs no tracking.
+    if element.get(_XML_SPACE_ATTRIB_NAME) == 'preserve':
         return
-    children = list(element)
+    if etree.QName(element).localname not in block_element_names:
+        return
+    children = [child for child in element if isinstance(child.tag, str)]
     if not children:
         return
     indent = '\n' + level * space
@@ -201,13 +215,18 @@ def _indent_tei_element(
     if not (element.text and element.text.strip()):
         element.text = child_indent
     for i, child in enumerate(children):
-        _indent_tei_element(child, space, level + 1)
+        _indent_element(child, block_element_names, space, level + 1)
         if not (child.tail and child.tail.strip()):
             child.tail = child_indent if i < len(children) - 1 else indent
 
 
-def _indent_tei(root: etree.ElementBase, space: str = '  ') -> None:
-    _indent_tei_element(root, space=space, level=0)
+def _indent_xml(root: etree.ElementBase, space: str = '  ') -> None:
+    block_element_names = _BLOCK_ELEMENT_NAMES_BY_NAMESPACE.get(
+        etree.QName(root).namespace
+    )
+    if block_element_names is None:
+        return
+    _indent_element(root, block_element_names, space=space, level=0)
 
 
 def serialize_xml_to_file(
@@ -215,13 +234,10 @@ def serialize_xml_to_file(
     filename: str,
     pretty_print: bool = False
 ):
-    # _XSLTResultTree (JATS) is an _ElementTree subclass; skip for those
-    is_element_tree = isinstance(
-        xml_root, etree._ElementTree  # pylint: disable=protected-access
-    )
-    if pretty_print and not is_element_tree:
-        _indent_tei(xml_root)
-    get_xml_tree(xml_root).write(
+    xml_tree = get_xml_tree(xml_root)
+    if pretty_print:
+        _indent_xml(xml_tree.getroot())
+    xml_tree.write(
         filename,
         encoding='utf-8',
         pretty_print=False
