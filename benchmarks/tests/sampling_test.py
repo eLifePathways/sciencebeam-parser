@@ -7,6 +7,7 @@ import pytest
 
 from benchmarks.sampling import (
     positional_ids,
+    release_ids,
     sample_indices,
     stratified_ids,
     stratified_order,
@@ -80,6 +81,58 @@ class TestPositionalIds:
     def test_rejects_duplicate_ids(self):
         with pytest.raises(ValueError, match="duplicate id"):
             positional_ids(["a", "b", "a"], 2, seed=42)
+
+
+class TestReleaseIds:
+    PUBLIC = [f"pub{i:02d}" for i in range(20)]
+    RESTRICTED = [f"res{i:02d}" for i in range(6)]
+
+    def _ids(self, n, current=None, first=None):
+        first = first or [self.PUBLIC, self.RESTRICTED]
+        return release_ids(first, current or first, n, seed=42)
+
+    def test_one_source_picks_what_positional_ids_picks(self):
+        for n in (5, 10, None):
+            assert set(release_ids([self.PUBLIC], [self.PUBLIC], n, 42)) == set(
+                positional_ids(self.PUBLIC, n, 42)
+            )
+
+    def test_shuffles_rather_than_taking_release_order(self):
+        assert release_ids([self.PUBLIC], [self.PUBLIC], 5, 42) != self.PUBLIC[:5]
+
+    def test_sources_take_turns(self):
+        picked = self._ids(6)
+        assert [i[:3] for i in picked] == ["pub", "res"] * 3
+
+    def test_the_longer_source_fills_in_once_the_other_runs_out(self):
+        picked = self._ids(None)
+        assert len(picked) == 26
+        assert all(i.startswith("pub") for i in picked[12:])
+
+    def test_smaller_modes_are_prefixes_of_larger_ones(self):
+        assert self._ids(5) == self._ids(12)[:5]
+
+    def test_a_removed_document_gives_its_place_to_the_next(self):
+        before = self._ids(6)
+        current = [[i for i in self.PUBLIC if i != before[0]], self.RESTRICTED]
+        after = self._ids(6, current)
+        assert len(after) == 6 and before[0] not in after
+        assert set(before[1:]) <= set(after)
+
+    def test_a_moved_document_keeps_its_place(self):
+        before = self._ids(6)
+        moved = before[0]
+        current = [[i for i in self.PUBLIC if i != moved], self.RESTRICTED + [moved]]
+        assert self._ids(6, current) == before
+
+    def test_additions_follow_the_first_release(self):
+        current = [self.PUBLIC + ["pub-new"], self.RESTRICTED]
+        assert "pub-new" not in self._ids(26, current)
+        assert self._ids(None, current)[-1] == "pub-new"
+
+    def test_rejects_duplicate_ids(self):
+        with pytest.raises(ValueError, match="duplicate id"):
+            release_ids([["a", "b"], ["b"]], [["a", "b"], ["b"]], 2, 42)
 
 
 class TestStratumOrder:

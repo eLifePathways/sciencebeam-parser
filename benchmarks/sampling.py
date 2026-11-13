@@ -105,3 +105,51 @@ def positional_ids(all_ids: Sequence[str], n: Optional[int], seed: int) -> List[
         len(all_ids), len(all_ids) if n is None else min(n, len(all_ids)), seed
     )
     return [record_id for index, record_id in enumerate(all_ids) if index in picked]
+
+
+def release_ids(
+    first_by_source: Sequence[Sequence[str]],
+    current_by_source: Sequence[Sequence[str]],
+    n: Optional[int],
+    seed: int,
+) -> List[str]:
+    """A mode's documents for a corpus listed by release: the first n of a fixed order.
+
+    Each source's first release is shuffled once with the seed, since a release
+    lists documents in whatever order they were built, which can be by date. A
+    removed document gives its place to the next, one that moved to another source
+    keeps its place, and documents added later follow the first release in release
+    order. Sources take turns, so a public and a restricted repo count equally until
+    one runs out. Smaller modes are prefixes of larger ones.
+    """
+    first_all = [i for ids in first_by_source for i in ids]
+    current_all = [i for ids in current_by_source for i in ids]
+    _check_unique(first_all, "first release")
+    _check_unique(current_all, "pinned release")
+    current, first = set(current_all), set(first_all)
+    orders = []
+    for first_ids, current_ids in zip(first_by_source, current_by_source):
+        positions = np.arange(len(first_ids))
+        np.random.default_rng(seed).shuffle(positions)
+        shuffled = [first_ids[int(i)] for i in positions]
+        orders.append(
+            [record_id for record_id in shuffled if record_id in current]
+            + [i for i in current_ids if i not in first]
+        )
+    longest = max((len(order) for order in orders), default=0)
+    picked = [
+        order[position]
+        for position in range(longest)
+        for order in orders
+        if position < len(order)
+    ]
+    return picked if n is None else picked[:n]
+
+
+def _check_unique(ids: Sequence[str], what: str) -> None:
+    duplicates = len(ids) - len(set(ids))
+    if duplicates:
+        raise ValueError(
+            f"{what} has {duplicates} duplicate id(s); sampling identifies documents "
+            f"by id, so ids have to be unique"
+        )

@@ -300,6 +300,14 @@ dev-benchmark-compare:
 		$(ARGS)
 
 
+# Shows what each dataset repo's newest release changes; APPLY=1 writes the new pins.
+dev-benchmark-update-dataset:
+	$(PYTHON) -m benchmarks.update_dataset_cli \
+		--config $(BENCHMARK_CONFIG) \
+		$(if $(filter 1,$(APPLY)),--apply) \
+		$(ARGS)
+
+
 # Renders a named comparison and its charts from summaries that already exist, so it
 # needs no parser and no network -- run it as often as the question changes.
 dev-comparison: .require-COMPARISON
@@ -530,6 +538,10 @@ docker-benchmark-score:
 
 docker-benchmark-compare:
 	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-compare
+
+
+docker-benchmark-update-dataset:
+	$(MAKE) PYTHON="$(DOCKER_DEV_PYTHON)" dev-benchmark-update-dataset
 
 
 docker-comparison:

@@ -22,6 +22,7 @@ from benchmarks.compute_cost import (
     start_cpu_measurement,
 )
 from benchmarks.fetch import fetch_data, resolved_sources
+from benchmarks.selection_record import selection_record
 
 LOGGER = logging.getLogger(__name__)
 
@@ -334,6 +335,8 @@ def run_predict(  # pylint: disable=too-many-arguments,too-many-positional-argum
         "split": split,
         "mode": mode,
         "corpora": list(sources),
+        # Which documents, with which checksums, so two runs can be shown to agree.
+        **selection_record(sources, records),
         "fields": config["fields"],
         "n_records": n_ok,
         "n_errors": n_err,

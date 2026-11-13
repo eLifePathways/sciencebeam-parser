@@ -170,10 +170,9 @@ def _run_baseline(  # pylint: disable=too-many-locals
         # this baseline from the comparison whenever one is included. A mode larger
         # than the one it was stored at leaves it short the same way.
         #
-        # Where it covers a corpus only partly it still contributes, and the report
-        # is what surfaces that: it prints each run's document count per corpus and
-        # calls out a difference, since a delta across unequal document sets
-        # reflects which documents were measured as well as how the tool behaved.
+        # Where it covers a corpus only partly it still contributes, and the
+        # comparison narrows every column to the documents they all have, saying
+        # what it left out (see benchmarks.shared_documents).
         coverage = _coverage(expected_ids, done_ids)
         covered = {corpus for corpus, (have, _) in coverage.items() if have}
         if not covered:
@@ -226,7 +225,7 @@ def _run_baseline(  # pylint: disable=too-many-locals
         })
 
     run_score(config, run_dir, data_dir, out_path=None, split_override=split,
-              include=include)
+              include=include, record_ids=expected_ids)
     metadata = store.read_metadata(tool, version, profile, split)
     label = _make_label(tool, version, profile, metadata)
     summary_path = run_dir / "summary.json"
@@ -502,7 +501,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
                 include=include, retry_passes=retry_passes)
     run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split,
               report_location=report_location,
-              include=include)
+              include=include, record_ids=expected_ids)
 
     if push_current:
         store.push("sciencebeam-parser", "main", profile, split,

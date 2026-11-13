@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from benchmarks.corpus_source import CorpusConfigError, resolve_source
+from benchmarks.corpus_source import CorpusConfigError, CorpusSource, resolve_source
 from benchmarks.fetch import (
     fetch_data,
     fetch_gold,
@@ -113,12 +113,14 @@ class TestResolveSource:
             _config({"plos": STRATIFIED_ENTRY}, {"plos": 3}),
             "validation", "plos", STRATIFIED_ENTRY,
         )
+        assert isinstance(source, CorpusSource)
         assert (source.repo_id, source.revision) == ("private/plos", "corpus-v001")
 
     def test_falls_back_to_the_dataset_level_repo_and_revision(self):
         source = resolve_source(
             _config({"ore": SINGLE_ENTRY}, {"ore": 3}), "validation", "ore", SINGLE_ENTRY
         )
+        assert isinstance(source, CorpusSource)
         assert (source.repo_id, source.revision) == ("shared/repo", "main")
 
     def test_rejects_a_corpus_that_names_a_repo_without_a_revision(self):
@@ -134,6 +136,7 @@ class TestResolveSource:
     def test_a_bare_string_entry_still_names_a_file(self):
         source = resolve_source({"dataset": {"repo_id": "a/b", "revision": "main"}},
                                 "validation", "ore", "ore/train.parquet")
+        assert isinstance(source, CorpusSource)
         assert source.file == "ore/train.parquet"
         assert source.id_column == "id"
 

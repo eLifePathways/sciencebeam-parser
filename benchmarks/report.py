@@ -48,6 +48,7 @@ from benchmarks.report_cost import render_cost_section
 from benchmarks.report_legend import keyed, render_legend
 from benchmarks.report_tables import render_split_tables
 from benchmarks.report_usage import render_usage_section
+from benchmarks.shared_documents import on_shared_documents
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
     concatenation_row,
@@ -689,18 +690,23 @@ def _write_comment_report(  # pylint: disable=too-many-arguments
     charts: ChartOutput,
     primary: int,
     variants: Sequence[Tuple[str, str]],
+    documents_note: Optional[str] = None,
 ) -> None:
     """The report a PR comment can carry, beside the full one."""
     comment = _render_comparison_report(
         labeled_summaries, labeled_run_records, selection, charts, primary, variants,
         budget, report_location, baseline,
     )
+    if documents_note:
+        # Kept only where it fits; the full report always has it.
+        with_note = comment.rstrip("\n") + "\n\n" + documents_note + "\n"
+        comment = with_note if len(with_note) <= budget else comment
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(comment)
     LOGGER.info("Comment report written to %s (%d characters)", out_path, len(comment))
 
 
-def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     labeled_summary_paths: List[Tuple[str, Path]],
     out_path: Optional[Path],
     selection: Selection = Selection(),
@@ -735,10 +741,15 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         prefix=chart_prefix,
         base_url=chart_base_url,
     )
+    labeled_summaries, documents_note = on_shared_documents(
+        labeled_summaries, [path for _, path in labeled_summary_paths]
+    )
     report = _render_comparison_report(
         labeled_summaries, labeled_run_records, selection, charts, primary, variants,
         baseline=baseline,
     )
+    if documents_note:
+        report = report.rstrip("\n") + "\n\n" + documents_note + "\n"
     if out_path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(report)
@@ -748,7 +759,7 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
             comment_out, comment_budget, report_location, baseline,
             labeled_summaries, labeled_run_records, selection,
             # The images are already drawn; this wants their markdown, not another pass.
-            replace(charts, out_dir=None), primary, variants,
+            replace(charts, out_dir=None), primary, variants, documents_note,
         )
     print(report)
 

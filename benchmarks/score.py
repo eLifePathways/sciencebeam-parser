@@ -5,7 +5,9 @@ import json
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import (
+    Any, Collection, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple,
+)
 
 import yaml
 
@@ -259,7 +261,9 @@ def _summarise_documents(
     return result
 
 
-def _read_scored_documents(scores_dir: Path) -> List[Dict[str, dict]]:
+def _read_scored_documents(
+    scores_dir: Path, record_ids: Optional[Collection[str]] = None
+) -> List[Dict[str, dict]]:
     """What a previous run scored, which is what it left behind rather than what it would
     score now: a document whose scoring failed keeps the file of the run before it."""
     if not scores_dir.exists():
@@ -268,7 +272,18 @@ def _read_scored_documents(scores_dir: Path) -> List[Dict[str, dict]]:
     return [
         json.loads(path.read_text())["fields"]
         for path in sorted(scores_dir.glob("*.json"))
+        if record_ids is None or path.stem in record_ids
     ]
+
+
+def summarise_scored_documents(
+    summary: Mapping[str, Any], run_dir: Path, corpus: str, record_ids: Collection[str]
+) -> Dict[str, Any]:
+    """One corpus of a scored run, summarised again over the given documents only."""
+    return _summarise_documents(
+        _read_scored_documents(run_dir / "scores" / corpus, record_ids),
+        summary["fields"], summary["field_measures"],
+    )
 
 
 def _score_corpus(  # pylint: disable=too-many-locals
@@ -282,6 +297,8 @@ def _score_corpus(  # pylint: disable=too-many-locals
     field_sources: Dict[str, Tuple[str, str]],
     lower_case_fields: Set[str],
     xml_mapping: dict,
+    record_ids: Optional[Collection[str]] = None,
+    scored: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     pred_dir = run_dir / "predictions" / corpus
     scores_dir = run_dir / "scores" / corpus
@@ -296,6 +313,9 @@ def _score_corpus(  # pylint: disable=too-many-locals
 
     for pred_path in iter_prediction_files(pred_dir):
         record_id = record_id_from_path(pred_path)
+        # The store holds predictions beyond this mode's documents.
+        if record_ids is not None and record_id not in record_ids:
+            continue
         gold_path = data_dir / corpus / f"{record_id}.jats.xml"
 
         if not gold_path.exists():
@@ -327,6 +347,8 @@ def _score_corpus(  # pylint: disable=too-many-locals
         }, indent=2))
 
         documents.append(fields)
+        if scored is not None:
+            scored.append(record_id)
 
     return _summarise_documents(documents, field_names, field_measures)
 
@@ -506,7 +528,9 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     include: Optional[Iterable[str]] = None,
     from_scores: bool = False,
     report_location: str = "",
+    record_ids: Optional[Collection[Tuple[str, str]]] = None,
 ) -> None:
+    """Score a run's predictions; `record_ids` limits it to a mode's documents."""
     xml_mapping = prepare_judge()
     field_names: List[str] = config["fields"]
     scoring_cfg = config.get("scoring", {})
@@ -540,21 +564,31 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     )
 
     corpus_results: Dict[str, Any] = {}
+    scored_documents: Dict[str, List[str]] = {}
     for corpus in corpora:
+        wanted = None if record_ids is None else {
+            record_id for record_corpus, record_id in record_ids if record_corpus == corpus
+        }
         if from_scores:
             # Summarising what a run already scored, which is all this needs: the gold it
             # was scored against may no longer be cached, and re-scoring would not change
             # a figure.
             LOGGER.info("Summarising corpus %r from its score files...", corpus)
+            scores_dir = run_dir / "scores" / corpus
             corpus_results[corpus] = _summarise_documents(
-                _read_scored_documents(run_dir / "scores" / corpus),
-                field_names, field_measures,
+                _read_scored_documents(scores_dir, wanted), field_names, field_measures,
             )
+            scored_documents[corpus] = [
+                path.stem for path in sorted(scores_dir.glob("*.json"))
+                if wanted is None or path.stem in wanted
+            ]
             continue
         LOGGER.info("Scoring corpus %r (split=%s)...", corpus, split)
+        scored_documents[corpus] = []
         corpus_results[corpus] = _score_corpus(
             corpus, data_dir / split, run_dir, field_names, all_measures, field_measures,
-            field_scoring_types, field_sources, lower_case_fields, xml_mapping
+            field_scoring_types, field_sources, lower_case_fields, xml_mapping,
+            wanted, scored_documents[corpus],
         )
 
     manifest_entries = read_manifest_entries(run_dir)
@@ -571,6 +605,10 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
             if sources != (field, field)
         },
         "corpora": corpus_results,
+        # What a comparison intersects, so every column is scored on the same documents.
+        "scored_documents": {
+            corpus: sorted(ids) for corpus, ids in scored_documents.items()
+        },
         **({"llm_usage": llm_usage} if llm_usage else {}),
         **({"cost": cost} if cost else {}),
     }, indent=2))

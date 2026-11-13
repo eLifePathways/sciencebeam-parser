@@ -1,9 +1,43 @@
 dataset:
-  # Pinned rather than `main`: these corpora are rebuilt in place, so following the
-  # branch would move every recorded aggregate. Tag a90f42e2d22e45c388915d16d3c20967713c4d56.
-  # v002 rows are a subset of v001's, ids and xml unchanged, so `variant` stays.
-  repo_id: elifepathways/sciencebeam-v2-benchmarking
-  revision: benchmark-v002
+  # One sciencebeam-dataset-* repo per entry, pinned to a release tag and the commit
+  # it pointed at: a run fails if the tag has moved. Scored against that tag's
+  # corrected `xml`. A mode takes the first N documents of each repo's
+  # releases/v1.0.0.csv shuffled with the sample seed, then of later additions.
+  # `variant` changes only when PDFs do.
+  # Move the pins with `make docker-benchmark-update-dataset`.
+  repos:
+    biorxiv: &biorxiv
+      repo_id: elifepathways/sciencebeam-dataset-biorxiv
+      revision: v1.0.0
+      commit: 03e6f2699e31a7014173de389f99e97dc83e029f
+    biorxiv_restricted: &biorxiv_restricted
+      repo_id: elifepathways/sciencebeam-dataset-biorxiv-restricted
+      revision: v2.0.0
+      commit: 73e41754f14c905fda94b41f53291d6a00e73092
+    ore: &ore
+      repo_id: elifepathways/sciencebeam-dataset-ore
+      revision: v2.0.0
+      commit: c8c2e691198fad661071ddd7f3a8d858ff84f1b8
+    pkp_restricted: &pkp_restricted
+      repo_id: elifepathways/sciencebeam-dataset-pkp-restricted
+      revision: v2.0.0
+      commit: 73a1bae8b73f6dd8cc44249a8eea7a18a909b7b6
+    scielo_br: &scielo_br
+      repo_id: elifepathways/sciencebeam-dataset-scielo-br
+      revision: v3.0.0
+      commit: 5c189a07dc6cd2b982da0db9d4c46b4b30acdfc0
+    scielo_br_restricted: &scielo_br_restricted
+      repo_id: elifepathways/sciencebeam-dataset-scielo-br-restricted
+      revision: v2.1.0
+      commit: bb61cd3151a0aad43489cd5f0ac84dec363b8429
+    scielo_mx_restricted: &scielo_mx_restricted
+      repo_id: elifepathways/sciencebeam-dataset-scielo-mx-restricted
+      revision: v2.0.0
+      commit: 4e8c69ec6c9f8ffd310b4121b6cb88f8b618e0b2
+    scielo_preprints: &scielo_preprints
+      repo_id: elifepathways/sciencebeam-dataset-scielo-preprints
+      revision: v3.0.0
+      commit: e48c337ee8fe25c14b35c6156e27437f857411bf
   splits:
     train:
       # The split to read closely when working out why an extraction failed, which
@@ -17,29 +51,25 @@ dataset:
         id_column: id
         variant: v002
         optional: true
+      # Public and restricted take turns, public first, so a mode weighs them
+      # equally until one runs out.
       biorxiv:
-        file: biorxiv-jats/train-00000-of-00001.parquet
-        id_column: id
+        sources: [*biorxiv, *biorxiv_restricted]
         variant: v1
       ore:
-        file: ore-jats/train-00000-of-00001.parquet
-        id_column: id
+        sources: [*ore]
         variant: v1
       pkp:
-        file: pkp-jats/train-00000-of-00001.parquet
-        id_column: id
+        sources: [*pkp_restricted]
         variant: v2
       scielo_br:
-        file: scielo_br-jats/train-00000-of-00001.parquet
-        id_column: id
+        sources: [*scielo_br, *scielo_br_restricted]
         variant: v1
       scielo_mx:
-        file: scielo_mx-jats/train-00000-of-00001.parquet
-        id_column: id
+        sources: [*scielo_mx_restricted]
         variant: v2
       scielo_preprints-jats:
-        file: scielo-preprints-jats/train-00000-of-00001.parquet
-        id_column: id
+        sources: [*scielo_preprints]
         variant: v1
     validation:
       # Private repo, pinned like the others, and sampled per journal because it is
@@ -54,33 +84,30 @@ dataset:
         id_column: id
         variant: v002
         optional: true
+      # Public and restricted take turns, public first, so a mode weighs them
+      # equally until one runs out.
       biorxiv:
-        file: biorxiv-jats/validation-00000-of-00001.parquet
-        id_column: id
+        sources: [*biorxiv, *biorxiv_restricted]
         variant: v1
       ore:
-        file: ore-jats/validation-00000-of-00001.parquet
-        id_column: id
+        sources: [*ore]
         variant: v1
       pkp:
-        file: pkp-jats/validation-00000-of-00001.parquet
-        id_column: id
+        sources: [*pkp_restricted]
         variant: v2
       scielo_br:
-        file: scielo_br-jats/validation-00000-of-00001.parquet
-        id_column: id
+        sources: [*scielo_br, *scielo_br_restricted]
         variant: v1
       scielo_mx:
-        file: scielo_mx-jats/validation-00000-of-00001.parquet
-        id_column: id
+        sources: [*scielo_mx_restricted]
         variant: v2
       scielo_preprints-jats:
-        file: scielo-preprints-jats/validation-00000-of-00001.parquet
-        id_column: id
+        sources: [*scielo_preprints]
         variant: v1
     # Only the corpora whose numbers are meant to be published. PLOS's test
     # documents stay unexamined, which is what keeps those numbers honest, so this
-    # split is for deliberate runs rather than routine ones.
+    # split is for deliberate runs rather than routine ones. The dataset repos' test
+    # splits are unused.
     test:
       plos-manuscripts:
         repo_id: elifepathways/sciencebeam-plos-rsrch-2064-benchmark
@@ -92,9 +119,9 @@ dataset:
         variant: v002
         optional: true
 
-# Split sizes at benchmark-v002 (validation/train), a guide rather than a limit:
-#   biorxiv 41/29, ore 58/37, pkp 132/95,
-#   scielo_br 181/123, scielo_mx 39/30, scielo_preprints-jats 125/83
+# Split sizes at the pinned tags (validation/train), a guide rather than a limit:
+#   biorxiv 41/29, ore 55/37, pkp 132/95,
+#   scielo_br 181/123, scielo_mx 39/30, scielo_preprints-jats 125/82
 # A mode asking for more than a split holds takes all of it. plos-manuscripts is
 # sized in multiples of its 14 journals, and its `full` is null because its splits
 # differ in size.
@@ -116,12 +143,12 @@ sampling:
     scielo_mx: 25
     scielo_preprints-jats: 25
   medium:
-    biorxiv: 47
+    biorxiv: 41
     ore: 50
     pkp: 50
     plos-manuscripts: 56
     scielo_br: 50
-    scielo_mx: 34
+    scielo_mx: 39
     scielo_preprints-jats: 50
   large:
     biorxiv: 100

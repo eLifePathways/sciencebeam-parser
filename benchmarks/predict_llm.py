@@ -20,6 +20,7 @@ import yaml
 from lxml import etree
 
 from benchmarks.fetch import fetch_data, get_corpus_variants, resolved_sources
+from benchmarks.selection_record import selection_record
 from benchmarks.predictions_store import RepoPredictionsStore
 from benchmarks.predict import _append_manifest, _load_done, _Progress
 
@@ -370,6 +371,8 @@ def run_predict_llm(  # noqa: E501  pylint: disable=too-many-arguments,too-many-
         "split": split,
         "mode": mode,
         "corpora": list(sources),
+        # Which documents, with which checksums, so two runs can be shown to agree.
+        **selection_record(sources, records),
         "fields": config["fields"],
         "n_records": n_ok,
         "n_errors": n_err,
