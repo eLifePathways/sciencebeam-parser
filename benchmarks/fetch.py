@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import (
@@ -17,17 +19,22 @@ from typing import (
 )
 
 from benchmarks.corpus_source import (
+    AnySource,
     CorpusConfigError,
     CorpusSource,
+    ReleasedCorpus,
+    ReleaseRepo,
     RepoReader,
     iter_partitioned_rows,
+    iter_release_rows,
     iter_single_file_rows,
     read_all_ids,
     read_manifest_ids_by_stratum,
+    read_release_ids,
     resolve_source,
 )
 from benchmarks.corrections import substitute_corrected_deposits
-from benchmarks.sampling import positional_ids, stratified_ids
+from benchmarks.sampling import positional_ids, release_ids, stratified_ids
 from benchmarks.training_records import SourceManifest, read_source_manifest
 from benchmarks.training_selection import (
     ModeSelection,
@@ -45,6 +52,7 @@ __all__ = [
     "included_corpora",
     "iter_corpus_sources",
     "resolved_sources",
+    "select_released_ids",
 ]
 
 
@@ -90,7 +98,7 @@ def included_corpora(
 
 def iter_corpus_sources(
     cfg: Mapping[str, Any], split: str, include: Optional[Iterable[str]] = None
-) -> List[CorpusSource]:
+) -> List[AnySource]:
     """Where each covered corpus lives, resolved once for every reader."""
     split_corpora = _split_corpora(cfg, split)
     return [
@@ -101,20 +109,29 @@ def iter_corpus_sources(
 
 def resolved_sources(
     cfg: Mapping[str, Any], split: str, include: Optional[Iterable[str]] = None
-) -> Dict[str, Dict[str, str]]:
+) -> Dict[str, Dict[str, Any]]:
     """What each corpus resolved to, for recording alongside a run's output.
 
     This is what makes "the PDFs and the gold XML came from the same revision"
     checkable after the fact rather than argued from the code.
     """
     return {
-        source.corpus: {
-            "repo_id": source.repo_id,
-            "revision": source.revision,
-            "location": source.location,
-            **({"manifest": source.manifest} if source.manifest else {}),
-        }
+        source.corpus: _describe_source(source)
         for source in iter_corpus_sources(cfg, split, include)
+    }
+
+
+def _describe_source(source: AnySource) -> Dict[str, Any]:
+    if isinstance(source, ReleasedCorpus):
+        return {
+            "sources": [repo.to_dict() for repo in source.repos],
+            "location": source.location,
+        }
+    return {
+        "repo_id": source.repo_id,
+        "revision": source.revision,
+        "location": source.location,
+        **({"manifest": source.manifest} if source.manifest else {}),
     }
 
 
@@ -232,6 +249,181 @@ def _iter_missing_rows(
     return iter_partitioned_rows(reader, source, wanted_by_stratum, columns)
 
 
+# Beside the documents: which repo and commit each came from, and its checksums.
+RELEASE_CACHE_FILE = ".release-cache.json"
+
+
+def select_released_ids(
+    reader: RepoReader,
+    corpus: ReleasedCorpus,
+    raw_n: Optional[int],
+    check_pins: bool = True,
+) -> Tuple[List[str], Dict[str, ReleaseRepo]]:
+    """The ids this mode selects, and the repo that holds each at its pinned tag."""
+    ids_by_repo: List[List[str]] = []
+    repo_by_id: Dict[str, ReleaseRepo] = {}
+    for repo in corpus.repos:
+        if check_pins:
+            reader.check_pinned(repo)
+        ids = read_release_ids(reader, repo, repo.revision, corpus.split)
+        for record_id in ids:
+            if record_id in repo_by_id:
+                raise CorpusConfigError(
+                    f"corpus {corpus.corpus!r}: a document is listed by both "
+                    f"{repo_by_id[record_id].describe()} and {repo.describe()}"
+                )
+            repo_by_id[record_id] = repo
+        ids_by_repo.append(ids)
+    return release_ids(ids_by_repo, raw_n), repo_by_id
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_release_cache(corpus_dir: Path) -> Dict[str, Dict[str, str]]:
+    path = corpus_dir / RELEASE_CACHE_FILE
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _is_cached(
+    entry: Optional[Mapping[str, str]], repo: ReleaseRepo, paths: Mapping[str, Path]
+) -> bool:
+    """On disk from this repo's pinned commit, with the checksums recorded then."""
+    if not entry or (entry.get("repo_id"), entry.get("commit")) != (
+        repo.repo_id, repo.commit
+    ):
+        return False
+    for key, path in paths.items():
+        checksum = entry.get(_checksum_key(key))
+        if not checksum or not path.exists() or _sha256(path) != checksum:
+            return False
+    return True
+
+
+def _checksum_key(path_key: str) -> str:
+    return path_key.replace("_path", "_sha256")
+
+
+def _materialise_released(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    reader: RepoReader,
+    corpus: ReleasedCorpus,
+    picked: Sequence[str],
+    repo_by_id: Mapping[str, ReleaseRepo],
+    corpus_dir: Path,
+    with_pdf: bool,
+) -> List[Dict[str, str]]:
+    """Write the selected documents not cached from their pinned commit; return all.
+
+    A document from another commit, or whose file no longer matches its checksum,
+    is read again and overwritten, so corrected gold replaces the old one.
+    """
+    cache = _read_release_cache(corpus_dir)
+    paths_by_raw_id = {
+        raw_id: _record_paths(corpus_dir, _record_id_of(raw_id), with_pdf)
+        for raw_id in picked
+    }
+    stale = [
+        raw_id for raw_id in picked
+        if not _is_cached(
+            cache.get(_record_id_of(raw_id)), repo_by_id[raw_id], paths_by_raw_id[raw_id]
+        )
+    ]
+    columns = ["pdf", "xml"] if with_pdf else ["xml"]
+    for repo in corpus.repos:
+        wanted = [raw_id for raw_id in stale if repo_by_id[raw_id] == repo]
+        if not wanted:
+            continue
+        for raw_id, values in iter_release_rows(
+            reader, repo, corpus.split, wanted, columns, corpus.id_column
+        ):
+            record_id = _record_id_of(raw_id)
+            cache[record_id] = _write_released_row(
+                paths_by_raw_id[raw_id], values, repo, cache.get(record_id)
+            )
+    if stale:
+        (corpus_dir / RELEASE_CACHE_FILE).write_text(
+            json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        LOGGER.info(
+            "Corpus %r: read %d document(s) from %s",
+            corpus.corpus, len(stale), corpus.describe(),
+        )
+    return [
+        _released_record(
+            corpus.corpus, _record_id_of(raw_id), paths_by_raw_id[raw_id],
+            cache[_record_id_of(raw_id)],
+        )
+        for raw_id in picked
+    ]
+
+
+def _write_released_row(
+    paths: Mapping[str, Path],
+    values: Mapping[str, Any],
+    repo: ReleaseRepo,
+    previous: Optional[Mapping[str, str]],
+) -> Dict[str, str]:
+    """Write one document's files and return its cache entry."""
+    paths["xml_path"].write_text(str(values["xml"]), encoding="utf-8")
+    if "pdf_path" in paths:
+        paths["pdf_path"].write_bytes(bytes(values["pdf"]))
+    previous = previous or {}
+    same_commit = (previous.get("repo_id"), previous.get("commit")) == (
+        repo.repo_id, repo.commit
+    )
+    return {
+        # A gold-only read keeps the PDF checksum of the same commit.
+        **(previous if same_commit else {}),
+        "repo_id": repo.repo_id,
+        "commit": repo.commit,
+        **{_checksum_key(key): _sha256(path) for key, path in paths.items()},
+    }
+
+
+def _released_record(
+    corpus: str, record_id: str, paths: Mapping[str, Path], entry: Mapping[str, str]
+) -> Dict[str, str]:
+    return {
+        **_record(corpus, record_id, paths),
+        "repo_id": entry["repo_id"],
+        **{
+            _checksum_key(key): entry[_checksum_key(key)]
+            for key in paths
+        },
+    }
+
+
+def _fetch_released_corpus(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    reader: RepoReader,
+    corpus: ReleasedCorpus,
+    raw_n: Optional[int],
+    mode: str,
+    corpus_dir: Path,
+    with_pdf: bool,
+) -> List[Dict[str, str]]:
+    LOGGER.info(
+        "Fetching corpus %r from %s (mode=%s, n=%s)",
+        corpus.corpus, corpus.describe(), mode,
+        raw_n if raw_n is not None else "all",
+    )
+    picked, repo_by_id = select_released_ids(reader, corpus, raw_n)
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    records = _materialise_released(
+        reader, corpus, picked, repo_by_id, corpus_dir, with_pdf
+    )
+    LOGGER.info(
+        "Corpus %r: %d record(s) available in %s", corpus.corpus, len(records), corpus_dir
+    )
+    return records
+
+
 def _record_paths(corpus_dir: Path, record_id: str, with_pdf: bool) -> Dict[str, Path]:
     paths = {"xml_path": corpus_dir / f"{record_id}.jats.xml"}
     if with_pdf:
@@ -265,6 +457,10 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     stored under data_dir/<split>/<corpus>/ so train and validation records never
     mix in the cache.
     """
+    if mode not in cfg["sampling"]:
+        raise ValueError(
+            f"Unknown mode {mode!r}. Available: {list(cfg['sampling'])}"
+        )
     sample_sizes = cfg["sampling"][mode]
     seed = cfg["seeds"]["sample"]
     reader = RepoReader.from_env()
@@ -279,6 +475,17 @@ def _fetch(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 source.corpus,
                 mode,
             )
+            continue
+        if isinstance(source, ReleasedCorpus):
+            if write_manifest or selection_dir is not None:
+                raise CorpusConfigError(
+                    f"corpus {source.corpus!r} is read from `sources`, which the "
+                    f"training-source fetch doesn't support yet"
+                )
+            records.extend(_fetch_released_corpus(
+                reader, source, sample_sizes[source.corpus], mode,
+                data_dir / split / source.corpus, with_pdf,
+            ))
             continue
         records.extend(
             _fetch_corpus(
