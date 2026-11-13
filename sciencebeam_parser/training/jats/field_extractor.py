@@ -565,6 +565,32 @@ def _iter_note_prose(text: str) -> Iterator[str]:
     yield from segments
 
 
+def _iter_table_values(
+    el: etree._Element, position: Dict[etree._Element, int]
+) -> List[Tuple[int, JatsFieldValue]]:
+    """A table's caption, and the note the page sets under its rows.
+
+    The note is a value of its own because the page prints it below the table
+    rather than beside the caption.  Only where the caption took the element's
+    text in part: otherwise the note is already in there.
+    """
+    children = el.xpath('./label') + el.xpath('./caption')
+    text = (element_text(el) if not children
+            else ' '.join(element_text(c) for c in children if element_text(c)))
+    entries: List[Tuple[int, JatsFieldValue]] = []
+    if text:
+        entries.append((position[el], JatsFieldValue(
+            text=text, field_name=JatsFieldNames.BODY_TABLE)))
+    if not children:
+        return entries
+    for foot in el.xpath('./table-wrap-foot'):
+        foot_text = element_text(foot)
+        if foot_text:
+            entries.append((position[foot], JatsFieldValue(
+                text=foot_text, field_name=JatsFieldNames.BODY_TABLE)))
+    return entries
+
+
 class JatsFieldExtractor:
     """Extract (text, field_name, sub_field_name) triples from a JATS <article> root."""
 
@@ -1033,23 +1059,7 @@ class JatsFieldExtractor:
                     text=text, field_name=JatsFieldNames.BODY_FIGURE)))
 
         for el in body.xpath('.//table-wrap'):
-            children = el.xpath('./label') + el.xpath('./caption')
-            text = (element_text(el) if not children
-                    else ' '.join(element_text(c) for c in children if element_text(c)))
-            if text:
-                entries.append((position[el], JatsFieldValue(
-                    text=text, field_name=JatsFieldNames.BODY_TABLE)))
-            # The note under the table is the table's, and the page prints it
-            # below the rows rather than beside the caption, so it is offered as
-            # a value of its own.  Only where the caption took the element's
-            # text in part: otherwise it is already in there.
-            if not children:
-                continue
-            for foot in el.xpath('./table-wrap-foot'):
-                foot_text = element_text(foot)
-                if foot_text:
-                    entries.append((position[foot], JatsFieldValue(
-                        text=foot_text, field_name=JatsFieldNames.BODY_TABLE)))
+            entries.extend(_iter_table_values(el, position))
 
         for _, fv in sorted(entries):
             yield fv

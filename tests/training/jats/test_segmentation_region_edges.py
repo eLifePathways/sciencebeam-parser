@@ -546,68 +546,67 @@ class TestDeclarationPrintedAfterTheArticle:
     them at the end."""
 
     def _make_doc(self):
-        title = make_line('A', 'title', y=100.0)
-        affiliation = make_line('A', 'university', 'somewhere', y=120.0)
+        front = {
+            'title': make_line('A', 'title', y=100.0),
+            'affiliation': make_line('A', 'university', 'somewhere', y=120.0),
+            'late_affiliation': make_line(
+                'Another', 'university', 'elsewhere', y=100.0, page_number=2
+            ),
+        }
         body = [
-            make_line('The', 'argument', f'runs{index}', y=200.0 + 20 * index)
+            make_line('The', 'argument', f'runs{index}', y=200.0 + 20 * index,
+                      page_number=page_number)
+            for page_number in (1, 2)
             for index in range(8)
         ]
-        late_affiliation = make_line(
-            'Another', 'university', 'elsewhere', y=100.0, page_number=2
-        )
-        more_body = [
-            make_line('and', 'goes', f'on{index}', y=200.0 + 20 * index, page_number=2)
-            for index in range(8)
-        ]
-        conflict = make_line(
-            'The', 'authors', 'declare', 'none', y=400.0, page_number=2
-        )
-        table = make_line('Macrodomain', 'Proposal', y=420.0, page_number=2)
-        caption = make_line(
-            'Coordinators', ':', 'Ada', 'Lovelace', y=430.0, page_number=2
-        )
-        ethics = make_line(
-            'The', 'study', 'needed', 'no', 'approval', y=440.0, page_number=2
-        )
-        correspondence_heading = make_line(
-            'CORRESPONDÊNCIA', ':', y=460.0, page_number=2
-        )
-        correspondence = make_line(
-            'Ada', 'Lovelace', ':', 'ada@example.org', y=470.0, page_number=2
-        )
+        closing = {
+            'conflict': make_line(
+                'The', 'authors', 'declare', 'none', y=400.0, page_number=2
+            ),
+            'table': make_line('Macrodomain', 'Proposal', y=420.0, page_number=2),
+            'caption': make_line(
+                'Coordinators', ':', 'Ada', 'Lovelace', y=430.0, page_number=2
+            ),
+            'ethics': make_line(
+                'The', 'study', 'needed', 'no', 'approval', y=440.0, page_number=2
+            ),
+            'correspondence_heading': make_line(
+                'CORRESPOND\u00caNCIA', ':', y=460.0, page_number=2
+            ),
+            'correspondence': make_line(
+                'Ada', 'Lovelace', ':', 'ada@example.org', y=470.0, page_number=2
+            ),
+        }
         doc = LayoutDocument(pages=[
             LayoutPage(
-                blocks=[LayoutBlock(lines=[title, affiliation] + body)],
+                blocks=[LayoutBlock(
+                    lines=[front['title'], front['affiliation']]
+                    + [line for line in body if _page_number_of(line) == 1]
+                )],
                 meta=make_page_meta(1),
             ),
             LayoutPage(
                 blocks=[LayoutBlock(
-                    lines=[late_affiliation] + more_body + [
-                        conflict, table, caption, ethics,
-                        correspondence_heading, correspondence,
-                    ]
+                    lines=[front['late_affiliation']]
+                    + [line for line in body if _page_number_of(line) == 2]
+                    + list(closing.values())
                 )],
                 meta=make_page_meta(2),
             ),
         ])
         lines = list(doc.iter_all_lines())
         fields = {
-            lines.index(title): JatsFieldNames.TITLE,
-            lines.index(affiliation): JatsFieldNames.AUTHOR_AFF,
-            lines.index(late_affiliation): JatsFieldNames.AUTHOR_AFF,
-            lines.index(conflict): JatsFieldNames.CONFLICT_NOTE,
-            lines.index(ethics): JatsFieldNames.AUTHOR_NOTES,
-            lines.index(caption): JatsFieldNames.AUTHOR,
-            lines.index(correspondence): JatsFieldNames.CORRESPONDENCE,
+            lines.index(front['title']): JatsFieldNames.TITLE,
+            lines.index(front['affiliation']): JatsFieldNames.AUTHOR_AFF,
+            lines.index(front['late_affiliation']): JatsFieldNames.AUTHOR_AFF,
+            lines.index(closing['conflict']): JatsFieldNames.CONFLICT_NOTE,
+            lines.index(closing['ethics']): JatsFieldNames.AUTHOR_NOTES,
+            lines.index(closing['caption']): JatsFieldNames.AUTHOR,
+            lines.index(closing['correspondence']): JatsFieldNames.CORRESPONDENCE,
         }
-        for line in body + more_body:
+        for line in body:
             fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
-        return doc, annotate(doc, fields), {
-            'conflict': conflict, 'ethics': ethics, 'table': table,
-            'caption': caption, 'late_affiliation': late_affiliation,
-            'correspondence_heading': correspondence_heading,
-            'correspondence': correspondence,
-        }
+        return doc, annotate(doc, fields), {**front, **closing}
 
     def test_a_declaration_takes_the_label_it_names(self):
         doc, annotated, lines = self._make_doc()
