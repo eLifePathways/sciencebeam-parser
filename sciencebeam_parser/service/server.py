@@ -17,6 +17,7 @@ from sciencebeam_parser.service.assets import (
 )
 from sciencebeam_parser.service.cors import with_cross_origin_access
 from sciencebeam_parser.service.routers.index import create_index_router
+from sciencebeam_parser.service.upload_limit import add_upload_size_limit
 from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 
 
@@ -37,6 +38,7 @@ def create_app_for_parser(
     )
 
     api_app = create_api_app(sciencebeam_parser)
+    add_upload_size_limit(api_app, sciencebeam_parser.config)
     app.mount(
         API_PATH,
         with_cross_origin_access(api_app, sciencebeam_parser.config)
