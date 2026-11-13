@@ -94,12 +94,21 @@ generates.
 **Overall** covers only corpora every column scored, so a column missing one
 drops it from the aggregate for all of them.
 
-Each table leads with the fields that moved against the primary run and
-collapses the rest, stating how many there were. A field moves when any of its
-rows does, so a field whose `exact` moved and whose `levenshtein` did not is
-read in one place, and the threshold is `MOVED_THRESHOLD` in
+Each table leads with the fields that moved and collapses the rest, stating how
+many there were. A field moves when any of its rows does, so a field whose
+`exact` moved and whose `levenshtein` did not is read in one place, and the
+threshold is `MOVED_THRESHOLD` in
 [`benchmarks/report_movement.py`](../benchmarks/report_movement.py) -- below it
 a difference prints as `+0.000`.
+
+Movement is measured against one named column, because another tool's column
+differs on nearly every field whatever the run did. CI names `sciencebeam-parser
+main` under the run's profile, falling back to the one `eval.yml` declares; a
+comparison names its own with `baseline: true`, and `--baseline` does it for a
+`--summary` pair. Two columns need no name. Where no column is named -- a
+comparison of three tools, or a run whose `main` predictions the store does not
+hold yet -- the table is not split, and the report says when `main` is the one
+missing.
 
 A PR comment is capped by GitHub at 65,536 characters, so what CI posts is a
 second file written beside the report: the same thing with whole per-corpus
@@ -168,6 +177,8 @@ variants:
   - {label: grobid, tool: grobid, version: 0.9.1-crf, profile: default}
   - {label: crf, tool: sciencebeam-parser, version: main, profile: grobid_crf,
      primary: true}                       # the deltas are to this one
+  - {label: prev, tool: sciencebeam-parser, version: main, profile: delft_old,
+     baseline: true}                      # and "what moved" is against this one
   - {label: retrained, tool: sciencebeam-parser, version: main,
      profile: delft_all_scielo_preprints_ore}
 

@@ -38,6 +38,7 @@ class VariantSpec:
     current: bool = False
     summary: Optional[str] = None
     primary: bool = False
+    baseline: bool = False
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,8 @@ def _parse_variant(entry: Any, index: int) -> VariantSpec:
     entry = _require_mapping(entry, f"variants[{index}]")
     _unknown_keys(
         entry,
-        ("label", "tool", "version", "profile", "current", "summary", "primary"),
+        ("label", "tool", "version", "profile", "current", "summary", "primary",
+         "baseline"),
         f"variants[{index}]",
     )
     current = bool(entry.get("current"))
@@ -94,6 +96,7 @@ def _parse_variant(entry: Any, index: int) -> VariantSpec:
     return VariantSpec(
         label=label, tool=tool, version=version, profile=profile,
         current=current, summary=summary, primary=bool(entry.get("primary")),
+        baseline=bool(entry.get("baseline")),
     )
 
 
@@ -212,6 +215,14 @@ def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:
         raise SelectionError("a comparison needs at least two variants")
     if sum(bool(_require_mapping(v, "variant").get("primary")) for v in variants) > 1:
         raise SelectionError("only one variant can be the primary")
+    if sum(bool(_require_mapping(v, "variant").get("baseline")) for v in variants) > 1:
+        raise SelectionError("only one variant can be the baseline")
+    if any(
+        _require_mapping(v, "variant").get("baseline")
+        and _require_mapping(v, "variant").get("primary")
+        for v in variants
+    ):
+        raise SelectionError("the primary cannot also be the baseline")
     corpora = data.get("corpora")
     parsed = [
         _parse_chart(entry, index)
@@ -268,6 +279,14 @@ def primary_index(config: ComparisonConfig) -> int:
         if variant.primary:
             return index
     return len(config.variants) - 1
+
+
+def baseline_index(config: ComparisonConfig) -> Optional[int]:
+    """Which column movement is measured against, where one says so."""
+    for index, variant in enumerate(config.variants):
+        if variant.baseline:
+            return index
+    return None
 
 
 def store_variants(config: ComparisonConfig) -> List[VariantSpec]:

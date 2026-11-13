@@ -70,21 +70,25 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def render_split_tables(
+def render_split_tables(  # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-positional-arguments
     labeled_summaries: List[Tuple[str, dict]],
     rows: Sequence[GridRow],
     field_scoring_types: dict,
     primary: int = -1,
+    baseline: Optional[int] = None,
 ) -> List[str]:
-    """What moved against the reference, then what did not, collapsed.
+    """What moved against the baseline, then what did not, collapsed.
 
     By field rather than by row, so a field whose `exact` moved and whose `levenshtein`
-    did not is read in one place.
+    did not is read in one place. One table where no column answers for movement.
     """
-    moved, unmoved = split_rows(rows, primary)
+    if baseline is None:
+        return render_field_table(labeled_summaries, rows, field_scoring_types, primary)
+    moved, unmoved = split_rows(rows, baseline, primary)
     if not moved or not unmoved:
         return render_field_table(labeled_summaries, rows, field_scoring_types, primary)
-    reference = labeled_summaries[primary][0]
+    reference = labeled_summaries[baseline][0]
     n_moved = len({row.field for row in moved})
     n_unmoved = len({row.field for row in unmoved})
     return [

@@ -16,6 +16,7 @@ from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
 from benchmarks.comparison_config import (
+    baseline_index,
     load_comparison,
     primary_index,
     variant_descriptions,
@@ -290,6 +291,7 @@ def _write_posted_report(
     primary_run_dir: Path,
     missing_main_profile: Optional[str],
     report_location: str = "",
+    baseline: Optional[int] = None,
 ) -> None:
     """The report CI posts: `comparison.md` where there is anything to compare with,
     else the run's own `report.md`, each with the comment-sized one beside it."""
@@ -299,7 +301,7 @@ def _write_posted_report(
         run_compare(
             labeled_paths, primary_run_dir / "comparison.md",
             comment_out=_comment_path(primary_run_dir / "comparison.md"),
-            report_location=report_location,
+            report_location=report_location, baseline=baseline,
         )
         posted_report = primary_run_dir / "comparison.md"
     else:
@@ -377,6 +379,7 @@ def run_stored_comparison(  # pylint: disable=too-many-arguments,too-many-positi
         primary_index(comparison_config), variant_descriptions(comparison_config),
         comment_out=_comment_path(comparison_path),
         report_location=report_location,
+        baseline=baseline_index(comparison_config),
     )
 
 
@@ -423,6 +426,9 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
         )
 
     labeled_paths: List[Tuple[str, Path]] = []
+    # Which column says what this run changed. Another tool's column differs on nearly
+    # every field whatever the run did, so it cannot be any of them.
+    main_baseline: Optional[int] = None
     for baseline in config.get("baselines", []):
         profile = baseline.get("profile", "default")
         entry = _run_baseline(
@@ -433,6 +439,8 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
             baseline.get("endpoint"),
         )
         if entry:
+            if (baseline["tool"], baseline["version"]) == (MAIN_TOOL, MAIN_VERSION):
+                main_baseline = len(labeled_paths)
             labeled_paths.append(entry)
 
     # Beside the declared `main`, never instead of it: the declared one is the
@@ -449,6 +457,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
             expected_ids, corpus_variants, store, concurrency, include, None,
         )
         if entry:
+            main_baseline = len(labeled_paths)
             labeled_paths.append(entry)
         else:
             missing_main_profile = same_profile_main["profile"]
@@ -497,7 +506,8 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     labeled_paths.append((current_label, primary_run_dir / "summary.json"))
 
     _write_posted_report(
-        labeled_paths, primary_run_dir, missing_main_profile, report_location
+        labeled_paths, primary_run_dir, missing_main_profile, report_location,
+        main_baseline,
     )
 
     # Beside the report CI always posts, never instead of it: a named comparison answers
@@ -513,6 +523,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
             primary_index(comparison_config), variant_descriptions(comparison_config),
             comment_out=_comment_path(named_comparison),
             report_location=report_location,
+            baseline=baseline_index(comparison_config),
         )
 
 

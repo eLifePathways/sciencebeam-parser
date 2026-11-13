@@ -800,7 +800,7 @@ class TestMovedAndUnmoved:
             _fields_summary({"title": 0.9, "abstract": 0.7}, ["biorxiv", "ore"]),
         ))
         overall = report.split("### Overall")[1].split("<details>")[0]
-        assert "1 of 2 fields moved against **B**." in overall
+        assert "1 of 2 fields moved against **A**." in overall
         assert "title" in overall
         assert "abstract" not in overall
 
@@ -879,3 +879,33 @@ class TestCommentBudget:
 
     def test_a_report_that_fits_says_nothing_about_dropping(self):
         assert "not in this comment" not in self._report(budget=100000)
+
+
+class TestMovementBaseline:
+    """What movement is measured against, where more than two columns are compared."""
+
+    def _columns(self, *title_f1: float) -> List[Tuple[str, dict]]:
+        return _labeled(*[
+            _fields_summary({"title": f1, "abstract": 0.7}, ["biorxiv", "ore"])
+            for f1 in title_f1
+        ])
+
+    def test_three_columns_without_a_baseline_stay_one_table(self):
+        # Another tool's column differs on nearly every field, which is not what the
+        # run changed, so nothing is split off as moved.
+        report = _render_comparison_report(self._columns(0.1, 0.5, 0.5))
+        assert "Did not move" not in report
+        assert "fields moved against" not in report
+
+    def test_a_declared_baseline_decides_what_moved(self):
+        report = _render_comparison_report(self._columns(0.1, 0.5, 0.9), baseline=1)
+        assert "1 of 2 fields moved against **B**." in report
+
+    def test_another_tools_column_does_not_make_a_field_move(self):
+        report = _render_comparison_report(self._columns(0.1, 0.5, 0.5), baseline=1)
+        assert "Did not move" not in report
+        assert "fields moved against" not in report
+
+    def test_two_columns_need_no_declaration(self):
+        report = _render_comparison_report(self._columns(0.5, 0.9))
+        assert "1 of 2 fields moved against **A**." in report
