@@ -82,6 +82,21 @@ def abstracts_offered(article_meta: ET.ElementBase) -> List[ET.ElementBase]:
     return main + [node for node in _candidates(article_meta) if node is not main[0]]
 
 
+def tei_abstract_text(abstract: ET.ElementBase) -> str:
+    """The text of a TEI abstract, without the heading it is printed under.
+
+    `sciencebeam-judge`'s own function yields every descendant of the abstract's
+    `<div>`, so inline markup is counted twice. An abstract written before the
+    heading had a `<div>` to sit in has its paragraphs directly under it.
+    """
+    paragraphs = abstract.findall("div/p") or abstract.findall("p")
+    return " ".join(get_text_content(paragraph) for paragraph in paragraphs)
+
+
+def fn_tei_abstract_text(_, nodes):
+    return [tei_abstract_text(node) for node in nodes]
+
+
 def tei_abstract_variants(abstracts: List[ET.ElementBase]) -> List[ET.ElementBase]:
     """The abstracts a TEI offers as languages: the first, and each one naming another.
 
@@ -113,7 +128,7 @@ def fn_jats_abstracts_all(_, nodes):
 
 
 def fn_tei_abstract_variants(_, nodes):
-    return [get_text_content(node) for node in tei_abstract_variants(list(nodes))]
+    return [tei_abstract_text(node) for node in tei_abstract_variants(list(nodes))]
 
 
 def fn_jats_main_abstract(_, nodes):
@@ -159,7 +174,10 @@ def fn_jats_abstract_language_pairs(_, nodes):
 
 
 def fn_tei_abstract_language_pairs(_, nodes):
-    return [_language_pair(node) for node in nodes]
+    return [
+        _first_declared_language(node) + PROPERTY_SEPARATOR + tei_abstract_text(node)
+        for node in nodes
+    ]
 
 
 def title_language_pairs(article: ET.ElementBase) -> List[str]:
@@ -190,6 +208,7 @@ def register_variant_functions(ns: Optional[ET.FunctionNamespace] = None) -> Non
     ns["jats-abstract-variants"] = fn_jats_abstract_variants
     ns["jats-abstracts-all"] = fn_jats_abstracts_all
     ns["tei-abstract-variants"] = fn_tei_abstract_variants
+    ns["tei-abstract-own-text"] = fn_tei_abstract_text
     ns["jats-abstract-language-pairs"] = fn_jats_abstract_language_pairs
     ns["tei-abstract-language-pairs"] = fn_tei_abstract_language_pairs
     ns["jats-title-language-pairs"] = fn_jats_title_language_pairs

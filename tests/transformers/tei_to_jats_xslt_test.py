@@ -162,9 +162,9 @@ def _tei(  # pylint: disable=too-many-arguments
     teiHeader = TEI_E.teiHeader(fileDesc)
     if abstracts is not None:
         teiHeader.append(TEI_E.profileDesc(*[
-            TEI_E.abstract(TEI_E.p(abstract[0]), **{XML_LANG: abstract[1]})
+            TEI_E.abstract(TEI_E.div(TEI_E.p(abstract[0])), **{XML_LANG: abstract[1]})
             if isinstance(abstract, tuple)
-            else TEI_E.abstract(TEI_E.p(abstract))
+            else TEI_E.abstract(TEI_E.div(TEI_E.p(abstract)))
             for abstract in abstracts
         ]))
     if abstract_headings is not None:
@@ -172,9 +172,9 @@ def _tei(  # pylint: disable=too-many-arguments
             element
             for heading, abstract in abstract_headings
             for element in (
-                [TEI_E.note(heading, type='abstract-heading'), TEI_E.abstract(TEI_E.p(abstract))]
+                [TEI_E.abstract(TEI_E.div(TEI_E.head(heading), TEI_E.p(abstract)))]
                 if heading
-                else [TEI_E.abstract(TEI_E.p(abstract))]
+                else [TEI_E.abstract(TEI_E.div(TEI_E.p(abstract)))]
             )
         ]))
     if application is not None:

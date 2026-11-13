@@ -68,11 +68,6 @@ class TeiSection(TeiElementWrapper):
         return TeiSectionParagraph(TEI_E('p'))
 
 
-# The heading an abstract is printed under, which TEI gives an abstract nowhere to
-# carry: a note of this type is the heading of the abstract that follows it.
-ABSTRACT_HEADING_NOTE_TYPE = 'abstract-heading'
-
-
 class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
     def __init__(self, root: Optional[etree.ElementBase] = None):
         if root is None:
@@ -134,13 +129,13 @@ class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
     def get_abstract(self) -> str:
         return '\n'.join(get_tei_xpath_text_content_list(
             self.root,
-            '(//tei:abstract)[1]/tei:p',
+            '(//tei:abstract)[1]/tei:div/tei:p',
         ))
 
     def set_abstract(self, abstract: str):
         self.set_child_element_at(
             ['teiHeader', 'profileDesc', 'abstract'],
-            TEI_E('p', abstract)
+            TEI_E('div', TEI_E('p', abstract))
         )
 
     def add_abstract_layout_block(
@@ -149,18 +144,14 @@ class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
         language: Optional[str] = None,
         heading_block: Optional[LayoutBlock] = None
     ):
-        abstract_element = TEI_E(
-            'abstract', TEI_E('p', *iter_layout_block_tei_children(abstract_block))
-        )
+        children = []
+        if heading_block is not None:
+            children.append(TEI_E('head', *iter_layout_block_tei_children(heading_block)))
+        children.append(TEI_E('p', *iter_layout_block_tei_children(abstract_block)))
+        abstract_element = TEI_E('abstract', TEI_E('div', *children))
         if language:
             abstract_element.attrib[XML_NS_PREFIX + 'lang'] = language
-        profile_desc_element = self.get_or_create_element_at(['teiHeader', 'profileDesc'])
-        if heading_block is not None:
-            profile_desc_element.append(TEI_E(
-                'note', {'type': ABSTRACT_HEADING_NOTE_TYPE},
-                *iter_layout_block_tei_children(heading_block)
-            ))
-        profile_desc_element.append(abstract_element)
+        self.get_or_create_element_at(['teiHeader', 'profileDesc']).append(abstract_element)
 
     def get_body_element(self) -> etree.ElementBase:
         return self.get_or_create_element_at(['text', 'body'])

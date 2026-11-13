@@ -136,16 +136,14 @@
       <xsl:for-each select="tei:profileDesc/tei:abstract">
         <abstract>
           <xsl:copy-of select="@xml:lang"/>
-          <!-- The heading the page printed above this abstract, which TEI gives
-               profileDesc/abstract nowhere to carry and JATS puts inside it. -->
-          <xsl:variable name="heading"
-                        select="preceding-sibling::*[1][self::tei:note][@type='abstract-heading']"/>
-          <xsl:if test="$heading">
+          <!-- The heading the page printed above this abstract, which JATS puts
+               inside it as a title. -->
+          <xsl:if test="tei:div/tei:head">
             <title>
-              <xsl:value-of select="$heading"/>
+              <xsl:value-of select="tei:div/tei:head"/>
             </title>
           </xsl:if>
-          <xsl:apply-templates/>
+          <xsl:apply-templates select="tei:div/tei:p"/>
         </abstract>
       </xsl:for-each>
 

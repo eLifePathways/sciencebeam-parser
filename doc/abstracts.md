@@ -22,28 +22,28 @@ Each abstract carries the language of its own text in `xml:lang`, under `variant
 
 ## The heading printed above an abstract
 
-A page prints `Abstract`, `Resumo` or `Plain language summary` above the abstract it introduces. TEI gives `profileDesc/abstract` nowhere to carry that heading, so it is emitted as a note immediately before the abstract it belongs to:
+A page prints `Abstract`, `Resumo` or `Plain language summary` above the abstract it introduces. It is carried as the head of the div the abstract's paragraphs sit in, which is the shape GROBID writes:
 
 ```xml
-<profileDesc>
-  <note type="abstract-heading">Plain language summary</note>
-  <abstract xml:lang="en">
-    <p>Human induced pluripotent stem cells …</p>
-  </abstract>
-</profileDesc>
+<abstract xml:lang="en">
+  <div>
+    <head>Plain language summary</head>
+    <p>Human induced pluripotent stem cells ...</p>
+  </div>
+</abstract>
 ```
 
-A note of that type is the heading of the abstract that follows it, and an abstract with no heading above it has no note. The heading is not part of the abstract's own text.
+An abstract with no heading above it has a div with no head, and the heading is not part of the abstract's own text. A consumer reading the abstract reads `abstract/div/p`.
 
 The JATS route puts it where JATS carries it, inside the abstract:
 
 ```xml
 <abstract xml:lang="en">
   <title>Plain language summary</title>
-  <p>Human induced pluripotent stem cells …</p>
+  <p>Human induced pluripotent stem cells ...</p>
 </abstract>
 ```
 
 The reading view shows it above the abstract it belongs to, in place of the word `Abstract` it falls back to otherwise.
 
-Headings printed inside a structured abstract — `Background`, `Methods`, `Results` — are part of the abstract's text and are not separated from it.
+Headings printed inside a structured abstract, such as `Background`, `Methods` and `Results`, are part of the abstract's text and are not separated from it.
