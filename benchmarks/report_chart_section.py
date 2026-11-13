@@ -9,6 +9,7 @@ from typing import Dict, List, Sequence, Tuple
 
 from benchmarks.llm_usage import usage_for_corpora
 from benchmarks.report_charts import (
+    compute_chart_is_drawable,
     ChartOutput,
     chart_markdown,
     chart_spec,
@@ -43,8 +44,11 @@ def render_declared_chart(  # pylint: disable=too-many-arguments,too-many-positi
                 for label, summary in labeled_summaries
             ],
         )
+        # Filtered whether or not an image is written, so the report and the comment
+        # link the same charts.
+        specs = [spec for spec in specs if compute_chart_is_drawable(spec)]
         if charts.out_dir is not None:
-            specs = render_compute_charts(specs, charts.out_dir, charts.prefix)
+            render_compute_charts(specs, charts.out_dir, charts.prefix)
     elif isinstance(declared, FieldsChartConfig):
         # No corpus axis, so no two-corpus floor: the question is which fields a
         # difference reaches rather than where it lives.

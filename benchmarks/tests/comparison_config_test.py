@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 from benchmarks.comparison_config import (
+    baseline_index,
     available_baselines,
     load_comparison,
     parse_comparison,
@@ -444,3 +445,56 @@ class TestVariantDescriptions:
     def test_should_keep_the_declared_order(self):
         config = _parse(TWO_VARIANTS)
         assert [label for label, _ in variant_descriptions(config)] == ["grobid", "head"]
+
+
+class TestBaselineVariant:
+    def test_names_the_column_movement_is_measured_against(self):
+        config = _parse("""
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf}
+  - {label: main, tool: sciencebeam-parser, version: main, baseline: true}
+  - {label: head, current: true}
+""")
+        assert baseline_index(config) == 1
+
+    def test_defaults_to_naming_none(self):
+        config = _parse("""
+variants:
+  - {label: main, tool: sciencebeam-parser, version: main}
+  - {label: head, current: true}
+""")
+        assert baseline_index(config) is None
+
+    def test_refuses_two_baselines(self):
+        with pytest.raises(SelectionError, match="only one variant can be the baseline"):
+            _parse("""
+variants:
+  - {label: a, tool: grobid, version: 0.9.1-crf, baseline: true}
+  - {label: main, tool: sciencebeam-parser, version: main, baseline: true}
+  - {label: head, current: true}
+""")
+
+    def test_refuses_the_primary_as_its_own_baseline(self):
+        with pytest.raises(SelectionError, match="cannot also be the baseline"):
+            _parse("""
+variants:
+  - {label: main, tool: sciencebeam-parser, version: main}
+  - {label: head, current: true, primary: true, baseline: true}
+""")
+
+    def test_refuses_the_baseline_on_the_variant_that_is_the_primary_by_default(self):
+        # No variant claims `primary`, so the last one is it.
+        with pytest.raises(SelectionError, match="cannot also be the baseline"):
+            _parse("""
+variants:
+  - {label: main, tool: sciencebeam-parser, version: main}
+  - {label: head, current: true, baseline: true}
+""")
+
+    def test_allows_the_baseline_on_the_last_variant_when_another_claims_primary(self):
+        config = _parse("""
+variants:
+  - {label: main, tool: sciencebeam-parser, version: main, primary: true}
+  - {label: head, current: true, baseline: true}
+""")
+        assert baseline_index(config) == 1

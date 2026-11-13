@@ -1065,3 +1065,41 @@ class TestScoringAJatsPredictionCarryingVariants:
         assert scores["abstract"] < 0.5
         assert scores["abstract_anywhere"] < 0.5
         assert scores["abstract_any_language"] == 1.0
+
+
+class TestSingleVariantReportBudget:
+    CORPORA = [f"corpus_{i}" for i in range(8)]
+
+    def _results(self):
+        aggregated = [{
+            "scoring_type": "string",
+            "scoring_method": "levenshtein",
+            "summary_scores": {
+                "by-field": {f"field_{i}": {"scores": {"f1": 0.5}} for i in range(12)}
+            },
+        }]
+        return {
+            corpus: {"n": 5, "aggregated": aggregated} for corpus in self.CORPORA
+        }
+
+    def _report(self, budget=None, location=""):
+        fields = [f"field_{i}" for i in range(12)]
+        return _render_report(
+            self._results(), fields, {field: "string" for field in fields}, None,
+            budget, location,
+        )
+
+    def test_the_full_report_carries_every_corpus(self):
+        report = self._report()
+        for corpus in self.CORPORA:
+            assert f"### {corpus} " in report
+
+    def test_the_budgeted_report_stays_within_it(self):
+        assert len(self._report(budget=3000)) <= 3000
+
+    def test_the_budgeted_report_names_what_it_dropped(self):
+        report = self._report(budget=3000, location="in the [job summary](http://x/1)")
+        dropped = [c for c in self.CORPORA if f"### {c} " not in report]
+        assert dropped
+        assert ", ".join(dropped) in report
+        assert "The full report is in the [job summary](http://x/1)." in report

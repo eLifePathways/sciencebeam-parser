@@ -116,6 +116,7 @@ jobs:
             --predictions-repo sciencebeam-eval-predictions \
             --comparison "${BENCHMARK_COMPARISON}" \
             --comparison-only \
+            --report-location "in the [job summary](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
             --comparison-out "${BENCHMARK_RUN}"
 
       - name: Write job summary
@@ -135,7 +136,7 @@ jobs:
           # From the run directory, so the report's own `charts/x.png` resolves whether
           # CML reads them relative to the file or to where it was invoked.
           cd "${BENCHMARK_RUN}"
-          cml comment create "comparison-${BENCHMARK_COMPARISON}.md"
+          cml comment create "comparison-${BENCHMARK_COMPARISON}-comment.md"
 
       - name: Upload the comparison
         if: always()

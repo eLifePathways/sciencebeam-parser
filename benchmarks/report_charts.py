@@ -346,6 +346,16 @@ def chart_markdown(
     return lines
 
 
+def compute_chart_is_drawable(spec: ComputeChartSpec) -> bool:
+    """Nothing to draw until two variants recorded the figure.
+
+    One bar is a number with a rectangle around it, and the cost section states it
+    already. The figure only became a thing runs record recently, so a comparison of
+    older stored predictions regularly has just the one.
+    """
+    return sum(value is not None for value in spec.values) >= 2
+
+
 def render_compute_charts(
     specs: Sequence[ComputeChartSpec], out_dir: Path, prefix: str = ""
 ) -> List[ComputeChartSpec]:
@@ -507,17 +517,12 @@ def _compute_value_format(largest: float) -> str:
 def render_compute_chart(
     spec: ComputeChartSpec, out_dir: Path, prefix: str = ""
 ) -> Optional[Path]:
-    """Nothing to draw until two variants recorded the figure.
-
-    One bar is a number with a rectangle around it, and the cost section states it
-    already. The figure only became a thing runs record recently, so a comparison of
-    older stored predictions regularly has just the one.
-    """
+    """The image, or None where `compute_chart_is_drawable` refuses it."""
     drawn = [
         (label, value)
         for label, value, in zip(spec.series, spec.values) if value is not None
     ]
-    if len(drawn) < 2:
+    if not compute_chart_is_drawable(spec):
         return None
     import matplotlib  # pylint: disable=import-outside-toplevel
     matplotlib.use("Agg")
