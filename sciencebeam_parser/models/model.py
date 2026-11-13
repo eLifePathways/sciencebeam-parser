@@ -16,8 +16,6 @@ from typing import (
     Union
 )
 
-from sciencebeam_trainer_delft.sequence_labelling.reader import load_data_crf_lines
-
 from sciencebeam_parser.utils.labels import get_split_prefix_label, strip_tag_prefix
 
 from sciencebeam_parser.document.layout_document import (
@@ -326,6 +324,10 @@ class Model(ABC, Preloadable):
         data_lines = list(iter_data_lines_for_model_data_iterables(
             model_data_lists
         ))
+        # At call time rather than import time: the delft reader pulls in torch,
+        # transformers and scikit-learn.
+        # pylint: disable-next=import-outside-toplevel
+        from sciencebeam_trainer_delft.sequence_labelling.reader import load_data_crf_lines
         texts, features = load_data_crf_lines(data_lines)
         texts = texts.tolist()
         features = features.tolist()
