@@ -639,14 +639,21 @@ def _iter_table_values(
 
 # What a translated article's own parts are, read in the order the sub-article
 # sets them.  The front stub carries the title and the abstract, the body the
-# argument, and the back the reference list the translation repeats.
+# argument, and the back the reference list the translation repeats and the
+# notes the translator writes under it.
+#
+# The keyword list whole rather than one value per keyword: a keyword is two or
+# three words the argument uses again -- "access to renal" -- and on its own it
+# claims a body line on whatever page it lands on, where the list as printed is
+# long enough to be found where it is.
 _TRANSLATION_FIELD_BY_XPATH = (
     ('front-stub//title-group//article-title', JatsFieldNames.TITLE),
     ('front-stub//abstract//p', JatsFieldNames.ABSTRACT),
-    ('front-stub//kwd-group//kwd', JatsFieldNames.KEYWORDS),
+    ('front-stub//kwd-group', JatsFieldNames.KEYWORDS),
     ('body//sec/title', JatsFieldNames.BODY_SECTION_TITLE),
     ('body//p', JatsFieldNames.BODY_SECTION_PARAGRAPH),
     ('back//ref-list/title', JatsFieldNames.REFERENCE_LIST_TITLE),
+    ('back//fn', JatsFieldNames.BACK_FOOTNOTE),
 )
 
 
