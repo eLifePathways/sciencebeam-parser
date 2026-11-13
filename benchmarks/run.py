@@ -15,6 +15,7 @@ from benchmarks.predict import DEFAULT_RETRY_PASSES, run_predict
 from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
+from benchmarks.report_movement import default_baseline
 from benchmarks.comparison_config import (
     baseline_index,
     load_comparison,
@@ -282,6 +283,16 @@ def _append_note(path: Path, note: str) -> None:
     path.write_text(text + separator + note, encoding="utf-8")
 
 
+def _comparison_baseline(comparison_config) -> Optional[int]:
+    """What a comparison file says, or the only candidate where it compares two."""
+    declared = baseline_index(comparison_config)
+    if declared is not None:
+        return declared
+    return default_baseline(
+        len(comparison_config.variants), primary_index(comparison_config)
+    )
+
+
 def _comment_path(report_path: Path) -> Path:
     return report_path.with_name(f"{report_path.stem}-comment.md")
 
@@ -379,7 +390,7 @@ def run_stored_comparison(  # pylint: disable=too-many-arguments,too-many-positi
         primary_index(comparison_config), variant_descriptions(comparison_config),
         comment_out=_comment_path(comparison_path),
         report_location=report_location,
-        baseline=baseline_index(comparison_config),
+        baseline=_comparison_baseline(comparison_config),
     )
 
 
@@ -523,7 +534,7 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
             primary_index(comparison_config), variant_descriptions(comparison_config),
             comment_out=_comment_path(named_comparison),
             report_location=report_location,
-            baseline=baseline_index(comparison_config),
+            baseline=_comparison_baseline(comparison_config),
         )
 
 

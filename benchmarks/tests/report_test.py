@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple
 
 import pytest
 
+from benchmarks.report_movement import default_baseline
 from benchmarks.report import (
     _common_corpora,
     _get_f1,
@@ -798,7 +799,7 @@ class TestMovedAndUnmoved:
         report = _render_comparison_report(_labeled(
             _fields_summary({"title": 0.5, "abstract": 0.7}, ["biorxiv", "ore"]),
             _fields_summary({"title": 0.9, "abstract": 0.7}, ["biorxiv", "ore"]),
-        ))
+        ), baseline=0)
         overall = report.split("### Overall")[1].split("<details>")[0]
         assert "1 of 2 fields moved against **A**." in overall
         assert "title" in overall
@@ -808,7 +809,7 @@ class TestMovedAndUnmoved:
         report = _render_comparison_report(_labeled(
             _fields_summary({"title": 0.5, "abstract": 0.7}, ["biorxiv", "ore"]),
             _fields_summary({"title": 0.9, "abstract": 0.7}, ["biorxiv", "ore"]),
-        ))
+        ), baseline=0)
         assert "<summary>Did not move (1 field, 1 row)</summary>" in report
 
     def test_a_field_with_a_moved_method_is_read_in_one_place(self):
@@ -906,6 +907,16 @@ class TestMovementBaseline:
         assert "Did not move" not in report
         assert "fields moved against" not in report
 
-    def test_two_columns_need_no_declaration(self):
+    def test_two_columns_are_not_split_without_one_either(self):
+        # The renderer invents no baseline: a benchmark run whose only other column
+        # is another tool's must not have that read as what the run changed.
         report = _render_comparison_report(self._columns(0.5, 0.9))
+        assert "Did not move" not in report
+        assert "fields moved against" not in report
+
+    def test_the_caller_supplies_the_two_column_default(self):
+        assert default_baseline(2, -1) == 0
+        report = _render_comparison_report(
+            self._columns(0.5, 0.9), baseline=default_baseline(2, -1)
+        )
         assert "1 of 2 fields moved against **A**." in report

@@ -102,13 +102,17 @@ threshold is `MOVED_THRESHOLD` in
 a difference prints as `+0.000`.
 
 Movement is measured against one named column, because another tool's column
-differs on nearly every field whatever the run did. CI names `sciencebeam-parser
-main` under the run's profile, falling back to the one `eval.yml` declares; a
-comparison names its own with `baseline: true`, and `--baseline` does it for a
-`--summary` pair. Two columns need no name. Where no column is named -- a
-comparison of three tools, or a run whose `main` predictions the store does not
-hold yet -- the table is not split, and the report says when `main` is the one
-missing.
+differs on nearly every field whatever the run did. A benchmark run names
+`sciencebeam-parser main` under its own profile, falling back to the one
+`eval.yml` declares, and names nothing where the store holds neither -- it never
+falls back to a column that is not comparable, so a run with only a GROBID column
+beside it is not split at all. A comparison file names its own with
+`baseline: true` and `--baseline` does it for a `--summary` pair; either of those
+comparing exactly two variants needs no name, the pairing being deliberate.
+
+Where no column is named the table is not split, and the report already says when
+`main` is the one missing. `train` is where this shows: the predictions store holds
+`main` for `validation`, so a `train` run usually has no comparable column.
 
 A PR comment is capped by GitHub at 65,536 characters, so what CI posts is a
 second file written beside the report: the same thing with whole per-corpus

@@ -23,6 +23,7 @@ from benchmarks.report_charts import (
     chart_specs,
     render_charts,
 )
+from benchmarks.report_movement import default_baseline
 from benchmarks.report_grid import (
     GridRow,
     Selection,
@@ -45,7 +46,6 @@ from benchmarks.gold_presence import (
 )
 from benchmarks.report_cost import render_cost_section
 from benchmarks.report_legend import keyed, render_legend
-from benchmarks.report_movement import default_baseline
 from benchmarks.report_tables import render_split_tables
 from benchmarks.report_usage import render_usage_section
 from benchmarks.variant_match import (
@@ -549,8 +549,6 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
 ) -> str:
     if not labeled_summaries:
         return ""
-    if baseline is None:
-        baseline = default_baseline(len(labeled_summaries), primary)
 
     _, primary_summary = labeled_summaries[-1]
     field_names = resolve_fields(labeled_summaries, selection)
@@ -868,10 +866,14 @@ def main(argv: Optional[List[str]] = None) -> None:
             primary = primary_index(config)
             variants = variant_descriptions(config)
             baseline = baseline_index(config)
+            if baseline is None:
+                baseline = default_baseline(len(labeled_paths), primary)
         else:
             labeled_paths = [_parse_labeled_summary(s) for s in args.summaries]
             primary = -1
             baseline = _baseline_from_label(args.baseline, labeled_paths)
+            if baseline is None:
+                baseline = default_baseline(len(labeled_paths), primary)
             # A `--summary` pair has no coordinates, so the path is what names it.
             variants = [(label, f"`{path}`") for label, path in labeled_paths]
             selection = Selection(

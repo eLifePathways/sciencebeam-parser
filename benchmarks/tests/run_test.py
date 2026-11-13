@@ -12,6 +12,7 @@ from benchmarks.fetch import get_corpus_variants
 from benchmarks.predictions_store import LocalPredictionsStore
 from benchmarks.run import (
     _baseline_env_vars,
+    _comparison_baseline,
     _comparison_only_variants,
     _coverage,
     _run_baseline,
@@ -882,3 +883,27 @@ variants:
     def test_a_comparison_without_one_names_no_column(self):
         config = parse_comparison(yaml.safe_load(_COMPARISON_YAML), "none")
         assert baseline_index(config) is None
+
+
+class TestComparisonBaseline:
+    def test_takes_what_the_comparison_declares(self):
+        config = parse_comparison(yaml.safe_load("""
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf}
+  - {label: main, tool: sciencebeam-parser, version: main, baseline: true}
+  - {label: head, current: true}
+"""), "declared")
+        assert _comparison_baseline(config) == 1
+
+    def test_takes_the_only_candidate_of_a_pair(self):
+        config = parse_comparison(yaml.safe_load(_COMPARISON_YAML), "pair")
+        assert _comparison_baseline(config) == 0
+
+    def test_names_none_where_three_variants_declare_none(self):
+        config = parse_comparison(yaml.safe_load("""
+variants:
+  - {label: grobid, tool: grobid, version: 0.9.1-crf}
+  - {label: main, tool: sciencebeam-parser, version: main}
+  - {label: head, current: true}
+"""), "undeclared")
+        assert _comparison_baseline(config) is None
