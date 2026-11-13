@@ -2406,6 +2406,13 @@ _FRONT_AFTER_THE_BODY_FIELDS = frozenset({
 })
 
 
+def _names_another_declaration(text: str, label: str) -> bool:
+    """Whether the line heads a declaration other than the one running on."""
+    kind = match_fn_keywords(text.strip()[:_STATEMENT_HEADING_MAX_LENGTH])
+    named = _STATEMENT_LABEL_BY_KIND.get(kind or '')
+    return named is not None and named != label
+
+
 def _release_front_after_the_body(
     seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
 ) -> None:
@@ -2476,6 +2483,13 @@ def _release_front_after_the_body(
             else None
         )
         for index in run:
+            # The statement ends where the page names the next declaration:
+            # an article closes with them one after another, and the heading
+            # of the one that follows is not the contributions'.
+            if taken is not None and _names_another_declaration(
+                seg_lines[index].text, taken
+            ):
+                taken = None
             seg_lines[index].seg_label = taken
 
 
