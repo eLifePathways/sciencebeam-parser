@@ -800,17 +800,20 @@ class TestMovedAndUnmoved:
             _fields_summary({"title": 0.5, "abstract": 0.7}, ["biorxiv", "ore"]),
             _fields_summary({"title": 0.9, "abstract": 0.7}, ["biorxiv", "ore"]),
         ), baseline=0)
-        overall = report.split("### Overall")[1].split("<details>")[0]
-        assert "1 of 2 fields moved against **A**." in overall
-        assert "title" in overall
-        assert "abstract" not in overall
+        moved = report.split("<summary>Moved")[1].split("</details>")[0]
+        assert "(1 of 2 fields, 1 row)" in moved
+        assert "title" in moved
+        assert "abstract" not in moved
 
     def test_states_what_did_not_move(self):
         report = _render_comparison_report(_labeled(
             _fields_summary({"title": 0.5, "abstract": 0.7}, ["biorxiv", "ore"]),
             _fields_summary({"title": 0.9, "abstract": 0.7}, ["biorxiv", "ore"]),
         ), baseline=0)
-        assert "<summary>Did not move (1 field, 1 row)</summary>" in report
+        assert (
+            "<summary>Did not move against <b>A</b> (1 of 2 fields, 1 row)</summary>"
+            in report
+        )
 
     def test_a_field_with_a_moved_method_is_read_in_one_place(self):
         fields = ["title"]
@@ -841,8 +844,8 @@ class TestMovedAndUnmoved:
             _fields_summary({"title": 0.5}, ["biorxiv", "ore"]),
             _fields_summary({"title": 0.5}, ["biorxiv", "ore"]),
         ))
-        assert "Did not move" not in report
-        assert "fields moved against" not in report
+        assert "<summary>Did not move" not in report
+        assert "<summary>Moved" not in report
 
 
 class TestCommentBudget:
@@ -895,32 +898,32 @@ class TestMovementBaseline:
         # Another tool's column differs on nearly every field, which is not what the
         # run changed, so nothing is split off as moved.
         report = _render_comparison_report(self._columns(0.1, 0.5, 0.5))
-        assert "Did not move" not in report
-        assert "fields moved against" not in report
+        assert "<summary>Did not move" not in report
+        assert "<summary>Moved" not in report
 
     def test_a_declared_baseline_decides_what_moved(self):
         report = _render_comparison_report(self._columns(0.1, 0.5, 0.9), baseline=1)
-        assert "1 of 2 fields moved against **B**." in report
+        assert "<summary>Moved against <b>B</b> (1 of 2 fields," in report
 
     def test_another_tools_column_does_not_make_a_field_move(self):
         # The first column differs on every field; the run matches its baseline.
         report = _render_comparison_report(self._columns(0.1, 0.5, 0.5), baseline=1)
-        assert "0 of 2 fields moved against **B**." in report
-        assert "<summary>Did not move (2 fields, 2 rows)</summary>" in report
+        assert "<summary>Moved" not in report
+        assert "<summary>Did not move against <b>B</b> (2 of 2 fields," in report
 
     def test_two_columns_are_not_split_without_one_either(self):
         # The renderer invents no baseline: a benchmark run whose only other column
         # is another tool's must not have that read as what the run changed.
         report = _render_comparison_report(self._columns(0.5, 0.9))
-        assert "Did not move" not in report
-        assert "fields moved against" not in report
+        assert "<summary>Did not move" not in report
+        assert "<summary>Moved" not in report
 
     def test_the_caller_supplies_the_two_column_default(self):
         assert default_baseline(2, -1) == 0
         report = _render_comparison_report(
             self._columns(0.5, 0.9), baseline=default_baseline(2, -1)
         )
-        assert "1 of 2 fields moved against **A**." in report
+        assert "<summary>Moved against <b>A</b> (1 of 2 fields," in report
 
 
 class TestNoBaselineNote:
@@ -953,12 +956,16 @@ class TestEveryFieldOrNoneMoved:
             for f1 in title_f1
         ])
 
-    def test_says_so_where_every_field_moved(self):
+    def test_opens_the_whole_table_where_every_field_moved(self):
         report = _render_comparison_report(self._columns(0.5, 0.9), baseline=0)
-        assert "2 of 2 fields moved against **A**." in report
+        assert "<details open>" in report
+        assert "<summary>Moved against <b>A</b> (2 of 2 fields," in report
         assert "Did not move" not in report
 
     def test_collapses_the_whole_table_where_none_did(self):
         report = _render_comparison_report(self._columns(0.5, 0.5), baseline=0)
-        assert "0 of 2 fields moved against **A**." in report
-        assert "<summary>Did not move (2 fields, 2 rows)</summary>" in report
+        assert "<summary>Moved" not in report
+        assert (
+            "<summary>Did not move against <b>A</b> (2 of 2 fields, 2 rows)</summary>"
+            in report
+        )

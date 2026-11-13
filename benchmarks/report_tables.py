@@ -78,38 +78,40 @@ def render_split_tables(  # pylint: disable=too-many-arguments
     primary: int = -1,
     baseline: Optional[int] = None,
 ) -> List[str]:
-    """What moved against the baseline, then what did not, collapsed.
+    """What moved against the baseline, and what did not, each a section of its own.
 
     By field rather than by row, so a field whose `exact` moved and whose `levenshtein`
-    did not is read in one place. One table where no column answers for movement, and
-    one that still states the count where every field moved or none did. What moved is
-    expanded and what did not is collapsed, whichever of them is all of it.
+    did not is read in one place. Each section names the baseline and its share of the
+    fields: what moved opens, what did not stays shut, whichever of them is all of it.
+    One table where no column answers for movement.
     """
     if baseline is None or not rows:
         return render_field_table(labeled_summaries, rows, field_scoring_types, primary)
     moved, unmoved = split_rows(rows, baseline, primary)
     reference = labeled_summaries[baseline][0]
     n_moved = len({row.field for row in moved})
-    n_unmoved = len({row.field for row in unmoved})
-    lines = [
-        f"{n_moved} of {n_moved + n_unmoved} fields moved against **{reference}**.",
-        "",
-    ]
+    n_fields = n_moved + len({row.field for row in unmoved})
+
+    def section(
+        label: str, kept: Sequence[GridRow], n_kept: int, opened: bool
+    ) -> List[str]:
+        return [
+            "<details open>" if opened else "<details>",
+            f"<summary>{label} against <b>{reference}</b>"
+            f" ({n_kept} of {n_fields} fields,"
+            f" {_plural(len(kept), 'row')})</summary>",
+            "",
+            *render_field_table(labeled_summaries, kept, field_scoring_types, primary),
+            "",
+            "</details>",
+        ]
+
+    lines: List[str] = []
     if moved:
-        lines += render_field_table(
-            labeled_summaries, moved, field_scoring_types, primary
-        )
+        lines += section("Moved", moved, n_moved, True)
     if unmoved:
         lines += [
             *([""] if moved else []),
-            "<details>",
-            f"<summary>Did not move ({_plural(n_unmoved, 'field')},"
-            f" {_plural(len(unmoved), 'row')})</summary>",
-            "",
-            *render_field_table(
-                labeled_summaries, unmoved, field_scoring_types, primary
-            ),
-            "",
-            "</details>",
+            *section("Did not move", unmoved, n_fields - n_moved, False),
         ]
     return lines
