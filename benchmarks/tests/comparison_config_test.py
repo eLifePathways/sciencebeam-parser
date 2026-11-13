@@ -481,3 +481,20 @@ variants:
   - {label: main, tool: sciencebeam-parser, version: main}
   - {label: head, current: true, primary: true, baseline: true}
 """)
+
+    def test_refuses_the_baseline_on_the_variant_that_is_the_primary_by_default(self):
+        # No variant claims `primary`, so the last one is it.
+        with pytest.raises(SelectionError, match="cannot also be the baseline"):
+            _parse("""
+variants:
+  - {label: main, tool: sciencebeam-parser, version: main}
+  - {label: head, current: true, baseline: true}
+""")
+
+    def test_allows_the_baseline_on_the_last_variant_when_another_claims_primary(self):
+        config = _parse("""
+variants:
+  - {label: main, tool: sciencebeam-parser, version: main, primary: true}
+  - {label: head, current: true, baseline: true}
+""")
+        assert baseline_index(config) == 1

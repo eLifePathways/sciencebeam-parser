@@ -93,3 +93,15 @@ class TestSplitRows:
         moved, unmoved = split_rows(rows, baseline=None)
         assert moved == []
         assert [row.field for row in unmoved] == ["a", "b"]
+
+
+class TestThresholdMatchesTheDisplay:
+    """A row the split calls unmoved never shows a visible delta."""
+
+    def test_a_difference_that_prints_as_a_delta_moved(self):
+        assert format(0.0007, "+.3f") == "+0.001"
+        assert row_moved(_row("title", [0.5007, 0.5]), baseline=0) is True
+
+    def test_a_difference_that_prints_as_zero_did_not(self):
+        assert format(0.0004, "+.3f") == "+0.000"
+        assert row_moved(_row("title", [0.5004, 0.5]), baseline=0) is False

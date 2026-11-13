@@ -98,8 +98,9 @@ Each table leads with the fields that moved and collapses the rest, stating how
 many there were. A field moves when any of its rows does, so a field whose
 `exact` moved and whose `levenshtein` did not is read in one place, and the
 threshold is `MOVED_THRESHOLD` in
-[`benchmarks/report_movement.py`](../benchmarks/report_movement.py) -- below it
-a difference prints as `+0.000`.
+[`benchmarks/report_movement.py`](../benchmarks/report_movement.py), set to what
+the printed delta rounds to `+0.000` -- so a row called unmoved never carries a
+visible one.
 
 Movement is measured against one named column, because another tool's column
 differs on nearly every field whatever the run did. A benchmark run names

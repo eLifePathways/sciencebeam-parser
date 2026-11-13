@@ -6,14 +6,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from benchmarks.llm_usage import usage_for_corpora
 
 
-def _fmt_count(value: Optional[float]) -> str:
-    return f"{round(value):,}" if value else "—"
-
-
-def _fmt_credits(value: Optional[float], places: int = 4) -> str:
-    return f"{value:.{places}f}" if value is not None else "—"
-
-
 def _all_calls(usage: Optional[Dict[str, Any]]) -> int:
     """Every completion the engine made, replayed ones included. The token and
     credit figures beside it are what was *spent*, which excludes them."""

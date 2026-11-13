@@ -478,10 +478,10 @@ def _no_baseline_note(n_columns: int, baseline: Optional[int]) -> List[str]:
     if baseline is not None or n_columns < 2:
         return []
     return [
-        "> **Not split by what moved**: no column here is comparable with this run."
+        "> **Not split by what moved**: no column here is comparable with this one."
         " A benchmark run measures movement against `sciencebeam-parser main` under"
-        " its own profile, which the predictions store has none of here; a comparison"
-        " file names its own with `baseline: true`.",
+        " its own profile; a comparison file names its own with `baseline: true`, and"
+        " `--baseline` names one for a `--summary` pair.",
         "",
     ]
 
@@ -871,6 +871,11 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     try:
         if args.comparison:
+            if args.baseline:
+                parser.error(
+                    "--baseline is for --summary; a comparison file names its own"
+                    " with `baseline: true`"
+                )
             config = load_comparison(args.comparison)
             labeled_paths = resolve_variants(
                 config, Path(args.runs), args.split,

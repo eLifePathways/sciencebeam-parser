@@ -25,8 +25,13 @@ class TestFit:
         sections = [(str(i), ["z" * 300]) for i in range(20)]
         assert len(fit(["head"], sections, 900, _note)) <= 900
 
-    def test_falls_back_to_the_head_alone(self):
-        assert fit(["head"], [("a", ["x" * 500])], 10, _note) == "head"
+    def test_keeps_the_note_at_the_floor(self):
+        # Nothing further to drop, so the note is kept rather than the reader being
+        # left with a head that silently lost every section.
+        text = fit(["head"], [("a", ["x" * 500])], 10, _note)
+        assert text.startswith("head")
+        assert "a" in text
+        assert "not in this comment" in text
 
 
 class TestDroppedCorporaNote:

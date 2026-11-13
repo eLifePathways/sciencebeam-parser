@@ -217,12 +217,7 @@ def parse_comparison(data: Any, name: str = "comparison") -> ComparisonConfig:
         raise SelectionError("only one variant can be the primary")
     if sum(bool(_require_mapping(v, "variant").get("baseline")) for v in variants) > 1:
         raise SelectionError("only one variant can be the baseline")
-    if any(
-        _require_mapping(v, "variant").get("baseline")
-        and _require_mapping(v, "variant").get("primary")
-        for v in variants
-    ):
-        raise SelectionError("the primary cannot also be the baseline")
+    _check_baseline_is_not_the_primary(variants)
     corpora = data.get("corpora")
     parsed = [
         _parse_chart(entry, index)
@@ -279,6 +274,21 @@ def primary_index(config: ComparisonConfig) -> int:
         if variant.primary:
             return index
     return len(config.variants) - 1
+
+
+def _check_baseline_is_not_the_primary(variants: List[Any]) -> None:
+    """The primary is the last variant unless one claims it, so the collision is
+    between the resolved positions rather than between the two flags."""
+    flags = [_require_mapping(v, "variant") for v in variants]
+    primary = next(
+        (index for index, flag in enumerate(flags) if flag.get("primary")),
+        len(flags) - 1,
+    )
+    baseline = next(
+        (index for index, flag in enumerate(flags) if flag.get("baseline")), None
+    )
+    if baseline is not None and baseline == primary:
+        raise SelectionError("the primary cannot also be the baseline")
 
 
 def baseline_index(config: ComparisonConfig) -> Optional[int]:

@@ -5,8 +5,8 @@ from typing import List, Optional, Sequence, Set, Tuple
 
 from benchmarks.report_grid import GridRow
 
-# A smaller difference prints as +0.000, so a row it separated would read as unchanged.
-MOVED_THRESHOLD = 0.001
+# What `+.3f` rounds to +0.000, so a row this separates never shows a visible delta.
+MOVED_THRESHOLD = 0.0005
 
 
 def default_baseline(n_columns: int, primary: int) -> Optional[int]:

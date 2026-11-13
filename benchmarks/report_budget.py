@@ -31,7 +31,11 @@ def dropped_corpora_note(dropped: Sequence[str], location: str) -> List[str]:
 def fit(
     head: Sequence[str], sections: Sequence[Section], budget: int, note: Note
 ) -> str:
-    """`head` plus as many whole sections as fit, naming the ones left out."""
+    """`head` plus as many whole sections as fit, naming the ones left out.
+
+    `head` is the floor: where even that and the note exceed the budget there is
+    nothing further to drop, and they are returned rather than the note being lost.
+    """
     for kept in range(len(sections), -1, -1):
         dropped = [name for name, _ in sections[kept:]]
         lines = list(head)
@@ -40,6 +44,6 @@ def fit(
         if dropped:
             lines += note(dropped)
         text = "\n".join(lines)
-        if len(text) <= budget:
+        if len(text) <= budget or kept == 0:
             return text
     return "\n".join(head)
