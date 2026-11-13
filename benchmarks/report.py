@@ -473,6 +473,19 @@ def _field_definition(summary: dict, field: str) -> Tuple[str, List[str]]:
     )
 
 
+def _no_baseline_note(n_columns: int, baseline: Optional[int]) -> List[str]:
+    """Why a comparison of several columns is one table rather than two."""
+    if baseline is not None or n_columns < 2:
+        return []
+    return [
+        "> **Not split by what moved**: no column here is comparable with this run."
+        " A benchmark run measures movement against `sciencebeam-parser main` under"
+        " its own profile, which the predictions store has none of here; a comparison"
+        " file names its own with `baseline: true`.",
+        "",
+    ]
+
+
 def _differently_scored_note(
     labeled_summaries: List[Tuple[str, dict]], field_names: List[str]
 ) -> List[str]:
@@ -579,6 +592,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     lines += render_legend(labels, primary, variants)
     lines += _coverage_lines(labeled_run_records or [])
     lines += _differently_scored_note(labeled_summaries, field_names)
+    lines += _no_baseline_note(len(labeled_summaries), baseline)
 
     if len(corpora) > 1:
         lines.extend(_render_overall_section(

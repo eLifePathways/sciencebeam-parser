@@ -110,9 +110,17 @@ beside it is not split at all. A comparison file names its own with
 `baseline: true` and `--baseline` does it for a `--summary` pair; either of those
 comparing exactly two variants needs no name, the pairing being deliberate.
 
-Where no column is named the table is not split, and the report already says when
-`main` is the one missing. `train` is where this shows: the predictions store holds
-`main` for `validation`, so a `train` run usually has no comparable column.
+Where no column is named the table is not split, and says so rather than leaving
+the absence to be read as "nothing moved". `train` is where this shows: the
+predictions store holds `main` for `validation`, so a `train` run usually has no
+comparable column, and neither has a comparison of several tools. To see what a
+change moved locally, compare two runs of your own:
+
+```sh
+uv run python -m benchmarks.report \
+  --summary before=benchmarks/runs/<before>/summary.json \
+  --summary after=benchmarks/runs/<after>/summary.json
+```
 
 A PR comment is capped by GitHub at 65,536 characters, so what CI posts is a
 second file written beside the report: the same thing with whole per-corpus

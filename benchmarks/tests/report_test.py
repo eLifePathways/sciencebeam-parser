@@ -920,3 +920,23 @@ class TestMovementBaseline:
             self._columns(0.5, 0.9), baseline=default_baseline(2, -1)
         )
         assert "1 of 2 fields moved against **A**." in report
+
+
+class TestNoBaselineNote:
+    def _columns(self, *title_f1: float) -> List[Tuple[str, dict]]:
+        return _labeled(*[
+            _fields_summary({"title": f1, "abstract": 0.7}, ["biorxiv", "ore"])
+            for f1 in title_f1
+        ])
+
+    def test_says_why_a_comparison_is_one_table(self):
+        report = _render_comparison_report(self._columns(0.5, 0.9))
+        assert "**Not split by what moved**" in report
+
+    def test_says_nothing_where_a_baseline_is_named(self):
+        report = _render_comparison_report(self._columns(0.5, 0.9), baseline=0)
+        assert "Not split by what moved" not in report
+
+    def test_says_nothing_about_a_single_column(self):
+        report = _render_comparison_report(self._columns(0.5))
+        assert "Not split by what moved" not in report
