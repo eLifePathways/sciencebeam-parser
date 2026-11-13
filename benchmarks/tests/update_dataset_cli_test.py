@@ -93,7 +93,8 @@ UPDATE = RepoUpdate(current=PINNED, newest=ReleaseRepo(REPO, "v2.0.0", "bbb"))
 
 
 def test_versions_compare_numerically():
-    assert parse_version("v10.0.0") > parse_version("v9.1.0")
+    newer, older = parse_version("v10.0.0"), parse_version("v9.1.0")
+    assert newer is not None and older is not None and newer > older
     assert parse_version("main") is None
 
 

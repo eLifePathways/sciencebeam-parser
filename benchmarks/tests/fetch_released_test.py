@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 from unittest.mock import patch
 
-import httpx
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -209,8 +208,8 @@ class TestErrors:
 
     def test_no_access_to_a_restricted_repo(self, monkeypatch):
         monkeypatch.delenv("BENCH_LOCAL_PARQUET_DIR", raising=False)
-        response = httpx.Response(401, request=httpx.Request("GET", "https://hf.co"))
-        error = RepositoryNotFoundError("401", response=response)
+        # Built without a response: its HTTP client type varies by huggingface_hub version.
+        error = RepositoryNotFoundError.__new__(RepositoryNotFoundError)
         with patch("benchmarks.corpus_source.HfApi") as api:
             api.return_value.repo_info.side_effect = error
             with pytest.raises(CorpusConfigError, match="no access"):
