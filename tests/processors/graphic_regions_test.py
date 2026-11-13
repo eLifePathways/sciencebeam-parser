@@ -12,6 +12,10 @@ from sciencebeam_parser.document.layout_document import (
     LayoutPageCoordinates,
     LayoutPageMeta
 )
+from sciencebeam_parser.external.pdfium.renderer import (
+    PdfRenderWorker,
+    PdfRenderWorkerPool
+)
 from sciencebeam_parser.processors.graphic_regions import (
     _Box,
     GraphicRegionConfig,
@@ -315,12 +319,33 @@ class TestGetLayoutDocumentWithGraphicRegions:
         result = _get_graphics(get_layout_document_with_graphic_regions(
             _get_layout_document(graphics), config=CONFIG,
             temp_dir=str(tmp_path), require_file=True,
-            pdf_path=MINIMAL_EXAMPLE_PDF_PATH
+            pdf_path=MINIMAL_EXAMPLE_PDF_PATH,
+            render_worker_pool=PdfRenderWorkerPool(max_workers=1, timeout=20)
         ))
         assert len(result) == 1
         assert result[0].graphic_type == VECTOR_REGION_GRAPHIC_TYPE
         assert result[0].local_file_path
         assert os.path.exists(result[0].local_file_path)
+
+    def test_should_require_a_file_still_where_no_worker_is_free(self, tmp_path: Path):
+        svg_path = _write_svg(tmp_path / 'page.svg', _get_shape_paths(20))
+        graphics = [
+            LayoutGraphic(
+                local_file_path=svg_path,
+                coordinates=_get_coordinates(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                graphic_type='svg', page_meta=PAGE_META_1
+            )
+        ]
+        pool = PdfRenderWorkerPool(max_workers=1, timeout=1)
+        with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
+            result = _get_graphics(get_layout_document_with_graphic_regions(
+                _get_layout_document(graphics), config=CONFIG,
+                temp_dir=str(tmp_path), require_file=True,
+                pdf_path=MINIMAL_EXAMPLE_PDF_PATH,
+                render_worker_pool=pool
+            ))
+        assert result
+        assert all(graphic.local_file_path for graphic in result)
 
     def test_should_read_a_page_of_its_own_size_as_one_region(self):
         other_page_meta = LayoutPageMeta(
@@ -373,22 +398,22 @@ class TestGetLayoutDocumentWithGraphicRegions:
 
 class TestPageRegionRenderer:
     def test_should_render_a_region_of_a_page(self, tmp_path: Path):
-        renderer = PageRegionRenderer(
-            MINIMAL_EXAMPLE_PDF_PATH, dpi=72.0, temp_dir=str(tmp_path)
-        )
-        image_path = renderer.render(1, _BOX_FOR_RENDER, str(tmp_path / 'region.png'))
+        with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
+            image_path = PageRegionRenderer(worker, dpi=72.0).render(
+                1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
+            )
         assert image_path
         with PIL.Image.open(image_path) as rendered_image:
             assert (rendered_image.width, rendered_image.height) == (100, 50)
 
     def test_should_return_none_for_a_page_that_is_not_there(self, tmp_path: Path):
-        renderer = PageRegionRenderer(
-            MINIMAL_EXAMPLE_PDF_PATH, dpi=72.0, temp_dir=str(tmp_path)
-        )
-        assert renderer.render(99, _BOX_FOR_RENDER, str(tmp_path / 'region.png')) is None
+        with PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
+            assert PageRegionRenderer(worker, dpi=72.0).render(
+                99, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
+            ) is None
 
     def test_should_return_none_for_a_document_it_cannot_read(self, tmp_path: Path):
-        renderer = PageRegionRenderer(
-            str(tmp_path / 'not-there.pdf'), dpi=72.0, temp_dir=str(tmp_path)
-        )
-        assert renderer.render(1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')) is None
+        with PdfRenderWorker(str(tmp_path / 'not-there.pdf'), timeout=20) as worker:
+            assert PageRegionRenderer(worker, dpi=72.0).render(
+                1, _BOX_FOR_RENDER, str(tmp_path / 'region.png')
+            ) is None

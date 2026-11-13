@@ -25,6 +25,11 @@ from sciencebeam_parser.external.pdfalto.wrapper import (
     get_default_pdfalto_binary_path
 )
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
+from sciencebeam_parser.external.pdfium.renderer import (
+    DEFAULT_MAX_RENDER_WORKERS,
+    DEFAULT_RENDER_TIMEOUT,
+    PdfRenderWorkerPool
+)
 from sciencebeam_parser.external.wapiti.wrapper import LazyWapitiBinaryWrapper
 from sciencebeam_parser.lookup.loader import load_lookup_from_config
 from sciencebeam_parser.lookup.phrase_match import load_phrase_match_from_path
@@ -299,6 +304,10 @@ class ScienceBeamBaseParser:
             selectable_profile_names=selectable_profile_names,
             max_models=config.get('max_loaded_models', DEFAULT_MAX_LOADED_MODELS)
         )
+        self.render_worker_pool = PdfRenderWorkerPool(
+            config.get('max_render_workers', DEFAULT_MAX_RENDER_WORKERS),
+            timeout=config.get('render_timeout', DEFAULT_RENDER_TIMEOUT)
+        )
         LOGGER.info(
             'default profile: %r, selectable: %r',
             default_profile_name, self.profile_registry.get_available_profile_names()
@@ -514,7 +523,8 @@ class ScienceBeamParserSessionParsedLayoutDocument(_ScienceBeamParserSessionDeri
     ) -> SemanticDocument:
         context = FullTextProcessorDocumentContext(
             pdf_path=self.pdf_path,
-            temp_dir=self.temp_dir
+            temp_dir=self.temp_dir,
+            render_worker_pool=self.session.parser.render_worker_pool
         )
         semantic_document = (
             fulltext_processor

@@ -675,6 +675,13 @@ selectable_profiles:
 # request for a profile not already resolved is refused rather than loaded.
 max_loaded_models: 40
 
+# Render workers alive at once, across every profile. Each holds a document
+# open for as long as it serves one. Over this, a request waits.
+max_render_workers: 2
+
+# Seconds to wait for a free render worker, and for one to answer a request.
+render_timeout: 120
+
 # Which origins a browser page may call the API from, matched exactly, or `*`
 # for every origin. Empty permits none. See doc/cors.md.
 cors:
