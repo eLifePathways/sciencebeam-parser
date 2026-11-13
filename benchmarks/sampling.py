@@ -105,3 +105,32 @@ def positional_ids(all_ids: Sequence[str], n: Optional[int], seed: int) -> List[
         len(all_ids), len(all_ids) if n is None else min(n, len(all_ids)), seed
     )
     return [record_id for index, record_id in enumerate(all_ids) if index in picked]
+
+
+def release_ids(
+    ids_by_source: Sequence[Sequence[str]], n: Optional[int]
+) -> List[str]:
+    """A mode's documents for a corpus listed by release: the first n.
+
+    Sources take turns, so a corpus split into a public and a restricted repo draws
+    equally from both until one runs out. Each source keeps its release order, so
+    smaller modes are prefixes of larger ones.
+    """
+    _check_unique([i for ids in ids_by_source for i in ids], "pinned release")
+    longest = max((len(ids) for ids in ids_by_source), default=0)
+    order = [
+        ids[position]
+        for position in range(longest)
+        for ids in ids_by_source
+        if position < len(ids)
+    ]
+    return order if n is None else order[:n]
+
+
+def _check_unique(ids: Sequence[str], what: str) -> None:
+    duplicates = len(ids) - len(set(ids))
+    if duplicates:
+        raise ValueError(
+            f"{what} has {duplicates} duplicate id(s); sampling identifies documents "
+            f"by id, so ids have to be unique"
+        )

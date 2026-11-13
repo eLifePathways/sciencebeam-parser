@@ -7,6 +7,7 @@ import pytest
 
 from benchmarks.sampling import (
     positional_ids,
+    release_ids,
     sample_indices,
     stratified_ids,
     stratified_order,
@@ -80,6 +81,32 @@ class TestPositionalIds:
     def test_rejects_duplicate_ids(self):
         with pytest.raises(ValueError, match="duplicate id"):
             positional_ids(["a", "b", "a"], 2, seed=42)
+
+
+class TestReleaseIds:
+    PUBLIC = [f"pub{i}" for i in range(6)]
+    RESTRICTED = [f"res{i}" for i in range(3)]
+
+    def test_takes_the_first_n_of_one_source(self):
+        assert release_ids([self.PUBLIC], 3) == ["pub0", "pub1", "pub2"]
+
+    def test_sources_take_turns(self):
+        assert release_ids([self.PUBLIC, self.RESTRICTED], 4) == [
+            "pub0", "res0", "pub1", "res1",
+        ]
+
+    def test_the_longer_source_fills_in_once_the_other_runs_out(self):
+        picked = release_ids([self.PUBLIC, self.RESTRICTED], None)
+        assert picked[6:] == ["pub3", "pub4", "pub5"]
+        assert len(picked) == 9
+
+    def test_smaller_modes_are_prefixes_of_larger_ones(self):
+        larger = release_ids([self.PUBLIC, self.RESTRICTED], 7)
+        assert release_ids([self.PUBLIC, self.RESTRICTED], 5) == larger[:5]
+
+    def test_rejects_a_document_in_two_sources(self):
+        with pytest.raises(ValueError, match="duplicate id"):
+            release_ids([["a", "b"], ["b"]], 2)
 
 
 class TestStratumOrder:
