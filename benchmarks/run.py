@@ -170,9 +170,8 @@ def _run_baseline(  # pylint: disable=too-many-locals
         # this baseline from the comparison whenever one is included. A mode larger
         # than the one it was stored at leaves it short the same way.
         #
-        # Where it covers a corpus only partly it still contributes, and the
-        # comparison narrows every column to the documents they all have, saying
-        # what it left out (see benchmarks.shared_documents).
+        # Where it covers a corpus only partly it is scored on what it has, and the
+        # report warns at the top.
         coverage = _coverage(expected_ids, done_ids)
         covered = {corpus for corpus, (have, _) in coverage.items() if have}
         if not covered:

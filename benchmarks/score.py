@@ -6,7 +6,7 @@ import logging
 from io import BytesIO
 from pathlib import Path
 from typing import (
-    Any, Collection, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple,
+    Any, Collection, Dict, Iterable, Iterator, List, Optional, Set, Tuple,
 )
 
 import yaml
@@ -274,16 +274,6 @@ def _read_scored_documents(
         for path in sorted(scores_dir.glob("*.json"))
         if record_ids is None or path.stem in record_ids
     ]
-
-
-def summarise_scored_documents(
-    summary: Mapping[str, Any], run_dir: Path, corpus: str, record_ids: Collection[str]
-) -> Dict[str, Any]:
-    """One corpus of a scored run, summarised again over the given documents only."""
-    return _summarise_documents(
-        _read_scored_documents(run_dir / "scores" / corpus, record_ids),
-        summary["fields"], summary["field_measures"],
-    )
 
 
 def _score_corpus(  # pylint: disable=too-many-locals

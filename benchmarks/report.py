@@ -48,7 +48,6 @@ from benchmarks.report_cost import render_cost_section
 from benchmarks.report_legend import keyed, render_legend
 from benchmarks.report_tables import render_split_tables
 from benchmarks.report_usage import render_usage_section
-from benchmarks.shared_documents import on_shared_documents
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
     concatenation_row,
@@ -344,6 +343,30 @@ def _unequal_docs_note(counts_by_label: List[Tuple[str, int]]) -> List[str]:
     ]
 
 
+def _missing_documents_note(
+    labeled_summaries: List[Tuple[str, dict]], corpora: List[str]
+) -> List[str]:
+    """For the top of the report: per corpus, the columns with fewer documents."""
+    lines = []
+    for corpus in corpora:
+        counts = [
+            (label, s.get("corpora", {}).get(corpus, {}).get("n", 0))
+            for label, s in labeled_summaries
+        ]
+        most = max((n for _, n in counts), default=0)
+        short = [f"{label} {n} of {most}" for label, n in counts if n < most]
+        if short:
+            lines.append(f"> - `{corpus}`: {', '.join(short)}")
+    if not lines:
+        return []
+    return [
+        "> ⚠️ **Some columns lack documents.** Each column is scored on the documents"
+        " it has, so a short column's scores and deltas cover fewer documents:",
+        *lines,
+        "",
+    ]
+
+
 def _common_corpora(
     labeled_summaries: List[Tuple[str, dict]], corpora: List[str]
 ) -> List[str]:
@@ -591,6 +614,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     keyed_summaries = keyed(labeled_summaries)
     lines = ["## ScienceBeam Parser Evaluation", ""]
     lines += render_legend(labels, primary, variants)
+    lines += _missing_documents_note(keyed_summaries, corpora)
     lines += _coverage_lines(labeled_run_records or [])
     lines += _differently_scored_note(labeled_summaries, field_names)
     lines += _no_baseline_note(len(labeled_summaries), baseline)
@@ -690,17 +714,12 @@ def _write_comment_report(  # pylint: disable=too-many-arguments
     charts: ChartOutput,
     primary: int,
     variants: Sequence[Tuple[str, str]],
-    documents_note: Optional[str] = None,
 ) -> None:
     """The report a PR comment can carry, beside the full one."""
     comment = _render_comparison_report(
         labeled_summaries, labeled_run_records, selection, charts, primary, variants,
         budget, report_location, baseline,
     )
-    if documents_note:
-        # Kept only where it fits; the full report always has it.
-        with_note = comment.rstrip("\n") + "\n\n" + documents_note + "\n"
-        comment = with_note if len(with_note) <= budget else comment
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(comment)
     LOGGER.info("Comment report written to %s (%d characters)", out_path, len(comment))
@@ -741,15 +760,10 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
         prefix=chart_prefix,
         base_url=chart_base_url,
     )
-    labeled_summaries, documents_note = on_shared_documents(
-        labeled_summaries, [path for _, path in labeled_summary_paths]
-    )
     report = _render_comparison_report(
         labeled_summaries, labeled_run_records, selection, charts, primary, variants,
         baseline=baseline,
     )
-    if documents_note:
-        report = report.rstrip("\n") + "\n\n" + documents_note + "\n"
     if out_path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(report)
@@ -759,7 +773,7 @@ def run_compare(  # pylint: disable=too-many-arguments,too-many-positional-argum
             comment_out, comment_budget, report_location, baseline,
             labeled_summaries, labeled_run_records, selection,
             # The images are already drawn; this wants their markdown, not another pass.
-            replace(charts, out_dir=None), primary, variants, documents_note,
+            replace(charts, out_dir=None), primary, variants,
         )
     print(report)
 

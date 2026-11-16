@@ -1,5 +1,8 @@
+# pylint: disable=too-many-lines
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import pytest
@@ -12,6 +15,7 @@ from benchmarks.report import (
     _parse_labeled_summary,
     _render_comparison_report,
     _unequal_docs_note,
+    run_compare,
 )
 
 
@@ -297,6 +301,49 @@ class TestRenderComparisonReport:  # pylint: disable=too-many-public-methods
         assert report.count("<details>") == 2
         assert "<summary><b>biorxiv</b>" in report
         assert "<summary><b>ore</b>" in report
+
+
+class TestMissingDocumentsNote:
+    def _report(self, agentic_n: int, budget: Optional[int] = None) -> str:
+        agg = [_agg("string", "levenshtein", {"title": 0.8})]
+        return _render_comparison_report([
+            ("GROBID", _title_summary(0.8, corpora=_multi_corpus(["biorxiv", "ore"], agg, 50))),
+            ("Agentic", _title_summary(0.8, corpora={
+                "biorxiv": {"n": agentic_n, "aggregated": agg},
+                "ore": {"n": 50, "aggregated": agg},
+            })),
+            ("SB (PR)", _title_summary(0.8, corpora=_multi_corpus(["biorxiv", "ore"], agg, 50))),
+        ], budget=budget)
+
+    def test_warns_at_the_top_naming_the_short_column(self):
+        report = self._report(agentic_n=14)
+        warning = report.index("Some columns lack documents")
+        assert warning < report.index("### Overall")
+        assert "> - `biorxiv`: A 14 of 50" in report
+        assert "`ore`:" not in report[warning:report.index("### Overall")]
+
+    def test_the_other_columns_keep_every_document(self, tmp_path: Path):
+        agg = [_agg("string", "levenshtein", {"title": 0.8})]
+        paths = []
+        for label, n in [("GROBID", 50), ("Agentic", 14), ("SB (PR)", 50)]:
+            summary = _title_summary(0.8, corpora={"biorxiv": {"n": n, "aggregated": agg}})
+            summary["scored_documents"] = {"biorxiv": [f"d{i}" for i in range(n)]}
+            path = tmp_path / label / "summary.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(summary))
+            paths.append((label, path))
+        out = tmp_path / "comparison.md"
+        run_compare(paths, out, comment_out=tmp_path / "comment.md")
+        for report in (out, tmp_path / "comment.md"):
+            text = report.read_text(encoding="utf-8")
+            assert "**G**: 50 docs | **A**: 14 docs | **S**: 50 docs" in text
+            assert "> - `biorxiv`: A 14 of 50" in text
+
+    def test_a_comment_keeps_the_warning(self):
+        assert "Some columns lack documents" in self._report(14, budget=1500)
+
+    def test_silent_when_every_column_has_every_document(self):
+        assert "Some columns lack documents" not in self._report(agentic_n=50)
 
 
 class TestUnequalDocsNote:
