@@ -814,6 +814,88 @@ def _tag_publication_dates(
             seg_line.seg_label = SEG_FRONT
 
 
+# The sentence a journal grants its licence in, from the words it opens with.
+# A line that cites a licence in passing says something about it first.
+_LICENCE_NOTICE_PATTERN = re.compile(
+    r'^\s*(?:open\s+access\s+)?'
+    r'(?:this\s+(?:is\s+an?|article\s+is|work\s+is)'
+    r'|est[ae]\s+(?:\u00e9|e)\s+um'
+    r'|est[ae]\s+art[\u00edi]culo)\b'
+    r'[^.]{0,160}?'
+    r'(?:creative\s+commons|open[\s-]access|acesso\s+aberto|cc[\s-]by)',
+    re.IGNORECASE,
+)
+
+
+def _get_first_reference_index(seg_lines: List[_SegLine]) -> Optional[int]:
+    """Where the reference list opens, if the document has one."""
+    return next(
+        (index for index, sl in enumerate(seg_lines)
+         if sl.seg_label == SEG_REFERENCES),
+        None,
+    )
+
+
+# The line a renderer composes to say how the article should be cited.
+_HOW_TO_CITE_PATTERN = re.compile(
+    r'^\s*(?:how\s+to\s+cite|como\s+citar|c[o\u00f3]mo\s+citar)\b',
+    re.IGNORECASE,
+)
+
+
+def _claim_the_citation_printed_after_the_references(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take the "how to cite" block an article closes with.
+
+    It is the bibliographic record of the article itself, not of anything it
+    cites and not part of whatever section it is printed under: GROBID's
+    corpus holds it in `<front>` 11 times of the 12 it has after a reference
+    list.  The citation runs under the heading to the end of the section the
+    page sets it in.
+    """
+    opened = _get_first_reference_index(seg_lines)
+    if opened is None:
+        return
+    for index in range(opened, len(seg_lines)):
+        if not _HOW_TO_CITE_PATTERN.match(seg_lines[index].text):
+            continue
+        under = seg_lines[index].seg_label
+        if under in _TRAILING_MATTER_LABELS:
+            continue
+        for seg_line in seg_lines[index:]:
+            if seg_line is not seg_lines[index] and (
+                seg_line.seg_label != under or _is_grounded(seg_line, annotated)
+            ):
+                break
+            seg_line.seg_label = SEG_FRONT
+
+
+def _claim_the_licence_printed_after_the_references(seg_lines: List[_SegLine]) -> None:
+    """Take a licence notice printed past the reference list.
+
+    A journal grants its licence at the foot of the last page, and the
+    deposit need not carry the sentence at all, so the list above reaches
+    over it.  GROBID's corpus holds the sentence printed after a reference
+    list in `<front>` 10 times of 12.  Before the list it is as often the
+    standing line a journal prints in a margin of every page, which the
+    margins have already settled.
+
+    Whatever the aligner made of the line: printed across the foot of a page
+    the list is set in two columns down, it arrives in the middle of the list
+    and S0102-76382018000400391 has it matched as an entry's article title.
+    No article is titled this.
+    """
+    opened = _get_first_reference_index(seg_lines)
+    if opened is None:
+        return
+    for seg_line in seg_lines[opened:]:
+        if seg_line.seg_label in _TRAILING_MATTER_LABELS:
+            continue
+        if _LICENCE_NOTICE_PATTERN.match(seg_line.text):
+            seg_line.seg_label = SEG_FRONT
+
+
 _SAME_ROW_Y_TOLERANCE = 3.0
 
 # A column gutter runs to about two fifths of the page; a badge sits a fraction
@@ -2163,6 +2245,79 @@ def _claim_footnotes_sharing_a_band(seg_lines: List[_SegLine]) -> None:
         seg_line.seg_label = SEG_FOOTNOTE
 
 
+def _get_block_type_size(block: List[_SegLine]) -> Optional[float]:
+    """The size the block is mostly set in, a superscript marker aside."""
+    sizes = [size for size in map(_get_line_font_size, block) if size is not None]
+    return max(sizes) if sizes else None
+
+
+def _iter_page_foot_blocks(
+    seg_lines: List[_SegLine], running_texts: Set[str]
+) -> Iterator[List[_SegLine]]:
+    """The block each page sets below everything else, the margins aside."""
+    by_page: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is None or not seg_line.text.strip():
+            continue
+        if seg_line.text in running_texts:
+            continue
+        if seg_line.seg_label in {SEG_HEADNOTE, SEG_PAGE}:
+            continue
+        by_page.setdefault(page_number, []).append(seg_line)
+    for page_lines in by_page.values():
+        last = page_lines[-1].block_index
+        yield [sl for sl in page_lines if sl.block_index == last]
+
+
+def _claim_the_notes_a_page_sets_below_its_text(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take a block set under the text where the document sets its notes.
+
+    A note broken over a page break is one value with the page furniture
+    between its halves, so neither half matches it and the body above reaches
+    over both.  The page still says what they are: set last, under the text,
+    in the type the notes the deposit does carry are set in, and smaller than
+    the type that page sets its own text in -- which a reference list, set
+    small down a page of nothing else, is not.
+    """
+    blocks = list(_iter_page_foot_blocks(seg_lines, _get_running_texts(seg_lines)))
+    # The notes the deposit carries, never a running foot: that repeats in the
+    # same small type at the foot of every page and is nobody's note.
+    note_sizes = {
+        size
+        for block in blocks
+        if all(sl.seg_label == SEG_FOOTNOTE for sl in block)
+        and any(_is_grounded(sl, annotated) for sl in block)
+        for size in [_get_block_type_size(block)]
+        if size is not None
+    }
+    for block in blocks:
+        if any(sl.seg_label == SEG_FOOTNOTE for sl in block):
+            continue
+        if any(_is_grounded(sl, annotated) for sl in block):
+            continue
+        size = _get_block_type_size(block)
+        if size not in note_sizes:
+            continue
+        page_size = _get_prevailing_type_size(
+            [sl for sl in seg_lines if _get_page_number(sl) == _get_page_number(block[0])]
+        )
+        if page_size is None or size >= page_size:
+            continue
+        for seg_line in block:
+            seg_line.seg_label = SEG_FOOTNOTE
+
+
+def _get_prevailing_type_size(seg_lines: List[_SegLine]) -> Optional[float]:
+    """The size most of the document's lines are set in."""
+    sizes = Counter(
+        size for size in map(_get_line_font_size, seg_lines) if size is not None
+    )
+    return sizes.most_common(1)[0][0] if sizes else None
+
+
 def _is_set_smaller_than(seg_line: _SegLine, neighbour: _SegLine) -> bool:
     """Whether the page sets the line in smaller type than its neighbour."""
     size = _get_line_font_size(seg_line)
@@ -2795,6 +2950,29 @@ def _claim_the_banner_above_the_front_matter(
             seg_line.seg_label = SEG_FRONT
 
 
+def _tag_the_margins_and_the_headings(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+    annotated: JatsAnnotatedLayoutDocument,
+    config: SegmentationConfig,
+) -> None:
+    """What the page prints around its content, and what opens a region."""
+    _clear_front_beyond_threshold(
+        seg_lines, config.front_max_start_line_index, annotated
+    )
+    _find_missing_page_numbers(seg_lines, page_meta_by_number, config)
+    _tag_headnotes_by_text_repetition(
+        seg_lines, config.page_header_max_first_line_index
+    )
+    _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
+    _tag_page_numbers_by_position(seg_lines, page_meta_by_number)
+    _release_furniture_inside_references(seg_lines)
+    _claim_region_heading(seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated)
+    _claim_region_heading_by_position(seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS)
+    _claim_statement_heading(seg_lines, annotated)
+    _claim_statement_by_heading(seg_lines, annotated)
+
+
 def _take_back_the_page_furniture(
     seg_lines: List[_SegLine],
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -2838,24 +3016,9 @@ class SegmentationLabelDeriver:
         _tag_cover_pages(seg_lines)
 
         # ── Tier 3: heuristic passes ──
-        _clear_front_beyond_threshold(
-            seg_lines, self.config.front_max_start_line_index, annotated
+        _tag_the_margins_and_the_headings(
+            seg_lines, page_meta_by_number, annotated, self.config
         )
-        _find_missing_page_numbers(seg_lines, page_meta_by_number, self.config)
-        _tag_headnotes_by_text_repetition(
-            seg_lines, self.config.page_header_max_first_line_index
-        )
-        _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
-        _tag_page_numbers_by_position(seg_lines, page_meta_by_number)
-        _release_furniture_inside_references(seg_lines)
-        _claim_region_heading(
-            seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated
-        )
-        _claim_region_heading_by_position(
-            seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS
-        )
-        _claim_statement_heading(seg_lines, annotated)
-        _claim_statement_by_heading(seg_lines, annotated)
         # `<review>` is the peer-review sub-articles, which print as one run at the end
         # of the document.  Its values are short, repeated checklist fragments in
         # an order the page does not follow, so the aligner places only some of
@@ -2870,6 +3033,9 @@ class SegmentationLabelDeriver:
         _release_statements_inside_front(seg_lines)
         _release_body_inside_the_references(seg_lines)
         _release_margin_lines_continuing_a_column(seg_lines)
+        # After the release, which reads a note set at the foot of a page as the
+        # column above it carrying on and lets it go.
+        _claim_the_notes_a_page_sets_below_its_text(seg_lines, annotated)
         _merge_gap_lines(
             seg_lines,
             enabled_labels={
@@ -2922,6 +3088,7 @@ class SegmentationLabelDeriver:
         _claim_amendments_box(seg_lines)
         _claim_annex_region(seg_lines)
         _tag_publication_dates(seg_lines, annotated)
+        _claim_the_licence_printed_after_the_references(seg_lines)
         _claim_lines_sharing_a_row(seg_lines, page_meta_by_number)
 
         _claim_the_banner_above_the_front_matter(
@@ -2934,6 +3101,9 @@ class SegmentationLabelDeriver:
         # Again, because the run of declarations an article closes with is only
         # a run of declarations once the pass above has released it.
         _claim_statement_by_heading(seg_lines, annotated)
+        # After the release above, which reads the citation as front matter
+        # printed past the body and lets it go.
+        _claim_the_citation_printed_after_the_references(seg_lines, annotated)
 
         # ── Default remaining untagged lines → body ──
         for sl in seg_lines:

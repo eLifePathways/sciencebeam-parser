@@ -149,3 +149,56 @@ class TestATableRowCarriedPastTheFooterThreshold:
         doc, annotated, _rows, note = self._make_doc(note_in_smaller_type=True)
         labels = derive_labels(doc, annotated)
         assert labels[id(note)] == SEG_FOOTNOTE
+
+
+class TestANoteTheArticleCarriesOverAPageBreak:
+    """A note split by the page break matches no value, and nothing grounds it.
+
+    The page still says what it is: set last, under the text, in the type the
+    notes it does carry are set in.
+    """
+
+    def _make_doc(self, carried_size: float):
+        def body(page_number: int, count: int):
+            return [
+                make_line(
+                    'The', 'marsh', 'held', f'herons{index}',
+                    page_number=page_number, y=100.0 + 20 * index, font_size=10.0,
+                )
+                for index in range(count)
+            ]
+
+        placed_note = make_line(
+            '1', 'From', 'the', 'ringing', 'scheme', "'", 's', 'returns',
+            page_number=1, y=900.0, font_size=8.0,
+        )
+        carried_note = make_line(
+            'counted', 'again', 'at', 'the', 'second', 'marsh',
+            page_number=2, y=900.0, font_size=carried_size,
+        )
+        first, second = body(1, 8), body(2, 8)
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=first), LayoutBlock(lines=[placed_note])],
+                meta=make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=second), LayoutBlock(lines=[carried_note])],
+                meta=make_page_meta(2),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+            for line in first + second
+        }
+        fields[lines.index(placed_note)] = JatsFieldNames.BACK_FOOTNOTE
+        return doc, annotate(doc, fields), carried_note
+
+    def test_the_half_on_the_next_page_goes_with_the_note(self):
+        doc, annotated, carried = self._make_doc(carried_size=8.0)
+        assert derive_labels(doc, annotated)[id(carried)] == SEG_FOOTNOTE
+
+    def test_a_block_set_in_the_type_of_the_text_is_not_a_note(self):
+        doc, annotated, carried = self._make_doc(carried_size=10.0)
+        assert derive_labels(doc, annotated)[id(carried)] != SEG_FOOTNOTE

@@ -82,3 +82,78 @@ class TestTheAuthorsBiographiesAfterTheReferences:
         doc, annotated, block = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in block] == [SEG_ANNEX] * 4
+
+
+class TestTheLicenceNoticeAtTheFootOfTheLastPage:
+    """A journal that grants its licence alone under the reference list."""
+
+    def _make_doc(self, notice: str):
+        references = [
+            make_line('A', 'reference', f'listed{index}', y=200.0 + 20 * index)
+            for index in range(6)
+        ]
+        printed = make_line(*notice.split(), y=340.0)
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=references + [printed])],
+                meta=make_page_meta(1),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.REFERENCE for line in references
+        }
+        return doc, annotate(doc, fields), printed
+
+    def test_it_is_taken_out_of_the_reference_list(self):
+        doc, annotated, printed = self._make_doc(
+            'This is an open-access article distributed under the terms of the'
+            ' Creative Commons Attribution License.'
+        )
+        assert derive_labels(doc, annotated)[id(printed)] == SEG_FRONT
+
+    def test_a_sentence_that_cites_a_licence_is_not(self):
+        doc, annotated, printed = self._make_doc(
+            'The heron counts of both marshes were released under a Creative'
+            ' Commons licence by the ringing scheme.'
+        )
+        assert derive_labels(doc, annotated)[id(printed)] != SEG_FRONT
+
+
+class TestTheCitationTheRendererComposes:
+    """A journal that closes with how the article should be cited."""
+
+    def _make_doc(self):
+        references = [
+            make_line('A', 'reference', f'listed{index}', y=200.0 + 20 * index)
+            for index in range(6)
+        ]
+        biography = make_line('About', 'the', 'authors', y=340.0)
+        heading = make_line('How', 'to', 'cite', 'this', 'article', ':', y=360.0)
+        citation = [
+            make_line('Heron', 'A', '.', 'Counting', 'herons', '.', f'Part{index}',
+                      y=380.0 + 20 * index)
+            for index in range(2)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(
+                    lines=references + [biography, heading] + citation
+                )],
+                meta=make_page_meta(1),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.REFERENCE for line in references
+        }
+        return doc, annotate(doc, fields), biography, heading, citation
+
+    def test_the_block_goes_to_the_front_matter(self):
+        doc, annotated, _, heading, citation = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in [heading, *citation]] == [SEG_FRONT] * 3
+
+    def test_the_section_above_it_is_left_where_it_is(self):
+        doc, annotated, biography, _, _ = self._make_doc()
+        assert derive_labels(doc, annotated)[id(biography)] == SEG_ANNEX
