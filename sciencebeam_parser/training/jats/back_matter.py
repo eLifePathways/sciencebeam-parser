@@ -131,7 +131,13 @@ _FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
                       'colabora', 'authorship',
                       'author role', 'authors role', "author's role",
                       'roles and responsibilit', 'roles & responsibilit',
-                      'papeis dos autores', 'funciones de los autores')),
+                      'papeis dos autores', 'funciones de los autores',
+                      # Spelled out, never the bare stem: "Participants" heads
+                      # a methods section.
+                      "author's participation", 'authors participation',
+                      'participation of the authors',
+                      'participacao dos autores',
+                      'participacion de los autores')),
     ('acknowledgement', ('acknowledg', 'agradecimento', 'agradecimiento')),
     # The same statement the `data-availability` sec-type marks, filed as a
     # footnote instead -- which is where a preprint server puts it.

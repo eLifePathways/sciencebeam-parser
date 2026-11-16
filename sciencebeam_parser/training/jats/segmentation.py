@@ -751,7 +751,11 @@ def _claim_annex_region(seg_lines: List[_SegLine]) -> None:
     The heading has to be unclaimed, which is what keeps a sentence that merely
     mentions an appendix out: that sentence belongs to a paragraph the JATS
     carries, so it is already labelled.  The annex then runs on over what
-    nothing else claims, and stops at whatever does.
+    nothing else claims, and stops at whatever does -- or hands over, where
+    the page names a declaration under it: the biographies an article closes
+    with are followed by the statement of what each author did.  A heading as
+    the page sets one, which is to say in bold -- a checklist asking whether
+    there are "pias para atender o numero de colaboradores" names nothing.
     """
     index = 0
     while index < len(seg_lines):
@@ -763,12 +767,18 @@ def _claim_annex_region(seg_lines: List[_SegLine]) -> None:
         ):
             index += 1
             continue
+        taken = SEG_ANNEX
         for following in seg_lines[index:]:
             if following.seg_label in _FURNITURE_LABELS:
                 continue
             if following.seg_label is not None:
                 break
-            following.seg_label = SEG_ANNEX
+            named = (
+                None if following is seg_line or not _is_bold(following)
+                else _declaration_named_by(following.text)
+            )
+            taken = named or taken
+            following.seg_label = taken
         index += 1
 
 
@@ -2826,10 +2836,17 @@ _FRONT_AFTER_THE_BODY_FIELDS = frozenset({
 })
 
 
+def _declaration_named_by(text: str) -> Optional[str]:
+    """The declaration a line heads, where it is a heading that names one."""
+    heading = text.strip()
+    if len(heading) > _STATEMENT_HEADING_MAX_LENGTH:
+        return None
+    return _STATEMENT_LABEL_BY_KIND.get(match_fn_keywords(heading) or '')
+
+
 def _names_another_declaration(text: str, label: str) -> bool:
     """Whether the line heads a declaration other than the one running on."""
-    kind = match_fn_keywords(text.strip()[:_STATEMENT_HEADING_MAX_LENGTH])
-    named = _STATEMENT_LABEL_BY_KIND.get(kind or '')
+    named = _declaration_named_by(text)
     return named is not None and named != label
 
 

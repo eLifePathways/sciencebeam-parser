@@ -12,6 +12,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
     SEG_ANNEX,
+    SEG_CONTRIBUTION,
     SEG_FRONT,
 )
 from tests.training.jats.segmentation_fixtures import (
@@ -55,7 +56,7 @@ class TestTheSubmissionHistoryAtTheFootOfTheLastPage:
 class TestTheAuthorsBiographiesAfterTheReferences:
     """A journal that closes with "About the authors"."""
 
-    def _make_doc(self):
+    def _make_doc(self, heading_in_bold: bool = True):
         references = [
             make_line('A', 'reference', f'listed{index}', y=200.0 + 20 * index)
             for index in range(6)
@@ -66,9 +67,15 @@ class TestTheAuthorsBiographiesAfterTheReferences:
                       y=360.0 + 20 * index)
             for index in range(3)
         ]
+        statement = [
+            make_line('Authors', 'participation', y=420.0, bold=heading_in_bold),
+            make_line('Both', 'authors', 'counted', 'and', 'wrote', y=440.0),
+        ]
         doc = LayoutDocument(pages=[
             LayoutPage(
-                blocks=[LayoutBlock(lines=references + [heading] + biography)],
+                blocks=[LayoutBlock(
+                    lines=references + [heading] + biography + statement
+                )],
                 meta=make_page_meta(1),
             ),
         ])
@@ -76,12 +83,22 @@ class TestTheAuthorsBiographiesAfterTheReferences:
         fields = {
             lines.index(line): JatsFieldNames.REFERENCE for line in references
         }
-        return doc, annotate(doc, fields), [heading] + biography
+        return doc, annotate(doc, fields), [heading] + biography, statement
 
     def test_the_heading_opens_an_annex(self):
-        doc, annotated, block = self._make_doc()
+        doc, annotated, block, _ = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in block] == [SEG_ANNEX] * 4
+
+    def test_the_annex_hands_over_where_a_declaration_is_named(self):
+        doc, annotated, _, statement = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in statement] == [SEG_CONTRIBUTION] * 2
+
+    def test_a_line_that_is_not_a_heading_names_nothing(self):
+        doc, annotated, _, statement = self._make_doc(heading_in_bold=False)
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in statement] == [SEG_ANNEX] * 2
 
 
 class TestTheLicenceNoticeAtTheFootOfTheLastPage:
