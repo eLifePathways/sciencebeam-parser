@@ -825,18 +825,28 @@ class TestAShortLineAtTheFootOfAPage:
 class TestTheBannerAboveTheFrontMatter:
     """A journal prints its licence in the top margin of the first page."""
 
-    def _make_doc(self, in_the_top_margin: bool):
+    def _make_doc(self, in_the_top_margin: bool, beside_a_running_head: bool = False):
         banner = [
             make_line('This', 'is', 'an', 'open', 'access', 'article',
                       y=20.0 if in_the_top_margin else 420.0, x=400.0),
             make_line('under', 'the', 'CC', 'BY', 'license',
                       y=40.0 if in_the_top_margin else 440.0, x=400.0),
         ]
+        running_head = [
+            make_line('The', 'journal', 'and', 'the', 'issue', y=40.0, x=100.0,
+                      page_number=page_number)
+            for page_number in (1, 2)
+        ] if beside_a_running_head else []
         title = make_line('A', 'title', y=100.0)
         abstract = make_line('What', 'the', 'article', 'found', y=120.0)
         body = [
             make_line('The', 'argument', f'runs{index}', y=200.0 + 20 * index)
             for index in range(6)
+        ]
+        overleaf = [
+            make_line('and', 'goes', f'on{index}', y=200.0 + 20 * index,
+                      page_number=2)
+            for index in range(4)
         ]
         doc = LayoutDocument(pages=[
             LayoutPage(
@@ -844,15 +854,12 @@ class TestTheBannerAboveTheFrontMatter:
                     LayoutBlock(lines=[title, abstract]),
                     LayoutBlock(lines=body),
                     LayoutBlock(lines=banner),
-                ],
+                ] + [LayoutBlock(lines=running_head[:1])] * bool(running_head),
                 meta=make_page_meta(1),
             ),
             LayoutPage(
-                blocks=[LayoutBlock(lines=[
-                    make_line('and', 'goes', f'on{index}', y=200.0 + 20 * index,
-                              page_number=2)
-                    for index in range(4)
-                ])],
+                blocks=[LayoutBlock(lines=overleaf)]
+                + [LayoutBlock(lines=running_head[1:])] * bool(running_head),
                 meta=make_page_meta(2),
             ),
         ])
@@ -874,6 +881,13 @@ class TestTheBannerAboveTheFrontMatter:
         doc, annotated, banner = self._make_doc(in_the_top_margin=False)
         labels = derive_labels(doc, annotated)
         assert labels[id(banner[0])] != SEG_FRONT
+
+    def test_a_row_the_page_runs_its_head_across_is_a_margin(self):
+        doc, annotated, banner = self._make_doc(
+            in_the_top_margin=True, beside_a_running_head=True
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in banner] == [SEG_HEADNOTE] * 2
 
 
 class TestATableCarriedOverThePage:

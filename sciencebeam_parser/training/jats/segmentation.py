@@ -2930,6 +2930,19 @@ def _release_front_after_the_body(
             seg_lines[index].seg_label = taken
 
 
+def _is_across_from(block_lines: List[_SegLine], rows: List[float]) -> bool:
+    """Whether the page sets the block on a row it already prints furniture on."""
+    band = [
+        position[1] for position in map(_get_line_position, block_lines) if position
+    ]
+    if not band:
+        return False
+    return any(
+        min(band) - _SAME_ROW_Y_TOLERANCE <= row <= max(band) + _SAME_ROW_Y_TOLERANCE
+        for row in rows
+    )
+
+
 def _claim_the_banner_above_the_front_matter(
     seg_lines: List[_SegLine],
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -2939,9 +2952,13 @@ def _claim_the_banner_above_the_front_matter(
 
     A journal prints its licence there -- "This is an open access article under
     the CC BY license" -- and GROBID's corpus holds that sentence in `<front>`
-    363 times against 91 as a headnote and 74 as a foot.  A running head is a
-    headnote by now, having repeated across the pages; what is left in the top
-    margin of the page the front matter begins on belongs to it.
+    363 times against 91 as a headnote and 74 as a foot.  What is in the top
+    margin of the page the front matter begins on belongs to it -- unless the
+    page is already printing furniture across that row.  A journal that runs
+    its head over the first page as well as the rest has made the row its
+    margin, and the block beside the head is printed around the page rather
+    than in it: S0034-737X2019000600486 sets its licence in the third corner
+    of a row whose other two hold the page number and the running head.
 
     The block, not the line: a column whose first line starts in the zone is
     the page's own content carrying on below it.
@@ -2950,21 +2967,30 @@ def _claim_the_banner_above_the_front_matter(
     if first is None:
         return
     page_number = _get_page_number(first)
+    page_lines = [sl for sl in seg_lines if _get_page_number(sl) == page_number]
     in_zone: Dict[int, bool] = {}
-    for seg_line in seg_lines:
-        if _get_page_number(seg_line) != page_number:
-            continue
+    blocks: Dict[int, List[_SegLine]] = {}
+    furniture_rows: List[float] = []
+    for seg_line in page_lines:
         in_zone[seg_line.block_index] = (
             in_zone.get(seg_line.block_index, True)
             and _is_in_header_zone(seg_line, page_meta_by_number, config)
         )
-    for seg_line in seg_lines:
-        if seg_line.seg_label is not None:
+        if seg_line.seg_label == SEG_HEADNOTE:
+            position = _get_line_position(seg_line)
+            if position:
+                furniture_rows.append(position[1])
+        if seg_line.seg_label is None:
+            blocks.setdefault(seg_line.block_index, []).append(seg_line)
+    for block_index, block_lines in blocks.items():
+        if not in_zone.get(block_index):
             continue
-        if _get_page_number(seg_line) != page_number:
-            continue
-        if in_zone.get(seg_line.block_index):
-            seg_line.seg_label = SEG_FRONT
+        taken = (
+            SEG_HEADNOTE if _is_across_from(block_lines, furniture_rows)
+            else SEG_FRONT
+        )
+        for seg_line in block_lines:
+            seg_line.seg_label = taken
 
 
 def _tag_the_margins_and_the_headings(
