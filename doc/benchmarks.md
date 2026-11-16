@@ -41,8 +41,8 @@ checksums and a selection digest.
 `make docker-benchmark-update-dataset` shows what each newer release adds, removes
 and corrects, and how each mode changes. `APPLY=1` writes the new pins.
 
-A comparison scores every column on the documents they all have, per corpus, and
-says what it left out.
+A comparison scores each column on the documents it has. Where a column has fewer
+than the others, a warning at the top of the report says which and how many.
 
 ## Scoring
 

@@ -1103,3 +1103,31 @@ class TestSingleVariantReportBudget:
         assert dropped
         assert ", ".join(dropped) in report
         assert "The full report is in the [job summary](http://x/1)." in report
+
+
+class TestScoringLimitedToTheModeDocuments:
+    def test_only_the_given_documents_are_scored(self, tmp_path: Path):
+        run_dir = tmp_path / "run"
+        for record_id in ("d1", "d2"):
+            pred = run_dir / "predictions" / "c" / f"{record_id}.tei.xml"
+            pred.parent.mkdir(parents=True, exist_ok=True)
+            pred.write_text("<TEI/>")
+            gold = tmp_path / "data" / "train" / "c" / f"{record_id}.jats.xml"
+            gold.parent.mkdir(parents=True, exist_ok=True)
+            gold.write_text("<article/>")
+        config = {
+            "dataset": {"splits": {"train": {"c": {"file": "c.parquet"}}}},
+            "fields": ["title"],
+            "scoring": {"default_methods": ["exact"]},
+        }
+        score = {
+            "field_name": "title", "scoring_type": "string", "scoring_method": "exact",
+            "match_score": {"true_positive": 1, "false_positive": 0, "false_negative": 0},
+        }
+        with patch("benchmarks.score.prepare_judge"), \
+                patch("benchmarks.score._score_pair", return_value=[score]):
+            run_score(config, run_dir, tmp_path / "data", out_path=None,
+                      split_override="train", record_ids={("c", "d1")})
+        summary = json.loads((run_dir / "summary.json").read_text())
+        assert summary["scored_documents"] == {"c": ["d1"]}
+        assert summary["corpora"]["c"]["n"] == 1
