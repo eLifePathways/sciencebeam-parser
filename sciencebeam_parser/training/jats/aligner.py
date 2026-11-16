@@ -21,6 +21,7 @@ from sciencebeam_parser.training.jats.field_vocab import (
     JatsSubFieldNames,
 )
 from sciencebeam_parser.training.jats.segmentation import (
+    get_amendments_box_line_ids,
     get_cover_page_line_ids,
     get_lines_in_printed_order,
     get_page_furniture_line_ids,
@@ -439,6 +440,9 @@ class _TokenIndex:
         # Where a publisher's cover page lies, which no value of the article's
         # own is searched in.
         self.cover_ranges: List[Tuple[int, int]] = []
+        # Where the box a revised article says what changed in lies, which only
+        # the note that box is may be looked for in.
+        self.amendments_ranges: List[Tuple[int, int]] = []
 
     def get_token_char_ranges(self, token_indices: Set[int]) -> List[Tuple[int, int]]:
         """The haystack covered by those tokens, merged into contiguous runs."""
@@ -537,9 +541,11 @@ def _build_token_index(  # pylint: disable=too-many-locals
     furniture_line_ids = get_page_furniture_line_ids(layout_document)
     cover_line_ids = get_cover_page_line_ids(layout_document)
     side_column_line_ids = get_side_column_line_ids(layout_document)
+    amendments_line_ids = get_amendments_box_line_ids(layout_document)
     furniture_token_indices: Set[int] = set()
     cover_token_indices: Set[int] = set()
     side_column_token_indices: Set[int] = set()
+    amendments_token_indices: Set[int] = set()
     token_range_by_line_id: Dict[int, Tuple[int, int]] = {}
     for line in layout_document.iter_all_lines():
         line_tokens: List[LayoutToken] = line.tokens or []
@@ -556,6 +562,10 @@ def _build_token_index(  # pylint: disable=too-many-locals
             )
         if id(line) in side_column_line_ids:
             side_column_token_indices.update(
+                range(len(all_tokens), len(all_tokens) + len(line_tokens))
+            )
+        if id(line) in amendments_line_ids:
+            amendments_token_indices.update(
                 range(len(all_tokens), len(all_tokens) + len(line_tokens))
             )
         outside_region = keep_line_ids is not None and id(line) not in keep_line_ids
@@ -597,6 +607,9 @@ def _build_token_index(  # pylint: disable=too-many-locals
     )
     token_index.side_column_ranges = token_index.get_token_char_ranges(
         side_column_token_indices
+    )
+    token_index.amendments_ranges = token_index.get_token_char_ranges(
+        amendments_token_indices
     )
     return token_index
 
@@ -3781,6 +3794,15 @@ class LayoutDocumentJatsAligner:
             # declares is the cover's own, so no value is searched in it.
             if token_index.cover_ranges:
                 masked = (masked or []) + token_index.cover_ranges
+            # The box a revised article says what changed in is the publisher's,
+            # and the article's own note is what it holds.  Everything else the
+            # deposit declares is printed outside it: a name the amendment cites
+            # is a citation rather than the byline a second time.
+            if (
+                token_index.amendments_ranges
+                and fv.field_name != JatsFieldNames.ARTICLE_NOTES
+            ):
+                masked = (masked or []) + token_index.amendments_ranges
             # A pure-number reference label is printed immediately before the
             # reference's own text, so its parent's match start says which of
             # the numbers in range is the one on the page.
@@ -4308,7 +4330,8 @@ class LayoutDocumentJatsAligner:
                 front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
             ),
             masked_ranges=(
-                matched_ranges + token_index.cover_ranges + token_index.furniture_ranges
+                matched_ranges + token_index.cover_ranges
+                + token_index.furniture_ranges + token_index.amendments_ranges
             ),
             instance_id=instance_by_field.get(JatsFieldNames.TITLE, 0),
         )
@@ -4319,11 +4342,15 @@ class LayoutDocumentJatsAligner:
                 front_matter_end + _FRONT_MATTER_BUFFER if front_matter_end else None
             ),
             masked_ranges=(
+                # A note holds nothing, except the box a revised article says
+                # what changed in: that one holds everything printed inside it,
+                # and a name there is one the amendment cites.
                 [
                     match_range for match_range in matched_ranges
                     if match_range not in note_match_ranges
                 ]
                 + token_index.cover_ranges + token_index.furniture_ranges
+                + token_index.amendments_ranges
             ),
             instance_id=instance_by_field.get(JatsFieldNames.AUTHOR, 0),
         )

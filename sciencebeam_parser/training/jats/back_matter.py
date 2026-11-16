@@ -410,6 +410,21 @@ def _without_the_words_introducing_it(text: str) -> str:
     return text[colon + 1:].strip()
 
 
+# A subject classification, which a publisher may file among the footnotes:
+# "JEL Classification: D15, D91".  The scheme names itself first.
+_SUBJECT_CLASSIFICATION_PATTERN = re.compile(
+    r'^\s*(?:[^\W\d_]+\s+){0,2}(JEL|MSC|PACS|AMS|ACM)\b[^:\u2013\-]{0,30}[:\u2013\-]',
+    re.IGNORECASE,
+)
+
+
+def _get_subject_classification_notes(root: etree._Element) -> Set[etree._Element]:
+    return {
+        el for el in root.xpath('back//fn')
+        if _SUBJECT_CLASSIFICATION_PATTERN.match(element_text(el))
+    }
+
+
 class LabelledSections(NamedTuple):
     """The sections of the body or back matter the model has its own label for."""
     supplementary: Set[etree._Element]
@@ -419,6 +434,7 @@ class LabelledSections(NamedTuple):
     funding: Set[etree._Element]
     acknowledgement: Set[etree._Element]
     ethics: Set[etree._Element]
+    classification: Set[etree._Element]
     footnote: Set[etree._Element]
 
     @staticmethod
@@ -447,13 +463,14 @@ class LabelledSections(NamedTuple):
                     | acknowledgement
                 ),
             ),
+            classification=_get_subject_classification_notes(root),
             footnote=set(root.xpath('back//fn')),
         )
 
     def _kind(self, el: etree._Element) -> Optional[str]:
         for kind in (
             'supplementary', 'availability', 'contribution', 'conflict',
-            'funding', 'acknowledgement', 'ethics', 'footnote',
+            'funding', 'acknowledgement', 'ethics', 'classification', 'footnote',
         ):
             if _is_within(el, getattr(self, kind)):
                 return kind
@@ -480,6 +497,7 @@ TITLE_FIELD_BY_KIND = {
     'funding': JatsFieldNames.FUNDING_SECTION_TITLE,
     'acknowledgement': JatsFieldNames.ACK_SECTION_TITLE,
     'ethics': JatsFieldNames.BACK_SECTION_TITLE,
+    'classification': JatsFieldNames.SUBJECT_CLASSIFICATION,
     # A footnote that names no statement is a numbered page footnote, and the
     # number it opens with is not a heading.
     'footnote': JatsFieldNames.BACK_FOOTNOTE,
@@ -504,5 +522,6 @@ PARAGRAPH_FIELD_BY_KIND = {
     'funding': JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
     'acknowledgement': JatsFieldNames.ACK_SECTION_PARAGRAPH,
     'ethics': JatsFieldNames.BACK_SECTION_PARAGRAPH,
+    'classification': JatsFieldNames.SUBJECT_CLASSIFICATION,
     'footnote': JatsFieldNames.BACK_FOOTNOTE,
 }

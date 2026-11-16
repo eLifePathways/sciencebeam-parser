@@ -66,6 +66,7 @@ class JatsFieldNames:
     DOI = 'doi'
     PUBLICATION_DATE = 'publication_date'
     HISTORY_DATE = 'history_date'
+    SUBJECT_CLASSIFICATION = 'subject_classification'
     SELF_CITATION = 'self_citation'
 
 
@@ -161,6 +162,9 @@ SEGMENTATION_LABEL_BY_FIELD: Dict[str, str] = {
     # front matter, and GROBID's corpus holds such a line in `<front>` 349
     # times against two anywhere else.
     JatsFieldNames.HISTORY_DATE:           '<header>',
+    # A subject classification is set with the keywords, which GROBID's
+    # corpus holds in `<front>` four times out of four.
+    JatsFieldNames.SUBJECT_CLASSIFICATION: '<header>',
     JatsFieldNames.SELF_CITATION:          '<header>',
     JatsFieldNames.REVIEWER:               '<header>',
     JatsFieldNames.REVIEWER_AFF:           '<header>',

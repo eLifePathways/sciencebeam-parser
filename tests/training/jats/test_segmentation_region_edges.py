@@ -29,13 +29,8 @@ from tests.training.jats.segmentation_fixtures import (
     derive_labels,
     make_line,
     make_page_meta,
+    page_number_of,
 )
-
-
-def _page_number_of(line: LayoutLine) -> int:
-    coordinates = line.tokens[0].coordinates
-    assert coordinates is not None
-    return coordinates.page_number
 
 
 class TestStructuredAbstractHeading:
@@ -581,14 +576,14 @@ class TestDeclarationPrintedAfterTheArticle:
             LayoutPage(
                 blocks=[LayoutBlock(
                     lines=[front['title'], front['affiliation']]
-                    + [line for line in body if _page_number_of(line) == 1]
+                    + [line for line in body if page_number_of(line) == 1]
                 )],
                 meta=make_page_meta(1),
             ),
             LayoutPage(
                 blocks=[LayoutBlock(
                     lines=[front['late_affiliation']]
-                    + [line for line in body if _page_number_of(line) == 2]
+                    + [line for line in body if page_number_of(line) == 2]
                     + list(closing.values())
                 )],
                 meta=make_page_meta(2),
@@ -718,7 +713,7 @@ class TestAMarginLineTheDepositPlacesElsewhere:
         ]
         by_page = {
             page_number: [line for line in body
-                          if _page_number_of(line) == page_number]
+                          if page_number_of(line) == page_number]
             for page_number in (1, 2, 3, 4)
         }
         doc = LayoutDocument(pages=[
@@ -798,7 +793,7 @@ class TestAShortLineAtTheFootOfAPage:
         ]
         by_page = {
             page_number: [line for line in body
-                          if _page_number_of(line) == page_number]
+                          if page_number_of(line) == page_number]
             for page_number in (1, 2, 3, 4)
         }
         doc = LayoutDocument(pages=[
@@ -893,7 +888,7 @@ class TestATableCarriedOverThePage:
         ]
         by_page = {
             page_number: [line for line in body
-                          if _page_number_of(line) == page_number]
+                          if page_number_of(line) == page_number]
             for page_number in (1, 2, 3)
         }
         carried = [
@@ -927,3 +922,46 @@ class TestATableCarriedOverThePage:
         doc, annotated, carried = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in carried] == [SEG_BODY] * 4
+
+
+class TestASectionTitleThatMatchedAReferenceEntry:
+    """A deposit carrying a body the page never prints, over a reference list."""
+
+    def _make_doc(self, long_run: bool = False):
+        body = [
+            make_line('The', 'argument', f'runs{index}', y=200.0 + 20 * index)
+            for index in range(6)
+        ]
+        entries = [
+            make_line('Autor', 'A', f'A{index}', 'title', 'and', 'a', 'year',
+                      y=200.0 + 20 * index, page_number=2)
+            for index in range(10)
+        ]
+        taken = [entries[3], entries[4]] + (entries[5:7] if long_run else [])
+        heading = entries[7]
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=body)], meta=make_page_meta(1)),
+            LayoutPage(blocks=[LayoutBlock(lines=entries)], meta=make_page_meta(2)),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+                  for line in body}
+        fields.update({
+            lines.index(entries[index]): JatsFieldNames.REFERENCE
+            for index in (0, 1, 9)
+        })
+        fields.update({
+            lines.index(line): JatsFieldNames.BODY_SECTION_TITLE
+            for line in taken + [heading]
+        })
+        return doc, annotate(doc, fields), taken + [heading]
+
+    def test_the_list_takes_the_entries_back(self):
+        doc, annotated, taken = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in taken] == [SEG_REFERENCES] * 3
+
+    def test_a_run_too_long_to_be_a_mistake_is_left_alone(self):
+        doc, annotated, taken = self._make_doc(long_run=True)
+        labels = derive_labels(doc, annotated)
+        assert SEG_BODY in [labels[id(line)] for line in taken]

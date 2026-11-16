@@ -11,6 +11,7 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
+    SEG_BODY,
     SEG_FOOTNOTE,
     SEG_PAGE,
 )
@@ -19,6 +20,7 @@ from tests.training.jats.segmentation_fixtures import (
     derive_labels,
     make_line,
     make_page_meta,
+    page_number_of,
 )
 
 
@@ -93,3 +95,57 @@ class TestRunningFootTakenByAMatch:
         doc, annotated, feet = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(foot)] for foot in feet] == [SEG_FOOTNOTE] * 3
+
+
+class TestATableRowCarriedPastTheFooterThreshold:
+    """A table whose rows the page sets one at a time across the threshold."""
+
+    def _make_doc(self, note_in_smaller_type: bool = False):
+        body = [
+            make_line('The', 'argument', f'of{page_number}', f'runs{index}',
+                      y=200.0 + 20 * index, page_number=page_number, font_size=10.0)
+            for page_number in (1, 2, 3)
+            for index in range(8)
+        ]
+        by_page = {
+            page_number: [line for line in body
+                          if page_number_of(line) == page_number]
+            for page_number in (1, 2, 3)
+        }
+        rows = [
+            [make_line('Cell', f'one{index}', y=y, x=10.0, page_number=2,
+                       font_size=8.0),
+             make_line('Cell', f'two{index}', y=y, x=300.0, page_number=2,
+                       font_size=8.0)]
+            for index, y in enumerate((890.0, 905.0, 930.0, 945.0))
+        ]
+        note = make_line('1', 'A', 'note', 'under', 'the', 'column', y=930.0,
+                         x=10.0, page_number=2, font_size=6.0)
+        second_page = (
+            [LayoutBlock(lines=by_page[2])]
+            + [LayoutBlock(lines=row) for row in rows[:2]]
+            + ([LayoutBlock(lines=[note])] if note_in_smaller_type
+               else [LayoutBlock(lines=row) for row in rows[2:]])
+        )
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=by_page[1])],
+                       meta=make_page_meta(1)),
+            LayoutPage(blocks=second_page, meta=make_page_meta(2)),
+            LayoutPage(blocks=[LayoutBlock(lines=by_page[3])],
+                       meta=make_page_meta(3)),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
+        }
+        return doc, annotate(doc, fields), rows, note
+
+    def test_the_rows_beyond_it_are_the_table_still(self):
+        doc, annotated, rows, _note = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for row in rows[2:] for line in row] == [SEG_BODY] * 4
+
+    def test_a_note_set_smaller_under_the_column_is_a_note(self):
+        doc, annotated, _rows, note = self._make_doc(note_in_smaller_type=True)
+        labels = derive_labels(doc, annotated)
+        assert labels[id(note)] == SEG_FOOTNOTE
