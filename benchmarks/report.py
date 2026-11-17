@@ -403,6 +403,8 @@ def _render_corpus_section(  # pylint: disable=too-many-arguments
     field_scoring_types: dict,
     primary: int = -1,
     baseline: Optional[int] = None,
+    moved_only: bool = False,
+    report_location: str = "",
 ) -> List[str]:
     counts_by_label = [
         (label, s.get("corpora", {}).get(corpus, {}).get("n", 0))
@@ -412,7 +414,8 @@ def _render_corpus_section(  # pylint: disable=too-many-arguments
     lines = [counts, ""] + _unequal_docs_note(counts_by_label)
     lines += _unequal_gold_note(labeled_summaries, [corpus], field_names)
     lines.extend(render_split_tables(
-        labeled_summaries, rows, field_scoring_types, primary, baseline
+        labeled_summaries, rows, field_scoring_types, primary, baseline,
+        moved_only, report_location,
     ))
     produced = _render_produced_section(labeled_summaries, field_names, [corpus])
     if produced:
@@ -583,6 +586,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     budget: Optional[int] = None,
     report_location: str = "",
     baseline: Optional[int] = None,
+    per_corpus_moved_only: bool = False,
 ) -> str:
     if not labeled_summaries:
         return ""
@@ -660,6 +664,7 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
         corpus_lines = _render_corpus_section(
             corpus, keyed_summaries, field_names, corpus_grids[corpus],
             field_scoring_types, primary, baseline,
+            per_corpus_moved_only, report_location,
         )
         sections.append((corpus, [
             "<details>",
@@ -718,7 +723,7 @@ def _write_comment_report(  # pylint: disable=too-many-arguments
     """The report a PR comment can carry, beside the full one."""
     comment = _render_comparison_report(
         labeled_summaries, labeled_run_records, selection, charts, primary, variants,
-        budget, report_location, baseline,
+        budget, report_location, baseline, per_corpus_moved_only=True,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(comment)

@@ -150,11 +150,13 @@ uv run python -m benchmarks.report \
 ```
 
 A PR comment is capped by GitHub at 65,536 characters, so what CI posts is a
-second file written beside the report: the same thing with whole per-corpus
-sections left out where the full one would not fit, naming the ones it left out
-and where to read them. `--comment-out` writes it, `--comment-budget` sizes it
-and `--report-location` says where the full report is. The job summary and the
-run artifact always carry every corpus.
+second file written beside the report. Its per-corpus sections carry what moved
+in that corpus and say how many fields they are not showing; whole sections are
+left out only where even that would not fit, and the ones left out are named.
+The Overall section keeps both halves. `--comment-out` writes it,
+`--comment-budget` sizes it and `--report-location` says where the full report
+is. The job summary and the run artifact always carry every corpus, both halves
+in every section.
 
 A document the parser fails on writes no prediction, and scoring iterates
 prediction files, so it is left out rather than scored zero. The report states
