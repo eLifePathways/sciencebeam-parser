@@ -21,6 +21,7 @@ from sciencebeam_parser.models.data import (
 )
 from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
 from sciencebeam_parser.service.api.routers.models import (
+    ModelOutputFormats,
     ModelResponseRouterFactory,
     create_models_router
 )
@@ -212,3 +213,10 @@ class TestModelsRouterProfile:
                 )
             ).feature_names
         )
+
+
+class TestModelOutputFormats:
+    def test_should_name_what_the_formatter_it_passes_them_to_names(self):
+        assert ModelOutputFormats.JSON == TagOutputFormats.JSON
+        assert ModelOutputFormats.DATA == TagOutputFormats.DATA
+        assert ModelOutputFormats.XML == TagOutputFormats.XML

@@ -9,11 +9,27 @@ PYTHON = PATH=$(VENV)/bin:$$PATH $(VENV)/bin/python
 
 ARGS =
 
-UNIT_PYTEST_ARGS = -m 'not slow and not integration'
+# Every module that imports delft or torch. Collecting one costs five seconds,
+# whether or not its tests are selected, so the unit run leaves them to dev-pytest.
+UNIT_PYTEST_IGNORE = \
+	--ignore=tests/cv_models \
+	--ignore=tests/models/delft_model_impl_test.py \
+	--ignore=tests/service/api/models_router_test.py \
+	--ignore=tests/training/cli/generate_delft_data_test.py \
+	--ignore=tests/training/cli/generate_delft_data_quality_test.py
 
-# More than four workers loses to the delft import each one pays.
+UNIT_PYTEST_ARGS = -m 'not slow and not integration' $(UNIT_PYTEST_IGNORE)
+
+# More than four workers loses to the delft import each one pays; 0 runs in this
+# process, which is what names each file as it goes.
 PYTEST_WORKERS ?= 4
+ifeq ($(PYTEST_WORKERS),0)
+PYTEST_PARALLEL_ARGS =
+else
 PYTEST_PARALLEL_ARGS = -n $(PYTEST_WORKERS) --dist worksteal
+endif
+
+PYTEST_DURATIONS_ARGS = --durations=20 --durations-min=0.2
 
 SCIENCEBEAM_PARSER_PORT = 8080
 
@@ -190,11 +206,11 @@ dev-lint: dev-flake8 dev-pylint dev-mypy
 
 
 dev-pytest:
-	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_PARALLEL_ARGS) $(ARGS)
+	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_PARALLEL_ARGS) $(PYTEST_DURATIONS_ARGS) $(ARGS)
 
 
 dev-pytest-unit:
-	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_PARALLEL_ARGS) $(UNIT_PYTEST_ARGS) $(ARGS)
+	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_PARALLEL_ARGS) $(PYTEST_DURATIONS_ARGS) $(UNIT_PYTEST_ARGS) $(ARGS)
 
 
 dev-watch:
@@ -203,7 +219,7 @@ dev-watch:
 		--runner=$(VENV)/bin/python \
 		. \
 		-m pytest \
-		$(UNIT_PYTEST_ARGS) $(PYTEST_PARALLEL_ARGS) \
+		$(UNIT_PYTEST_ARGS) $(PYTEST_PARALLEL_ARGS) $(PYTEST_DURATIONS_ARGS) \
 		-p no:cacheprovider -p no:warnings $(ARGS)
 
 
@@ -213,7 +229,7 @@ dev-watch-slow:
 		--runner=$(VENV)/bin/python \
 		. \
 		-m pytest \
-		$(PYTEST_PARALLEL_ARGS) \
+		$(PYTEST_PARALLEL_ARGS) $(PYTEST_DURATIONS_ARGS) \
 		-p no:cacheprovider -p no:warnings $(ARGS)
 
 
