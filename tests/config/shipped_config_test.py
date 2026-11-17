@@ -1,3 +1,5 @@
+import copy
+from functools import cache
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -85,8 +87,14 @@ HUB_PROFILE_BASE = 'grobid_crf_0_9_0'
 HUB_PATH_PREFIX = 'hf://'
 
 
-def get_shipped_config() -> dict:
+@cache
+def _parsed_shipped_config() -> dict:
     return yaml.safe_load(CONFIG_PATH.read_text(encoding='utf-8'))
+
+
+def get_shipped_config() -> dict:
+    """A copy of the shipped config, parsed once however many tests ask for it."""
+    return copy.deepcopy(_parsed_shipped_config())
 
 
 def get_shipped_selectable_profile_names() -> List[str]:
