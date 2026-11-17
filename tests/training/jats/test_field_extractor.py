@@ -463,6 +463,55 @@ class TestAcknowledgement:
         assert len(ack) == 1
         assert 'thank' in ack[0].text
 
+    def test_a_title_naming_one_declaration_hands_the_block_over(self):
+        fvs = _field_values_for(
+            '<article><back><ack><title>Funding</title>'
+            '<p>The work was funded by UNICRUZ.</p></ack></back></article>'
+        )
+        assert [v.field_name for v in fvs] == [
+            JatsFieldNames.FUNDING_SECTION_TITLE,
+            JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
+        ]
+
+    def test_a_title_naming_several_names_none_of_them(self):
+        fvs = _field_values_for(
+            '<article><back><ack>'
+            '<title>Acknowledgement, financial support and full disclosure</title>'
+            '<p>The authors are grateful to UNICRUZ for funding the research.</p>'
+            '</ack></back></article>'
+        )
+        assert [v.field_name for v in fvs] == [
+            JatsFieldNames.ACK_SECTION_TITLE,
+            JatsFieldNames.ACK_SECTION_PARAGRAPH,
+        ]
+
+
+class TestAuthorNotes:
+    def test_a_note_is_offered_whole(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="other"><p>The study needed no ethical approval at all.</p></fn>'
+            '</author-notes></article-meta></front></article>'
+        )
+        notes = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR_NOTES]
+        assert [v.text for v in notes] == [
+            'The study needed no ethical approval at all.'
+        ]
+
+    def test_a_resolver_url_written_into_it_breaks_it_into_its_prose(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="edited-by"><p>Editorial Responsibility Editor-in-chief:'
+            ' Ada Lovelace https://orcid.org/0000-0003-4181-613X .'
+            ' Deputy Editor: Grace Hopper https://orcid.org/0000-0002-2983-3968 .'
+            '</p></fn></author-notes></article-meta></front></article>'
+        )
+        notes = [v for v in fvs if v.field_name == JatsFieldNames.AUTHOR_NOTES]
+        assert [v.text for v in notes] == [
+            'Editorial Responsibility Editor-in-chief: Ada Lovelace',
+            '. Deputy Editor: Grace Hopper',
+        ]
+
 
 class TestFunding:
     def test_extracts_funding_statement(self):
@@ -1219,3 +1268,72 @@ class TestCorrespondenceBlockValues:
         ]
         assert len(notes) == 1
         assert 'Example University' in notes[0]
+
+
+class TestATranslationOfTheArticle:
+    """A `sub-article` the deposit marks as a translation is the article again."""
+
+    XML = (
+        '<article>'
+        '<front><article-meta><title-group>'
+        '<article-title>The article as the journal prints it</article-title>'
+        '</title-group></article-meta></front>'
+        '<sub-article article-type="translation">'
+        '<front-stub><title-group>'
+        '<article-title>The article in another language</article-title>'
+        '</title-group></front-stub>'
+        '<body><sec><title>A section of the translation</title>'
+        '<p>The argument of it, translated.</p></sec></body>'
+        '<back><fn-group><fn><p>1 From the original: a note the translator wrote.</p>'
+        '</fn></fn-group></back>'
+        '</sub-article>'
+        '</article>'
+    )
+
+    def test_its_title_is_the_article_s_own_field(self):
+        titles = [
+            v.text for v in _field_values_for(self.XML)
+            if v.field_name == JatsFieldNames.TITLE
+        ]
+        assert 'The article in another language' in titles
+
+    def test_the_translator_s_note_is_a_back_footnote(self):
+        notes = [
+            v.text for v in _field_values_for(self.XML)
+            if v.field_name == JatsFieldNames.BACK_FOOTNOTE
+        ]
+        assert notes == ['1 From the original: a note the translator wrote.']
+
+    def test_its_body_is_the_article_s_own_field(self):
+        body = [
+            v.text for v in _field_values_for(self.XML)
+            if v.field_name in (
+                JatsFieldNames.BODY_SECTION_TITLE,
+                JatsFieldNames.BODY_SECTION_PARAGRAPH,
+            )
+        ]
+        assert body == [
+            'A section of the translation', 'The argument of it, translated.',
+        ]
+
+
+class TestASubjectClassification:
+    """A classification the publisher files among the footnotes."""
+
+    @staticmethod
+    def _fields_of(note: str):
+        return _fields_by_name(_field_values_for(
+            '<article><back><fn-group>'
+            f'<fn><p>{note}</p></fn>'
+            '</fn-group></back></article>'
+        ))
+
+    def test_it_is_not_read_as_a_footnote(self):
+        fields = self._fields_of('JEL Classification: D15, D91.')
+        assert fields[JatsFieldNames.SUBJECT_CLASSIFICATION]
+        assert not fields[JatsFieldNames.BACK_FOOTNOTE]
+
+    def test_a_note_that_names_no_scheme_is_a_footnote(self):
+        fields = self._fields_of('1 The classification used here: see Table 3.')
+        assert fields[JatsFieldNames.BACK_FOOTNOTE]
+        assert not fields[JatsFieldNames.SUBJECT_CLASSIFICATION]

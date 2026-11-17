@@ -4,6 +4,8 @@ The segmentation deriver reads coordinates, blocks and type as much as it
 reads the JATS, so a fixture that leaves them out tests nothing: these put a
 document on a page the way a renderer would.
 """
+from typing import Optional
+
 from sciencebeam_parser.document.layout_document import (
     EMPTY_FONT,
     LayoutBlock,
@@ -40,12 +42,17 @@ def make_token(
     y: float = 500.0,
     x: float = 10.0,
     bold: bool = False,
+    font_size: Optional[float] = None,
+    height: float = 12.0,
 ) -> LayoutToken:
+    font = BOLD_FONT if bold else EMPTY_FONT
+    if font_size is not None:
+        font = LayoutFont(font_id=f'size-{font_size}', font_size=font_size, is_bold=bold)
     return LayoutToken(
         text=text,
-        font=BOLD_FONT if bold else EMPTY_FONT,
+        font=font,
         coordinates=LayoutPageCoordinates(
-            x=x, y=y, width=50, height=12, page_number=page_number
+            x=x, y=y, width=50, height=height, page_number=page_number
         ),
     )
 
@@ -56,11 +63,23 @@ def make_line(
     page_number: int = 1,
     x: float = 10.0,
     bold: bool = False,
+    font_size: Optional[float] = None,
+    height: float = 12.0,
 ) -> LayoutLine:
     tokens = [
-        make_token(t, page_number=page_number, y=y, x=x, bold=bold) for t in texts
+        make_token(
+            t, page_number=page_number, y=y, x=x, bold=bold,
+            font_size=font_size, height=height,
+        )
+        for t in texts
     ]
     return LayoutLine(tokens=tokens)
+
+
+def page_number_of(line: LayoutLine) -> int:
+    coordinates = line.tokens[0].coordinates
+    assert coordinates is not None
+    return coordinates.page_number
 
 
 def make_doc_with_page(

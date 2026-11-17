@@ -9,7 +9,6 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.training.jats.annotated_document import JatsAnnotatedLayoutDocument
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
-    get_lines_in_printed_order,
     SEG_ANNEX,
     SEG_CONFLICT,
     SEG_CONTRIBUTION,
@@ -116,6 +115,17 @@ class TestPageColumns:
         )
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in lines[-2:]] == [SEG_REFERENCES] * 2
+
+    def test_a_region_stops_where_a_narrow_column_shares_a_bucket(self):
+        # A page setting a narrow column beside two of text reads as two
+        # columns, so the narrow one shares a bucket with the text beside it.
+        doc, lines, annotated = self._page(
+            *[(f'Reference entry number {i} here.', 28.4, True) for i in range(5)],
+            ('The argument of the article goes on.', 167.2, False),
+            *[(f'and on and on and on {i}.', 400.0, False) for i in range(5)],
+        )
+        labels = derive_labels(doc, annotated)
+        assert labels[id(lines[5])] != SEG_REFERENCES
 
     def test_a_region_stops_at_the_other_column_of_a_two_column_page(self):
         doc, lines, annotated = self._page(
@@ -862,76 +872,6 @@ class TestFrontMatterBoundary:
         doc, annotated, grant = self._make_doc(front_after_references=True)
         labels = derive_labels(doc, annotated, front_max_start_line_index=80)
         assert labels[id(grant)] != SEG_FRONT
-
-
-class TestLinesInPrintedOrder:
-    """The order the page sets a page's lines in, where it is not the order given.
-
-    pdfalto reads a page column by column, so a block running the full width
-    under two columns can arrive before the column above it.  Said without a
-    column model: where a page's content falls into two groups, the ones handed
-    over first set wholly below the ones after them, the page prints the second
-    group first.
-    """
-
-    @staticmethod
-    def _page(*lines: LayoutLine) -> LayoutDocument:
-        return LayoutDocument(pages=[
-            LayoutPage(blocks=[LayoutBlock(lines=list(lines))],
-                       meta=make_page_meta(1, height=1000.0)),
-        ])
-
-    def _texts(self, doc: LayoutDocument, furniture=frozenset()):
-        return [line.text for line in get_lines_in_printed_order(doc, set(furniture))]
-
-    def test_a_block_the_page_sets_under_the_column_above_it(self):
-        # The foot of the page, handed over before the column it sits below.
-        doc = self._page(
-            make_line('Grant information and who it came from', y=800.0),
-            make_line('Copyright and the licence it is under', y=820.0),
-            make_line('The last words of a statement above it', y=100.0),
-            make_line('and the heading of what follows them', y=130.0),
-        )
-        assert self._texts(doc)[:2] == [
-            'The last words of a statement above it',
-            'and the heading of what follows them',
-        ]
-
-    def test_a_page_handed_over_the_way_it_is_set(self):
-        doc = self._page(
-            make_line('The first line the page sets', y=100.0),
-            make_line('the second line under it', y=130.0),
-            make_line('and the third under that', y=160.0),
-        )
-        assert self._texts(doc) == [
-            'The first line the page sets',
-            'the second line under it',
-            'and the third under that',
-        ]
-
-    def test_two_columns_the_second_of_which_reaches_higher(self):
-        # The right column starts above the foot of the left one, so nothing
-        # says the page sets either after the other.
-        doc = self._page(
-            make_line('The left column runs down', y=100.0, x=50.0),
-            make_line('to the foot of the page', y=800.0, x=50.0),
-            make_line('and the right column', y=100.0, x=350.0),
-            make_line('beside it does the same', y=800.0, x=350.0),
-        )
-        assert self._texts(doc)[0] == 'The left column runs down'
-
-    def test_the_page_number_under_everything_is_not_asked_about(self):
-        # The page number is handed over last and set below the block that is
-        # out of place, so counted as content it would deny the page the
-        # question.
-        doc = self._page(
-            make_line('Grant information and who it came from', y=800.0),
-            make_line('The last words of a statement above it', y=100.0),
-            make_line('Page 2 of 29', y=950.0),
-        )
-        number = doc.pages[0].blocks[0].lines[2]
-        assert self._texts(doc)[0] == 'Grant information and who it came from'
-        assert self._texts(doc, {id(number)})[0] == 'The last words of a statement above it'
 
 
 class TestTheNoteNamingTheCorrespondingAuthor:

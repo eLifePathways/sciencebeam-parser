@@ -2029,6 +2029,29 @@ def _paged_line(text: str, page_number: int, y: float) -> LayoutLine:
     ])
 
 
+def _blocked_doc(
+    pages: Sequence[Sequence[Sequence[Tuple[str, float]]]]
+) -> LayoutDocument:
+    """One page per entry, each page given as blocks of (text, y) lines."""
+    return LayoutDocument(pages=[
+        LayoutPage(
+            blocks=[
+                LayoutBlock(lines=[
+                    _paged_line(text, page_number, y) for text, y in block
+                ])
+                for block in blocks
+            ],
+            meta=LayoutPageMeta(
+                page_number=page_number,
+                coordinates=LayoutPageCoordinates(
+                    x=0, y=0, width=600, height=1000, page_number=page_number
+                ),
+            ),
+        )
+        for page_number, blocks in enumerate(pages, 1)
+    ])
+
+
 def _paged_doc(pages: Sequence[Sequence[Tuple[str, float]]]) -> LayoutDocument:
     """One page per entry, each line given as (text, y) on a page 1000 high."""
     return LayoutDocument(pages=[
@@ -2268,10 +2291,11 @@ class TestAnAbstractContinuedAboveTheBlockHandedOverFirst:
         ' count the herons nesting along them, and the counts were compared'
         ' with the water levels recorded at the three gauges upstream.'
     )
-    TAIL = (
-        'The birds returned to the same reed beds each year whatever the water'
-        ' had done the winter before.'
+    TAIL_LINES = (
+        'The birds returned to the same reed beds each year whatever the water',
+        'had done the winter before.',
     )
+    TAIL = ' '.join(TAIL_LINES)
     ABSTRACT = HEAD + ' ' + TAIL
     BLOCK = [
         'Corresponding author: a name and the address it is written to',
@@ -2281,11 +2305,14 @@ class TestAnAbstractContinuedAboveTheBlockHandedOverFirst:
     ]
 
     def _align(self):
-        doc = _paged_doc([
-            [('A survey of the herons of the northern marshes', 100.0)]
-            + [(self.HEAD, 200.0)],
-            [(line, 800.0 + 20 * index) for index, line in enumerate(self.BLOCK)]
-            + [(self.TAIL, 100.0)],
+        # The metadata block and the column above it are blocks of their own,
+        # which is what says the page sets one below the other.
+        doc = _blocked_doc([
+            [[('A survey of the herons of the northern marshes', 100.0)],
+             [(self.HEAD, 200.0)]],
+            [[(line, 800.0 + 20 * index) for index, line in enumerate(self.BLOCK)],
+             [(line, 100.0 + 20 * index)
+              for index, line in enumerate(self.TAIL_LINES)]],
         ])
         field_values = [
             _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
@@ -3840,3 +3867,61 @@ class TestWhetherARepeatIsTheSamePrinting:
 
     def test_a_name_missing_a_part(self):
         assert not self._same('Alessandro Cavalcanti', 'Alessandro Leite Cavalcanti')
+
+
+class TestTheBoxARevisedArticleSaysWhatChangedIn:
+    """`ore` prints an amendments box in the front matter of a revised article.
+
+    The box is the publisher's and the article's own note is what it holds.  A
+    name the amendment cites inside it is a citation, not the byline again.
+    """
+
+    AMENDMENT = (
+        'Amendments from Version 1 Following the reviewers we have explained how'
+        ' the marshes were surveyed, and the counts withdrawn from this version'
+        ' are reported in a survey of their own (see protocol (Wren A, Finch B,'
+        ' et al.)).'
+    )
+
+    def _align(self):
+        # The page prints one author in the byline and cites the other only
+        # inside the box, which is where the name has nowhere else to go.
+        doc = _blocked_doc([[
+            [('A survey of the herons of the northern marshes', 100.0)],
+            [('Heron A', 140.0)],
+            [(self.AMENDMENT, 300.0),
+             ('Any further responses from the reviewers can be found', 320.0)],
+        ]])
+        field_values = [
+            _fv('A survey of the herons of the northern marshes', JatsFieldNames.TITLE),
+            _fv('Heron A', JatsFieldNames.AUTHOR),
+            _fv('Wren A', JatsFieldNames.AUTHOR),
+            _fv(self.AMENDMENT, JatsFieldNames.ARTICLE_NOTES),
+        ]
+        return doc, LayoutDocumentJatsAligner().align(doc, field_values)
+
+    def _named_lines(self, field_name: str) -> Set[str]:
+        doc, annotated = self._align()
+        return {
+            ' '.join(token.text for token in line.tokens)
+            for line in doc.iter_all_lines()
+            if any(
+                annotated.get_token_field(token) == field_name
+                for token in line.tokens
+            )
+        }
+
+    def test_the_byline_is_still_the_author(self):
+        assert 'Heron A' in self._named_lines(JatsFieldNames.AUTHOR)
+
+    def test_the_name_the_box_cites_is_not(self):
+        assert not [
+            line for line in self._named_lines(JatsFieldNames.AUTHOR)
+            if line.startswith('Amendments')
+        ]
+
+    def test_the_note_is_still_looked_for_there(self):
+        assert [
+            line for line in self._named_lines(JatsFieldNames.ARTICLE_NOTES)
+            if line.startswith('Amendments')
+        ]

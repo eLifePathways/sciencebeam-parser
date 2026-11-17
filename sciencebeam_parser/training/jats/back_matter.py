@@ -124,8 +124,20 @@ _FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     # conflict is matched first, so "financial competing interests" is still a
     # conflict.
     ('funding', ('funding', 'financ', 'grant', 'apoyo financiero')),
+    # "Author roles: J.H.: Conceptualization, methodology" is a contribution
+    # section in GROBID's corpus, and 296 of them open with a heading of this
+    # kind.  Only beside the authors, because a role is named in prose as well.
     ('contribution', ('contribution', 'contribuicao', 'contribucion',
-                      'colabora', 'authorship')),
+                      'colabora', 'authorship',
+                      'author role', 'authors role', "author's role",
+                      'roles and responsibilit', 'roles & responsibilit',
+                      'papeis dos autores', 'funciones de los autores',
+                      # Spelled out, never the bare stem: "Participants" heads
+                      # a methods section.
+                      "author's participation", 'authors participation',
+                      'participation of the authors',
+                      'participacao dos autores',
+                      'participacion de los autores')),
     ('acknowledgement', ('acknowledg', 'agradecimento', 'agradecimiento')),
     # The same statement the `data-availability` sec-type marks, filed as a
     # footnote instead -- which is where a preprint server puts it.
@@ -154,6 +166,15 @@ def match_fn_keywords(heading: str) -> Optional[str]:
         if any(keyword in folded for keyword in keywords):
             return kind
     return None
+
+
+def match_fn_kinds(heading: str) -> Set[str]:
+    """Every declaration a heading names."""
+    folded = _fold(heading)[:_FN_HEADING_LENGTH]
+    return {
+        kind for kind, keywords in _FN_KIND_KEYWORDS
+        if any(keyword in folded for keyword in keywords)
+    }
 
 
 def _get_fn_heading(el: etree._Element) -> Optional[str]:
@@ -278,6 +299,18 @@ _NOTICE_TITLES = frozenset({
 })
 
 
+def match_notice_title(heading: str) -> bool:
+    """Whether a heading names a declaration GROBID files under `<annex>`.
+
+    By what it opens with rather than by the whole of it: a journal writes
+    "Abbreviations, acronyms & symbols" where GROBID's corpus has
+    "Abbreviations", which it holds under that type 22 times against 1 in the
+    body.
+    """
+    folded = _fold(heading).strip()
+    return any(folded.startswith(title) for title in _NOTICE_TITLES)
+
+
 def _get_notice_sections(root: etree._Element) -> Set[etree._Element]:
     return {
         el for el in root.xpath('(body|back)//sec[not(@sec-type)]')
@@ -383,6 +416,21 @@ def _without_the_words_introducing_it(text: str) -> str:
     return text[colon + 1:].strip()
 
 
+# A subject classification, which a publisher may file among the footnotes:
+# "JEL Classification: D15, D91".  The scheme names itself first.
+_SUBJECT_CLASSIFICATION_PATTERN = re.compile(
+    r'^\s*(?:[^\W\d_]+\s+){0,2}(JEL|MSC|PACS|AMS|ACM)\b[^:\u2013\-]{0,30}[:\u2013\-]',
+    re.IGNORECASE,
+)
+
+
+def _get_subject_classification_notes(root: etree._Element) -> Set[etree._Element]:
+    return {
+        el for el in root.xpath('back//fn')
+        if _SUBJECT_CLASSIFICATION_PATTERN.match(element_text(el))
+    }
+
+
 class LabelledSections(NamedTuple):
     """The sections of the body or back matter the model has its own label for."""
     supplementary: Set[etree._Element]
@@ -392,6 +440,7 @@ class LabelledSections(NamedTuple):
     funding: Set[etree._Element]
     acknowledgement: Set[etree._Element]
     ethics: Set[etree._Element]
+    classification: Set[etree._Element]
     footnote: Set[etree._Element]
 
     @staticmethod
@@ -420,13 +469,14 @@ class LabelledSections(NamedTuple):
                     | acknowledgement
                 ),
             ),
+            classification=_get_subject_classification_notes(root),
             footnote=set(root.xpath('back//fn')),
         )
 
     def _kind(self, el: etree._Element) -> Optional[str]:
         for kind in (
             'supplementary', 'availability', 'contribution', 'conflict',
-            'funding', 'acknowledgement', 'ethics', 'footnote',
+            'funding', 'acknowledgement', 'ethics', 'classification', 'footnote',
         ):
             if _is_within(el, getattr(self, kind)):
                 return kind
@@ -453,6 +503,7 @@ TITLE_FIELD_BY_KIND = {
     'funding': JatsFieldNames.FUNDING_SECTION_TITLE,
     'acknowledgement': JatsFieldNames.ACK_SECTION_TITLE,
     'ethics': JatsFieldNames.BACK_SECTION_TITLE,
+    'classification': JatsFieldNames.SUBJECT_CLASSIFICATION,
     # A footnote that names no statement is a numbered page footnote, and the
     # number it opens with is not a heading.
     'footnote': JatsFieldNames.BACK_FOOTNOTE,
@@ -477,5 +528,6 @@ PARAGRAPH_FIELD_BY_KIND = {
     'funding': JatsFieldNames.FUNDING_SECTION_PARAGRAPH,
     'acknowledgement': JatsFieldNames.ACK_SECTION_PARAGRAPH,
     'ethics': JatsFieldNames.BACK_SECTION_PARAGRAPH,
+    'classification': JatsFieldNames.SUBJECT_CLASSIFICATION,
     'footnote': JatsFieldNames.BACK_FOOTNOTE,
 }
