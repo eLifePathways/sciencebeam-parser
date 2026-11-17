@@ -19,6 +19,10 @@ LOGGER = logging.getLogger(__name__)
 
 MINIMAL_EXAMPLE_PDF_PATH = 'test-data/minimal-example.pdf'
 
+# Long enough to tell waiting from not waiting, where what is waited on can
+# never arrive: a stopped worker, or the only one of a pool held elsewhere.
+EXPIRING_TIMEOUT = 0.2
+
 
 pytestmark = pytest.mark.integration
 
@@ -77,12 +81,13 @@ class TestPdfRenderWorker:
             assert worker.render(1, 1.0, str(tmp_path / 'page.png'))
 
     def test_should_render_nothing_where_a_worker_stops_answering(self, tmp_path: Path):
-        worker = PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH, timeout=2)
+        worker = PdfRenderWorker(MINIMAL_EXAMPLE_PDF_PATH)
         try:
             assert worker.render(1, 1.0, str(tmp_path / 'first.png'))
             process = worker._process  # pylint: disable=protected-access
             assert process is not None
             process.send_signal(signal.SIGSTOP)
+            worker.timeout = EXPIRING_TIMEOUT
             assert worker.render(1, 1.0, str(tmp_path / 'second.png')) is None
         finally:
             worker.close()
@@ -96,9 +101,10 @@ class TestPdfRenderWorker:
 
 class TestPdfRenderWorkerPool:
     def test_should_refuse_a_worker_while_the_only_one_is_in_use(self, tmp_path: Path):
-        pool = PdfRenderWorkerPool(max_workers=1, timeout=1)
+        pool = PdfRenderWorkerPool(max_workers=1, timeout=30)
         with pool.worker(MINIMAL_EXAMPLE_PDF_PATH) as worker:
             assert worker.render(1, 1.0, str(tmp_path / 'first.png'))
+            pool.timeout = EXPIRING_TIMEOUT
             with pytest.raises(RenderWorkerUnavailableError):
                 with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
                     pass

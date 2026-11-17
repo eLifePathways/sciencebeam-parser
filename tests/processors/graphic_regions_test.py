@@ -379,7 +379,7 @@ class TestGetLayoutDocumentWithGraphicRegions:
                 graphic_type='svg', page_meta=PAGE_META_1
             )
         ]
-        pool = PdfRenderWorkerPool(max_workers=1, timeout=1)
+        pool = PdfRenderWorkerPool(max_workers=1, timeout=0.2)
         with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
             result = _get_graphics(get_layout_document_with_graphic_regions(
                 _get_layout_document(graphics), config=CONFIG,
