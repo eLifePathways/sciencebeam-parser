@@ -70,6 +70,22 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
+def _elsewhere_line(  # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-positional-arguments
+    n_rest: int, n_fields: int, reference: str, report_location: str, any_moved: bool
+) -> List[str]:
+    where = (
+        f" The whole table is {report_location}."
+        if report_location else " The whole table is in this run's artifact."
+    )
+    said = (
+        f"Not shown: {n_rest} of {n_fields} fields matching **{reference}** here."
+        if any_moved else
+        f"Nothing moved against **{reference}** here; all {n_fields} fields match it."
+    )
+    return [said + where, ""]
+
+
 def render_split_tables(  # pylint: disable=too-many-arguments
     # pylint: disable=too-many-positional-arguments
     labeled_summaries: List[Tuple[str, dict]],
@@ -77,6 +93,8 @@ def render_split_tables(  # pylint: disable=too-many-arguments
     field_scoring_types: dict,
     primary: int = -1,
     baseline: Optional[int] = None,
+    moved_only: bool = False,
+    report_location: str = "",
 ) -> List[str]:
     """What moved against the baseline, and what did not, each a section of its own.
 
@@ -84,6 +102,9 @@ def render_split_tables(  # pylint: disable=too-many-arguments
     did not is read in one place. Each section names the baseline and its share of the
     fields: what moved opens, what did not stays shut, whichever of them is all of it.
     One table where no column answers for movement.
+
+    `moved_only` leaves the shut half out and says how many fields are in it, which is
+    what a comment carries where the full report carries both.
     """
     if baseline is None or not rows:
         return render_field_table(labeled_summaries, rows, field_scoring_types, primary)
@@ -109,9 +130,13 @@ def render_split_tables(  # pylint: disable=too-many-arguments
     lines: List[str] = []
     if moved:
         lines += section("Moved", moved, n_moved, True)
-    if unmoved:
-        lines += [
-            *([""] if moved else []),
-            *section("Did not move", unmoved, n_fields - n_moved, False),
-        ]
-    return lines
+    if not unmoved:
+        return lines
+    if moved_only:
+        return lines + [*([""] if moved else []), *_elsewhere_line(
+            n_fields - n_moved, n_fields, reference, report_location, bool(moved)
+        )]
+    return lines + [
+        *([""] if moved else []),
+        *section("Did not move", unmoved, n_fields - n_moved, False),
+    ]

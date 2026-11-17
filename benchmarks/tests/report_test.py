@@ -1016,3 +1016,61 @@ class TestEveryFieldOrNoneMoved:
             "<summary>Did not move against <b>A</b> (2 of 2 fields, 2 rows)</summary>"
             in report
         )
+
+
+class TestPerCorpusMovedOnly:
+    """A comment says where a change landed; the full report keeps both halves."""
+
+    CORPORA = ["biorxiv", "ore"]
+
+    def _report(self, moved: bool = True, baseline=0, **kwargs) -> str:
+        before = {"title": 0.5, "abstract": 0.7}
+        after = {"title": 0.9 if moved else 0.5, "abstract": 0.7}
+        return _render_comparison_report(
+            _labeled(
+                _fields_summary(before, self.CORPORA),
+                _fields_summary(after, self.CORPORA),
+            ),
+            baseline=baseline, **kwargs,
+        )
+
+    def _corpus_section(self, report: str, corpus: str = "biorxiv") -> str:
+        return report.split(f"<b>{corpus}</b>")[1].split("<summary><b>")[0]
+
+    def test_the_full_report_keeps_both_halves(self):
+        section = self._corpus_section(self._report())
+        assert "<summary>Moved against" in section
+        assert "<summary>Did not move against" in section
+
+    def test_a_comment_carries_only_what_moved(self):
+        section = self._corpus_section(self._report(per_corpus_moved_only=True))
+        assert "<summary>Moved against" in section
+        assert "<summary>Did not move against" not in section
+
+    def test_a_comment_says_how_many_it_is_not_showing(self):
+        section = self._corpus_section(self._report(per_corpus_moved_only=True))
+        assert "Not shown: 1 of 2 fields matching **A** here." in section
+
+    def test_a_comment_says_where_the_whole_table_is(self):
+        section = self._corpus_section(self._report(
+            per_corpus_moved_only=True,
+            report_location="in the [job summary](http://x/1)",
+        ))
+        assert "The whole table is in the [job summary](http://x/1)." in section
+
+    def test_a_corpus_where_nothing_moved_is_still_a_section(self):
+        report = self._report(moved=False, per_corpus_moved_only=True)
+        section = self._corpus_section(report)
+        assert "Nothing moved against" in section
+        assert "all 2 fields match it" in section
+
+    def test_the_overall_section_keeps_both_halves(self):
+        report = self._report(per_corpus_moved_only=True)
+        overall = report.split("### Overall")[1].split("<summary><b>")[0]
+        assert "<summary>Moved against" in overall
+        assert "<summary>Did not move against" in overall
+
+    def test_a_comparison_with_no_baseline_is_unchanged(self):
+        with_flag = self._report(baseline=None, per_corpus_moved_only=True)
+        without = self._report(baseline=None)
+        assert with_flag == without
