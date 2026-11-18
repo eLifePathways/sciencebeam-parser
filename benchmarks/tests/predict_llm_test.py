@@ -245,6 +245,7 @@ class TestRunPredictLlmStoreUse:
     def test_should_fetch_from_the_store_before_generating(self, tmp_path):
         with patch("benchmarks.predict_llm.fetch_data", return_value=[]), \
              patch("benchmarks.predict_llm.resolved_sources", return_value={"biorxiv": {}}), \
+             patch("benchmarks.predict_llm.served_model", return_value="ckpt-1"), \
              patch("benchmarks.predict_llm.RepoPredictionsStore") as store_cls:
             store = store_cls.return_value
             run_predict_llm(
@@ -263,6 +264,7 @@ class TestRunPredictLlmStoreUse:
     def test_should_not_touch_a_store_when_not_pushing(self, tmp_path):
         with patch("benchmarks.predict_llm.fetch_data", return_value=[]), \
              patch("benchmarks.predict_llm.resolved_sources", return_value={"biorxiv": {}}), \
+             patch("benchmarks.predict_llm.served_model", return_value="ckpt-1"), \
              patch("benchmarks.predict_llm.RepoPredictionsStore") as store_cls:
             run_predict_llm(
                 config=self._config(), mode="smoke", split="validation",
