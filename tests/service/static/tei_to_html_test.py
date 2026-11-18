@@ -1,6 +1,5 @@
 import json
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,10 +23,7 @@ RENDER_HARNESS_FILE = Path(__file__).parent / 'render_tei.mjs'
 TEI_NS = 'http://www.tei-c.org/ns/1.0'
 
 
-pytestmark = [pytest.mark.integration, pytest.mark.skipif(
-    shutil.which('node') is None,
-    reason='node runs the reading view that the page runs in a browser'
-)]
+pytestmark = pytest.mark.integration
 
 
 def run_harness(harness_file: Path, payload: Any) -> str:

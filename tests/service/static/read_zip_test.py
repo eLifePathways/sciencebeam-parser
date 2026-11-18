@@ -1,6 +1,5 @@
 import base64
 import json
-import shutil
 import subprocess
 import zipfile
 from io import BytesIO
@@ -13,10 +12,7 @@ import pytest
 HARNESS_FILE = Path(__file__).parent / 'read_zip.mjs'
 
 
-pytestmark = [pytest.mark.integration, pytest.mark.skipif(
-    shutil.which('node') is None,
-    reason='node runs the archive reader that the page runs in a browser'
-)]
+pytestmark = pytest.mark.integration
 
 
 def get_zip_bytes(

@@ -1,5 +1,4 @@
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -10,10 +9,7 @@ import pytest
 HARNESS_FILE = Path(__file__).parent / 'add_svg_view_box.mjs'
 
 
-pytestmark = [pytest.mark.integration, pytest.mark.skipif(
-    shutil.which('node') is None,
-    reason='node runs the view box the page applies in a browser'
-)]
+pytestmark = pytest.mark.integration
 
 
 def add_svg_view_box(svg: str) -> str:

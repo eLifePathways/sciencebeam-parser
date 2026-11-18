@@ -55,6 +55,12 @@ target "pytest" {
   target     = "pytest"
 }
 
+target "ui-tests" {
+  context    = "."
+  dockerfile = "Dockerfile"
+  target     = "ui-tests"
+}
+
 target "end-to-end-tests" {
   context    = "."
   dockerfile = "Dockerfile"

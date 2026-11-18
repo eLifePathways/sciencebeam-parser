@@ -20,6 +20,8 @@ UNIT_PYTEST_IGNORE = \
 
 UNIT_PYTEST_ARGS = -m 'not slow and not integration' $(UNIT_PYTEST_IGNORE)
 
+UI_TESTS = tests/service/static
+
 # More than four workers loses to the delft import each one pays; 0 runs in this
 # process, which is what names each file as it goes.
 PYTEST_WORKERS ?= 4
@@ -206,7 +208,12 @@ dev-lint: dev-flake8 dev-pylint dev-mypy
 
 
 dev-pytest:
-	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_PARALLEL_ARGS) $(PYTEST_DURATIONS_ARGS) $(ARGS)
+	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_PARALLEL_ARGS) $(PYTEST_DURATIONS_ARGS) \
+		--ignore=$(UI_TESTS) $(ARGS)
+
+
+dev-ui-tests:
+	$(PYTHON) -m pytest -p no:cacheprovider $(PYTEST_DURATIONS_ARGS) $(UI_TESTS) $(ARGS)
 
 
 dev-pytest-unit:
@@ -233,7 +240,7 @@ dev-watch-slow:
 		-p no:cacheprovider -p no:warnings $(ARGS)
 
 
-dev-test: dev-lint dev-pytest
+dev-test: dev-lint dev-pytest dev-ui-tests
 
 
 dev-start:
