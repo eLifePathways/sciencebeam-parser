@@ -9,9 +9,8 @@ PYTHON = PATH=$(VENV)/bin:$$PATH $(VENV)/bin/python
 
 ARGS =
 
-# Every module that imports delft at collection, which costs five seconds whether or
-# not its tests are selected. Leaving them out starts the run sooner; it does not
-# avoid delft, and the first test needing it pays for the import on each worker.
+# The modules whose subject is delft or torch, and which therefore import one at
+# collection: four seconds whether or not their tests are selected.
 UNIT_PYTEST_IGNORE = \
 	--ignore=tests/cv_models \
 	--ignore=tests/models/delft_model_impl_test.py \

@@ -4141,7 +4141,7 @@ requires-dist = [
     { name = "pypdfium2", specifier = ">=5.0.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sciencebeam-judge", specifier = ">=0.0.26" },
-    { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", git = "https://github.com/eLifePathways/sciencebeam-trainer-delft?branch=feature%2Fhub-models" },
+    { name = "sciencebeam-trainer-delft", extras = ["delft"], marker = "extra == 'delft'", specifier = ">=1.0.5" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "torch", marker = "extra == 'cpu'", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "extra == 'cpu'", specifier = ">=0.26.0", index = "https://download.pytorch.org/whl/cpu" },
@@ -4173,8 +4173,8 @@ ocr = [{ name = "tesserocr", specifier = "==2.5.2" }]
 
 [[package]]
 name = "sciencebeam-trainer-delft"
-version = "0.0.0"
-source = { git = "https://github.com/eLifePathways/sciencebeam-trainer-delft?branch=feature%2Fhub-models#712360bd00bc12f43ef213b04b98069c91c53c46" }
+version = "1.0.5"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
     { name = "joblib" },
@@ -4184,6 +4184,10 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "tqdm" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/bd/cd2d457e24a147ab015e1836479f956d2588f06e3eb8cdd60e97e376c7e0/sciencebeam_trainer_delft-1.0.5.tar.gz", hash = "sha256:6c00b20d4afa765ff2acd976f67e53ce9a0b503f3848d048c184b142a641b7be", size = 139332, upload-time = "2026-11-18T11:02:19.244Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/48/9cbac456018abe641f62878522199bca6ec47b5f20ae9ab02e3f79243b45/sciencebeam_trainer_delft-1.0.5-py3-none-any.whl", hash = "sha256:1d85768f6117b8a2f545556a3ccd431b0238341814a0be75905f0b17a359a3c1", size = 143713, upload-time = "2026-11-18T11:02:18.175Z" },
 ]
 
 [package.optional-dependencies]
