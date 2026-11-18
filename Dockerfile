@@ -133,7 +133,15 @@ RUN python -m mypy
 # pytest
 FROM dev AS pytest
 
-RUN python -m pytest -p no:cacheprovider
+RUN python -m pytest -p no:cacheprovider --ignore=tests/service/static
+
+
+# ui-tests
+FROM dev AS ui-tests
+
+COPY --from=node:24-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+
+RUN python -m pytest -p no:cacheprovider tests/service/static
 
 
 # end-to-end-tests
