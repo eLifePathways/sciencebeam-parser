@@ -71,6 +71,7 @@ METHOD_LABELS: Dict[str, str] = {
     "levenshtein": "matched at 80% edit similarity",
     "ratcliff_obershelp": "matched at 95% Ratcliff-Obershelp similarity",
     "edit_sim": "edit similarity scored in full, punctuation ignored",
+    "token_set_edit_sim": "edit similarity over the distinct words, order ignored",
 }
 
 

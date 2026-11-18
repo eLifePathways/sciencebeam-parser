@@ -264,6 +264,8 @@ scoring:
       type: partial_ulist
     affiliation_text:
       type: partial_ulist
+      methods: [levenshtein, edit_sim, token_set_edit_sim]
+      lower: true
     keywords:
       type: partial_ulist
     body_section_titles:
