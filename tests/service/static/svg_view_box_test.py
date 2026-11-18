@@ -10,10 +10,10 @@ import pytest
 HARNESS_FILE = Path(__file__).parent / 'add_svg_view_box.mjs'
 
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.integration, pytest.mark.skipif(
     shutil.which('node') is None,
     reason='node runs the view box the page applies in a browser'
-)
+)]
 
 
 def add_svg_view_box(svg: str) -> str:

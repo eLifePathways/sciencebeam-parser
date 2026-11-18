@@ -11,6 +11,8 @@ from sciencebeam_parser.processors.document_page_image import (
 
 LOGGER = logging.getLogger(__name__)
 
+pytestmark = pytest.mark.integration
+
 MINIMAL_EXAMPLE_PDF_PATH = 'test-data/minimal-example.pdf'
 
 
@@ -45,7 +47,7 @@ class TestIterPdfDocumentPageImages:
         assert [page_image.page_number for page_image in page_images] == [1]
 
     def test_should_render_nothing_where_no_worker_is_free(self, tmp_path: Path):
-        pool = PdfRenderWorkerPool(max_workers=1, timeout=1)
+        pool = PdfRenderWorkerPool(max_workers=1, timeout=0.2)
         with pool.worker(MINIMAL_EXAMPLE_PDF_PATH):
             page_images = list(iter_pdf_document_page_images(
                 MINIMAL_EXAMPLE_PDF_PATH, str(tmp_path), pool, dpi=36

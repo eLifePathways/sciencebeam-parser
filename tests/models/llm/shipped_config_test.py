@@ -1,3 +1,5 @@
+import copy
+from functools import cache
 from pathlib import Path
 from typing import Dict, List
 
@@ -28,8 +30,14 @@ SHAPE_BY_TASK = {'reference_segmenter': 'lines', 'citation': 'values'}
 PUBLIC_MODEL_LOCATION_PREFIXES = ('http://', 'https://', 'hf://')
 
 
-def get_shipped_config() -> dict:
+@cache
+def _parsed_shipped_config() -> dict:
     return yaml.safe_load(CONFIG_PATH.read_text(encoding='utf-8'))
+
+
+def get_shipped_config() -> dict:
+    """A copy of the shipped config, parsed once however many tests ask for it."""
+    return copy.deepcopy(_parsed_shipped_config())
 
 
 def get_resolved_models(profile_name: str) -> dict:

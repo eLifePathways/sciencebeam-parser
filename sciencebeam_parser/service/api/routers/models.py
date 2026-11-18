@@ -8,13 +8,6 @@ from lxml import etree
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import FileResponse
 
-from sciencebeam_trainer_delft.sequence_labelling.reader import load_data_crf_lines
-from sciencebeam_trainer_delft.sequence_labelling.tag_formatter import (
-    TagOutputFormats,
-    TagLabelFormats,
-    iter_format_tag_result
-)
-
 from sciencebeam_parser.app.parser import (
     ScienceBeamParser,
     ScienceBeamParserSessionSource,
@@ -53,16 +46,24 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ModelOutputFormats:
+    """What the `output_format` parameter accepts.
+
+    All but `raw_data` are passed to delft's formatter, whose own values they
+    have to equal; `models_router_test` holds them to it.
+    """
     RAW_DATA = 'raw_data'
+    JSON = 'json'
+    DATA = 'data'
+    XML = 'xml'
 
 
-DEFAULT_MODEL_OUTPUT_FORMAT = TagOutputFormats.JSON
+DEFAULT_MODEL_OUTPUT_FORMAT = ModelOutputFormats.JSON
 
 VALID_MODEL_OUTPUT_FORMATS = [
-    TagOutputFormats.JSON,
+    ModelOutputFormats.JSON,
     ModelOutputFormats.RAW_DATA,
-    TagOutputFormats.DATA,
-    TagOutputFormats.XML
+    ModelOutputFormats.DATA,
+    ModelOutputFormats.XML
 ]
 
 
@@ -216,6 +217,8 @@ class ModelResponseRouterFactory:
             if output_format == ModelOutputFormats.RAW_DATA:
                 response_content = '\n'.join(data_lines) + '\n'
             else:
+                # pylint: disable-next=import-outside-toplevel
+                from sciencebeam_trainer_delft.sequence_labelling.reader import load_data_crf_lines
                 texts, features = load_data_crf_lines(data_lines)
                 LOGGER.info('texts length: %d', len(texts))
                 if not len(texts):  # pylint: disable=len-as-condition
@@ -226,6 +229,10 @@ class ModelResponseRouterFactory:
                         output_format=None
                     )
                 LOGGER.debug('tag_result: %s', tag_result)
+                # pylint: disable-next=import-outside-toplevel
+                from sciencebeam_trainer_delft.sequence_labelling.tag_formatter import (
+                    TagLabelFormats, iter_format_tag_result
+                )
                 formatted_tag_result_iterable = iter_format_tag_result(
                     tag_result,
                     output_format=output_format,
@@ -236,7 +243,7 @@ class ModelResponseRouterFactory:
                     model_name=self.model_name
                 )
                 response_content = ''.join(formatted_tag_result_iterable)
-                if output_format == TagOutputFormats.JSON:
+                if output_format == ModelOutputFormats.JSON:
                     response_type = 'application/json'
             LOGGER.debug('response_content: %r', response_content)
         return Response(

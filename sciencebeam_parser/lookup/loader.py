@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from functools import cache
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +22,7 @@ def is_wf_filename(path: str) -> bool:
     return os.path.basename(path).lower().endswith('.wf')
 
 
+@cache
 def load_lookup_from_text_file(path: str, split_on_hyphen: bool = False) -> TextLookUp:
     words: set = set()
     for line in Path(path).read_text(encoding='utf-8').splitlines():
@@ -33,6 +35,7 @@ def load_lookup_from_text_file(path: str, split_on_hyphen: bool = False) -> Text
     return SimpleTextLookUp(words)
 
 
+@cache
 def load_lookup_from_wf_file(path: str) -> TextLookUp:
     # GROBID multext wordforms format: first tab-separated column is the word form.
     # GROBID stores words as-is (preserving case) but test_common() lowercases the query,

@@ -1,4 +1,5 @@
 import logging
+from functools import cache
 
 from lxml import etree
 
@@ -19,6 +20,7 @@ TEI_NS_MAP = {
 TEI_CELL = TEI_NS_PREFIX + 'cell'
 
 
+@cache
 def load_xml_lookup_from_file(
     filename: str
 ) -> TextLookUp:

@@ -15,6 +15,9 @@ from sciencebeam_parser.utils.download import download_with_zip_path_support
 EXAMPLE_PDF_PATH = 'test-data/minimal-example.pdf'
 
 
+pytestmark = pytest.mark.integration
+
+
 @pytest.fixture(name='pdfalto_wrapper', scope='session')
 def _pdfalto_wrapper(sciencebeam_parser_config: dict) -> PdfAltoWrapper:
     configured_path = sciencebeam_parser_config['pdfalto'].get('path')

@@ -13,10 +13,10 @@ import pytest
 HARNESS_FILE = Path(__file__).parent / 'read_zip.mjs'
 
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.integration, pytest.mark.skipif(
     shutil.which('node') is None,
     reason='node runs the archive reader that the page runs in a browser'
-)
+)]
 
 
 def get_zip_bytes(

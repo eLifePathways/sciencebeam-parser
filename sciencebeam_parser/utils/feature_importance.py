@@ -11,8 +11,6 @@ import json
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-from sciencebeam_trainer_delft.sequence_labelling.reader import load_data_crf_lines
-
 
 def load_parts(data_path: str) -> List[List[str]]:
     """Read a .data file; return list of per-line token lists (label included as last element)."""
@@ -78,6 +76,8 @@ def apply_swap(
 
 
 def run_model(model, lines: List[str]) -> List[str]:
+    # pylint: disable-next=import-outside-toplevel
+    from sciencebeam_trainer_delft.sequence_labelling.reader import load_data_crf_lines
     texts, features = load_data_crf_lines(lines)
     tag_result = model.model_impl.predict_labels(texts, features)
     return [label for _token, label in tag_result[0]]
