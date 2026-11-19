@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from benchmarks.judge_setup import prepare_judge
+from benchmarks.report_budget import COMMENT_BUDGET
 from benchmarks.score import (
     _build_field_sources,
     _doc_scores_from_dict,
@@ -201,6 +202,53 @@ class TestRenderReport:
         )
         assert "Type" in result
         assert "ulist" in result
+
+    def test_should_show_precision_and_recall_behind_each_f1(self):
+        aggregated = [
+            {
+                "scoring_type": "partial_ulist",
+                "scoring_method": "edit_sim",
+                "summary_scores": {
+                    "by-field": {
+                        "affiliation_text": {
+                            "scores": {"f1": 0.47, "precision": 0.31, "recall": 0.99}
+                        }
+                    }
+                },
+            }
+        ]
+        result = _render_report(
+            {"ore": {"n": 5, "aggregated": aggregated}},
+            ["affiliation_text"],
+            {"affiliation_text": "partial_ulist"},
+            None,
+        )
+        assert "edit_sim P / R" in result
+        assert "0.310 / 0.990" in result
+
+    def test_should_keep_precision_and_recall_out_of_a_budgeted_comment(self):
+        aggregated = [
+            {
+                "scoring_type": "partial_ulist",
+                "scoring_method": "edit_sim",
+                "summary_scores": {
+                    "by-field": {
+                        "affiliation_text": {
+                            "scores": {"f1": 0.47, "precision": 0.31, "recall": 0.99}
+                        }
+                    }
+                },
+            }
+        ]
+        result = _render_report(
+            {"ore": {"n": 5, "aggregated": aggregated}},
+            ["affiliation_text"],
+            {"affiliation_text": "partial_ulist"},
+            None,
+            budget=COMMENT_BUDGET,
+        )
+        assert "0.470" in result
+        assert "P / R" not in result
 
     def test_should_deduplicate_method_columns_across_scoring_types(self):
         aggregated = [
@@ -576,6 +624,46 @@ class TestAttributionIsNotScored:
             for score in without
             if score["scoring_method"] == "exact"
         )
+
+
+class TestAnAffiliationScoredAsThePagePrintsIt:
+    """A label identifies an affiliation rather than naming it, and a gold that holds
+    the printed string as well as the parts it was built from says it twice."""
+
+    def _affiliation_scores(self, gold_aff: str, predicted_raw_affiliation: str) -> dict:
+        gold = GOLD_JATS_1.replace(b"<aff>Institute 1</aff>", gold_aff.encode("utf-8"))
+        predicted = PREDICTED_TEI_1.format(encoding_desc="").replace(
+            '<note type="raw_affiliation">Institute 1</note>',
+            predicted_raw_affiliation,
+        ).encode("utf-8")
+        scores = _score_pair(
+            gold, predicted, ["affiliation_text"], ["exact"], prepare_judge(),
+            scoring_types_by_field_map={"affiliation_text": ["partial_ulist"]},
+        )
+        return scores[0]["match_score"]
+
+    def test_should_match_where_only_the_labels_differ(self):
+        match_score = self._affiliation_scores(
+            "<aff><label>1</label>Institute 1</aff>",
+            '<note type="raw_affiliation"><label>2</label>Institute 1</note>',
+        )
+        assert match_score["true_positive"] == 1
+
+    def test_should_read_the_gold_from_the_printed_string(self):
+        match_score = self._affiliation_scores(
+            '<aff><institution content-type="original">Institute 1</institution>'
+            '<institution content-type="orgname">Institute 1</institution>'
+            "<country>Nowhere</country></aff>",
+            '<note type="raw_affiliation">Institute 1</note>',
+        )
+        assert match_score["true_positive"] == 1
+
+    def test_should_read_the_whole_gold_where_there_is_no_printed_string(self):
+        match_score = self._affiliation_scores(
+            '<aff><institution content-type="orgname">Institute 1</institution></aff>',
+            '<note type="raw_affiliation">Institute 1</note>',
+        )
+        assert match_score["true_positive"] == 1
 
 
 class TestATitleScoredWithAndWithoutItsCase:
