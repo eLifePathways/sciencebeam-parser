@@ -36,6 +36,12 @@ def make_page_meta(page_number: int = 1, height: float = 1000.0) -> LayoutPageMe
     )
 
 
+# A token is as wide as it has characters, which is what lets a fixture say
+# that a heading does not fill the measure the page sets its text to.
+_CHARACTER_WIDTH = 5.0
+_SPACE_WIDTH = 5.0
+
+
 def make_token(
     text: str,
     page_number: int = 1,
@@ -52,7 +58,8 @@ def make_token(
         text=text,
         font=font,
         coordinates=LayoutPageCoordinates(
-            x=x, y=y, width=50, height=height, page_number=page_number
+            x=x, y=y, width=max(len(text), 1) * _CHARACTER_WIDTH,
+            height=height, page_number=page_number,
         ),
     )
 
@@ -66,13 +73,16 @@ def make_line(
     font_size: Optional[float] = None,
     height: float = 12.0,
 ) -> LayoutLine:
-    tokens = [
-        make_token(
-            t, page_number=page_number, y=y, x=x, bold=bold,
+    tokens = []
+    left = x
+    for text in texts:
+        token = make_token(
+            text, page_number=page_number, y=y, x=left, bold=bold,
             font_size=font_size, height=height,
         )
-        for t in texts
-    ]
+        tokens.append(token)
+        assert token.coordinates is not None
+        left += token.coordinates.width + _SPACE_WIDTH
     return LayoutLine(tokens=tokens)
 
 

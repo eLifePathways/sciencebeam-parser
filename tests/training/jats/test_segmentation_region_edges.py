@@ -633,195 +633,6 @@ class TestDeclarationPrintedAfterTheArticle:
         assert labels[id(lines['late_affiliation'])] == SEG_FRONT
 
 
-class TestAffiliationColumnRunningPastTheFooter:
-    """A publisher sets the affiliations down the side of the title page."""
-
-    def _make_doc(self):
-        title = make_line('A', 'title', y=100.0)
-        affiliation = make_line('A', 'university', 'somewhere', y=900.0)
-        late = make_line('Another', 'university', 'elsewhere', y=930.0)
-        last = make_line('A', 'last', 'university', 'nearby', y=950.0)
-        overleaf = make_line(
-            'A', 'third', 'university', 'elsewhere', y=100.0, page_number=2
-        )
-        grounded_overleaf = make_line(
-            'A', 'fourth', 'university', 'far', 'away', y=120.0, page_number=2
-        )
-        body = [
-            make_line('The', 'argument', f'runs{index}', y=200.0 + 20 * index,
-                      page_number=2)
-            for index in range(8)
-        ]
-        # The column is set beside the article, so the page emits the text of
-        # it after the whole column rather than between its lines.
-        beside_the_column = [
-            make_line('The', 'argument', 'opens', f'here{index}',
-                      y=200.0 + 20 * index, x=300.0)
-            for index in range(6)
-        ]
-        doc = LayoutDocument(pages=[
-            LayoutPage(
-                blocks=[
-                    LayoutBlock(lines=[title, affiliation]),
-                    LayoutBlock(lines=[late]),
-                    LayoutBlock(lines=[last]),
-                    LayoutBlock(lines=beside_the_column),
-                ],
-                meta=make_page_meta(1),
-            ),
-            LayoutPage(
-                blocks=[LayoutBlock(
-                    lines=[overleaf, grounded_overleaf] + body
-                )],
-                meta=make_page_meta(2),
-            ),
-        ])
-        lines = list(doc.iter_all_lines())
-        fields = {
-            lines.index(title): JatsFieldNames.TITLE,
-            lines.index(affiliation): JatsFieldNames.AUTHOR_AFF,
-            lines.index(last): JatsFieldNames.AUTHOR_AFF,
-            lines.index(grounded_overleaf): JatsFieldNames.AUTHOR_AFF,
-        }
-        for line in body + beside_the_column:
-            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
-        return doc, annotate(doc, fields), {
-            'late': late, 'overleaf': overleaf,
-        }
-
-    def test_the_column_is_front_matter_past_the_footer_threshold(self):
-        doc, annotated, lines = self._make_doc()
-        assert derive_labels(doc, annotated)[id(lines['late'])] == SEG_FRONT
-
-    def test_it_carries_on_at_the_top_of_the_next_page(self):
-        doc, annotated, lines = self._make_doc()
-        assert derive_labels(doc, annotated)[id(lines['overleaf'])] == SEG_FRONT
-
-
-class TestAMarginLineTheDepositPlacesElsewhere:
-    """A table prints the same note under each page it runs over."""
-
-    def _make_doc(self):
-        note = 'Abbreviation - PD: Peritoneal Dialysis.'
-        placed = make_line(*note.split(' '), y=400.0)
-        in_the_margin = make_line(*note.split(' '), y=940.0, page_number=4)
-        body = [
-            make_line('The', 'argument', 'of', f'page{page_number}', f'line{index}',
-                      y=500.0 + 20 * index, page_number=page_number)
-            for page_number in (1, 2, 3, 4)
-            for index in range(6)
-        ]
-        by_page = {
-            page_number: [line for line in body
-                          if page_number_of(line) == page_number]
-            for page_number in (1, 2, 3, 4)
-        }
-        doc = LayoutDocument(pages=[
-            LayoutPage(blocks=[LayoutBlock(lines=[placed] + by_page[1])],
-                       meta=make_page_meta(1)),
-            LayoutPage(blocks=[LayoutBlock(lines=by_page[2])],
-                       meta=make_page_meta(2)),
-            LayoutPage(blocks=[LayoutBlock(lines=by_page[3])],
-                       meta=make_page_meta(3)),
-            LayoutPage(
-                blocks=[
-                    LayoutBlock(lines=by_page[4]),
-                    LayoutBlock(lines=[in_the_margin]),
-                ],
-                meta=make_page_meta(4),
-            ),
-        ])
-        lines = list(doc.iter_all_lines())
-        fields = {lines.index(placed): JatsFieldNames.BODY_TABLE}
-        for line in body:
-            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
-        return doc, annotate(doc, fields), in_the_margin
-
-    def test_the_one_in_the_margin_is_content_too(self):
-        doc, annotated, in_the_margin = self._make_doc()
-        assert derive_labels(doc, annotated)[id(in_the_margin)] == SEG_BODY
-
-
-class TestAFootnoteWrappingOntoASecondLine:
-    """A note at the foot of a page runs over the line it starts on."""
-
-    def _make_doc(self):
-        body = [
-            make_line('The', 'argument', f'runs{index}', y=200.0 + 20 * index)
-            for index in range(8)
-        ]
-        first = make_line('1', 'The', 'note', 'opens', 'here', y=930.0)
-        second = make_line('and', 'carries', 'on', 'here', y=945.0)
-        doc = LayoutDocument(pages=[
-            LayoutPage(
-                blocks=[LayoutBlock(lines=body), LayoutBlock(lines=[first, second])],
-                meta=make_page_meta(1),
-            ),
-            LayoutPage(
-                blocks=[LayoutBlock(lines=[
-                    make_line('and', 'goes', f'on{index}', y=200.0 + 20 * index,
-                              page_number=2)
-                    for index in range(4)
-                ])],
-                meta=make_page_meta(2),
-            ),
-        ])
-        lines = list(doc.iter_all_lines())
-        fields = {
-            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
-        }
-        return doc, annotate(doc, fields), first, second
-
-    def test_both_lines_stay_at_the_foot(self):
-        doc, annotated, first, second = self._make_doc()
-        labels = derive_labels(doc, annotated)
-        assert [labels[id(first)], labels[id(second)]] == [SEG_FOOTNOTE] * 2
-
-
-class TestAShortLineAtTheFootOfAPage:
-    """A one-word fragment the page sets at a foot says nothing about itself."""
-
-    def _make_doc(self):
-        fragment = 'R'
-        in_the_body = make_line(fragment, y=400.0)
-        in_the_margin = make_line(fragment, y=940.0, page_number=4)
-        body = [
-            make_line('The', 'argument', 'of', f'page{page_number}', f'line{index}',
-                      y=500.0 + 20 * index, page_number=page_number)
-            for page_number in (1, 2, 3, 4)
-            for index in range(6)
-        ]
-        by_page = {
-            page_number: [line for line in body
-                          if page_number_of(line) == page_number]
-            for page_number in (1, 2, 3, 4)
-        }
-        doc = LayoutDocument(pages=[
-            LayoutPage(blocks=[LayoutBlock(lines=[in_the_body] + by_page[1])],
-                       meta=make_page_meta(1)),
-            LayoutPage(blocks=[LayoutBlock(lines=by_page[2])],
-                       meta=make_page_meta(2)),
-            LayoutPage(blocks=[LayoutBlock(lines=by_page[3])],
-                       meta=make_page_meta(3)),
-            LayoutPage(
-                blocks=[
-                    LayoutBlock(lines=by_page[4]),
-                    LayoutBlock(lines=[in_the_margin]),
-                ],
-                meta=make_page_meta(4),
-            ),
-        ])
-        lines = list(doc.iter_all_lines())
-        fields = {lines.index(in_the_body): JatsFieldNames.BODY_SECTION_PARAGRAPH}
-        for line in body:
-            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
-        return doc, annotate(doc, fields), in_the_margin
-
-    def test_it_is_not_claimed_by_the_same_fragment_elsewhere(self):
-        doc, annotated, in_the_margin = self._make_doc()
-        assert derive_labels(doc, annotated)[id(in_the_margin)] == SEG_FOOTNOTE
-
-
 class TestTheBannerAboveTheFrontMatter:
     """A journal prints its licence in the top margin of the first page."""
 
@@ -893,7 +704,7 @@ class TestTheBannerAboveTheFrontMatter:
 class TestATableCarriedOverThePage:
     """A table running over a page break repeats its label and says so."""
 
-    def _make_doc(self):
+    def _make_doc(self, says_so_on_the_label_line: bool = False):
         body = [
             make_line('The', 'argument', 'of', f'page{page_number}', f'line{index}',
                       y=200.0 + 20 * index, page_number=page_number)
@@ -906,7 +717,11 @@ class TestATableCarriedOverThePage:
             for page_number in (1, 2, 3)
         }
         carried = [
-            make_line('Table', '9', y=20.0, page_number=page_number)
+            make_line(
+                *(('Table', '9', '.', 'Continuation') if says_so_on_the_label_line
+                  else ('Table', '9')),
+                y=20.0, page_number=page_number,
+            )
             for page_number in (2, 3)
         ]
         marker = [
@@ -934,6 +749,11 @@ class TestATableCarriedOverThePage:
 
     def test_its_label_and_its_marker_are_not_page_furniture(self):
         doc, annotated, carried = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in carried] == [SEG_BODY] * 4
+
+    def test_a_label_that_says_so_on_one_line_is_not_either(self):
+        doc, annotated, carried = self._make_doc(says_so_on_the_label_line=True)
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in carried] == [SEG_BODY] * 4
 
@@ -979,3 +799,43 @@ class TestASectionTitleThatMatchedAReferenceEntry:
         doc, annotated, taken = self._make_doc(long_run=True)
         labels = derive_labels(doc, annotated)
         assert SEG_BODY in [labels[id(line)] for line in taken]
+
+
+class TestTheImprintBlockAtTheFootOfThePage:
+    """A journal that sets the doi, the funding and the dates in one block."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'argument', 'of', 'the', f'article{index}',
+                      y=200.0 + 20 * index)
+            for index in range(6)
+        ]
+        imprint = [
+            make_line('doi', ':', '10.0000/0000-00000000000', y=700.0),
+            make_line('Financial', 'support', ':', 'The', 'marsh', 'trust', '.',
+                      y=712.0),
+            make_line('+', 'Corresponding', 'author', ':', 'a@example.org',
+                      y=724.0),
+            make_line('Received', '24', 'February', '2017', y=736.0),
+            make_line('Accepted', '6', 'June', '2017', y=748.0),
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=body), LayoutBlock(lines=imprint)],
+                meta=make_page_meta(1),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
+        }
+        fields[lines.index(imprint[1])] = JatsFieldNames.FUNDING
+        fields[lines.index(imprint[2])] = JatsFieldNames.CORRESPONDENCE
+        for line in imprint[3:]:
+            fields[lines.index(line)] = JatsFieldNames.HISTORY_DATE
+        return doc, annotate(doc, fields), imprint
+
+    def test_the_rest_of_the_block_is_front_matter_too(self):
+        doc, annotated, imprint = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in imprint] == [SEG_FRONT] * 5

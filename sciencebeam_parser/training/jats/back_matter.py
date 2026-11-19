@@ -127,7 +127,8 @@ _FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     # "Author roles: J.H.: Conceptualization, methodology" is a contribution
     # section in GROBID's corpus, and 296 of them open with a heading of this
     # kind.  Only beside the authors, because a role is named in prose as well.
-    ('contribution', ('contribution', 'contribuicao', 'contribucion',
+    ('contribution', ('contribution', 'contribuicao', 'contribuicoes',
+                      'contribucion',
                       'colabora', 'authorship',
                       'author role', 'authors role', "author's role",
                       'roles and responsibilit', 'roles & responsibilit',
