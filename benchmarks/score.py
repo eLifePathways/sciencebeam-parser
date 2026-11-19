@@ -375,9 +375,9 @@ def _unique_methods(aggregated: List[dict]) -> List[str]:
     return methods
 
 
-def _f1_from_aggregated(
+def _scores_from_aggregated(
     aggregated: List[dict], field: str, field_type: str, method: str
-) -> Optional[float]:
+) -> Dict[str, float]:
     for entry in aggregated:
         if entry.get("scoring_type", "string") != field_type:
             continue
@@ -385,12 +385,24 @@ def _f1_from_aggregated(
             continue
         return entry.get("summary_scores", {}).get("by-field", {}).get(
             field, {}
-        ).get("scores", {}).get("f1")
-    return None
+        ).get("scores", {})
+    return {}
+
+
+def _f1_from_aggregated(
+    aggregated: List[dict], field: str, field_type: str, method: str
+) -> Optional[float]:
+    return _scores_from_aggregated(aggregated, field, field_type, method).get("f1")
 
 
 def _fmt_f1(f1: Optional[float]) -> str:
     return f"{f1:.3f}" if f1 is not None else "—"
+
+
+def _fmt_precision_recall(scores: Dict[str, float]) -> str:
+    if "precision" not in scores or "recall" not in scores:
+        return "—"
+    return f"{scores['precision']:.3f} / {scores['recall']:.3f}"
 
 
 def _score_row(
@@ -405,6 +417,22 @@ def _score_row(
     extract something that is not there."""
     cells = "".join(
         " " + _fmt_f1(_f1_from_aggregated(aggregated, field, field_type, method)) + " |"
+        for method in methods
+    )
+    return f"| {field} | {field_type} | {docs} |" + cells
+
+
+def _precision_recall_row(
+    field: str,
+    field_type: str,
+    docs: str,
+    aggregated: List[dict],
+    methods: List[str],
+) -> str:
+    cells = "".join(
+        " " + _fmt_precision_recall(
+            _scores_from_aggregated(aggregated, field, field_type, method)
+        ) + " |"
         for method in methods
     )
     return f"| {field} | {field_type} | {docs} |" + cells
@@ -435,11 +463,39 @@ def _render_produced_table(
     ]
 
 
+def _field_rows(
+    result: Dict[str, Any],
+    field_names: List[str],
+    field_scoring_types: Dict[str, str],
+) -> List[Tuple[str, str, str, List[dict]]]:
+    """Every row a corpus table has, as field, type, docs label and what to read it from."""
+    n = result.get("n", 0)
+    aggregated = result.get("aggregated") or []
+    presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
+    conditional = result.get(GOLD_PRESENT_AGGREGATED_KEY) or []
+    rows = []
+    for field in field_names:
+        field_type = field_scoring_types.get(field, "string")
+        presence = presence_by_field.get(field)
+        split = bool(
+            presence and presence["n_gold"] and is_split_worth_reporting([presence])
+        )
+        n_docs = presence["n"] if presence else n
+        rows.append((
+            field, field_type, f"all {n_docs}" if split else str(n_docs),
+            aggregated if has_gold(presence) else [],
+        ))
+        if split and presence:
+            rows.append((field, field_type, f"gold {presence['n_gold']}", conditional))
+    return rows
+
+
 def _corpus_section(
     corpus: str,
     result: Dict[str, Any],
     field_names: List[str],
     field_scoring_types: Dict[str, str],
+    precision_recall: bool = False,
 ) -> List[str]:
     n = result.get("n", 0)
     aggregated = result.get("aggregated")
@@ -448,31 +504,24 @@ def _corpus_section(
         return lines + ["_No results._", ""]
 
     unique_methods = _unique_methods(aggregated)
-    presence_by_field = result.get(GOLD_PRESENCE_KEY) or {}
-    conditional = result.get(GOLD_PRESENT_AGGREGATED_KEY) or []
+    rows = _field_rows(result, field_names, field_scoring_types)
     lines.append(
         "| Field | Type | Docs |" + "".join(f" {m} F1 |" for m in unique_methods)
     )
     lines.append("|---|---|---|" + "---|" * len(unique_methods))
-
-    for field in field_names:
-        field_type = field_scoring_types.get(field, "string")
-        presence = presence_by_field.get(field)
-        split = bool(
-            presence and presence["n_gold"] and is_split_worth_reporting([presence])
-        )
-        n_docs = presence["n"] if presence else n
-        lines.append(_score_row(
-            field, field_type, f"all {n_docs}" if split else str(n_docs),
-            aggregated if has_gold(presence) else [], unique_methods,
-        ))
-        if split and presence:
-            lines.append(_score_row(
-                field, field_type, f"gold {presence['n_gold']}",
-                conditional, unique_methods,
-            ))
-
+    lines += [_score_row(*row, unique_methods) for row in rows]
     lines.append("")
+
+    if precision_recall:
+        lines += [
+            "Precision and recall behind those figures:",
+            "",
+            "| Field | Type | Docs |" + "".join(f" {m} P / R |" for m in unique_methods),
+            "|---|---|---|" + "---|" * len(unique_methods),
+            *[_precision_recall_row(*row, unique_methods) for row in rows],
+            "",
+        ]
+
     lines += _render_produced_table(result, field_names)
     lines += render_variant_match_table(result.get(VARIANT_MATCH_KEY) or {}, field_names)
     return lines
@@ -498,7 +547,10 @@ def _render_report(
             head += [coverage, ""]
 
     sections = [
-        (corpus, _corpus_section(corpus, result, field_names, field_scoring_types))
+        (corpus, _corpus_section(
+            corpus, result, field_names, field_scoring_types,
+            precision_recall=budget is None,
+        ))
         for corpus, result in corpus_results.items()
     ]
     if budget is None:

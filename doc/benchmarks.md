@@ -71,6 +71,21 @@ setting its title in capitals where the JATS declares title case is describing i
 own typography, not a different title, and the two rows apart tell a model's
 reading of a title from the capitals its pages are set in.
 
+`affiliation_text` compares one raw affiliation string per affiliation. A
+label identifies an affiliation rather than naming it, so neither side carries
+one, and where a gold `<aff>` holds the affiliation in an
+`institution[@content-type="original"]` beside the `orgname`, `orgdiv1` and
+`country` elements a database built it from, the `original` is what is read —
+the elements beside it are the same affiliation again.
+
+It is scored by `token_set_edit_sim` as well as the two default methods: each
+side's distinct words, sorted, compared by the same edit similarity `edit_sim`
+uses. Word order and a repeated phrase stop counting, while a misspelt word
+still scores in part. The field is also scored without regard to case.
+
+Precision and recall sit behind every F1 in the full report, as a second table
+under each corpus. A posted comment carries the F1 table alone.
+
 ### Author–affiliation linking
 
 `affiliation_text` compares a document's affiliations as one flat list: it says

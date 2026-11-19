@@ -8,11 +8,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict
 
+from sciencebeam_judge.evaluation.scoring_methods.scoring_methods import SCORING_METHODS_MAP
 from sciencebeam_judge.evaluation.scoring_types.scoring_types import SCORING_TYPE_MAP
 from sciencebeam_judge.parsing.xml import parse_xml_mapping
 from sciencebeam_judge.parsing.xpath.xpath_functions import register_functions
 from sciencebeam_judge.resources import DEFAULT_XML_MAPPING_PATH
 
+from benchmarks.affiliation_xpath import register_affiliation_functions
 from benchmarks.best_match_scoring import (
     BEST_MATCH_SCORING_TYPE_NAME,
     BEST_MATCH_SCORING_TYPE,
@@ -20,6 +22,10 @@ from benchmarks.best_match_scoring import (
 from benchmarks.matched_property_scoring import (
     MATCHED_PROPERTY_SCORING_TYPE_NAME,
     MATCHED_PROPERTY_SCORING_TYPE,
+)
+from benchmarks.token_set_scoring import (
+    TOKEN_SET_EDIT_SIM_METHOD_NAME,
+    TOKEN_SET_EDIT_SIM_SCORING_METHOD,
 )
 from benchmarks.variant_xpath import register_variant_functions
 
@@ -30,6 +36,8 @@ def prepare_judge() -> Dict[str, Dict[str, str]]:
     """Registers what the judge does not ship with, and returns the mapping to parse with."""
     register_functions()
     register_variant_functions()
+    register_affiliation_functions()
+    SCORING_METHODS_MAP[TOKEN_SET_EDIT_SIM_METHOD_NAME] = TOKEN_SET_EDIT_SIM_SCORING_METHOD
     SCORING_TYPE_MAP[BEST_MATCH_SCORING_TYPE_NAME] = BEST_MATCH_SCORING_TYPE
     SCORING_TYPE_MAP[MATCHED_PROPERTY_SCORING_TYPE_NAME] = MATCHED_PROPERTY_SCORING_TYPE
     xml_mapping = parse_xml_mapping(DEFAULT_XML_MAPPING_PATH)
