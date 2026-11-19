@@ -1,8 +1,12 @@
 from pathlib import Path
 
+import pytest
+
 from benchmarks.prediction_files import (
     is_prediction_file,
     iter_prediction_files,
+    iter_scored_prediction_files,
+    prediction_format_from_name,
     record_id_from_name,
 )
 
@@ -41,3 +45,37 @@ class TestIterPredictionFiles:
 
     def test_should_be_empty_for_a_missing_directory(self, tmp_path: Path):
         assert not list(iter_prediction_files(tmp_path / 'nope'))
+
+
+class TestPredictionFormatFromName:
+    def test_should_name_the_format(self):
+        assert prediction_format_from_name('doc-1.tei.xml') == 'tei'
+        assert prediction_format_from_name('doc-1.jats.xml') == 'jats'
+        assert prediction_format_from_name('manifest.jsonl') is None
+
+
+class TestIterScoredPredictionFiles:
+    def test_should_keep_only_the_named_format(self, tmp_path: Path):
+        for name in ['a.tei.xml', 'a.jats.xml', 'b.tei.xml']:
+            (tmp_path / name).write_text('x')
+        assert [p.name for p in iter_scored_prediction_files(tmp_path, 'jats')] == [
+            'a.jats.xml',
+        ]
+        assert [p.name for p in iter_scored_prediction_files(tmp_path, 'tei')] == [
+            'a.tei.xml', 'b.tei.xml',
+        ]
+
+    def test_should_take_either_format_where_each_record_has_one(self, tmp_path: Path):
+        for name in ['a.jats.xml', 'b.tei.xml']:
+            (tmp_path / name).write_text('x')
+        assert [p.name for p in iter_scored_prediction_files(tmp_path)] == [
+            'a.jats.xml', 'b.tei.xml',
+        ]
+
+    def test_should_refuse_a_record_with_both_formats_unless_one_is_named(
+        self, tmp_path: Path
+    ):
+        for name in ['a.tei.xml', 'a.jats.xml']:
+            (tmp_path / name).write_text('x')
+        with pytest.raises(ValueError, match="'a'"):
+            list(iter_scored_prediction_files(tmp_path))

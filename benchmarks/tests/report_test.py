@@ -824,6 +824,48 @@ class TestDifferentlyScoredNote:
         assert "Scored differently between runs" not in report
 
 
+def _format_summary(prediction_format: Optional[str]) -> dict:
+    summary = _typed_summary("string")
+    if prediction_format:
+        summary["prediction_format"] = prediction_format
+    return summary
+
+
+class TestCrossFormatNote:
+    def test_says_once_that_the_delta_crosses_formats(self):
+        report = _render_comparison_report(
+            [("main", _format_summary("tei")), ("pr", _format_summary("jats"))], baseline=0,
+        )
+        assert report.count("Δ across formats") == 1
+        assert "P is scored on its JATS and M on its TEI" in report
+
+    def test_names_the_format_of_each_column(self):
+        report = _render_comparison_report(
+            [("main", _format_summary("tei")), ("pr", _format_summary("jats"))], baseline=0,
+        )
+        assert "| M | main | TEI |  |" in report
+        assert "| P | pr | JATS | reference (Δ X = this − X) |" in report
+
+    def test_is_silent_where_the_baseline_shares_the_format(self):
+        report = _render_comparison_report(
+            [
+                ("main", _format_summary("tei")),
+                ("agentic", _format_summary("jats")),
+                ("pr", _format_summary("tei")),
+            ],
+            baseline=0,
+        )
+        assert "Δ across formats" not in report
+        assert "| A | agentic | JATS |  |" in report
+
+    def test_is_silent_where_a_format_is_unknown(self):
+        report = _render_comparison_report(
+            [("main", _format_summary(None)), ("pr", _format_summary("jats"))], baseline=0,
+        )
+        assert "Δ across formats" not in report
+        assert "Scored on" not in report
+
+
 def _fields_summary(f1_by_field: dict, corpora_names: list, n: int = 10) -> dict:
     fields = list(f1_by_field)
     return _summary(

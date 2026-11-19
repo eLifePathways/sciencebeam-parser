@@ -45,7 +45,7 @@ from benchmarks.gold_presence import (
     produced_row,
 )
 from benchmarks.report_cost import render_cost_section
-from benchmarks.report_legend import keyed, render_legend
+from benchmarks.report_legend import format_name, keyed, render_legend
 from benchmarks.report_tables import render_split_tables
 from benchmarks.report_usage import render_usage_section
 from benchmarks.variant_match import (
@@ -513,6 +513,24 @@ def _no_baseline_note(n_columns: int, baseline: Optional[int]) -> List[str]:
     ]
 
 
+def _cross_format_note(
+    keys: Sequence[str], formats: Sequence[Optional[str]], primary: int,
+    baseline: Optional[int],
+) -> List[str]:
+    if baseline is None:
+        return []
+    primary_format, baseline_format = formats[primary], formats[baseline]
+    if not primary_format or not baseline_format or primary_format == baseline_format:
+        return []
+    return [
+        f"> **Δ across formats**: {keys[primary]} is scored on its"
+        f" {format_name(primary_format)} and {keys[baseline]} on its"
+        f" {format_name(baseline_format)}, so Δ {keys[baseline]} is what the conversion"
+        " loses as well as what the change moved.",
+        "",
+    ]
+
+
 def _differently_scored_note(
     labeled_summaries: List[Tuple[str, dict]], field_names: List[str]
 ) -> List[str]:
@@ -617,7 +635,9 @@ def _render_comparison_report(  # pylint: disable=too-many-locals
     labels = [label for label, _ in labeled_summaries]
     keyed_summaries = keyed(labeled_summaries)
     lines = ["## ScienceBeam Parser Evaluation", ""]
-    lines += render_legend(labels, primary, variants)
+    formats = [summary.get("prediction_format") for _, summary in labeled_summaries]
+    lines += render_legend(labels, primary, variants, formats)
+    lines += _cross_format_note([key for key, _ in keyed_summaries], formats, primary, baseline)
     lines += _missing_documents_note(keyed_summaries, corpora)
     lines += _coverage_lines(labeled_run_records or [])
     lines += _differently_scored_note(labeled_summaries, field_names)

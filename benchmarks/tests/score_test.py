@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
-from unittest.mock import patch
+from typing import Optional, Tuple
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -1131,3 +1131,46 @@ class TestScoringLimitedToTheModeDocuments:
         summary = json.loads((run_dir / "summary.json").read_text())
         assert summary["scored_documents"] == {"c": ["d1"]}
         assert summary["corpora"]["c"]["n"] == 1
+
+
+class TestScoringOneFormat:
+    CONFIG = {
+        "dataset": {"splits": {"train": {"c": {"file": "c.parquet"}}}},
+        "fields": ["title"],
+        "scoring": {"default_methods": ["exact"]},
+    }
+    SCORE = {
+        "field_name": "title", "scoring_type": "string", "scoring_method": "exact",
+        "match_score": {"true_positive": 1, "false_positive": 0, "false_negative": 0},
+    }
+
+    def _run(self, tmp_path: Path, names, **kwargs) -> Tuple[dict, MagicMock]:
+        run_dir = tmp_path / "run"
+        for name in names:
+            pred = run_dir / "predictions" / "c" / name
+            pred.parent.mkdir(parents=True, exist_ok=True)
+            pred.write_text(name)
+            gold = tmp_path / "data" / "train" / "c" / f"{name.split('.')[0]}.jats.xml"
+            gold.parent.mkdir(parents=True, exist_ok=True)
+            gold.write_text("<article/>")
+        with patch("benchmarks.score.prepare_judge"), \
+                patch("benchmarks.score._score_pair", return_value=[self.SCORE]) as score_pair:
+            run_score(self.CONFIG, run_dir, tmp_path / "data", out_path=None,
+                      split_override="train", **kwargs)
+        return json.loads((run_dir / "summary.json").read_text()), score_pair
+
+    def test_should_score_each_record_once_in_the_named_format(self, tmp_path: Path):
+        summary, score_pair = self._run(
+            tmp_path, ["d1.tei.xml", "d1.jats.xml", "d2.tei.xml"], prediction_format="jats"
+        )
+        assert summary["scored_documents"] == {"c": ["d1"]}
+        assert summary["prediction_format"] == "jats"
+        assert [call.args[1] for call in score_pair.call_args_list] == [b"d1.jats.xml"]
+
+    def test_should_name_the_format_every_prediction_shares(self, tmp_path: Path):
+        summary, _ = self._run(tmp_path, ["d1.tei.xml", "d2.tei.xml"])
+        assert summary["prediction_format"] == "tei"
+
+    def test_should_name_no_format_where_records_differ(self, tmp_path: Path):
+        summary, _ = self._run(tmp_path, ["d1.tei.xml", "d2.jats.xml"])
+        assert "prediction_format" not in summary

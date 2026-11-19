@@ -47,3 +47,12 @@ class TestRenderLegend:
     def test_says_what_each_is_where_described(self):
         lines = render_legend(["grobid"], primary=0, described=[("grobid", "`grobid` 0.9")])
         assert "| G | grobid | `grobid` 0.9 |  |" in lines
+
+    def test_names_the_format_of_each_column_where_they_differ(self):
+        lines = render_legend(["main", "pr"], primary=-1, formats=["tei", "jats"])
+        assert lines[0] == "|  | Variant | Scored on |  |"
+        assert "| M | main | TEI |  |" in lines
+
+    def test_leaves_the_format_out_where_every_column_shares_it(self):
+        lines = render_legend(["main", "pr"], primary=-1, formats=["tei", "tei"])
+        assert "Scored on" not in "\n".join(lines)

@@ -37,7 +37,13 @@ from benchmarks.gold_presence import (
 from benchmarks.judge_setup import prepare_judge
 from benchmarks.compute_cost import aggregate_cost
 from benchmarks.llm_usage import aggregate_llm_usage, read_manifest_entries
-from benchmarks.prediction_files import iter_prediction_files, record_id_from_path
+from benchmarks.prediction_files import (
+    iter_prediction_files,
+    iter_scored_prediction_files,
+    PREDICTION_FORMATS,
+    prediction_format_from_name,
+    record_id_from_path,
+)
 from benchmarks.report_budget import COMMENT_BUDGET, dropped_corpora_note, fit
 from benchmarks.variant_match import (
     VARIANT_MATCH_KEY,
@@ -289,6 +295,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
     xml_mapping: dict,
     record_ids: Optional[Collection[str]] = None,
     scored: Optional[List[str]] = None,
+    prediction_format: Optional[str] = None,
 ) -> Dict[str, Any]:
     pred_dir = run_dir / "predictions" / corpus
     scores_dir = run_dir / "scores" / corpus
@@ -301,7 +308,7 @@ def _score_corpus(  # pylint: disable=too-many-locals
     scoring_types_by_field_map = {f: [t] for f, t in field_scoring_types.items()}
     documents: List[Dict[str, dict]] = []
 
-    for pred_path in iter_prediction_files(pred_dir):
+    for pred_path in iter_scored_prediction_files(pred_dir, prediction_format):
         record_id = record_id_from_path(pred_path)
         # The store holds predictions beyond this mode's documents.
         if record_ids is not None and record_id not in record_ids:
@@ -509,6 +516,16 @@ def _render_report(
     )
 
 
+def _only_format(run_dir: Path, corpora: Iterable[str]) -> Optional[str]:
+    """The format of every prediction in a run, where they share one."""
+    formats = {
+        prediction_format_from_name(path.name)
+        for corpus in corpora
+        for path in iter_prediction_files(run_dir / "predictions" / corpus)
+    }
+    return formats.pop() if len(formats) == 1 else None
+
+
 def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     config: dict,
     run_dir: Path,
@@ -519,6 +536,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
     from_scores: bool = False,
     report_location: str = "",
     record_ids: Optional[Collection[Tuple[str, str]]] = None,
+    prediction_format: Optional[str] = None,
 ) -> None:
     """Score a run's predictions; `record_ids` limits it to a mode's documents."""
     xml_mapping = prepare_judge()
@@ -578,8 +596,9 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         corpus_results[corpus] = _score_corpus(
             corpus, data_dir / split, run_dir, field_names, all_measures, field_measures,
             field_scoring_types, field_sources, lower_case_fields, xml_mapping,
-            wanted, scored_documents[corpus],
+            wanted, scored_documents[corpus], prediction_format,
         )
+    scored_format = prediction_format or _only_format(run_dir, corpora)
 
     manifest_entries = read_manifest_entries(run_dir)
     llm_usage = aggregate_llm_usage(manifest_entries, corpora)
@@ -599,6 +618,7 @@ def run_score(  # pylint: disable=too-many-locals,too-many-arguments,too-many-po
         "scored_documents": {
             corpus: sorted(ids) for corpus, ids in scored_documents.items()
         },
+        **({"prediction_format": scored_format} if scored_format else {}),
         **({"llm_usage": llm_usage} if llm_usage else {}),
         **({"cost": cost} if cost else {}),
     }, indent=2))
@@ -640,6 +660,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         metavar="CORPUS",
         help="Also score an opt-in corpus, repeatable. Ignored where run.json lists corpora",
     )
+    parser.add_argument(
+        "--prediction-format", choices=PREDICTION_FORMATS, default=None,
+        help="Score this format where a run holds more than one",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -655,6 +679,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         split_override=args.split,
         include=args.include_corpus,
         from_scores=args.from_scores,
+        prediction_format=args.prediction_format,
     )
 
 
