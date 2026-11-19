@@ -19,7 +19,9 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticDocument,
     SemanticExternalIdentifier,
     SemanticExternalIdentifierTypes,
+    SemanticHeading,
     SemanticInstitution,
+    SemanticLabel,
     SemanticMarker,
     SemanticNote,
     SemanticReference,
@@ -305,6 +307,8 @@ def _reference(**kwargs):  # pylint: disable=too-many-branches
         ))
     if 'page' in props:
         imprint.append(TEI_E.biblScope(props['page'], unit='page'))
+    if 'label' in props:
+        bibl_struct.insert(0, TEI_E.note(props['label'], type='label'))
     if 'doi' in props:
         analytic.append(TEI_E.idno(props['doi'], type='DOI'))
     if 'article_authors' in props:
@@ -618,23 +622,23 @@ class TestTeiToJatsXslt:
             )
             assert person.xpath('./email') == []
 
-        def test_should_add_contrib_type_person_attribute(self, tei_to_jats_xslt_fn):
+        def test_should_add_contrib_type_author_attribute(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
                 _tei(authors=[_author()])
             ))
             person = _get_item(
                 jats, 'front/article-meta/contrib-group/contrib'
             )
-            assert person.attrib.get('contrib-type') == 'person'
+            assert person.attrib.get('contrib-type') == 'author'
 
-        def test_should_add_content_type_author_attribute_to_contrib_group(
+        def test_should_not_add_content_type_to_contrib_group(
             self, tei_to_jats_xslt_fn
         ):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
                 _tei(authors=[_author()])
             ))
-            person = _get_item(jats, 'front/article-meta/contrib-group')
-            assert person.attrib.get('content-type') == 'author'
+            contrib_group = _get_item(jats, 'front/article-meta/contrib-group')
+            assert 'content-type' not in contrib_group.attrib
 
         def test_should_translate_multiple_authors(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
@@ -672,7 +676,7 @@ class TestTeiToJatsXslt:
                 ).attrib.get('rid') == AFFILIATION_1['key']
             )
 
-            aff = _get_item(jats, 'front/article-meta/aff')
+            aff = _get_item(jats, 'front/article-meta/contrib-group/aff')
             assert aff.attrib.get('id') == AFFILIATION_1['key']
             assert (
                 _get_text(
@@ -701,7 +705,7 @@ class TestTeiToJatsXslt:
                 ])
             ))
 
-            aff = _get_item(jats, 'front/article-meta/aff')
+            aff = _get_item(jats, 'front/article-meta/contrib-group/aff')
             assert aff.xpath('institution[@content-type="orgname"]') == []
             assert aff.xpath('institution[@content-type="orgdiv1"]') == []
             assert aff.xpath('institution[@content-type="orgdiv2"]') == []
@@ -718,7 +722,7 @@ class TestTeiToJatsXslt:
             )
             assert person.xpath('./xref[@ref-type="aff"]') == []
 
-            assert jats.xpath('front/article-meta/aff') == []
+            assert jats.xpath('front/article-meta/contrib-group/aff') == []
 
         def test_should_add_multiple_affiliations(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
@@ -740,9 +744,25 @@ class TestTeiToJatsXslt:
                 ).attrib.get('rid') == AFFILIATION_2['key']
             )
 
-            affs = jats.xpath('front/article-meta/aff')
+            affs = jats.xpath('front/article-meta/contrib-group/aff')
             assert affs[0].attrib.get('id') == AFFILIATION_1['key']
             assert affs[1].attrib.get('id') == AFFILIATION_2['key']
+
+        def test_should_place_affiliations_in_the_contrib_group_after_the_contributors(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(authors=[
+                    _author(affiliation=_author_affiliation(**AFFILIATION_1)),
+                    _author(affiliation=_author_affiliation(**AFFILIATION_2))
+                ])
+            ))
+
+            contrib_group = _get_item(jats, 'front/article-meta/contrib-group')
+            assert [child.tag for child in contrib_group] == [
+                'contrib', 'contrib', 'aff', 'aff'
+            ]
+            assert jats.xpath('front/article-meta/aff') == []
 
         def test_should_add_a_shared_affiliation_once_with_an_xref_from_each_author(
             self, tei_to_jats_xslt_fn
@@ -761,7 +781,7 @@ class TestTeiToJatsXslt:
                 for person in persons
             ] == [AFFILIATION_1['key'], AFFILIATION_1['key']]
 
-            affs = jats.xpath('front/article-meta/aff')
+            affs = jats.xpath('front/article-meta/contrib-group/aff')
             assert [aff.attrib.get('id') for aff in affs] == [AFFILIATION_1['key']]
 
         def test_should_add_an_xref_for_each_affiliation_of_an_author(
@@ -777,7 +797,7 @@ class TestTeiToJatsXslt:
                 for xref in person.xpath('./xref[@ref-type="aff"]')
             ] == [AFFILIATION_1['key'], AFFILIATION_2['key']]
 
-            affs = jats.xpath('front/article-meta/aff')
+            affs = jats.xpath('front/article-meta/contrib-group/aff')
             assert [aff.attrib.get('id') for aff in affs] == [
                 AFFILIATION_1['key'], AFFILIATION_2['key']
             ]
@@ -791,7 +811,7 @@ class TestTeiToJatsXslt:
                 )))
             ])))
 
-            aff = _get_item(jats, 'front/article-meta/aff')
+            aff = _get_item(jats, 'front/article-meta/contrib-group/aff')
             assert _get_text(aff, 'label') == '1'
             assert get_text_content(aff) == (
                 '1 Department of Science, Data Lab, Institute 1, New London, Country 1'
@@ -816,7 +836,7 @@ class TestTeiToJatsXslt:
                 ))
             ])))
 
-            aff = _get_item(jats, 'front/article-meta/aff')
+            aff = _get_item(jats, 'front/article-meta/contrib-group/aff')
             assert [child.tag for child in aff] == ['city', 'institution']
             assert get_text_content(aff) == 'New London: Institute 1'
 
@@ -830,7 +850,7 @@ class TestTeiToJatsXslt:
                 ))
             ])))
 
-            aff = _get_item(jats, 'front/article-meta/aff')
+            aff = _get_item(jats, 'front/article-meta/contrib-group/aff')
             assert [(child.tag, child.text) for child in aff] == [
                 ('institution', 'New London Hospital'),
                 ('city', 'New London')
@@ -846,7 +866,7 @@ class TestTeiToJatsXslt:
                 ))
             ])))
 
-            aff = _get_item(jats, 'front/article-meta/aff')
+            aff = _get_item(jats, 'front/article-meta/contrib-group/aff')
             assert [child.tag for child in aff] == ['country']
             assert get_text_content(aff) == 'Institute 1, Country 1'
 
@@ -859,7 +879,7 @@ class TestTeiToJatsXslt:
                 ))
             ])))
 
-            aff = _get_item(jats, 'front/article-meta/aff')
+            aff = _get_item(jats, 'front/article-meta/contrib-group/aff')
             assert get_text_content(aff) == 'Institute 1, Country 1'
 
         def test_should_give_the_author_xref_the_printed_label(self, tei_to_jats_xslt_fn):
@@ -881,7 +901,7 @@ class TestTeiToJatsXslt:
 
             person = _get_item(jats, 'front/article-meta/contrib-group/contrib')
             assert _get_text(person, './xref[@ref-type="aff"]') == ''
-            assert jats.xpath('front/article-meta/aff/label') == []
+            assert jats.xpath('front/article-meta/contrib-group/aff/label') == []
 
         def test_should_carry_the_affiliation_the_parser_produced(
             self, tei_to_jats_xslt_fn
@@ -904,7 +924,7 @@ class TestTeiToJatsXslt:
 
             person = _get_item(jats, 'front/article-meta/contrib-group/contrib')
             assert _get_text(person, './xref[@ref-type="aff"]') == '1'
-            aff = _get_item(jats, 'front/article-meta/aff')
+            aff = _get_item(jats, 'front/article-meta/contrib-group/aff')
             assert ' '.join(get_text_content(aff).split()) == (
                 '1 Department of Science , Institute 1 , Country 1'
             )
@@ -928,6 +948,40 @@ class TestTeiToJatsXslt:
             ))
             assert _get_text(jats, 'body/sec/title') == VALUE_1
             assert _get_text(jats, 'body/sec/p') == VALUE_2
+
+        def test_should_add_the_printed_section_number_as_label(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(body=TEI_E.body(TEI_E.div(
+                    TEI_E.head(VALUE_1, n='2.1'),
+                    TEI_E.p(VALUE_2)
+                )))
+            ))
+            sec = _get_item(jats, 'body/sec')
+            assert [child.tag for child in sec] == ['label', 'title', 'p']
+            assert _get_text(sec, 'label') == '2.1'
+            assert _get_text(sec, 'title') == VALUE_1
+
+        def test_should_not_add_a_label_where_no_number_was_printed(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(body=TEI_E.body(TEI_E.div(TEI_E.head(VALUE_1))))
+            ))
+            assert jats.xpath('body/sec/label') == []
+
+        def test_should_carry_the_section_number_the_parser_produced(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            semantic_document = SemanticDocument()
+            section = semantic_document.body_section.add_new_section()
+            section.add_content(SemanticHeading([
+                SemanticLabel(layout_block=LayoutBlock.for_text('3.')),
+                SemanticNote(layout_block=LayoutBlock.for_text(VALUE_1))
+            ]))
+            tei_document = get_tei_for_semantic_document(semantic_document)
+            jats = etree.fromstring(tei_to_jats_xslt_fn(tei_document.root))
+            assert _get_text(jats, 'body/sec/label') == '3.'
+            assert _get_text(jats, 'body/sec/title') == VALUE_1
 
         def test_should_add_italics_formatting_to_head_and_p_divs(
             self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
@@ -1449,6 +1503,47 @@ class TestTeiToJatsXslt:
             assert _get_text(
                 jats, 'back/ref-list/ref/element-citation/pub-id[@pub-id-type="doi"]'
             ) == '10.1234/doi1'
+
+        def test_should_add_the_printed_reference_number_as_label(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(references=[_reference(**extend_dict(REFERENCE_1, label='12'))])
+            ))
+            ref = _get_item(jats, 'back/ref-list/ref')
+            assert [child.tag for child in ref] == ['label', 'element-citation']
+            assert _get_text(ref, 'label') == '12'
+
+        def test_should_not_add_a_label_where_no_reference_number_was_printed(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(references=[_reference(**REFERENCE_1)])
+            ))
+            assert jats.xpath('back/ref-list/ref/label') == []
+
+        def test_should_carry_the_reference_number_the_parser_produced(
+            self, tei_to_jats_xslt_fn
+        ):
+            semantic_reference = SemanticReference(content_id='b0')
+            semantic_reference.add_content(
+                SemanticLabel(layout_block=LayoutBlock.for_text('[4]'))
+            )
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[
+                get_tei_reference_element(
+                    semantic_reference, context=DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
+                )
+            ])))
+            assert _get_text(jats, 'back/ref-list/ref/label') == '[4]'
+
+        def test_should_write_the_authors_first(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(references=[_reference(**extend_dict(
+                    REFERENCE_1, article_authors=[AUTHOR_1]
+                ))])
+            ))
+            element_citation = _get_item(jats, 'back/ref-list/ref/element-citation')
+            assert element_citation[0].tag == 'person-group'
 
         def test_should_fallback_to_collection_title_if_article_title_does_not_exist(
                 self, tei_to_jats_xslt_fn):

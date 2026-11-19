@@ -146,9 +146,22 @@ function appendBlocks(parent, blocks, level, options) {
   });
 }
 
+function appendSectionTitle(parent, section, tagName) {
+  if (!section.heading) {
+    appendValue(parent, section.title, tagName);
+    return;
+  }
+  const title = appendElement(parent, tagName, '');
+  appendValue(title, section.heading, 'span', 'jats-label');
+  if (section.title) {
+    appendText(title, ' ');
+    appendValue(title, section.title);
+  }
+}
+
 function appendSection(parent, section, level, options) {
   const element = appendElement(parent, 'section', 'jats-section', section);
-  appendValue(element, section.title, 'h' + Math.min(level, 6));
+  appendSectionTitle(element, section, 'h' + Math.min(level, 6));
   appendBlocks(element, section.blocks, level + 1, options);
 }
 
@@ -334,6 +347,10 @@ function appendJoined(parent, parts, separator) {
 
 function appendReference(parent, reference) {
   const item = appendElement(parent, 'li', '', reference);
+  if (reference.heading) {
+    appendValue(item, reference.heading, 'span', 'jats-label');
+    appendText(item, ' ');
+  }
   const groups = [];
   if (reference.authors.length) {
     groups.push((target) => appendReferenceAuthors(target, reference.authors));
@@ -357,7 +374,10 @@ function appendReferences(parent, references) {
     return;
   }
   appendElement(parent, 'h2', '').textContent = 'References';
-  const list = appendElement(parent, 'ol', 'jats-references');
+  const isLabelled = references.every((reference) => reference.heading);
+  const list = appendElement(
+    parent, 'ol', isLabelled ? 'jats-references jats-printed-labels' : 'jats-references'
+  );
   references.forEach((reference) => appendReference(list, reference));
 }
 

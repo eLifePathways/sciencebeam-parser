@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import json
 import re
 import subprocess
@@ -210,12 +211,12 @@ class TestAffiliations:
     def test_should_read_the_parts_from_the_smallest_outwards(self):
         view_model = get_article_view_model(get_article_xml(
             front=(
-                '<aff id="aff1">'
+                '<contrib-group><aff id="aff1">'
                 '<institution content-type="orgname">A University</institution>'
                 '<institution content-type="orgdiv1">A Department</institution>'
                 '<institution content-type="orgdiv2">A Laboratory</institution>'
                 '<city>A City</city><country>A Country</country>'
-                '</aff>'
+                '</aff></contrib-group>'
             )
         ))
         assert without_paths(view_model['affiliations']) == [{
@@ -234,7 +235,11 @@ class TestAffiliations:
 
     def test_should_leave_out_the_parts_the_document_does_not_carry(self):
         view_model = get_article_view_model(get_article_xml(
-            front='<aff id="aff1"><country>A Country</country></aff>'
+            front=(
+                '<contrib-group>'
+                '<aff id="aff1"><country>A Country</country></aff>'
+                '</contrib-group>'
+            )
         ))
         assert without_paths(view_model['affiliations'][0]['parts']) == [
             {'label': 'country', 'text': 'A Country'}
@@ -243,9 +248,9 @@ class TestAffiliations:
     def test_should_read_the_printed_label_and_text_in_printed_order(self):
         view_model = get_article_view_model(get_article_xml(
             front=(
-                '<aff id="aff1"><label>a</label> '
+                '<contrib-group><aff id="aff1"><label>a</label> '
                 '<institution content-type="orgname">A University</institution>'
-                ' (<city>A City</city>)</aff>'
+                ' (<city>A City</city>)</aff></contrib-group>'
             )
         ))
         affiliation = without_paths(view_model['affiliations'][0])
@@ -256,6 +261,21 @@ class TestAffiliations:
             {'text': ' ('},
             {'label': 'city', 'text': 'A City'},
             {'text': ')'}
+        ]
+
+    def test_should_read_the_affiliations_inside_the_contributor_group(self):
+        view_model = get_article_view_model(get_article_xml(
+            front=(
+                '<contrib-group><contrib><name><surname>Smith</surname></name>'
+                '<xref ref-type="aff" rid="aff1">1</xref></contrib>'
+                '<aff id="aff1"><label>1</label> A University</aff></contrib-group>'
+            )
+        ))
+        assert [
+            affiliation['id'] for affiliation in view_model['affiliations']
+        ] == ['aff1']
+        assert [author['nameParts'][0]['text'] for author in view_model['authors']] == [
+            'Smith'
         ]
 
 
@@ -303,6 +323,14 @@ class TestSections:
         assert [block['type'] for block in section['blocks']] == [
             'paragraph', 'figure', 'paragraph'
         ]
+
+    def test_should_read_the_printed_section_number(self):
+        view_model = get_article_view_model(get_article_xml(
+            body='<sec><label>2.</label><title>Methods</title></sec>'
+        ))
+        assert without_paths(view_model['sections'][0]['heading']) == {
+            'label': 'label', 'text': '2.'
+        }
 
     def test_should_keep_a_nested_section_inside_its_parent(self):
         view_model = get_article_view_model(get_article_xml(
@@ -411,6 +439,7 @@ class TestReferences:
         assert without_paths(view_model['references']) == [{
             'label': 'ref',
             'id': 'b0',
+            'heading': None,
             'authors': [
                 [
                     {'label': 'given-names', 'text': 'J'},
@@ -431,6 +460,17 @@ class TestReferences:
             'doi': {'label': 'pub-id', 'text': '10.1000/xyz'}
         }]
 
+    def test_should_read_the_printed_reference_number(self):
+        view_model = get_article_view_model(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><label>1</label>'
+                '<element-citation/></ref></ref-list>'
+            )
+        ))
+        assert without_paths(view_model['references'][0]['heading']) == {
+            'label': 'label', 'text': '1'
+        }
+
     def test_should_read_a_citation_that_states_almost_nothing(self):
         view_model = get_article_view_model(get_article_xml(
             back='<ref-list><ref id="b0"><element-citation/></ref></ref-list>'
@@ -446,9 +486,9 @@ FULL_ARTICLE_XML = get_article_xml(
         '<title-group><article-title>The title</article-title></title-group>'
         '<contrib-group><contrib><name><surname>Smith</surname>'
         '<given-names>J</given-names></name><xref ref-type="aff" rid="aff1"/>'
-        '</contrib></contrib-group>'
+        '</contrib>'
         '<aff id="aff1"><institution content-type="orgname">A University'
-        '</institution><country>A Country</country></aff>'
+        '</institution><country>A Country</country></aff></contrib-group>'
         '<abstract><p>An abstract.</p></abstract>'
     ),
     body=(
@@ -584,6 +624,74 @@ class TestRenderedArticle:
         text_only = get_text_without_labels(html)
         assert 'References' in text_only
         assert text_only.endswith('A Journal')
+
+    def test_should_read_a_document_that_prints_no_numbers(self):
+        html = get_rendered_article(get_article_xml(
+            front=(
+                '<contrib-group><contrib><name><surname>Smith</surname></name>'
+                '<xref ref-type="aff" rid="aff1"/></contrib>'
+                '<aff id="aff1">A University</aff></contrib-group>'
+            ),
+            body='<sec><title>Methods</title><p>Text.</p></sec>',
+            back=(
+                '<ref-list><ref id="b0"><element-citation>'
+                '<source>A Journal</source></element-citation></ref></ref-list>'
+            )
+        ))
+        text_only = get_text_without_labels(html)
+        assert 'Smith 1' in text_only
+        assert 'MethodsText.' in text_only
+        assert 'jats-label' not in html
+        assert 'jats-printed-labels' not in html
+
+    def test_should_show_the_printed_section_number_before_its_title(self):
+        html = get_rendered_article(get_article_xml(
+            body='<sec><label>2.</label><title>Methods</title><p>Text.</p></sec>'
+        ))
+        assert '2. Methods' in get_text_without_labels(html)
+
+    def test_should_name_the_section_number_and_title_side_by_side(self):
+        html = get_rendered_article(get_article_xml(
+            body='<sec><label>2.</label><title>Methods</title><p>Text.</p></sec>'
+        ))
+        heading_match = re.search(r'<h2>.*?</h2>', html)
+        assert heading_match
+        heading = heading_match.group(0)
+        assert re.findall(r'data-jats="([^"]+)"', heading) == ['label', 'title']
+        assert '</span>2.</span> <span data-jats="title"' in heading
+
+    def test_should_show_the_printed_reference_numbers_in_place_of_the_list_numbers(
+        self
+    ):
+        html = get_rendered_article(get_article_xml(
+            back=(
+                '<ref-list>'
+                '<ref id="b0"><label>[1]</label><element-citation>'
+                '<source>A Journal</source></element-citation></ref>'
+                '<ref id="b1"><label>[2]</label><element-citation>'
+                '<source>Another Journal</source></element-citation></ref>'
+                '</ref-list>'
+            )
+        ))
+        text_only = get_text_without_labels(html)
+        assert '[1] A Journal' in text_only
+        assert '[2] Another Journal' in text_only
+        assert 'jats-references jats-printed-labels' in html
+
+    def test_should_keep_the_reference_list_numbers_where_not_every_number_was_printed(
+        self
+    ):
+        html = get_rendered_article(get_article_xml(
+            back=(
+                '<ref-list>'
+                '<ref id="b0"><label>[1]</label><element-citation>'
+                '<source>A Journal</source></element-citation></ref>'
+                '<ref id="b1"><element-citation>'
+                '<source>Another Journal</source></element-citation></ref>'
+                '</ref-list>'
+            )
+        ))
+        assert 'jats-printed-labels' not in html
 
 
 FIGURE_ARTICLE_XML = get_article_xml(
@@ -722,9 +830,9 @@ AFFILIATED_ARTICLE_XML = get_article_xml(
         '<xref ref-type="aff" rid="aff1"/><xref ref-type="aff" rid="aff2"/></contrib>'
         '<contrib><name><surname>Jones</surname><given-names>A</given-names></name>'
         '<xref ref-type="aff" rid="aff2"/></contrib>'
-        '</contrib-group>'
         '<aff id="aff1"><institution content-type="orgname">A University</institution></aff>'
         '<aff id="aff2"><institution content-type="orgname">An Institute</institution></aff>'
+        '</contrib-group>'
     )
 )
 
@@ -752,10 +860,10 @@ class TestAffiliationReferences:
             front=(
                 '<contrib-group><contrib><name><surname>Smith</surname>'
                 '<given-names>J</given-names></name>'
-                '<xref ref-type="aff" rid="aff1">a</xref></contrib></contrib-group>'
+                '<xref ref-type="aff" rid="aff1">a</xref></contrib>'
                 '<aff id="aff1"><label>a</label> '
                 '<institution content-type="orgname">A University</institution>'
-                ' (<city>A City</city>)</aff>'
+                ' (<city>A City</city>)</aff></contrib-group>'
             )
         ))
         text_only = get_text_without_labels(html)
@@ -769,9 +877,9 @@ class TestAffiliationReferences:
             front=(
                 '<contrib-group><contrib><name><surname>Smith</surname></name>'
                 '<xref ref-type="aff" rid="aff1">a</xref>'
-                '<xref ref-type="aff" rid="aff2"/></contrib></contrib-group>'
+                '<xref ref-type="aff" rid="aff2"/></contrib>'
                 '<aff id="aff1"><label>a</label> A University</aff>'
-                '<aff id="aff2">An Institute</aff>'
+                '<aff id="aff2">An Institute</aff></contrib-group>'
             )
         ))
         assert 'jats-printed-labels' not in html
@@ -796,10 +904,12 @@ class TestAffiliationReferences:
     def test_should_keep_an_affiliation_the_document_repeats(self):
         view_model = get_article_view_model(get_article_xml(
             front=(
+                '<contrib-group>'
                 '<aff id="aff1"><institution content-type="orgname">A University'
                 '</institution></aff>'
                 '<aff id="aff2"><institution content-type="orgname">A University'
                 '</institution></aff>'
+                '</contrib-group>'
             )
         ))
         assert [
@@ -929,9 +1039,9 @@ class TestElementPaths:
                 '<given-names>J</given-names></name>'
                 '<xref ref-type="aff" rid="aff1"/></contrib>'
                 '<contrib><name><surname>Jones</surname></name></contrib>'
-                '</contrib-group>'
                 '<aff id="aff1"><institution content-type="orgname">A University'
                 '</institution><city>A City</city></aff>'
+                '</contrib-group>'
                 '<abstract><p>One.</p><p>Two.</p></abstract>'
             ),
             body=(

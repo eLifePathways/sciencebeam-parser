@@ -156,7 +156,8 @@ pre {
   font-size: 13px;
 }
 
-.jats-affiliations.jats-printed-labels {
+.jats-affiliations.jats-printed-labels,
+.jats-references.jats-printed-labels {
   list-style: none;
   padding-left: 0;
 }

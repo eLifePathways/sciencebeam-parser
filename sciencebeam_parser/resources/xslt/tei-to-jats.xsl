@@ -72,9 +72,9 @@
       </title-group>
 
       <xsl:if test="tei:fileDesc/tei:sourceDesc/tei:biblStruct/tei:analytic/tei:author">
-        <contrib-group content-type="author">
+        <contrib-group>
           <xsl:for-each select="tei:fileDesc/tei:sourceDesc/tei:biblStruct/tei:analytic/tei:author">
-            <contrib contrib-type="person">
+            <contrib contrib-type="author">
               <xsl:apply-templates select="tei:persName"/>
 
               <xsl:if test="tei:email">
@@ -94,44 +94,44 @@
               </xsl:for-each>
             </contrib>
           </xsl:for-each>
+
+          <!-- an affiliation attached to several authors is written out under each of
+               them in the TEI; the JATS carries it once, under its key -->
+          <xsl:for-each select="tei:fileDesc/tei:sourceDesc/tei:biblStruct/tei:analytic/tei:author/tei:affiliation[not(@key = preceding::tei:affiliation/@key)]">
+            <aff>
+              <xsl:attribute name='id'>
+                <xsl:value-of select="@key"/>
+              </xsl:attribute>
+              <xsl:variable name="raw" select="tei:note[@type='raw_affiliation']"/>
+              <xsl:variable name="parts" select="tei:orgName | tei:address/*[not(self::tei:postBox)]"/>
+              <xsl:if test="$raw/tei:label">
+                <label><xsl:value-of select="$raw/tei:label"/></label>
+              </xsl:if>
+              <xsl:choose>
+                <xsl:when test="$raw">
+                  <xsl:variable name="raw_text">
+                    <xsl:for-each select="$raw/node()[not(self::tei:label)]">
+                      <xsl:value-of select="."/>
+                    </xsl:for-each>
+                  </xsl:variable>
+                  <xsl:call-template name="aff-mixed-content">
+                    <xsl:with-param name="rest" select="string($raw_text)"/>
+                    <xsl:with-param name="parts" select="$parts"/>
+                  </xsl:call-template>
+                </xsl:when>
+                <xsl:otherwise>
+                  <xsl:for-each select="$parts">
+                    <xsl:if test="position() &gt; 1">
+                      <xsl:text>, </xsl:text>
+                    </xsl:if>
+                    <xsl:apply-templates select="." mode="aff-part"/>
+                  </xsl:for-each>
+                </xsl:otherwise>
+              </xsl:choose>
+            </aff>
+          </xsl:for-each>
         </contrib-group>
       </xsl:if>
-
-      <!-- an affiliation attached to several authors is written out under each of
-           them in the TEI; the JATS carries it once, under its key -->
-      <xsl:for-each select="tei:fileDesc/tei:sourceDesc/tei:biblStruct/tei:analytic/tei:author/tei:affiliation[not(@key = preceding::tei:affiliation/@key)]">
-        <aff>
-          <xsl:attribute name='id'>
-            <xsl:value-of select="@key"/>
-          </xsl:attribute>
-          <xsl:variable name="raw" select="tei:note[@type='raw_affiliation']"/>
-          <xsl:variable name="parts" select="tei:orgName | tei:address/*[not(self::tei:postBox)]"/>
-          <xsl:if test="$raw/tei:label">
-            <label><xsl:value-of select="$raw/tei:label"/></label>
-          </xsl:if>
-          <xsl:choose>
-            <xsl:when test="$raw">
-              <xsl:variable name="raw_text">
-                <xsl:for-each select="$raw/node()[not(self::tei:label)]">
-                  <xsl:value-of select="."/>
-                </xsl:for-each>
-              </xsl:variable>
-              <xsl:call-template name="aff-mixed-content">
-                <xsl:with-param name="rest" select="string($raw_text)"/>
-                <xsl:with-param name="parts" select="$parts"/>
-              </xsl:call-template>
-            </xsl:when>
-            <xsl:otherwise>
-              <xsl:for-each select="$parts">
-                <xsl:if test="position() &gt; 1">
-                  <xsl:text>, </xsl:text>
-                </xsl:if>
-                <xsl:apply-templates select="." mode="aff-part"/>
-              </xsl:for-each>
-            </xsl:otherwise>
-          </xsl:choose>
-        </aff>
-      </xsl:for-each>
 
       <xsl:if test="not(tei:profileDesc/tei:abstract)">
         <abstract/>
@@ -253,6 +253,9 @@
 
   <xsl:template match="tei:div">
     <sec>
+      <xsl:if test="normalize-space(tei:head/@n)">
+        <label><xsl:value-of select="normalize-space(tei:head/@n)"/></label>
+      </xsl:if>
       <xsl:apply-templates select="tei:head"/>
       <xsl:apply-templates select="tei:p"/>
     </sec>
@@ -375,7 +378,23 @@
         <xsl:value-of select="./@xml:id"/>
       </xsl:attribute>
 
+      <xsl:if test="normalize-space(tei:note[@type='label'])">
+        <label><xsl:value-of select="normalize-space(tei:note[@type='label'])"/></label>
+      </xsl:if>
+
       <element-citation publication-type="journal">
+        <xsl:if test="tei:analytic/tei:author/tei:persName">
+          <person-group person-group-type="author">
+            <xsl:apply-templates select="tei:analytic/tei:author/tei:persName"/>
+          </person-group>
+        </xsl:if>
+
+        <xsl:if test="tei:monogr/tei:author/tei:persName">
+          <person-group person-group-type="author">
+            <xsl:apply-templates select="tei:monogr/tei:author/tei:persName"/>
+          </person-group>
+        </xsl:if>
+
         <xsl:choose>
           <xsl:when test="tei:analytic/tei:title[@type='main']">
             <article-title>
@@ -442,18 +461,6 @@
           <pub-id pub-id-type="doi">
             <xsl:value-of select="$doi"/>
           </pub-id>
-        </xsl:if>
-
-        <xsl:if test="tei:analytic/tei:author/tei:persName">
-          <person-group person-group-type="author">
-            <xsl:apply-templates select="tei:analytic/tei:author/tei:persName"/>
-          </person-group>
-        </xsl:if>
-
-        <xsl:if test="tei:monogr/tei:author/tei:persName">
-          <person-group person-group-type="author">
-            <xsl:apply-templates select="tei:monogr/tei:author/tei:persName"/>
-          </person-group>
         </xsl:if>
       </element-citation>
     </ref>
