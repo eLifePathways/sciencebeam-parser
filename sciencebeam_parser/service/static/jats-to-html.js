@@ -31,6 +31,8 @@ const AFFILIATION_PARTS = [
   ['institution', 'orgname'],
   ['addr-line', null],
   ['city', null],
+  ['state', null],
+  ['postal-code', null],
   ['country', null]
 ];
 
@@ -166,22 +168,54 @@ function getAuthors(articleMeta) {
   }));
 }
 
+function getAffiliationPart(child) {
+  return {
+    label: getAttribute(child, 'content-type') || child.name,
+    path: child.path,
+    text: getTextContent(child).trim()
+  };
+}
+
+function getAffiliationParts(aff) {
+  return AFFILIATION_PARTS.flatMap(([name, contentType]) => getChildElements(aff, name)
+    .filter(
+      (child) => !contentType
+        || getAttribute(child, 'content-type') === contentType
+    )
+    .map(getAffiliationPart)
+    .filter((part) => part.text));
+}
+
+function isPrintedText(aff) {
+  return (aff.children || []).some(
+    (child) => typeof child === 'string' && /[^\s,]/.test(child)
+  );
+}
+
+/* The affiliation as the page printed it, where the document carries that. */
+function getAffiliationContent(aff) {
+  if (!isPrintedText(aff)) {
+    return null;
+  }
+  const content = [];
+  (aff.children || []).forEach((child) => {
+    if (typeof child === 'string') {
+      content.push({ text: child });
+    } else if (child.name !== 'label') {
+      content.push(getAffiliationPart(child));
+    }
+  });
+  return content;
+}
+
 function getAffiliations(articleMeta) {
   return getChildElements(articleMeta, 'aff').map((aff) => ({
     label: aff.name,
     path: aff.path,
     id: getAttribute(aff, 'id'),
-    parts: AFFILIATION_PARTS.flatMap(([name, contentType]) => getChildElements(aff, name)
-      .filter(
-        (child) => !contentType
-          || getAttribute(child, 'content-type') === contentType
-      )
-      .map((child) => ({
-        label: contentType || name,
-        path: child.path,
-        text: getTextContent(child).trim()
-      }))
-      .filter((part) => part.text))
+    heading: getValue(aff, 'label'),
+    parts: getAffiliationParts(aff),
+    content: getAffiliationContent(aff)
   }));
 }
 

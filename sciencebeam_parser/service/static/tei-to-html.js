@@ -145,11 +145,18 @@ function getAffiliationParts(affiliation) {
   ));
 }
 
+function getAffiliationLabel(affiliation) {
+  const raw = getChildElements(affiliation, 'note')
+    .find((note) => getAttribute(note, 'type') === 'raw_affiliation');
+  return raw ? getValue(raw, 'label') : null;
+}
+
 function getAffiliation(node) {
   return {
     label: node.name,
     path: node.path,
     id: getAttribute(node, 'key'),
+    heading: getAffiliationLabel(node),
     parts: getAffiliationParts(node)
   };
 }

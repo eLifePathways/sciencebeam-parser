@@ -13,9 +13,23 @@ from lxml.builder import ElementMaker
 from sciencebeam_parser.utils.xml import get_text_content
 from sciencebeam_parser.document.layout_document import LayoutBlock
 from sciencebeam_parser.document.semantic_document import (
+    SemanticAffiliationAddress,
+    SemanticCountry,
+    SemanticDepartment,
     SemanticDocument,
+    SemanticExternalIdentifier,
+    SemanticExternalIdentifierTypes,
+    SemanticInstitution,
+    SemanticMarker,
+    SemanticNote,
+    SemanticReference,
     SemanticSectionTypes
 )
+from sciencebeam_parser.document.tei.author import (
+    get_tei_affiliation_for_semantic_affiliation_address_element
+)
+from sciencebeam_parser.document.tei.factories import DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
+from sciencebeam_parser.document.tei.references import get_tei_reference_element
 from sciencebeam_parser.document.tei.attribution import DocumentAttribution
 from sciencebeam_parser.document.tei_document import get_tei_for_semantic_document
 from sciencebeam_parser.transformers.xslt import XsltTransformerWrapper
@@ -226,6 +240,15 @@ def _author_affiliation(**kwargs):
     affiliation = TEI_E.affiliation()
     if 'key' in props:
         affiliation.attrib['key'] = props['key']
+    if 'raw' in props:
+        label, text = props['raw']
+        note = TEI_E.note(type='raw_affiliation')
+        if label:
+            note.append(TEI_E.label(label))
+            note[-1].tail = text
+        else:
+            note.text = text
+        affiliation.append(note)
     if 'department' in props:
         affiliation.append(TEI_E.orgName(props['department'], type='department'))
     if 'laboratory' in props:
@@ -283,7 +306,7 @@ def _reference(**kwargs):  # pylint: disable=too-many-branches
     if 'page' in props:
         imprint.append(TEI_E.biblScope(props['page'], unit='page'))
     if 'doi' in props:
-        monogr.append(TEI_E.idno(props['doi'], type='doi'))
+        analytic.append(TEI_E.idno(props['doi'], type='DOI'))
     if 'article_authors' in props:
         for author in props['article_authors']:
             analytic.append(_author(
@@ -757,6 +780,136 @@ class TestTeiToJatsXslt:
             affs = jats.xpath('front/article-meta/aff')
             assert [aff.attrib.get('id') for aff in affs] == [
                 AFFILIATION_1['key'], AFFILIATION_2['key']
+            ]
+
+        def test_should_keep_the_printed_affiliation_with_its_parts_tagged_in_place(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[
+                _author(affiliation=_author_affiliation(**AFFILIATION_1, raw=(
+                    '1', ' Department of Science, Data Lab, Institute 1, New London, Country 1'
+                )))
+            ])))
+
+            aff = _get_item(jats, 'front/article-meta/aff')
+            assert _get_text(aff, 'label') == '1'
+            assert get_text_content(aff) == (
+                '1 Department of Science, Data Lab, Institute 1, New London, Country 1'
+            )
+            assert [
+                (child.tag, child.attrib.get('content-type'), child.text)
+                for child in aff
+            ] == [
+                ('label', None, '1'),
+                ('institution', 'orgdiv1', 'Department of Science'),
+                ('institution', 'orgdiv2', 'Data Lab'),
+                ('institution', 'orgname', 'Institute 1'),
+                ('city', None, 'New London'),
+                ('country', None, 'Country 1')
+            ]
+
+        def test_should_tag_parts_in_printed_order(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[
+                _author(affiliation=_author_affiliation(
+                    key='aff1', institution='Institute 1', city='New London',
+                    raw=(None, 'New London: Institute 1')
+                ))
+            ])))
+
+            aff = _get_item(jats, 'front/article-meta/aff')
+            assert [child.tag for child in aff] == ['city', 'institution']
+            assert get_text_content(aff) == 'New London: Institute 1'
+
+        def test_should_tag_the_longer_part_where_two_start_together(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[
+                _author(affiliation=_author_affiliation(
+                    key='aff1', institution='New London Hospital', city='New London',
+                    raw=(None, 'New London Hospital, New London')
+                ))
+            ])))
+
+            aff = _get_item(jats, 'front/article-meta/aff')
+            assert [(child.tag, child.text) for child in aff] == [
+                ('institution', 'New London Hospital'),
+                ('city', 'New London')
+            ]
+
+        def test_should_keep_printed_text_that_no_part_accounts_for(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[
+                _author(affiliation=_author_affiliation(
+                    key='aff1', institution='Institute One', country='Country 1',
+                    raw=(None, 'Institute 1, Country 1')
+                ))
+            ])))
+
+            aff = _get_item(jats, 'front/article-meta/aff')
+            assert [child.tag for child in aff] == ['country']
+            assert get_text_content(aff) == 'Institute 1, Country 1'
+
+        def test_should_separate_parts_where_the_printed_text_is_missing(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[
+                _author(affiliation=_author_affiliation(
+                    key='aff1', institution='Institute 1', country='Country 1'
+                ))
+            ])))
+
+            aff = _get_item(jats, 'front/article-meta/aff')
+            assert get_text_content(aff) == 'Institute 1, Country 1'
+
+        def test_should_give_the_author_xref_the_printed_label(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[
+                _author(affiliation=_author_affiliation(
+                    **AFFILIATION_1, raw=('a', ' Institute 1')
+                ))
+            ])))
+
+            person = _get_item(jats, 'front/article-meta/contrib-group/contrib')
+            assert _get_text(person, './xref[@ref-type="aff"]') == 'a'
+
+        def test_should_invent_no_label(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[
+                _author(affiliation=_author_affiliation(
+                    **AFFILIATION_1, raw=(None, 'Institute 1')
+                ))
+            ])))
+
+            person = _get_item(jats, 'front/article-meta/contrib-group/contrib')
+            assert _get_text(person, './xref[@ref-type="aff"]') == ''
+            assert jats.xpath('front/article-meta/aff/label') == []
+
+        def test_should_carry_the_affiliation_the_parser_produced(
+            self, tei_to_jats_xslt_fn
+        ):
+            semantic_affiliation = SemanticAffiliationAddress(content_id='aff0')
+            for semantic_content in [
+                SemanticMarker(layout_block=LayoutBlock.for_text('1')),
+                SemanticDepartment(layout_block=LayoutBlock.for_text('Department of Science')),
+                SemanticNote(layout_block=LayoutBlock.for_text(',')),
+                SemanticInstitution(layout_block=LayoutBlock.for_text('Institute 1')),
+                SemanticNote(layout_block=LayoutBlock.for_text(',')),
+                SemanticCountry(layout_block=LayoutBlock.for_text('Country 1'))
+            ]:
+                semantic_affiliation.add_content(semantic_content)
+            author = _author()
+            author.append(get_tei_affiliation_for_semantic_affiliation_address_element(
+                semantic_affiliation, context=DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
+            ))
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(authors=[author])))
+
+            person = _get_item(jats, 'front/article-meta/contrib-group/contrib')
+            assert _get_text(person, './xref[@ref-type="aff"]') == '1'
+            aff = _get_item(jats, 'front/article-meta/aff')
+            assert ' '.join(get_text_content(aff).split()) == (
+                '1 Department of Science , Institute 1 , Country 1'
+            )
+            assert [child.tag for child in aff] == [
+                'label', 'institution', 'institution', 'country'
             ]
 
     class TestBody:
@@ -1279,6 +1432,23 @@ class TestTeiToJatsXslt:
             assert _get_text(
                 element_citation, 'pub-id[@pub-id-type="doi"]'
             ) == REFERENCE_1['doi']
+
+        def test_should_carry_the_doi_the_parser_produced(self, tei_to_jats_xslt_fn):
+            semantic_reference = SemanticReference(content_id='b0')
+            semantic_reference.add_content(SemanticExternalIdentifier(
+                layout_block=LayoutBlock.for_text('10.1234/doi1'),
+                value='10.1234/doi1',
+                external_identifier_type=SemanticExternalIdentifierTypes.DOI
+            ))
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[
+                get_tei_reference_element(
+                    semantic_reference, context=DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
+                )
+            ])))
+
+            assert _get_text(
+                jats, 'back/ref-list/ref/element-citation/pub-id[@pub-id-type="doi"]'
+            ) == '10.1234/doi1'
 
         def test_should_fallback_to_collection_title_if_article_title_does_not_exist(
                 self, tei_to_jats_xslt_fn):
