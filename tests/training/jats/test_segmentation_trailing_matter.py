@@ -13,6 +13,7 @@ from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
     SEG_ANNEX,
     SEG_AVAILABILITY,
+    SEG_BODY,
     SEG_CONFLICT,
     SEG_CONTRIBUTION,
     SEG_FOOTNOTE,
@@ -427,3 +428,61 @@ class TestTheEditorCreditedUnderTheReferences:
     def test_a_publisher_an_entry_names_is_not(self):
         doc, annotated, printed = self._make_doc('Editora: A Publishing House')
         assert derive_labels(doc, annotated)[id(printed)] != SEG_FRONT
+
+
+class TestTheHeadingAnAppendedSectionOpensWith:
+    """A table of abbreviations the deposit carries without its title."""
+
+    def _make_doc(self, heading_text='Abbreviations, acronyms & symbols',
+                  heading_is_a_body_title: bool = False):
+        body = [
+            make_line('Herons', 'wade', f'on{index}', 'the', 'northern',
+                      'marshes', 'through', 'the', 'shortening', 'days', 'of',
+                      'the', 'season', y=100.0 + 20 * index)
+            for index in range(8)
+        ]
+        heading = make_line(*heading_text.split(' '), y=300.0, bold=True)
+        entries = [
+            make_line(name, 'is', 'what', 'the', 'table', 'expands', 'it', 'to',
+                      'for', 'the', 'reader', 'of', 'the', 'count',
+                      y=320.0 + 20 * index)
+            for index, name in enumerate(('BTO', 'WWT', 'RSPB'))
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=body),
+                    LayoutBlock(lines=[heading]),
+                    LayoutBlock(lines=entries),
+                ],
+                meta=make_page_meta(1),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+            for line in body
+        }
+        fields.update({
+            lines.index(line): JatsFieldNames.BACK_SECTION_PARAGRAPH
+            for line in entries
+        })
+        if heading_is_a_body_title:
+            fields[lines.index(heading)] = JatsFieldNames.BODY_SECTION_TITLE
+        return doc, annotate(doc, fields), heading
+
+    def test_the_heading_above_it_belongs_to_it(self):
+        doc, annotated, heading = self._make_doc()
+        assert derive_labels(doc, annotated)[id(heading)] == SEG_ANNEX
+
+    def test_a_line_that_fills_the_measure_is_not_a_heading(self):
+        doc, annotated, heading = self._make_doc(
+            'The counts below are set out as a table of the abbreviations used'
+        )
+        assert derive_labels(doc, annotated)[id(heading)] != SEG_ANNEX
+
+    def test_a_heading_the_deposit_carries_as_the_body_s_is_left_alone(self):
+        doc, annotated, heading = self._make_doc(
+            'Conclusion', heading_is_a_body_title=True
+        )
+        assert derive_labels(doc, annotated)[id(heading)] == SEG_BODY

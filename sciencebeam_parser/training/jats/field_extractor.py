@@ -707,6 +707,111 @@ def _iter_printed_date_forms(day: int, month: int, year: int) -> Iterator[str]:
         yield f'{day} de {name} de {year}'
 
 
+# What the deposit declares above the body, for the body that prints it again.
+_FRONT_MATTER_REPEAT_PATHS = (
+    './/article-title', './/subtitle', './/trans-title',
+    './/aff', './/abstract//p', './/trans-abstract//p',
+)
+
+# Shorter than this and a line the body shares with the front matter is a
+# phrase both happen to use.
+_FRONT_MATTER_REPEAT_MIN_LENGTH = 20
+
+# How much of the body paragraph a declared value has to be for the paragraph
+# to be that value printed again, rather than a section that quotes it.
+_FRONT_MATTER_REPEAT_MIN_RATIO = 0.6
+
+# How nearly the two have to say the same thing for one to be the title.
+_TITLE_REPEAT_MIN_RATIO = 0.9
+
+# Where the repeated title stands, and how far the title page can run: a body
+# that prints the title again further in is citing it, not opening with it.
+_REPEATED_TITLE_MAX_INDEX = 5
+_TITLE_PAGE_MAX_PARAGRAPHS = 20
+
+
+def _for_comparison(text: str) -> str:
+    return ' '.join(text.lower().split())
+
+
+def _is_one_inside_the_other(one: str, other: str, min_ratio: float) -> bool:
+    if one not in other and other not in one:
+        return False
+    shorter, longer = sorted((len(one), len(other)))
+    return shorter >= longer * min_ratio
+
+
+def _get_front_matter_texts(root: etree._Element) -> List[str]:
+    """What the deposit declares above the body, ready to be compared against."""
+    front = root.find('front')
+    if front is None:
+        return []
+    texts = []
+    for path in _FRONT_MATTER_REPEAT_PATHS:
+        for el in front.xpath(path):
+            text = _for_comparison(element_text(el))
+            if len(text) >= _FRONT_MATTER_REPEAT_MIN_LENGTH:
+                texts.append(text)
+    return texts
+
+
+def _repeats_the_front_matter(text: str, front_texts: Sequence[str]) -> bool:
+    """Whether the paragraph prints again something the deposit declares."""
+    normalised = _for_comparison(text)
+    if len(normalised) < _FRONT_MATTER_REPEAT_MIN_LENGTH:
+        return False
+    return any(
+        # A paragraph inside a declared value is part of it: the deposit
+        # carries the abstract whole and the body sets it out in paragraphs.
+        normalised in front_text
+        or _is_one_inside_the_other(
+            normalised, front_text, _FRONT_MATTER_REPEAT_MIN_RATIO
+        )
+        for front_text in front_texts
+    )
+
+
+def _get_title_page_repeated_in_the_body(
+    root: etree._Element, paragraphs: Sequence[etree._Element]
+) -> Set[etree._Element]:
+    """The paragraphs at the head of the body that set the title page again.
+
+    An older deposit carries the title page inside `<body>` as well as in
+    `<front>`: the kind of article, the title, the byline, the affiliation and
+    the abstract are each a paragraph of the body.  The page prints them once,
+    so the body wins those lines from the front matter and the article is left
+    without a front matter at all.
+
+    The title standing at the head of the body is what says a deposit does
+    this.  From there, everything down to the last paragraph that repeats a
+    declared value belongs to the title page, including the lines between them
+    that the two places word differently -- a byline that reverses the names,
+    an affiliation that drops its country.
+    """
+    titles = root.xpath('front//article-title')
+    title = _for_comparison(element_text(titles[0])) if titles else ''
+    if len(title) < _FRONT_MATTER_REPEAT_MIN_LENGTH:
+        return set()
+    opens = next(
+        (
+            index
+            for index, el in enumerate(paragraphs[:_REPEATED_TITLE_MAX_INDEX])
+            if _is_one_inside_the_other(
+                _for_comparison(element_text(el)), title, _TITLE_REPEAT_MIN_RATIO
+            )
+        ),
+        None,
+    )
+    if opens is None:
+        return set()
+    front_texts = _get_front_matter_texts(root)
+    closes = opens
+    for index, el in enumerate(paragraphs[:_TITLE_PAGE_MAX_PARAGRAPHS]):
+        if index > closes and _repeats_the_front_matter(element_text(el), front_texts):
+            closes = index
+    return set(paragraphs[:closes + 1])
+
+
 class JatsFieldExtractor:
     """Extract (text, field_name, sub_field_name) triples from a JATS <article> root."""
 
@@ -1184,9 +1289,13 @@ class JatsFieldExtractor:
                         el, JatsFieldNames.BODY_SECTION_TITLE
                     ))))
 
-        for el in body.xpath('.//p[not(ancestor::fig) and not(ancestor::table-wrap)]'):
+        paragraphs = body.xpath(
+            './/p[not(ancestor::fig) and not(ancestor::table-wrap)]'
+        )
+        title_page = _get_title_page_repeated_in_the_body(root, paragraphs)
+        for el in paragraphs:
             text = element_text(el)
-            if text:
+            if text and el not in title_page:
                 entries.append((position[el], JatsFieldValue(
                     text=text,
                     field_name=labelled.paragraph_field(

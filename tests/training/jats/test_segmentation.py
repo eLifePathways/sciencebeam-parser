@@ -200,7 +200,11 @@ class TestCorrespondingAuthorNote:
         labels = [derive_labels(doc, annotated)[id(line)] for line in lines]
         assert labels == [SEG_FRONT, SEG_FRONT]
 
-    def test_a_numbered_note_under_it_is_still_a_footnote(self):
+    def test_a_numbered_note_under_it_joins_the_front_matter(self):
+        # What a journal prints at the foot of its title page is about the
+        # article rather than about the page, and GROBID's corpus sets a
+        # footnote above the body on 31 of its 931 segmentation documents,
+        # where what it sets there is the journal's own running foot.
         doc, lines = self._title_page(
             '*Autor correspondente',
             'Enderecos de e-mail: a@example.com',
@@ -208,7 +212,7 @@ class TestCorrespondingAuthorNote:
         )
         annotated = JatsAnnotatedLayoutDocument(layout_document=doc)
         labels = [derive_labels(doc, annotated)[id(line)] for line in lines]
-        assert labels == [SEG_FRONT, SEG_FRONT, SEG_FOOTNOTE]
+        assert labels == [SEG_FRONT, SEG_FRONT, SEG_FRONT]
 
     def test_an_ordinary_footnote_is_untouched(self):
         doc, lines = self._title_page('1 A note about the method used here.')

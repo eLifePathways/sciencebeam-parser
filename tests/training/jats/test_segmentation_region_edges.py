@@ -839,3 +839,130 @@ class TestTheImprintBlockAtTheFootOfThePage:
         doc, annotated, imprint = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in imprint] == [SEG_FRONT] * 5
+
+
+class TestTheColumnTheReferenceListRunsInto:
+    """A list set across the foot of one column and on into the next."""
+
+    def _make_doc(self, follows_the_list: bool = False,
+                  carried_on_is_an_appendix: bool = False):
+        body = [
+            make_line('Herons', 'wade', f'on{index}', 'the', 'northern', 'marsh',
+                      y=100.0 + 12 * index, x=50.0)
+            for index in range(6)
+        ]
+        entries = [
+            make_line('Nilsson', 'A:', f'A{index}', 'count.', '2020;', '1:', '2-3.',
+                      y=600.0 + 12 * index, x=50.0)
+            for index in range(4)
+        ]
+        carried_on = [
+            make_line('Olsen', 'B:', f'Another{index}', 'count.', '2021;', '2:',
+                      '4-5.', y=100.0 + 12 * index, x=320.0)
+            for index in range(6)
+        ]
+        if carried_on_is_an_appendix:
+            carried_on[0] = make_line('Appendix', y=100.0, x=320.0, bold=True)
+        # The second column is handed over before the column the list opens in,
+        # unless it is what the page sets after the list.
+        blocks = [LayoutBlock(lines=carried_on), LayoutBlock(lines=body),
+                  LayoutBlock(lines=entries)]
+        if follows_the_list:
+            blocks = blocks[1:] + blocks[:1]
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=blocks, meta=make_page_meta(1)),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+                  for line in body}
+        for line in entries:
+            fields[lines.index(line)] = JatsFieldNames.REFERENCE
+        return doc, annotate(doc, fields), carried_on, body
+
+    def test_the_column_handed_over_early_is_more_of_the_list(self):
+        doc, annotated, carried_on, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in carried_on] == [SEG_REFERENCES] * 6
+
+    def test_the_column_the_list_is_printed_under_is_left_alone(self):
+        doc, annotated, _, body = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in body] == [SEG_BODY] * 6
+
+    def test_a_column_handed_over_after_the_list_keeps_what_follows_it(self):
+        doc, annotated, carried_on, _ = self._make_doc(follows_the_list=True)
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in carried_on] != [SEG_REFERENCES] * 6
+
+    def test_the_last_cell_of_a_table_row_is_not_a_column_of_the_list(self):
+        rows = [
+            [make_line('Herons', f'counted{index}', y=100.0 + 14 * index, x=50.0),
+             make_line('12', f'(8.{index}%)', y=100.0 + 14 * index, x=250.0),
+             make_line('9', f'(6.{index}%)', y=100.0 + 14 * index, x=370.0),
+             make_line(f'0.{index}5', y=100.0 + 14 * index, x=480.0)]
+            for index in range(6)
+        ]
+        entries = [
+            make_line('Nilsson', 'A:', f'A{index}', 'count.', '2020;', '1:',
+                      '2-3.', y=600.0 + 12 * index, x=320.0)
+            for index in range(4)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=row) for row in rows]
+                + [LayoutBlock(lines=entries)],
+                meta=make_page_meta(1),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {lines.index(line): JatsFieldNames.REFERENCE for line in entries}
+        labels = derive_labels(doc, annotate(doc, fields))
+        totals = [row[3] for row in rows]
+        assert [labels[id(line)] for line in totals] == [SEG_BODY] * 6
+
+    def test_an_appendix_set_beside_the_list_keeps_its_own_region(self):
+        doc, annotated, carried_on, _ = self._make_doc(
+            carried_on_is_an_appendix=True
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in carried_on] == [SEG_ANNEX] * 6
+
+
+class TestTheSummaryPrintedAtTheEndOfTheArticle:
+    """A summary in another language, set in the column the article ends in."""
+
+    def _make_doc(self, set_apart: bool = False):
+        def argument(index, y):
+            return make_line('Herons', 'wade', f'on{index}', 'the', 'northern',
+                             'marsh', y=y)
+
+        above = [argument(index, 100.0 + 20 * index) for index in range(6)]
+        apart = 120.0 if set_apart else 0.0
+        summary = [
+            make_line('The', 'count', f'was{index}', 'repeated', 'over', 'four',
+                      'seasons', y=220.0 + apart + 20 * index)
+            for index in range(4)
+        ]
+        below = [argument(index + 6, 300.0 + apart + 20 * index) for index in range(6)]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=above + summary + below)],
+                meta=make_page_meta(1),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+                  for line in above + below}
+        for line in summary:
+            fields[lines.index(line)] = JatsFieldNames.ABSTRACT
+        return doc, annotate(doc, fields), summary
+
+    def test_the_run_the_argument_carries_on_through_is_body(self):
+        doc, annotated, summary = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in summary] == [SEG_BODY] * 4
+
+    def test_a_run_the_page_sets_apart_is_front_matter(self):
+        doc, annotated, summary = self._make_doc(set_apart=True)
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in summary] == [SEG_FRONT] * 4

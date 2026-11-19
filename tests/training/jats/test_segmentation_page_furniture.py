@@ -487,3 +487,147 @@ class TestAShortLineAtTheFootOfAPage:
     def test_it_is_not_claimed_by_the_same_fragment_elsewhere(self):
         doc, annotated, in_the_margin = self._make_doc()
         assert derive_labels(doc, annotated)[id(in_the_margin)] == SEG_FOOTNOTE
+
+
+class TestAPageNumberInTheOuterCorner:
+    """A journal sets the number in the outer corner, which swaps side."""
+
+    def _make_doc(self):
+        numbers = [
+            make_line(
+                str(page_number), y=100.0, page_number=page_number,
+                x=20.0 if page_number % 2 == 0 else 560.0,
+            )
+            for page_number in (1, 2, 3, 4, 5)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[numbers[page_number - 1]]),
+                    LayoutBlock(lines=[make_line(
+                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
+                        y=400.0, page_number=page_number,
+                    )]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (1, 2, 3, 4, 5)
+        ])
+        return doc, annotate(doc, {}), numbers
+
+    def test_the_number_is_the_page_number_on_a_verso_as_on_a_recto(self):
+        doc, annotated, numbers = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 5
+
+
+class TestARunningFootSetAboveTheFooterZone:
+    """A foot the page prints a little above where the footer zone begins."""
+
+    def _make_doc(self):
+        feet = [
+            make_line('Journal', 'of', 'Marsh', 'Birds,', 'v.', '12,', '2024',
+                      y=900.0, page_number=page_number)
+            for page_number in (1, 2, 3, 4)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[feet[page_number - 1]]),
+                    LayoutBlock(lines=[make_line(
+                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
+                        y=400.0, page_number=page_number,
+                    )]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (1, 2, 3, 4)
+        ])
+        return doc, annotate(doc, {}), feet
+
+    def test_the_foot_the_page_repeats_is_read_from_where_it_is_printed(self):
+        doc, annotated, feet = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(foot)] for foot in feet] == [SEG_FOOTNOTE] * 4
+
+
+class TestTheMarginOfTheTitlePage:
+    """What a journal prints at the foot of the page it opens the article on."""
+
+    def _make_doc(self, front_matter_on_the_later_page: bool = False):
+        title = make_line('Herons', 'of', 'the', 'northern', 'marshes', y=100.0)
+        author = make_line('A', 'Nilsson', y=130.0)
+        note = make_line(
+            '1', 'This', 'survey', 'was', 'carried', 'out', 'on', 'the',
+            'Varanger', 'marshes.', y=950.0,
+        )
+        feet = [
+            make_line('Journal', 'of', 'Marsh', 'Birds,', 'v.', '12,', '2024',
+                      y=965.0, page_number=page_number)
+            for page_number in (1, 2, 3)
+        ]
+        later_note = make_line(
+            '2', 'The', 'count', 'was', 'repeated', 'in', 'the', 'autumn.',
+            y=950.0, page_number=3,
+        )
+        amendments = make_line(
+            'This', 'version', 'answers', 'the', 'reviewers.', y=150.0,
+            page_number=3,
+        )
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[title, author]),
+                    LayoutBlock(lines=[note]),
+                    LayoutBlock(lines=[feet[0]]),
+                ],
+                meta=make_page_meta(1),
+            ),
+        ] + [
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[make_line(
+                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
+                        y=400.0, page_number=page_number,
+                    )]),
+                ] + ([LayoutBlock(lines=[amendments])]
+                     if page_number == 3 and front_matter_on_the_later_page
+                     else []) + (
+                    [LayoutBlock(lines=[later_note])] if page_number == 3 else []
+                ) + [
+                    LayoutBlock(lines=[feet[page_number - 1]]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (2, 3)
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(title): JatsFieldNames.TITLE,
+            lines.index(author): JatsFieldNames.AUTHOR,
+            lines.index(note): JatsFieldNames.BACK_FOOTNOTE,
+            lines.index(later_note): JatsFieldNames.BACK_FOOTNOTE,
+        }
+        if front_matter_on_the_later_page:
+            fields[lines.index(amendments)] = JatsFieldNames.ABSTRACT
+        annotated = annotate(doc, fields)
+        return doc, annotated, note, feet, later_note
+
+    def test_the_note_printed_once_beside_the_front_matter_is_front_matter(self):
+        doc, annotated, note, _, _ = self._make_doc()
+        assert derive_labels(doc, annotated)[id(note)] == SEG_FRONT
+
+    def test_the_foot_printed_on_every_page_is_still_a_running_foot(self):
+        doc, annotated, _, feet, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(foot)] for foot in feet] == [SEG_FOOTNOTE] * 3
+
+    def test_a_note_on_a_page_the_front_matter_does_not_reach_is_a_footnote(self):
+        doc, annotated, _, _, later_note = self._make_doc()
+        assert derive_labels(doc, annotated)[id(later_note)] == SEG_FOOTNOTE
+
+    def test_front_matter_printed_further_in_does_not_make_a_title_page(self):
+        doc, annotated, _, _, later_note = self._make_doc(
+            front_matter_on_the_later_page=True
+        )
+        assert derive_labels(doc, annotated)[id(later_note)] == SEG_FOOTNOTE

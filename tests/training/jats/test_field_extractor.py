@@ -1337,3 +1337,54 @@ class TestASubjectClassification:
         fields = self._fields_of('1 The classification used here: see Table 3.')
         assert fields[JatsFieldNames.BACK_FOOTNOTE]
         assert not fields[JatsFieldNames.SUBJECT_CLASSIFICATION]
+
+
+class TestTitlePageRepeatedInTheBody:
+    """A deposit that carries the title page inside `<body>` as well."""
+
+    @staticmethod
+    def _article(opening_paragraphs, title='Herons of the northern marshes'):
+        body = ''.join(f'<p>{text}</p>' for text in opening_paragraphs)
+        return (
+            '<article>'
+            '<front><article-meta><title-group>'
+            f'<article-title>{title}</article-title>'
+            '</title-group>'
+            '<aff>Varanger Institute of Marsh Ecology</aff>'
+            '<abstract><p>The heron count on the Varanger marshes was repeated '
+            'over four seasons. Numbers fell in every season but the last.</p>'
+            '</abstract>'
+            '</article-meta></front>'
+            f'<body>{body}<p>The marsh was walked on four mornings of each '
+            'season, and every bird standing in open water was counted.</p>'
+            '</body></article>'
+        )
+
+    def test_the_repeated_title_page_is_not_body(self):
+        values = _field_values_for(self._article([
+            'Original Article',
+            'Herons of the northern marshes',
+            'A Nilsson, B Olsen',
+            'Varanger Institute of Marsh Ecology, Varanger.',
+            'The heron count on the Varanger marshes was repeated over four '
+            'seasons.',
+        ]))
+        paragraphs = [
+            v.text for v in values
+            if v.field_name == JatsFieldNames.BODY_SECTION_PARAGRAPH
+        ]
+        assert paragraphs == [
+            'The marsh was walked on four mornings of each season, and every '
+            'bird standing in open water was counted.'
+        ]
+
+    def test_a_body_that_opens_with_its_own_words_keeps_them(self):
+        values = _field_values_for(self._article([
+            'Numbers fell in every season but the last, which is what this '
+            'paper sets out to explain.',
+        ]))
+        paragraphs = [
+            v.text for v in values
+            if v.field_name == JatsFieldNames.BODY_SECTION_PARAGRAPH
+        ]
+        assert len(paragraphs) == 2
