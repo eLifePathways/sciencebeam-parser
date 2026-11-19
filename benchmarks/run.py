@@ -11,8 +11,10 @@ import httpx
 import yaml
 
 from benchmarks.fetch import fetch_gold, get_corpus_variants
+from benchmarks.jats_conversion import checkout_converter, convert_predictions_to_jats
 from benchmarks.predict import DEFAULT_RETRY_PASSES, run_predict
 from benchmarks.predict_llm import RESTRICTED_CORPORA_FOR_LLM, run_predict_llm
+from benchmarks.prediction_files import PREDICTION_FORMATS
 from benchmarks.predictions_store import LocalPredictionsStore, RepoPredictionsStore
 from benchmarks.report import run_compare
 from benchmarks.report_movement import default_baseline
@@ -411,8 +413,11 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     chart_prefix: str = "",
     chart_base_url: str = "",
     report_location: str = "",
+    prediction_format: Optional[str] = None,
 ) -> None:
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals,too-many-branches
+    if push_current and prediction_format == "jats":
+        raise ValueError("`main` is stored as TEI; push it without a JATS prediction format")
     corpus_variants = get_corpus_variants(config, split, include)
     expected_ids = {
         (r["corpus"], r["record_id"])
@@ -498,9 +503,12 @@ def run_benchmark(  # pylint: disable=too-many-arguments,too-many-positional-arg
     run_predict(config, mode, split, data_dir, primary_run_dir,
                 parser_url, parser_image, parser_profile, concurrency,
                 include=include, retry_passes=retry_passes)
+    if prediction_format == "jats":
+        convert_predictions_to_jats(primary_run_dir / "predictions", checkout_converter())
     run_score(config, primary_run_dir, data_dir, out_path=None, split_override=split,
               report_location=report_location,
-              include=include, record_ids=expected_ids)
+              include=include, record_ids=expected_ids,
+              prediction_format=prediction_format)
 
     if push_current:
         store.push("sciencebeam-parser", "main", profile, split,
@@ -654,6 +662,10 @@ def main(argv=None) -> None:
         "--push-current", action="store_true",
         help="Push current predictions to store after generation (use on main branch)",
     )
+    parser.add_argument(
+        "--prediction-format", choices=PREDICTION_FORMATS, default="tei",
+        help="Score the run under test on its TEI, or on the JATS converted from it",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -714,6 +726,7 @@ def main(argv=None) -> None:
         chart_prefix=args.chart_prefix,
         chart_base_url=args.chart_base_url,
         report_location=args.report_location,
+        prediction_format=args.prediction_format,
     )
 
 

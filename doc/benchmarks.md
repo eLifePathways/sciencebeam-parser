@@ -540,6 +540,41 @@ again for documents that still have no prediction; `1` never retries. CI uses
 In CI, label a PR `benchmark:smoke` (or `:small`, `:medium`, `:large`, `:full`,
 `:plos`). Each run posts a new comment and collapses the previous ones.
 
+## Scoring the JATS
+
+The parser is scored on its TEI by default. Adding `benchmark:jats` to a PR
+that has a size label scores the PR's column on its JATS instead. The label
+does not start a run by itself. The job converts the TEI it predicted with the
+PR's stylesheet and config, through the same `TeiToJatsConverter` the service
+uses for a JATS response, and writes a `.jats.xml` beside each `.tei.xml`. A
+TEI that does not convert gets no JATS, so it is left out of the column like a
+document the parser failed on. Locally, `--prediction-format jats` does the
+same.
+
+Every other column keeps its own format: `main` and GROBID are TEI, and the
+trained JATS annotation model is JATS. Where the columns differ, the legend
+says which format each was scored on. Where the run's column and the column
+its movement is measured against differ, the report says so once above the
+tables, since the delta then includes what the conversion loses.
+
+`main` is stored as TEI only, so `--push-current` refuses
+`--prediction-format jats`.
+
+To score one run's TEI predictions against the JATS converted from them:
+
+```sh
+uv run python -m benchmarks.jats_conversion \
+  --run benchmarks/runs/<run>/train --out benchmarks/runs/<run>-formats \
+  --split train --commit <commit that produced the TEI>
+```
+
+It writes `tei/` and `jats/` runs under `--out` and a `comparison.md` with
+JATS measured against TEI. `--commit` reads the stylesheet and config from that
+commit, and this checkout's code reads them. Converting older TEI with a newer
+stylesheet can score a field at zero because the TEI's shape changed, so pass
+the commit that produced the TEI. Without `--commit`, the checkout's own
+stylesheet and config are used.
+
 ## The trained JATS annotation model
 
 Not the [LLM engine](llm_engine.md), which swaps an API model into the parser.

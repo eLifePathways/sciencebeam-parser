@@ -3,7 +3,7 @@ naming them."""
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 
 _MAX_INITIALS = 3
@@ -71,8 +71,16 @@ def keyed(labeled_summaries: List[Tuple[str, dict]]) -> List[Tuple[str, dict]]:
     return [(key, summary) for key, (_, summary) in zip(keys, labeled_summaries)]
 
 
+FORMAT_NAMES = {"tei": "TEI", "jats": "JATS"}
+
+
+def format_name(prediction_format: Optional[str]) -> str:
+    return FORMAT_NAMES.get(prediction_format or "", prediction_format or "")
+
+
 def render_legend(
-    labels: Sequence[str], primary: int, described: Sequence[Tuple[str, str]] = ()
+    labels: Sequence[str], primary: int, described: Sequence[Tuple[str, str]] = (),
+    formats: Sequence[Optional[str]] = (),
 ) -> List[str]:
     """Which variant each column key stands for, and what it is where a comparison
     file says so. Not collapsed: the tables cannot be read without it.
@@ -84,18 +92,24 @@ def render_legend(
         return []
     what_by_label = dict(described)
     with_what = any(what_by_label.get(label) for label in labels)
+    with_format = len({f for f in formats if f}) > 1
     reference = primary % len(labels)
     rows = []
     for index, (key, label) in enumerate(zip(column_keys(labels), labels)):
         cells = [key, label]
         if with_what:
             cells.append(what_by_label.get(label, ""))
+        if with_format:
+            cells.append(format_name(formats[index]))
         cells.append(
             "reference (Δ X = this − X)"
             if index == reference and len(labels) > 1 else ""
         )
         rows.append("| " + " | ".join(cells) + " |")
-    header = ["", "Variant"] + (["What it is"] if with_what else []) + [""]
+    header = (
+        ["", "Variant"] + (["What it is"] if with_what else [])
+        + (["Scored on"] if with_format else []) + [""]
+    )
     return [
         "| " + " | ".join(header) + " |",
         "|" + "|".join(["---"] * len(header)) + "|",

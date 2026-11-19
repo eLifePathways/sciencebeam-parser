@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
-from typing import FrozenSet, List, Optional, Sequence, Set
+from typing import List, Optional, Sequence, Set
 from zipfile import ZipFile
 
 from lxml import etree
@@ -40,18 +40,17 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticGraphic
 )
 from sciencebeam_parser.document.tei.attribution import DocumentAttribution
-from sciencebeam_parser.document.tei.common import TEI_NS
 from sciencebeam_parser.document.tei_document import get_tei_for_semantic_document
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
-from sciencebeam_parser.resources.xslt import TEI_TO_JATS_XSLT_FILE
 from sciencebeam_parser.transformers.doc_converter_wrapper import DocConverterWrapper
-from sciencebeam_parser.transformers.xslt import XsltTransformerWrapper
+from sciencebeam_parser.transformers.tei_to_jats import TeiToJatsConverter
 from sciencebeam_parser.utils.download import download_with_zip_path_support
 from sciencebeam_parser.utils.lazy import LazyLoaded
 from sciencebeam_parser.utils.media_types import (
     MediaTypes
 )
 from sciencebeam_parser.utils.telemetry import span
+from sciencebeam_parser.utils.xml_serialization import serialize_xml_to_file
 from sciencebeam_parser.utils.text import normalize_text
 from sciencebeam_parser.utils.tokenizer import get_tokenized_tokens
 from sciencebeam_parser.processors.fulltext.api import (
@@ -165,85 +164,6 @@ def create_asset_zip_for_semantic_document(
     LOGGER.debug('response_content (bytes): %d', Path(zip_filename).stat().st_size)
 
 
-def get_xml_tree(xml_root: etree.ElementBase) -> etree._ElementTree:
-    if isinstance(xml_root, etree._ElementTree):  # pylint: disable=protected-access
-        # Note: _XSLTResultTree is extending _ElementTree
-        return xml_root
-    return etree.ElementTree(xml_root)
-
-
-_TEI_BLOCK_ELEMENT_NAMES = frozenset({
-    'TEI', 'teiHeader', 'fileDesc', 'titleStmt', 'publicationStmt',
-    'profileDesc', 'sourceDesc', 'abstract',
-    'text', 'body', 'back', 'front',
-    'div', 'listBibl', 'biblStruct', 'analytic', 'monogr',
-    'figure', 'table', 'row',
-})
-
-_JATS_BLOCK_ELEMENT_NAMES = frozenset({
-    'article', 'front', 'body', 'back',
-    'journal-meta', 'article-meta', 'contrib-group', 'custom-meta-group',
-    'abstract', 'sec', 'fig', 'caption', 'table-wrap', 'table', 'tbody',
-    'ref-list', 'app-group', 'app', 'ack',
-})
-
-_BLOCK_ELEMENT_NAMES_BY_NAMESPACE = {
-    TEI_NS: _TEI_BLOCK_ELEMENT_NAMES,
-    None: _JATS_BLOCK_ELEMENT_NAMES,
-}
-
-_XML_SPACE_ATTRIB_NAME = '{http://www.w3.org/XML/1998/namespace}space'
-
-
-def _indent_element(
-    element: etree.ElementBase,
-    block_element_names: FrozenSet[str],
-    space: str,
-    level: int
-) -> None:
-    # A preserve subtree is returned from rather than descended into, which is
-    # why the inherited value needs no tracking.
-    if element.get(_XML_SPACE_ATTRIB_NAME) == 'preserve':
-        return
-    if etree.QName(element).localname not in block_element_names:
-        return
-    children = [child for child in element if isinstance(child.tag, str)]
-    if not children:
-        return
-    indent = '\n' + level * space
-    child_indent = indent + space
-    if not (element.text and element.text.strip()):
-        element.text = child_indent
-    for i, child in enumerate(children):
-        _indent_element(child, block_element_names, space, level + 1)
-        if not (child.tail and child.tail.strip()):
-            child.tail = child_indent if i < len(children) - 1 else indent
-
-
-def _indent_xml(root: etree.ElementBase, space: str = '  ') -> None:
-    block_element_names = _BLOCK_ELEMENT_NAMES_BY_NAMESPACE.get(
-        etree.QName(root).namespace
-    )
-    if block_element_names is None:
-        return
-    _indent_element(root, block_element_names, space=space, level=0)
-
-
-def serialize_xml_to_file(
-    xml_root: etree.ElementBase,
-    filename: str,
-    pretty_print: bool = False
-):
-    xml_tree = get_xml_tree(xml_root)
-    if pretty_print:
-        _indent_xml(xml_tree.getroot())
-    xml_tree.write(
-        filename,
-        encoding='utf-8',
-        pretty_print=False
-    )
-
-
 @dataclass
 class DocumentRequestParameters:
     first_page: Optional[int] = None
@@ -339,11 +259,7 @@ class ScienceBeamBaseParser:
             config,
             download_manager=self.download_manager
         )
-        tei_to_jats_config = config.get('xslt', {}).get('tei_to_jats', {})
-        self.tei_to_jats_xslt_transformer = XsltTransformerWrapper.from_template_file(
-            TEI_TO_JATS_XSLT_FILE,
-            xslt_template_parameters=tei_to_jats_config.get('parameters', {})
-        )
+        self.tei_to_jats_converter = TeiToJatsConverter.from_config(config)
         self.doc_to_pdf_enabled = config.get('doc_to_pdf', {}).get('enabled', True)
         self.doc_to_pdf_convert_parameters = config.get('doc_to_pdf', {}).get('convert', {})
         self.doc_converter_wrapper = DocConverterWrapper(
@@ -451,16 +367,11 @@ class ScienceBeamParserSessionParsedSemanticDocument(_ScienceBeamParserSessionDe
         super().__init__(session=session)
         self.semantic_document = semantic_document
 
-    @property
-    def tei_to_jats_xslt_transformer(self) -> XsltTransformerWrapper:
-        return self.parser.tei_to_jats_xslt_transformer
-
-    def _get_tei_to_jats_xml_root(self, xml_root: etree.ElementBase) -> etree.ElementBase:
+    def _write_jats_for_tei(self, tei_root: etree.ElementBase, filename: str) -> None:
         start = monotonic()
-        xml_root = self.tei_to_jats_xslt_transformer(xml_root)
+        self.parser.tei_to_jats_converter.write_jats(tei_root, filename)
         end = monotonic()
         LOGGER.info('tei to jats, took=%.3fs', end - start)
-        return xml_root
 
     def _serialize_xml_to_file(
         self,
@@ -494,13 +405,14 @@ class ScienceBeamParserSessionParsedSemanticDocument(_ScienceBeamParserSessionDe
             self.semantic_document,
             attribution=self.session.document_attribution
         )
-        xml_root = tei_document.root
-        relative_xml_filename = TEI_XML_ZIP_ENTRY_NAME
         if response_media_type in JATS_MEDIA_TYPES:
-            xml_root = self._get_tei_to_jats_xml_root(xml_root)
             relative_xml_filename = JATS_XML_ZIP_ENTRY_NAME
-        local_xml_filename = os.path.join(self.temp_dir, relative_xml_filename)
-        self._serialize_xml_to_file(xml_root, local_xml_filename)
+            local_xml_filename = os.path.join(self.temp_dir, relative_xml_filename)
+            self._write_jats_for_tei(tei_document.root, local_xml_filename)
+        else:
+            relative_xml_filename = TEI_XML_ZIP_ENTRY_NAME
+            local_xml_filename = os.path.join(self.temp_dir, relative_xml_filename)
+            self._serialize_xml_to_file(tei_document.root, local_xml_filename)
         LOGGER.debug('local_xml_filename: %r', local_xml_filename)
         if response_media_type in ASSET_ZIP_MEDIA_TYPES:
             zip_filename = os.path.join(self.temp_dir, 'results.zip')

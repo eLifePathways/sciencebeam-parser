@@ -85,6 +85,9 @@ jobs:
            inputs.include_plos) && '--include-corpus plos-manuscripts' || ''
         }}
       BENCHMARK_RUN: benchmarks/runs/${{ github.sha }}/validation
+      # Only the run under test: every other column stays on what the store holds.
+      BENCHMARK_PREDICTION_FORMAT: >-
+        ${{ contains(github.event.pull_request.labels.*.name, 'benchmark:jats') && 'jats' || 'tei' }}
 
     steps:
       - uses: actions/checkout@v5
@@ -264,6 +267,7 @@ jobs:
             --parser-url http://localhost:8080 \
             --parser-image "${{ steps.image_tag.outputs.value }}" \
             --profile "${{ env.BENCHMARK_PROFILE }}" \
+            --prediction-format ${{ env.BENCHMARK_PREDICTION_FORMAT }} \
             --retry-passes ${{ env.BENCHMARK_RETRY_PASSES }} \
             --report-location "in the [job summary](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
             ${{ env.BENCHMARK_CORPORA }} \

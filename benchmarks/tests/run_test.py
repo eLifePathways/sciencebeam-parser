@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from benchmarks.comparison_config import baseline_index, parse_comparison
@@ -351,6 +352,46 @@ class TestRunBenchmark:
         sbp_push = [c for c in push_calls if c[0] == "sciencebeam-parser"]
         assert len(sbp_push) == 1
         assert sbp_push[0][2] == "grobid_crf"  # profile
+
+    @patch("benchmarks.run._docker_stop")
+    @patch("benchmarks.run._docker_start")
+    @patch("benchmarks.run._wait_healthy")
+    @patch("benchmarks.run.run_compare")
+    @patch("benchmarks.run.convert_predictions_to_jats")
+    @patch("benchmarks.run.run_score")
+    @patch("benchmarks.run.run_predict")
+    @patch("benchmarks.run.fetch_gold")
+    def test_scores_the_run_under_test_on_its_converted_jats(
+        self, mock_gold, _mock_predict, mock_score, mock_convert, _mock_compare,
+        _mock_wait, _mock_start, _mock_stop, tmp_path: Path,
+    ):
+        mock_gold.return_value = self.gold_records()
+        runs_dir = tmp_path / "runs"
+        store = LocalPredictionsStore(runs_dir)
+
+        def fake_score(_cfg, run_dir, *_a, **_kw):
+            self.make_summary(run_dir)
+
+        mock_score.side_effect = fake_score
+
+        run_benchmark(_CONFIG, "smoke", "train", tmp_path / "data", runs_dir, store,
+                      parser_url="http://localhost:8080", parser_image="my-image:v1",
+                      prediction_format="jats")
+
+        primary_run_dir = runs_dir / "train"
+        assert mock_convert.call_args.args[0] == primary_run_dir / "predictions"
+        formats_by_run_dir = {
+            call.args[1]: call.kwargs.get("prediction_format")
+            for call in mock_score.call_args_list
+        }
+        assert formats_by_run_dir.pop(primary_run_dir) == "jats"
+        assert set(formats_by_run_dir.values()) == {None}
+
+    def test_refuses_to_push_main_scored_on_jats(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="TEI"):
+            run_benchmark(_CONFIG, "smoke", "train", tmp_path / "data", tmp_path / "runs",
+                          LocalPredictionsStore(tmp_path / "runs"),
+                          push_current=True, prediction_format="jats")
 
     @patch("benchmarks.run._docker_stop")
     @patch("benchmarks.run._docker_start")

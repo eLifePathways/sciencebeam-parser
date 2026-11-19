@@ -13,7 +13,7 @@ T_XSLT_Input = Union[etree.ElementBase, etree.ElementTree]
 class XsltTransformerWrapper:
     def __init__(
         self,
-        xslt_template: str,
+        xslt_template: Union[str, bytes],
         xslt_template_parameters: Optional[Mapping[str, Any]] = None
     ):
         self.xslt_template = xslt_template
@@ -25,7 +25,9 @@ class XsltTransformerWrapper:
         etree.fromstring(self.xslt_template)
 
     @staticmethod
-    def from_template_string(xslt_template: str, **kwargs) -> 'XsltTransformerWrapper':
+    def from_template_string(
+        xslt_template: Union[str, bytes], **kwargs
+    ) -> 'XsltTransformerWrapper':
         return XsltTransformerWrapper(xslt_template, **kwargs)
 
     @staticmethod
