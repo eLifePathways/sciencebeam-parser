@@ -4,11 +4,15 @@ from unittest.mock import patch
 from lxml import etree
 
 from benchmarks.jats_conversion import (
+    CONFIG_PATH,
+    STYLESHEET_PATH,
     checkout_converter,
     commit_converter,
     compare_formats,
     convert_predictions_to_jats,
 )
+from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
+from sciencebeam_parser.resources.xslt import TEI_TO_JATS_XSLT_FILE
 
 
 TEI_XML = (
@@ -54,10 +58,22 @@ class TestConvertPredictionsToJats:
 
 
 class TestCommitConverter:
-    def test_should_convert_with_the_stylesheet_of_a_commit(self, tmp_path: Path):
+    def test_should_convert_with_the_stylesheet_and_config_of_a_commit(
+        self, tmp_path: Path
+    ):
+        files_by_path = {STYLESHEET_PATH: TEI_TO_JATS_XSLT_FILE, CONFIG_PATH: DEFAULT_CONFIG_FILE}
+
+        def git_show(_commit: str, path: str) -> bytes:
+            return Path(files_by_path[path]).read_bytes()
+
         jats_path = tmp_path / "doc-1.jats.xml"
-        commit_converter("HEAD").write_jats(etree.fromstring(TEI_XML), str(jats_path))
+        with patch("benchmarks.jats_conversion._git_show", side_effect=git_show) as show:
+            converter = commit_converter("abc1234")
+        converter.write_jats(etree.fromstring(TEI_XML), str(jats_path))
         assert _article_title(jats_path) == "An invented title"
+        assert [call.args for call in show.call_args_list] == [
+            ("abc1234", STYLESHEET_PATH), ("abc1234", CONFIG_PATH),
+        ]
 
 
 class TestCompareFormats:
