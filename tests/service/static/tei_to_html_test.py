@@ -169,6 +169,18 @@ class TestAffiliations:
             ('country', 'A Country')
         ]
 
+    def test_should_read_the_printed_label(self):
+        view_model = get_tei_view_model(get_tei_xml(header=(
+            '<fileDesc><sourceDesc><biblStruct><analytic><author>'
+            '<affiliation key="aff1">'
+            '<note type="raw_affiliation"><label>a</label> A University</note>'
+            '<orgName type="institution">A University</orgName>'
+            '</affiliation></author></analytic></biblStruct></sourceDesc></fileDesc>'
+        )))
+        assert without_paths(view_model['affiliations'][0]['heading']) == {
+            'label': 'label', 'text': 'a'
+        }
+
     def test_should_keep_an_affiliation_each_author_carries(self):
         view_model = get_tei_view_model(get_tei_xml(header=AUTHORS_HEADER))
         assert [

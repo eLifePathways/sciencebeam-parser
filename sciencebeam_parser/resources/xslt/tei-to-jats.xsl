@@ -89,6 +89,7 @@
                   <xsl:attribute name='rid'>
                     <xsl:value-of select="@key"/>
                   </xsl:attribute>
+                  <xsl:value-of select="tei:note[@type='raw_affiliation']/tei:label"/>
                 </xref>
               </xsl:for-each>
             </contrib>
@@ -103,31 +104,32 @@
           <xsl:attribute name='id'>
             <xsl:value-of select="@key"/>
           </xsl:attribute>
-          <xsl:if test="tei:orgName[@type='institution']">
-            <institution content-type="orgname">
-              <xsl:value-of select="tei:orgName[@type='institution']"/>
-            </institution>
+          <xsl:variable name="raw" select="tei:note[@type='raw_affiliation']"/>
+          <xsl:variable name="parts" select="tei:orgName | tei:address/*[not(self::tei:postBox)]"/>
+          <xsl:if test="$raw/tei:label">
+            <label><xsl:value-of select="$raw/tei:label"/></label>
           </xsl:if>
-          <xsl:if test="tei:orgName[@type='department']">
-            <institution content-type="orgdiv1">
-              <xsl:value-of select="tei:orgName[@type='department']"/>
-            </institution>
-          </xsl:if>
-          <xsl:if test="tei:orgName[@type='laboratory']">
-            <institution content-type="orgdiv2">
-              <xsl:value-of select="tei:orgName[@type='laboratory']"/>
-            </institution>
-          </xsl:if>
-          <xsl:if test="tei:address/tei:settlement">
-            <city>
-              <xsl:value-of select="tei:address/tei:settlement"/>
-            </city>
-          </xsl:if>
-          <xsl:if test="tei:address/tei:country">
-            <country>
-              <xsl:value-of select="tei:address/tei:country"/>
-            </country>
-          </xsl:if>
+          <xsl:choose>
+            <xsl:when test="$raw">
+              <xsl:variable name="raw_text">
+                <xsl:for-each select="$raw/node()[not(self::tei:label)]">
+                  <xsl:value-of select="."/>
+                </xsl:for-each>
+              </xsl:variable>
+              <xsl:call-template name="aff-mixed-content">
+                <xsl:with-param name="rest" select="string($raw_text)"/>
+                <xsl:with-param name="parts" select="$parts"/>
+              </xsl:call-template>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:for-each select="$parts">
+                <xsl:if test="position() &gt; 1">
+                  <xsl:text>, </xsl:text>
+                </xsl:if>
+                <xsl:apply-templates select="." mode="aff-part"/>
+              </xsl:for-each>
+            </xsl:otherwise>
+          </xsl:choose>
         </aff>
       </xsl:for-each>
 
@@ -290,6 +292,75 @@
     </xsl:if>
   </xsl:template>
 
+  <!-- the printed affiliation, each part tagged where its text is found; text no part
+       accounts for stays as printed -->
+  <xsl:template name="aff-mixed-content">
+    <xsl:param name="rest"/>
+    <xsl:param name="parts"/>
+    <xsl:param name="placed" select="'|'"/>
+    <xsl:variable name="candidates" select="$parts[
+      normalize-space(.)
+      and contains($rest, string(.))
+      and not(contains($placed, concat('|', generate-id(), '|')))
+    ]"/>
+    <xsl:choose>
+      <xsl:when test="$candidates">
+        <xsl:for-each select="$candidates">
+          <xsl:sort select="string-length(substring-before($rest, string(.)))" data-type="number"/>
+          <xsl:sort select="string-length(.)" data-type="number" order="descending"/>
+          <xsl:if test="position() = 1">
+            <xsl:value-of select="substring-before($rest, string(.))"/>
+            <xsl:apply-templates select="." mode="aff-part"/>
+            <xsl:call-template name="aff-mixed-content">
+              <xsl:with-param name="rest" select="substring-after($rest, string(.))"/>
+              <xsl:with-param name="parts" select="$parts"/>
+              <xsl:with-param name="placed" select="concat($placed, generate-id(), '|')"/>
+            </xsl:call-template>
+          </xsl:if>
+        </xsl:for-each>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="$rest"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="tei:orgName[@type='institution']" mode="aff-part">
+    <institution content-type="orgname"><xsl:value-of select="."/></institution>
+  </xsl:template>
+
+  <xsl:template match="tei:orgName[@type='department']" mode="aff-part">
+    <institution content-type="orgdiv1"><xsl:value-of select="."/></institution>
+  </xsl:template>
+
+  <xsl:template match="tei:orgName[@type='laboratory']" mode="aff-part">
+    <institution content-type="orgdiv2"><xsl:value-of select="."/></institution>
+  </xsl:template>
+
+  <xsl:template match="tei:orgName" mode="aff-part">
+    <institution><xsl:value-of select="."/></institution>
+  </xsl:template>
+
+  <xsl:template match="tei:settlement" mode="aff-part">
+    <city><xsl:value-of select="."/></city>
+  </xsl:template>
+
+  <xsl:template match="tei:region" mode="aff-part">
+    <state><xsl:value-of select="."/></state>
+  </xsl:template>
+
+  <xsl:template match="tei:postCode" mode="aff-part">
+    <postal-code><xsl:value-of select="."/></postal-code>
+  </xsl:template>
+
+  <xsl:template match="tei:addrLine" mode="aff-part">
+    <addr-line><xsl:value-of select="."/></addr-line>
+  </xsl:template>
+
+  <xsl:template match="tei:country" mode="aff-part">
+    <country><xsl:value-of select="."/></country>
+  </xsl:template>
+
   <xsl:template match="tei:listBibl">
     <xsl:if test="tei:biblStruct">
       <ref-list id="ref-list-1">
@@ -366,9 +437,10 @@
           </xsl:when>
         </xsl:choose>
 
-        <xsl:if test="tei:monogr/tei:idno[@type='doi']">
+        <xsl:variable name="doi" select="(tei:analytic | tei:monogr)/tei:idno[@type='DOI']"/>
+        <xsl:if test="$doi">
           <pub-id pub-id-type="doi">
-            <xsl:value-of select="tei:monogr/tei:idno[@type='doi']"/>
+            <xsl:value-of select="$doi"/>
           </pub-id>
         </xsl:if>
 

@@ -152,12 +152,25 @@ function appendSection(parent, section, level, options) {
   appendBlocks(element, section.blocks, level + 1, options);
 }
 
+/* The affiliation as printed, or its parts joined where the format has no
+ * printed text. */
+function getAffiliationContent(affiliation) {
+  return affiliation.content || affiliation.parts.flatMap(
+    (part, index) => (index ? [{ text: ', ' }, part] : [part])
+  );
+}
+
+function getAffiliationText(affiliation) {
+  return getAffiliationContent(affiliation)
+    .map((item) => item.text).join('').replace(/\s+/g, ' ').trim();
+}
+
 function getAffiliationByRid(affiliations) {
   const byRid = {};
   affiliations.forEach((affiliation, index) => {
     byRid[affiliation.id] = {
-      number: index + 1,
-      text: affiliation.parts.map((part) => part.text).join(', ')
+      number: affiliation.heading ? affiliation.heading.text : String(index + 1),
+      text: getAffiliationText(affiliation)
     };
   });
   return byRid;
@@ -181,7 +194,7 @@ function appendAffiliationRef(parent, ref, affiliationByRid) {
   anchor.setAttribute(
     'title', affiliation ? affiliation.text : 'no affiliation with id ' + ref.rid
   );
-  appendText(anchor, affiliation ? String(affiliation.number) : ref.rid);
+  appendText(anchor, affiliation ? affiliation.number : ref.rid);
 }
 
 function appendAuthor(parent, author, affiliationByRid) {
@@ -234,17 +247,25 @@ function appendAuthors(parent, viewModel) {
   if (!viewModel.affiliations.length) {
     return;
   }
-  const affiliations = appendElement(parent, 'ol', 'jats-affiliations');
+  const isLabelled = viewModel.affiliations.every((affiliation) => affiliation.heading);
+  const affiliations = appendElement(
+    parent, 'ol', isLabelled ? 'jats-affiliations jats-printed-labels' : 'jats-affiliations'
+  );
   viewModel.affiliations.forEach((affiliation) => {
     const item = appendElement(affiliations, 'li', '', affiliation);
     if (affiliation.id) {
       item.setAttribute('id', affiliation.id);
     }
-    affiliation.parts.forEach((part, index) => {
-      if (index) {
-        appendText(item, ', ');
+    if (affiliation.heading) {
+      appendValue(item, affiliation.heading, 'span', 'jats-label');
+      appendText(item, ' ');
+    }
+    getAffiliationContent(affiliation).forEach((content, index) => {
+      if (content.path) {
+        appendValue(item, content);
+      } else {
+        appendText(item, index ? content.text : content.text.trimStart());
       }
-      appendValue(item, part);
     });
   });
 }

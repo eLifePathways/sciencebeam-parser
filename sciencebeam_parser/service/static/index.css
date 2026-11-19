@@ -156,6 +156,11 @@ pre {
   font-size: 13px;
 }
 
+.jats-affiliations.jats-printed-labels {
+  list-style: none;
+  padding-left: 0;
+}
+
 .jats-abstract { margin-bottom: 8px; }
 
 .jats-figure, .jats-table {

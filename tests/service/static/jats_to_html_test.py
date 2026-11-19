@@ -221,6 +221,8 @@ class TestAffiliations:
         assert without_paths(view_model['affiliations']) == [{
             'label': 'aff',
             'id': 'aff1',
+            'heading': None,
+            'content': None,
             'parts': [
                 {'label': 'orgdiv2', 'text': 'A Laboratory'},
                 {'label': 'orgdiv1', 'text': 'A Department'},
@@ -236,6 +238,24 @@ class TestAffiliations:
         ))
         assert without_paths(view_model['affiliations'][0]['parts']) == [
             {'label': 'country', 'text': 'A Country'}
+        ]
+
+    def test_should_read_the_printed_label_and_text_in_printed_order(self):
+        view_model = get_article_view_model(get_article_xml(
+            front=(
+                '<aff id="aff1"><label>a</label> '
+                '<institution content-type="orgname">A University</institution>'
+                ' (<city>A City</city>)</aff>'
+            )
+        ))
+        affiliation = without_paths(view_model['affiliations'][0])
+        assert affiliation['heading'] == {'label': 'label', 'text': 'a'}
+        assert affiliation['content'] == [
+            {'text': ' '},
+            {'label': 'orgname', 'text': 'A University'},
+            {'text': ' ('},
+            {'label': 'city', 'text': 'A City'},
+            {'text': ')'}
         ]
 
 
@@ -726,6 +746,36 @@ class TestAffiliationReferences:
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)
         assert 'title="A University"' in html
         assert 'title="An Institute"' in html
+
+    def test_should_read_as_the_label_the_page_printed(self):
+        html = get_rendered_article(get_article_xml(
+            front=(
+                '<contrib-group><contrib><name><surname>Smith</surname>'
+                '<given-names>J</given-names></name>'
+                '<xref ref-type="aff" rid="aff1">a</xref></contrib></contrib-group>'
+                '<aff id="aff1"><label>a</label> '
+                '<institution content-type="orgname">A University</institution>'
+                ' (<city>A City</city>)</aff>'
+            )
+        ))
+        text_only = get_text_without_labels(html)
+        assert 'J Smith a' in text_only
+        assert 'a A University (A City)' in text_only
+        assert 'title="A University (A City)"' in html
+        assert 'jats-printed-labels' in html
+
+    def test_should_keep_the_list_numbers_where_not_every_label_was_printed(self):
+        html = get_rendered_article(get_article_xml(
+            front=(
+                '<contrib-group><contrib><name><surname>Smith</surname></name>'
+                '<xref ref-type="aff" rid="aff1">a</xref>'
+                '<xref ref-type="aff" rid="aff2"/></contrib></contrib-group>'
+                '<aff id="aff1"><label>a</label> A University</aff>'
+                '<aff id="aff2">An Institute</aff>'
+            )
+        ))
+        assert 'jats-printed-labels' not in html
+        assert 'Smith a 2' in get_text_without_labels(html)
 
     def test_should_name_the_element_a_reference_came_from(self):
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)
