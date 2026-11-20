@@ -20,6 +20,7 @@ import {
   getTextContent,
   getValue,
   getLanguage,
+  getLanguageValue,
   getValuesWithLanguage,
   parseXmlNode
 } from './xml-nodes.js';
@@ -315,6 +316,7 @@ export function getArticleViewModel(article) {
         )
       )
     ] : [],
+    language: getLanguageValue(article),
     journal: journalTitle
       ? {
         label: 'journal-title',

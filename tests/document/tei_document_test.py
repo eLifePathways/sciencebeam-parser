@@ -267,6 +267,26 @@ class TestGetTeiForSemanticDocument:  # pylint: disable=too-many-public-methods
             '//tei:body/tei:div/tei:p'
         ) == [TOKEN_2]
 
+    def test_should_declare_the_language_the_body_is_written_in(self):
+        semantic_document = SemanticDocument()
+        section = semantic_document.body_section.add_new_section()
+        section.add_new_paragraph().add_block_content(
+            LayoutBlock.for_text(PORTUGUESE_ABSTRACT_1)
+        )
+        nested_section = section.add_new_section()
+        nested_section.add_new_paragraph().add_block_content(
+            LayoutBlock.for_text(PORTUGUESE_ABSTRACT_1)
+        )
+        tei_document = get_tei_for_semantic_document(semantic_document)
+        assert tei_xpath(tei_document.root, '//tei:text')[0].attrib[XML_LANG] == 'pt'
+
+    def test_should_not_declare_a_body_language_it_cannot_tell(self):
+        semantic_document = SemanticDocument()
+        section = semantic_document.body_section.add_new_section()
+        section.add_new_paragraph().add_block_content(LayoutBlock.for_text(TOKEN_1))
+        tei_document = get_tei_for_semantic_document(semantic_document)
+        assert XML_LANG not in tei_xpath(tei_document.root, '//tei:text')[0].attrib
+
     def test_should_create_back_section(self):
         semantic_document = SemanticDocument()
         section = semantic_document.back_section.add_new_section()

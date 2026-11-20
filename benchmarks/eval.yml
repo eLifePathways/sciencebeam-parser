@@ -184,6 +184,7 @@ fields:
   - title_any_language
   - title_all_languages
   - title_language
+  - language
   - abstract
   - abstract_anywhere
   - abstract_any_language
@@ -255,6 +256,9 @@ scoring:
       actual: abstracts_all
       methods: [levenshtein, edit_sim]
       type: partial_ulist
+    language:
+      methods: [exact, edit_sim]
+      lower: true
     abstract_language:
       methods: [exact]
       type: matched_property

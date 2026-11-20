@@ -116,6 +116,10 @@ class TeiDocument(TeiElementWrapper):  # pylint: disable=too-many-public-methods
             title_elem
         )
 
+    def set_text_language(self, language: str):
+        """Declares the language the document's text is written in."""
+        self.get_or_create_element_at(['text']).attrib[XML_NS_PREFIX + 'lang'] = language
+
     def set_attribution(self, attribution: DocumentAttribution):
         encoding_desc = get_or_create_element_after(
             self.get_or_create_element_at(['teiHeader']),

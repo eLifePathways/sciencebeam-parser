@@ -173,6 +173,30 @@ class TestTitle:
         ]
 
 
+class TestLanguage:
+    def test_should_read_the_language_the_article_declares(self):
+        view_model = get_article_view_model(
+            get_article_xml().replace('<article ', '<article xml:lang="pt" ')
+        )
+        assert without_paths(view_model['language']) == {'label': 'xml:lang', 'text': 'pt'}
+        assert view_model['language']['path'] == '/article/@xml:lang'
+
+    def test_should_read_no_language_where_the_article_declares_none(self):
+        assert get_article_view_model(get_article_xml())['language'] is None
+
+    def test_should_show_the_language_the_article_is_written_in(self):
+        html = get_rendered_article(
+            get_article_xml().replace('<article ', '<article xml:lang="pt" ')
+        )
+        assert '<article lang="pt" class="jats-article">' in html
+        assert 'Written in pt' in get_text_without_labels(html)
+        assert 'data-jats="xml:lang"' in html
+
+    def test_should_show_no_language_where_the_article_declares_none(self):
+        html = get_rendered_article(get_article_xml())
+        assert 'Written in' not in html
+
+
 class TestAuthors:
     def test_should_read_the_name_in_reading_order_naming_each_part(self):
         view_model = get_article_view_model(get_article_xml(

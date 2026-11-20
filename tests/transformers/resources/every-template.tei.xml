@@ -37,7 +37,7 @@
       <abstract xml:lang="en"><div><p>Six bridges were <hi rend="bold">tested</hi>.</p></div></abstract>
     </profileDesc>
   </teiHeader>
-  <text>
+  <text xml:lang="pt">
     <body>
       <div>
         <head n="1.">Introdução</head>

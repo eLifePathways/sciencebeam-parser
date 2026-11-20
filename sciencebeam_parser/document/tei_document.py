@@ -5,6 +5,7 @@ from typing import (
     Optional,
 )
 
+from sciencebeam_parser.utils.language import detect_language
 from sciencebeam_parser.utils.stop_watch import StopWatchRecorder
 from sciencebeam_parser.document.semantic_document import (
     SemanticAbstract,
@@ -14,6 +15,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticFigure,
     SemanticMarker,
     SemanticNote,
+    SemanticParagraph,
     SemanticReferenceList,
     SemanticSection,
     SemanticSectionTypes,
@@ -139,6 +141,14 @@ def get_tei_for_semantic_document(  # noqa pylint: disable=too-many-branches, to
         TeiElementBuilder(tei_document.get_body_element()).extend(
             context.get_tei_child_elements_for_semantic_content(semantic_content)
         )
+    body_language = detect_language(' '.join(
+        paragraph.get_text()
+        for paragraph in semantic_document.body_section.iter_by_types_recursively(
+            (SemanticParagraph,)
+        )
+    ))
+    if body_language:
+        tei_document.set_text_language(body_language)
 
     LOGGER.info('generating tei document: back section')
     stop_watch_recorder.start('back')

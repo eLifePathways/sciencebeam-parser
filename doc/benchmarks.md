@@ -71,6 +71,16 @@ setting its title in capitals where the JATS declares title case is describing i
 own typography, not a different title, and the two rows apart tell a model's
 reading of a title from the capitals its pages are set in.
 
+`language` compares the language the document declares its text is written in: the
+gold's `<article xml:lang>` with `<text xml:lang>` in TEI, or with
+`<article xml:lang>` in JATS, without regard to case. The parser takes it from the body's
+paragraphs. `exact` is the figure to read; `edit_sim` is scored too because the
+gold-present figures are built from it. `scielo_mx` and some of
+`scielo_preprints-jats` declare no language, so the gold-present figures are the
+ones to read; three `scielo_preprints-jats` deposits declare `po` for Portuguese
+and count as misses. Some `scielo_br` documents are the PDF of an article's English
+version, where the gold describes the Portuguese article.
+
 `affiliation_text` compares one raw affiliation string per affiliation. A
 label identifies an affiliation rather than naming it, so neither side carries
 one, and where a gold `<aff>` holds the affiliation in an
