@@ -440,6 +440,7 @@ class TestReferences:
             'label': 'ref',
             'id': 'b0',
             'heading': None,
+            'content': None,
             'authors': [
                 [
                     {'label': 'given-names', 'text': 'J'},
@@ -486,6 +487,33 @@ class TestReferences:
             'text': 'https://example.org/data',
             'href': 'https://example.org/data'
         }
+
+    def test_should_read_a_mixed_citation_as_printed(self):
+        view_model = get_article_view_model(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><mixed-citation>'
+                '<person-group person-group-type="author">'
+                '<string-name><surname>Smith</surname> <given-names>J</given-names>'
+                '</string-name></person-group>. '
+                '<article-title>The cited title</article-title>. doi: '
+                '<pub-id pub-id-type="doi">10.1000/xyz</pub-id>'
+                '</mixed-citation></ref></ref-list>'
+            )
+        ))
+        reference = without_paths(view_model['references'][0])
+        assert reference['content'] == [
+            {'label': 'surname', 'text': 'Smith'},
+            {'text': ' '},
+            {'label': 'given-names', 'text': 'J'},
+            {'text': '. '},
+            {'label': 'article-title', 'text': 'The cited title'},
+            {'text': '. doi: '},
+            {'label': 'pub-id', 'text': '10.1000/xyz'}
+        ]
+        assert reference['authors'] == [[
+            {'label': 'given-names', 'text': 'J'},
+            {'label': 'surname', 'text': 'Smith'}
+        ]]
 
     def test_should_read_a_citation_that_states_almost_nothing(self):
         view_model = get_article_view_model(get_article_xml(
@@ -654,6 +682,27 @@ class TestRenderedArticle:
         assert 'data-jats="ext-link"' in html
         assert 'href="https://example.org/data"' in html
         assert 'rel="noopener noreferrer"' in html
+
+    def test_should_show_a_mixed_citation_as_printed_with_its_links(self):
+        html = get_rendered_article(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><label>1</label><mixed-citation>'
+                '<person-group person-group-type="author">'
+                '<string-name><surname>Smith</surname>, <given-names>J</given-names>'
+                '</string-name></person-group>. '
+                '<article-title>The cited title</article-title>. doi: '
+                '<pub-id pub-id-type="doi">10.1000/xyz</pub-id>. Available from: '
+                '<ext-link ext-link-type="uri" xlink:href="https://example.org/x">'
+                'https://example.org/x</ext-link>'
+                '</mixed-citation></ref></ref-list>'
+            )
+        ))
+        assert (
+            '1 Smith, J. The cited title. doi: 10.1000/xyz. Available from: https://example.org/x'
+        ) in get_text_without_labels(html)
+        assert 'data-jats="surname"' in html
+        assert 'href="https://doi.org/10.1000/xyz"' in html
+        assert 'href="https://example.org/x"' in html
 
     def test_should_link_the_doi_of_a_reference(self):
         html = get_rendered_article(get_article_xml(

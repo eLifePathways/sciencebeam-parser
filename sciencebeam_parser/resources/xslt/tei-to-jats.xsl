@@ -5,7 +5,9 @@
   xmlns:mml="http://www.w3.org/1998/Math/MathML" 
   xmlns:xlink="http://www.w3.org/1999/xlink" 
   xmlns:tei="http://www.tei-c.org/ns/1.0"
-  exclude-result-prefixes="xs mml tei"
+  xmlns:exsl="http://exslt.org/common"
+  xmlns:cite="urn:sciencebeam-parser:tei-to-jats:citation"
+  exclude-result-prefixes="xs mml tei exsl cite"
   version="1.0"
 >
   <xsl:output
@@ -404,93 +406,450 @@
         <label><xsl:value-of select="normalize-space(tei:note[@type='label'])"/></label>
       </xsl:if>
 
-      <element-citation publication-type="journal">
-        <xsl:if test="tei:analytic/tei:author/tei:persName">
-          <person-group person-group-type="author">
-            <xsl:apply-templates select="tei:analytic/tei:author/tei:persName"/>
-          </person-group>
-        </xsl:if>
-
-        <xsl:if test="tei:monogr/tei:author/tei:persName">
-          <person-group person-group-type="author">
-            <xsl:apply-templates select="tei:monogr/tei:author/tei:persName"/>
-          </person-group>
-        </xsl:if>
-
-        <xsl:choose>
-          <xsl:when test="tei:analytic/tei:title[@type='main']">
-            <article-title>
-              <xsl:value-of select="tei:analytic/tei:title[@type='main']"/>
-            </article-title>
-          </xsl:when>
-          <xsl:when test="tei:monogr/tei:title[@type='main']">
-            <article-title>
-              <xsl:value-of select="tei:monogr/tei:title[@type='main']"/>
-            </article-title>
-          </xsl:when>
-        </xsl:choose>
-
-        <xsl:if test="tei:monogr/tei:title[@level='j']">
-          <source>
-            <xsl:value-of select="tei:monogr/tei:title[@level='j']"/>
-          </source>
-        </xsl:if>
-
-        <xsl:if test="tei:monogr/tei:imprint/tei:date[@type='published']">
-          <xsl:call-template name="parseDateComponents">
-            <xsl:with-param name="date" select="tei:monogr/tei:imprint/tei:date[@type='published']/@when"/>
-          </xsl:call-template>
-        </xsl:if>
-
-        <xsl:if test="tei:monogr/tei:imprint/tei:biblScope[@unit='volume']">
-          <volume>
-            <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='volume']"/>
-          </volume>
-        </xsl:if>
-
-        <xsl:if test="tei:monogr/tei:imprint/tei:biblScope[@unit='issue']">
-          <issue>
-            <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='issue']"/>
-          </issue>
-        </xsl:if>
-
-        <xsl:choose>
-          <xsl:when test="tei:monogr/tei:imprint/tei:biblScope[@unit='page'][@from or @to]">
-            <xsl:if test="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@from">
-              <fpage>
-                <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@from"/>
-              </fpage>
-            </xsl:if>
-
-            <xsl:if test="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@to">
-              <lpage>
-                <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@to"/>
-              </lpage>
-            </xsl:if>
-          </xsl:when>
-          <xsl:when test="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/text()">
-            <fpage>
-              <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='page']"/>
-            </fpage>
-            <lpage>
-              <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='page']"/>
-            </lpage>
-          </xsl:when>
-        </xsl:choose>
-
-        <xsl:for-each select=".//tei:ref[@type='url'][normalize-space()]">
-          <ext-link ext-link-type="uri" xlink:href="{translate(normalize-space(), '&lt;&gt; ', '')}"><xsl:value-of select="normalize-space()"/></ext-link>
-        </xsl:for-each>
-
-        <xsl:variable name="doi" select="(tei:analytic | tei:monogr)/tei:idno[@type='DOI']"/>
-        <xsl:if test="$doi">
-          <pub-id pub-id-type="doi">
-            <xsl:value-of select="$doi"/>
-          </pub-id>
-        </xsl:if>
-      </element-citation>
+      <xsl:variable name="element-citation">
+        <xsl:call-template name="element-citation"/>
+      </xsl:variable>
+      <xsl:choose>
+        <xsl:when test="normalize-space(tei:note[@type='raw_reference'])">
+          <xsl:call-template name="mixed-citation"/>
+        </xsl:when>
+        <xsl:when test="exsl:node-set($element-citation)/*/node()">
+          <xsl:copy-of select="$element-citation"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <mixed-citation publication-type="journal"/>
+        </xsl:otherwise>
+      </xsl:choose>
     </ref>
   </xsl:template>
+
+  <!-- the parsed parts alone, where the printed reference is not known -->
+  <xsl:template name="element-citation">
+    <element-citation publication-type="journal">
+      <xsl:if test="tei:analytic/tei:author/tei:persName">
+        <person-group person-group-type="author">
+          <xsl:apply-templates select="tei:analytic/tei:author/tei:persName"/>
+        </person-group>
+      </xsl:if>
+
+      <xsl:if test="tei:monogr/tei:author/tei:persName">
+        <person-group person-group-type="author">
+          <xsl:apply-templates select="tei:monogr/tei:author/tei:persName"/>
+        </person-group>
+      </xsl:if>
+
+      <xsl:choose>
+        <xsl:when test="tei:analytic/tei:title[@type='main']">
+          <article-title>
+            <xsl:value-of select="tei:analytic/tei:title[@type='main']"/>
+          </article-title>
+        </xsl:when>
+        <xsl:when test="tei:monogr/tei:title[@type='main']">
+          <article-title>
+            <xsl:value-of select="tei:monogr/tei:title[@type='main']"/>
+          </article-title>
+        </xsl:when>
+      </xsl:choose>
+
+      <xsl:if test="tei:monogr/tei:title[@level='j']">
+        <source>
+          <xsl:value-of select="tei:monogr/tei:title[@level='j']"/>
+        </source>
+      </xsl:if>
+
+      <xsl:if test="tei:monogr/tei:imprint/tei:date[@type='published']">
+        <xsl:call-template name="parseDateComponents">
+          <xsl:with-param name="date" select="tei:monogr/tei:imprint/tei:date[@type='published']/@when"/>
+        </xsl:call-template>
+      </xsl:if>
+
+      <xsl:if test="tei:monogr/tei:imprint/tei:biblScope[@unit='volume']">
+        <volume>
+          <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='volume']"/>
+        </volume>
+      </xsl:if>
+
+      <xsl:if test="tei:monogr/tei:imprint/tei:biblScope[@unit='issue']">
+        <issue>
+          <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='issue']"/>
+        </issue>
+      </xsl:if>
+
+      <xsl:choose>
+        <xsl:when test="tei:monogr/tei:imprint/tei:biblScope[@unit='page'][@from or @to]">
+          <xsl:if test="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@from">
+            <fpage>
+              <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@from"/>
+            </fpage>
+          </xsl:if>
+
+          <xsl:if test="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@to">
+            <lpage>
+              <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@to"/>
+            </lpage>
+          </xsl:if>
+        </xsl:when>
+        <xsl:when test="tei:monogr/tei:imprint/tei:biblScope[@unit='page']/text()">
+          <fpage>
+            <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='page']"/>
+          </fpage>
+          <lpage>
+            <xsl:value-of select="tei:monogr/tei:imprint/tei:biblScope[@unit='page']"/>
+          </lpage>
+        </xsl:when>
+      </xsl:choose>
+
+      <xsl:for-each select=".//tei:ref[@type='url'][normalize-space()]">
+        <ext-link ext-link-type="uri" xlink:href="{translate(normalize-space(), '&lt;&gt; ', '')}"><xsl:value-of select="normalize-space()"/></ext-link>
+      </xsl:for-each>
+
+      <xsl:variable name="doi" select="(tei:analytic | tei:monogr)/tei:idno[@type='DOI']"/>
+      <xsl:if test="$doi">
+        <pub-id pub-id-type="doi">
+          <xsl:value-of select="$doi"/>
+        </pub-id>
+      </xsl:if>
+    </element-citation>
+  </xsl:template>
+
+  <!-- letters and digits: a part is only found where it is not inside a longer word -->
+  <xsl:variable name="word-characters"
+    select="'0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝàáâãäåçèéêëìíîïñòóôõöøùúûüýÿ'"/>
+
+  <!-- the printed reference, its parsed parts tagged where they are printed -->
+  <xsl:template name="mixed-citation">
+    <xsl:variable name="parts" select="
+      tei:analytic/tei:author/tei:persName/tei:surname
+      | tei:analytic/tei:author/tei:persName/tei:forename
+      | tei:monogr/tei:author/tei:persName/tei:surname
+      | tei:monogr/tei:author/tei:persName/tei:forename
+      | tei:analytic/tei:title[@type='main']
+      | tei:monogr/tei:title[@type='main'][not(@level='j')][not(../../tei:analytic/tei:title[@type='main'])]
+      | tei:monogr/tei:title[@level='j']
+      | tei:monogr/tei:imprint/tei:date[@type='published']
+      | tei:monogr/tei:imprint/tei:biblScope[@unit='volume' or @unit='issue']
+      | tei:monogr/tei:imprint/tei:biblScope[@unit='page'][not(@from or @to)]
+      | tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@from
+      | tei:monogr/tei:imprint/tei:biblScope[@unit='page']/@to
+    "/>
+    <xsl:variable name="printed" select="string(tei:note[@type='raw_reference'])"/>
+    <!-- A line break can leave a space inside a printed DOI or URL, so they are found
+         ignoring whitespace, and written without it. -->
+    <xsl:variable name="identifiers">
+      <xsl:for-each select="tei:analytic/tei:idno[@type='DOI'] | tei:monogr/tei:idno[@type='DOI']
+        | .//tei:ref[@type='url']">
+        <xsl:variable name="value" select="normalize-space()"/>
+        <xsl:variable name="printed-value">
+          <xsl:call-template name="find-ignoring-whitespace">
+            <xsl:with-param name="text" select="$printed"/>
+            <xsl:with-param name="value" select="$value"/>
+          </xsl:call-template>
+        </xsl:variable>
+        <xsl:if test="string($printed-value)">
+          <cite:identifier kind="{local-name()}" value="{$value}"><xsl:value-of select="$printed-value"/></cite:identifier>
+        </xsl:if>
+      </xsl:for-each>
+    </xsl:variable>
+    <!-- initials are often printed run together, "MJ" for M and J -->
+    <xsl:variable name="joined-forenames">
+      <xsl:for-each select="(tei:analytic | tei:monogr)/tei:author/tei:persName[count(tei:forename) &gt; 1]">
+        <cite:forenames author="{generate-id(ancestor::tei:author[1])}">
+          <xsl:attribute name="covers">
+            <xsl:for-each select="tei:forename">
+              <xsl:value-of select="concat(generate-id(), '|')"/>
+            </xsl:for-each>
+          </xsl:attribute>
+          <xsl:for-each select="tei:forename">
+            <xsl:value-of select="normalize-space()"/>
+          </xsl:for-each>
+        </cite:forenames>
+      </xsl:for-each>
+    </xsl:variable>
+    <xsl:variable name="tagged">
+      <xsl:call-template name="cite-mixed-content">
+        <xsl:with-param name="rest" select="$printed"/>
+        <xsl:with-param name="parts" select="$parts | exsl:node-set($identifiers)/cite:identifier
+          | exsl:node-set($joined-forenames)/cite:forenames"/>
+      </xsl:call-template>
+    </xsl:variable>
+    <xsl:variable name="named">
+      <xsl:apply-templates select="exsl:node-set($tagged)/node()" mode="cite-names"/>
+    </xsl:variable>
+    <mixed-citation publication-type="journal">
+      <xsl:call-template name="cite-person-group">
+        <xsl:with-param name="nodes" select="exsl:node-set($named)/node()"/>
+      </xsl:call-template>
+    </mixed-citation>
+  </xsl:template>
+
+  <!-- as the affiliation is, with each part only found as a whole word -->
+  <xsl:template name="cite-mixed-content">
+    <xsl:param name="rest"/>
+    <xsl:param name="parts"/>
+    <xsl:param name="placed" select="'|'"/>
+    <xsl:variable name="found">
+      <xsl:for-each select="$parts[normalize-space(.)][not(contains($placed, concat('|', generate-id(), '|')))]">
+        <xsl:variable name="offset">
+          <xsl:call-template name="word-offset">
+            <xsl:with-param name="text" select="$rest"/>
+            <xsl:with-param name="value" select="string(.)"/>
+          </xsl:call-template>
+        </xsl:variable>
+        <xsl:if test="$offset &gt;= 0">
+          <cite:found id="{generate-id()}" offset="{$offset}" length="{string-length(.)}"/>
+        </xsl:if>
+      </xsl:for-each>
+    </xsl:variable>
+    <xsl:variable name="first-found">
+      <xsl:for-each select="exsl:node-set($found)/cite:found">
+        <xsl:sort select="@offset" data-type="number"/>
+        <xsl:sort select="@length" data-type="number" order="descending"/>
+        <xsl:if test="position() = 1">
+          <xsl:copy-of select="."/>
+        </xsl:if>
+      </xsl:for-each>
+    </xsl:variable>
+    <xsl:variable name="first" select="exsl:node-set($first-found)/cite:found"/>
+    <xsl:choose>
+      <xsl:when test="$first">
+        <xsl:variable name="part" select="$parts[generate-id() = $first/@id]"/>
+        <xsl:value-of select="substring($rest, 1, $first/@offset)"/>
+        <xsl:apply-templates select="$part" mode="cite-part"/>
+        <xsl:call-template name="cite-mixed-content">
+          <xsl:with-param name="rest" select="substring($rest, $first/@offset + $first/@length + 1)"/>
+          <xsl:with-param name="parts" select="$parts"/>
+          <xsl:with-param name="placed" select="concat($placed, $first/@id, '|', $part/@covers)"/>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="$rest"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- where value first stands in text as a whole word, as the number of characters
+       before it; -1 where it does not -->
+  <xsl:template name="word-offset">
+    <xsl:param name="text"/>
+    <xsl:param name="value"/>
+    <xsl:param name="skipped" select="0"/>
+    <xsl:param name="previous" select="''"/>
+    <xsl:variable name="before" select="substring-before($text, $value)"/>
+    <xsl:variable name="character-before" select="concat(
+      substring($previous, 1, number($before = '')),
+      substring($before, string-length($before), 1)
+    )"/>
+    <xsl:variable name="character-after" select="substring(substring-after($text, $value), 1, 1)"/>
+    <xsl:choose>
+      <xsl:when test="not(contains($text, $value))">-1</xsl:when>
+      <xsl:when test="
+        ($character-before = '' or not(contains($word-characters, $character-before)))
+        and ($character-after = '' or not(contains($word-characters, $character-after)))
+      ">
+        <xsl:value-of select="$skipped + string-length($before)"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:call-template name="word-offset">
+          <xsl:with-param name="text" select="substring($text, string-length($before) + 2)"/>
+          <xsl:with-param name="value" select="$value"/>
+          <xsl:with-param name="skipped" select="$skipped + string-length($before) + 1"/>
+          <xsl:with-param name="previous" select="substring($text, string-length($before) + 1, 1)"/>
+        </xsl:call-template>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="cite:forenames" mode="cite-part">
+    <given-names cite:author="{@author}"><xsl:value-of select="."/></given-names>
+  </xsl:template>
+
+  <xsl:template match="tei:surname" mode="cite-part">
+    <surname cite:author="{generate-id(ancestor::tei:author[1])}"><xsl:value-of select="."/></surname>
+  </xsl:template>
+
+  <xsl:template match="tei:forename" mode="cite-part">
+    <given-names cite:author="{generate-id(ancestor::tei:author[1])}"><xsl:value-of select="."/></given-names>
+  </xsl:template>
+
+  <xsl:template match="tei:title[@level='j']" mode="cite-part">
+    <source><xsl:value-of select="."/></source>
+  </xsl:template>
+
+  <xsl:template match="tei:title" mode="cite-part">
+    <article-title><xsl:value-of select="."/></article-title>
+  </xsl:template>
+
+  <xsl:template match="tei:date" mode="cite-part">
+    <year><xsl:value-of select="."/></year>
+  </xsl:template>
+
+  <xsl:template match="tei:biblScope[@unit='volume']" mode="cite-part">
+    <volume><xsl:value-of select="."/></volume>
+  </xsl:template>
+
+  <xsl:template match="tei:biblScope[@unit='issue']" mode="cite-part">
+    <issue><xsl:value-of select="."/></issue>
+  </xsl:template>
+
+  <xsl:template match="tei:biblScope | tei:biblScope/@from" mode="cite-part">
+    <fpage><xsl:value-of select="."/></fpage>
+  </xsl:template>
+
+  <xsl:template match="tei:biblScope/@to" mode="cite-part">
+    <lpage><xsl:value-of select="."/></lpage>
+  </xsl:template>
+
+  <xsl:template match="cite:identifier[@kind='idno']" mode="cite-part">
+    <pub-id pub-id-type="doi"><xsl:value-of select="@value"/></pub-id>
+  </xsl:template>
+
+  <xsl:template match="cite:identifier[@kind='ref']" mode="cite-part">
+    <ext-link ext-link-type="uri" xlink:href="{translate(@value, '&lt;&gt; ', '')}"><xsl:value-of select="@value"/></ext-link>
+  </xsl:template>
+
+  <!-- where value is printed in text, with any whitespace inside it; empty if it is not -->
+  <xsl:template name="find-ignoring-whitespace">
+    <xsl:param name="text"/>
+    <xsl:param name="value"/>
+    <xsl:variable name="compact-text" select="translate($text, $whitespace, '')"/>
+    <xsl:variable name="compact-value" select="translate($value, $whitespace, '')"/>
+    <xsl:if test="$compact-value and contains($compact-text, $compact-value)">
+      <xsl:variable name="before-length">
+        <xsl:call-template name="non-whitespace-prefix-length">
+          <xsl:with-param name="text" select="$text"/>
+          <xsl:with-param name="count"
+            select="string-length(substring-before($compact-text, $compact-value)) + 1"/>
+        </xsl:call-template>
+      </xsl:variable>
+      <xsl:variable name="start" select="substring($text, $before-length)"/>
+      <xsl:variable name="length">
+        <xsl:call-template name="non-whitespace-prefix-length">
+          <xsl:with-param name="text" select="$start"/>
+          <xsl:with-param name="count" select="string-length($compact-value)"/>
+        </xsl:call-template>
+      </xsl:variable>
+      <xsl:value-of select="substring($start, 1, $length)"/>
+    </xsl:if>
+  </xsl:template>
+
+  <xsl:variable name="whitespace" select="'&#9;&#10;&#13; &#160;'"/>
+
+  <!-- the length of the shortest start of text holding count characters that are not
+       whitespace, halving the text each step so the recursion stays shallow -->
+  <xsl:template name="non-whitespace-prefix-length">
+    <xsl:param name="text"/>
+    <xsl:param name="count"/>
+    <xsl:variable name="half" select="floor(string-length($text) div 2)"/>
+    <xsl:variable name="first-count"
+      select="string-length(translate(substring($text, 1, $half), $whitespace, ''))"/>
+    <xsl:choose>
+      <xsl:when test="$count &lt;= 0">0</xsl:when>
+      <xsl:when test="string-length($text) &lt;= 1">
+        <xsl:value-of select="string-length($text)"/>
+      </xsl:when>
+      <xsl:when test="$first-count &gt;= $count">
+        <xsl:call-template name="non-whitespace-prefix-length">
+          <xsl:with-param name="text" select="substring($text, 1, $half)"/>
+          <xsl:with-param name="count" select="$count"/>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:variable name="rest-length">
+          <xsl:call-template name="non-whitespace-prefix-length">
+            <xsl:with-param name="text" select="substring($text, $half + 1)"/>
+            <xsl:with-param name="count" select="$count - $first-count"/>
+          </xsl:call-template>
+        </xsl:variable>
+        <xsl:value-of select="$half + $rest-length"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- An author's name parts become one string-name where they are printed together,
+       with only spaces and punctuation between them; otherwise they stay plain text. -->
+  <xsl:template match="text()" mode="cite-names">
+    <xsl:variable name="author" select="preceding-sibling::node()[1]/@cite:author"/>
+    <xsl:variable name="is-inside-a-name" select="
+      translate(., ' ,.&#160;', '') = ''
+      and $author
+      and following-sibling::node()[1]/@cite:author = $author
+      and count(../*[@cite:author = $author][
+        not(preceding-sibling::node()[1]/@cite:author = @cite:author)
+        and not(
+          preceding-sibling::node()[1][self::text()][translate(., ' ,.&#160;', '') = '']
+          and preceding-sibling::node()[2]/@cite:author = @cite:author
+        )
+      ]) = 1
+    "/>
+    <xsl:if test="not($is-inside-a-name)">
+      <xsl:value-of select="."/>
+    </xsl:if>
+  </xsl:template>
+
+  <xsl:template match="*[@cite:author]" mode="cite-names">
+    <xsl:variable name="author" select="@cite:author"/>
+    <xsl:variable name="name-starts" select="../*[@cite:author = $author][
+      not(preceding-sibling::node()[1]/@cite:author = @cite:author)
+      and not(
+        preceding-sibling::node()[1][self::text()][translate(., ' ,.&#160;', '') = '']
+        and preceding-sibling::node()[2]/@cite:author = @cite:author
+      )
+    ]"/>
+    <xsl:choose>
+      <xsl:when test="count($name-starts) != 1">
+        <xsl:value-of select="."/>
+      </xsl:when>
+      <xsl:when test="generate-id($name-starts) = generate-id(.)">
+        <string-name>
+          <xsl:for-each select=". | following-sibling::node()[
+            @cite:author = $author
+            or (
+              self::text()
+              and preceding-sibling::node()[1]/@cite:author = $author
+              and following-sibling::node()[1]/@cite:author = $author
+            )
+          ]">
+            <xsl:choose>
+              <xsl:when test="self::*">
+                <xsl:element name="{local-name()}"><xsl:value-of select="."/></xsl:element>
+              </xsl:when>
+              <xsl:otherwise>
+                <xsl:value-of select="."/>
+              </xsl:otherwise>
+            </xsl:choose>
+          </xsl:for-each>
+        </string-name>
+      </xsl:when>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="*" mode="cite-names">
+    <xsl:copy-of select="."/>
+  </xsl:template>
+
+  <!-- the names, from the first to the last, as one person-group where nothing else
+       is tagged between them -->
+  <xsl:template name="cite-person-group">
+    <xsl:param name="nodes"/>
+    <xsl:variable name="names" select="$nodes[self::string-name]"/>
+    <xsl:variable name="between" select="$nodes[
+      preceding-sibling::string-name and following-sibling::string-name
+    ]"/>
+    <xsl:choose>
+      <xsl:when test="$names and not($between[self::*][not(self::string-name)])">
+        <xsl:copy-of select="$nodes[not(self::string-name) and not(preceding-sibling::string-name)]"/>
+        <person-group person-group-type="author">
+          <xsl:copy-of select="$names | $between"/>
+        </person-group>
+        <xsl:copy-of select="$nodes[not(self::string-name) and not(following-sibling::string-name)
+          and preceding-sibling::string-name]"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:copy-of select="$nodes"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
 
   <xsl:template match="tei:persName">
     <name>

@@ -387,11 +387,32 @@ function appendJoined(parent, parts, separator) {
   });
 }
 
+function getDoiUrl(doi) {
+  return 'https://doi.org/' + encodeURI(doi.text);
+}
+
+/* The citation as printed, its tagged parts marked where they stand. */
+function appendCitationContent(parent, content) {
+  content.forEach((value, index) => {
+    if (!value.path) {
+      appendText(parent, index ? value.text : value.text.trimStart());
+    } else if (value.label === 'pub-id') {
+      appendLink(parent, value, getDoiUrl(value));
+    } else {
+      appendLink(parent, value, value.href);
+    }
+  });
+}
+
 function appendReference(parent, references, index) {
   const reference = references[index];
   const item = appendElement(parent, 'li', '', reference);
   if (references.some((other) => other.heading)) {
     appendItemLabel(item, references, index);
+  }
+  if (reference.content) {
+    appendCitationContent(item, reference.content);
+    return;
   }
   const groups = [];
   if (reference.authors.length) {
@@ -407,7 +428,7 @@ function appendReference(parent, references, index) {
   appendJoined(item, groups, '. ');
   if (reference.doi) {
     appendText(item, groups.length ? ' doi:' : 'doi:');
-    appendLink(item, reference.doi, 'https://doi.org/' + encodeURI(reference.doi.text));
+    appendLink(item, reference.doi, getDoiUrl(reference.doi));
   }
   if (reference.url) {
     appendText(item, groups.length || reference.doi ? ' ' : '');

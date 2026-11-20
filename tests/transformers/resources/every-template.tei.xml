@@ -58,6 +58,7 @@
         <listBibl>
           <biblStruct xml:id="b0">
             <note type="label">1</note>
+            <note type="raw_reference">Hallgren P. Creep in glued laminated beams. J Timber Eng. 2019;14(2):101-9. doi: 10. 5555/jte.2019.0142</note>
             <analytic>
               <author><persName><forename type="first">P</forename><surname>Hallgren</surname></persName></author>
               <title level="a" type="main">Creep in glued laminated beams</title>
@@ -79,6 +80,7 @@
             <note type="label">3</note>
             <ref type="url">&lt;https://example.org/data&gt;</ref>
           </biblStruct>
+          <biblStruct xml:id="b3"/>
         </listBibl>
       </div>
     </back>
