@@ -1765,6 +1765,26 @@ def _release_body_inside_front(seg_lines: List[_SegLine]) -> None:
                 seg_lines[index].seg_label = SEG_FRONT
 
 
+def _release_references_inside_the_annex(seg_lines: List[_SegLine]) -> None:
+    """Take back the appendix cell that matched an entry of the reference list.
+
+    An appendix tabulating what each study found names its authors in a cell of
+    its own -- "Chen e / colaboradores / (2016)" -- and a word that every entry
+    of the list carries is enough for one of them to win it.  The list is one
+    region under the article, and the appendix is one region after it.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_REFERENCES):
+        if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_ANNEX
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = SEG_ANNEX
+
+
 def _release_references_inside_front(seg_lines: List[_SegLine]) -> None:
     """Take back the affiliation line that matched an entry of the reference list.
 
@@ -1966,6 +1986,20 @@ def _says_something_without_its_numbers(text: str) -> bool:
     return len(words) >= 2 and max(len(word) for word in words) >= 4
 
 
+def _is_on_the_row_the_head_runs_across(
+    seg_line: _SegLine,
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+    rows: List[float],
+) -> bool:
+    """Whether the page sets the line where it already runs this head."""
+    if not rows:
+        return True
+    y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+    if y_ratio is None:
+        return True
+    return any(abs(y_ratio - row) <= _RUNNING_HEAD_Y_TOLERANCE for row in rows)
+
+
 def _reclaim_repeated_headnotes(
     seg_lines: List[_SegLine],
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -1991,12 +2025,19 @@ def _reclaim_repeated_headnotes(
     article's page range in the head of the page it opens on and the volume
     alone thereafter.
 
+    And on the row the head runs across.  A journal whose running head is the
+    article's short title prints that title twice on its opening page -- once
+    across the head and once as the title -- and both are in the zone.  The
+    row is what tells them apart: the head keeps to one, and the title does
+    not.
+
     A line that reads as a page marker keeps what it has.  Read without its
     numbers it is nothing but the word between them, which repeats on every page
     the number prints on.  The head a page range matched is not one of those,
     and is what this takes back.
     """
     pages_by_text: Dict[str, Set[int]] = {}
+    rows_by_text: Dict[str, List[float]] = {}
     for seg_line in seg_lines:
         page_number = _get_page_number(seg_line)
         if page_number is None:
@@ -2004,9 +2045,11 @@ def _reclaim_repeated_headnotes(
         if seg_line.seg_label == SEG_HEADNOTE or _is_in_header_zone(
             seg_line, page_meta_by_number, config
         ):
-            pages_by_text.setdefault(
-                _without_the_numbers(seg_line.text), set()
-            ).add(page_number)
+            read = _without_the_numbers(seg_line.text)
+            pages_by_text.setdefault(read, set()).add(page_number)
+            y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+            if seg_line.seg_label == SEG_HEADNOTE and y_ratio is not None:
+                rows_by_text.setdefault(read, []).append(y_ratio)
     for seg_line in seg_lines:
         if seg_line.seg_label in (SEG_HEADNOTE, SEG_COVER, None):
             continue
@@ -2018,6 +2061,11 @@ def _reclaim_repeated_headnotes(
         if count < 2 or not _is_valid_headnote_candidate(seg_line.text, count, min_count=2):
             continue
         if not _is_in_header_zone(seg_line, page_meta_by_number, config):
+            continue
+        if not _is_on_the_row_the_head_runs_across(
+            seg_line, page_meta_by_number,
+            rows_by_text.get(_without_the_numbers(seg_line.text)) or [],
+        ):
             continue
         seg_line.seg_label = SEG_HEADNOTE
 
@@ -3971,6 +4019,7 @@ def _release_the_regions_a_false_match_won(seg_lines: List[_SegLine]) -> None:
     _release_references_inside_availability(seg_lines)
     _release_references_inside_body(seg_lines)
     _release_references_inside_front(seg_lines)
+    _release_references_inside_the_annex(seg_lines)
     _release_body_inside_front(seg_lines)
     _release_front_inside_body(seg_lines)
     _release_front_inside_the_review(seg_lines)

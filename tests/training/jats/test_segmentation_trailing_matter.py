@@ -702,3 +702,47 @@ class TestADatePrintedAfterTheDeclarations:
         doc, annotated, dates = self._make_doc(split_across_two_lines=True)
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in dates] == [SEG_FRONT] * 2
+
+
+class TestAnAppendixCellThatMatchedAnEntry:
+    """An appendix tabulating what each study found names its authors in a cell
+    of its own."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'argument', f'runs{index}', 'here', y=60.0 + 14 * index)
+            for index in range(4)
+        ]
+        references = [
+            make_line('Egret', 'A', 'and', 'colleagues', f'(201{index})',
+                      'Wading.', y=140.0 + 14 * index)
+            for index in range(4)
+        ]
+        appendix = [
+            make_line('Appendix', 'A.', 'What', 'each', 'count', 'found',
+                      y=220.0),
+            make_line('Egret', 'A', 'and', y=234.0),
+        ]
+        cell = make_line('colleagues', y=248.0)
+        more = [
+            make_line('(2016)', 'counted', 'on', 'the', 'northern', 'marsh',
+                      y=262.0),
+        ]
+        doc = make_doc_with_page(
+            LayoutBlock(lines=body),
+            LayoutBlock(lines=references),
+            LayoutBlock(lines=appendix + [cell] + more),
+        )
+        order = list(doc.iter_all_lines())
+        fields = {order.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+                  for line in body}
+        fields.update({order.index(line): JatsFieldNames.REFERENCE
+                       for line in references})
+        fields.update({order.index(line): JatsFieldNames.APPENDIX
+                       for line in appendix + more})
+        fields[order.index(cell)] = JatsFieldNames.REFERENCE
+        return doc, annotate(doc, fields), cell
+
+    def test_the_cell_stays_with_the_appendix(self):
+        doc, annotated, cell = self._make_doc()
+        assert derive_labels(doc, annotated)[id(cell)] == SEG_ANNEX
