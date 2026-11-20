@@ -1,0 +1,73 @@
+<?xml-stylesheet href="xsd.xsl" type="text/xsl"?>
+<!-- JATS 1.4d1 Differences from ALI 1.01 Schema
+Date: February 2024
+Rationale: The 1.0.1 release of ALI is more strict in typing and
+ requirements that ALI 1.0. Using ALI 1.0.1 without change would
+ make JATS 1.4d1 incompatible with JATS 1.3. Since JATS chooses
+ NOT to make an incompatible release at this time, the additional
+ ALI requirements are not reflected JATS or in this module.
+JATS 1.4d1 Changes to ALI 1.0.1 (DTD-origin related)
+ - For <ali:free_to_read>
+   - @start_date is optional rather than required
+   - @end_date is of type xsd:string (CDATA) in JATS, not xsd:date
+   - @start_date is of type xsd:string (CDATA) in JATS, not xsd:date
+ - For <ali:license_ref>
+   - Because JATS originates as a DTD, content cannot be
+     restricted (as it is in ALI 1.0.1) to xsd:anyURI'.
+     Content is #PCDATA.
+   - @start_date is of type xsd:string (CDATA) in JATS, not xsd:date
+   - @applies_to is not of type xsd:anyURI or xsd:NMTOKEN.
+     Content is xsd:string (CDATA).
+Other JATS 1.4d1 Changes to ALI 1.0.1
+   - JATS added four attributes to <ali:free_to_read>
+     and <ali:license_ref>: @id, @content-type, @specific-use,
+     and  @xml:base.
+-->
+
+<xsd:schema xmlns:mtl="http://www.mulberrytech.com/taglib"
+            xmlns:c="http://www.w3.org/ns/xproc-step"
+            xmlns:ali="http://www.niso.org/schemas/ali/1.0/"
+            xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+            targetNamespace="http://www.niso.org/schemas/ali/1.0/">
+<!--* Allow references to unqualified names *-->
+   <xsd:import/>
+   <xsd:import namespace="http://www.w3.org/XML/1998/namespace"/>
+   <!--* Some imports may need to be added manually *-->
+   <xsd:element name="free_to_read">
+      <xsd:annotation>
+         <xsd:documentation>
+            <div xmlns="http://www.w3.org/1999/xhtml">
+               <h3>Free to Read (Niso Ali)</h3>
+            </div>
+         </xsd:documentation>
+      </xsd:annotation>
+      <xsd:complexType>
+         <xsd:attribute name="content-type" use="optional" type="xsd:string"/>
+         <xsd:attribute name="end_date" use="optional" type="xsd:string"/>
+         <xsd:attribute name="id" use="optional" type="xsd:ID"/>
+         <xsd:attribute name="specific-use" use="optional" type="xsd:string"/>
+         <xsd:attribute name="start_date" use="optional" type="xsd:string"/>
+         <xsd:attribute ref="xml:base" use="optional"/>
+      </xsd:complexType>
+   </xsd:element>
+   <xsd:element name="license_ref">
+      <xsd:annotation>
+         <xsd:documentation>
+            <div xmlns="http://www.w3.org/1999/xhtml">
+               <h3>License Reference (Niso Ali)</h3>
+            </div>
+         </xsd:documentation>
+      </xsd:annotation>
+      <xsd:complexType mixed="true">
+         <xsd:group ref="license-ref-model"/>
+           <xsd:attribute name="content-type" use="optional" type="xsd:string"/>
+           <xsd:attribute name="id" use="optional" type="xsd:ID"/>
+           <xsd:attribute name="specific-use" use="optional" type="xsd:string"/>
+           <xsd:attribute name="start_date" use="optional" type="xsd:string"/>
+           <xsd:attribute ref="xml:base" use="optional"/>
+	       <xsd:attribute name="applies_to" use="optional" type="xsd:string"/>            
+      </xsd:complexType>
+   </xsd:element>
+   <xsd:annotation/>
+</xsd:schema>
+

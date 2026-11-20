@@ -355,12 +355,36 @@ def _get_custom_meta_value_by_name(jats) -> dict:
         get_text_content(_get_item(custom_meta, 'meta-name')):
             get_text_content(_get_item(custom_meta, 'meta-value'))
         for custom_meta in _xpath(
-            jats, 'front/article-meta/custom-meta-group/custom-meta'
+            jats, 'processing-meta/custom-meta-group/custom-meta'
         )
     }
 
 
 class TestTeiToJatsXslt:
+    class TestDeclaration:
+        def test_should_declare_jats_1_4_archiving(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei()))
+            docinfo = jats.getroottree().docinfo
+            assert docinfo.public_id == (
+                '-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD'
+                ' v1.4 20241031//EN'
+            )
+            assert docinfo.system_url == (
+                'https://jats.nlm.nih.gov/archiving/1.4/JATS-archivearticle1-4.dtd'
+            )
+            assert jats.attrib.get('dtd-version') == '1.4'
+
+        def test_should_name_the_tag_set_in_processing_meta_before_the_front(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei()))
+            processing_meta = jats[0]
+            assert processing_meta.tag == 'processing-meta'
+            assert processing_meta.attrib == {
+                'tagset-family': 'jats', 'base-tagset': 'archiving'
+            }
+            assert jats[1].tag == 'front'
+
     class TestAttribution:
         def test_should_translate_version_profile_and_digest(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
@@ -388,7 +412,7 @@ class TestTeiToJatsXslt:
                 _tei(application=_application()),
                 {'output_parameters': 'true'}
             ))
-            assert len(_xpath(jats, 'front/article-meta/custom-meta-group')) == 1
+            assert len(_xpath(jats, 'processing-meta/custom-meta-group')) == 1
             assert set(_get_custom_meta_value_by_name(jats)) == {
                 'sciencebeam-parser-version',
                 'sciencebeam-parser-profile',
@@ -401,7 +425,7 @@ class TestTeiToJatsXslt:
             self, tei_to_jats_xslt_fn
         ):
             jats = etree.fromstring(tei_to_jats_xslt_fn(_tei()))
-            assert _xpath(jats, 'front/article-meta/custom-meta-group') == []
+            assert _xpath(jats, 'processing-meta/custom-meta-group') == []
 
         def test_should_agree_with_the_tei_the_parser_produced(self, tei_to_jats_xslt_fn):
             attribution = DocumentAttribution(
@@ -993,8 +1017,8 @@ class TestTeiToJatsXslt:
                 ))),
                 {'output_italic': 'true'}
             ))
-            assert _get_text(jats, 'body/sec/title/i') == VALUE_1
-            assert _get_text(jats, 'body/sec/p/i') == VALUE_2
+            assert _get_text(jats, 'body/sec/title/italic') == VALUE_1
+            assert _get_text(jats, 'body/sec/p/italic') == VALUE_2
 
         def test_should_not_add_italics_formatting_if_disabled(
             self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
@@ -1007,9 +1031,9 @@ class TestTeiToJatsXslt:
                 {'output_italic': 'false'}
             ))
             assert _get_text(jats, 'body/sec/title') == VALUE_1
-            assert not jats.xpath('body/sec/title/i')
+            assert not jats.xpath('body/sec/title/italic')
             assert _get_text(jats, 'body/sec/p') == VALUE_2
-            assert not jats.xpath('body/sec/p/i')
+            assert not jats.xpath('body/sec/p/italic')
 
         def test_should_add_bold_formatting_to_head_and_p_divs(
             self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
@@ -1021,8 +1045,8 @@ class TestTeiToJatsXslt:
                 ))),
                 {'output_bold': 'true'}
             ))
-            assert _get_text(jats, 'body/sec/title/b') == VALUE_1
-            assert _get_text(jats, 'body/sec/p/b') == VALUE_2
+            assert _get_text(jats, 'body/sec/title/bold') == VALUE_1
+            assert _get_text(jats, 'body/sec/p/bold') == VALUE_2
 
         def test_should_not_add_bold_formatting_to_head_and_p_divs_if_disabled(
             self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
@@ -1035,9 +1059,9 @@ class TestTeiToJatsXslt:
                 {'output_bold': 'false'}
             ))
             assert _get_text(jats, 'body/sec/title') == VALUE_1
-            assert not jats.xpath('body/sec/p/b')
+            assert not jats.xpath('body/sec/title/bold')
             assert _get_text(jats, 'body/sec/p') == VALUE_2
-            assert not jats.xpath('body/sec/p/b')
+            assert not jats.xpath('body/sec/p/bold')
 
         def test_should_extract_figures_with_graphic_having_url(
             self,
@@ -1050,7 +1074,8 @@ class TestTeiToJatsXslt:
                     ),
                     TEI_E.figure(
                         {XML_ID: 'fig_0'},
-                        TEI_E.head('Figure 1'),
+                        TEI_E.note('Figure', type='<figure_head>'),
+                        TEI_E.head('1'),
                         TEI_E.label('1'),
                         TEI_E.figDesc('Figure 1. This is the figure'),
                         TEI_E.graphic({
@@ -1062,7 +1087,7 @@ class TestTeiToJatsXslt:
             assert _get_text(jats, 'body/sec/fig/@id') == 'fig_0'
             assert _get_text(jats, 'body/sec/fig/object-id') == 'fig_0'
             assert _get_text(jats, 'body/sec/fig/label') == 'Figure 1'
-            assert _get_text(jats, 'body/sec/fig/caption/title') == 'Figure 1'
+            assert jats.xpath('body/sec/fig/caption/title') == []
             assert _get_text(jats, 'body/sec/fig/caption/p') == 'Figure 1. This is the figure'
             assert _get_item(jats, 'body/sec/fig/graphic') is not None
             assert _get_text(jats, 'body/sec/fig/graphic/@xlink:href ') == 'image1.png'
@@ -1071,21 +1096,50 @@ class TestTeiToJatsXslt:
             assert _get_text(jats, 'body/sec/p/xref/@rid') == 'fig_0'
             assert not _xpath(jats, '//title/title')
 
-        def test_should_extract_figures_with_graphic_not_having_url(
+        def test_should_label_a_figure_as_printed(
             self,
             tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
         ):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
                 _tei(body=TEI_E.body(
                     TEI_E.figure(
-                        TEI_E.graphic()
+                        {XML_ID: 'fig_0'},
+                        TEI_E.note('Figura', type='<figure_head>'),
+                        TEI_E.head('3'),
+                        TEI_E.label('3'),
+                        TEI_E.note('.', type='<figure_head>'),
+                        TEI_E.figDesc(VALUE_1)
                     )
                 ))
             ))
-            assert _get_item(jats, 'body/sec/fig/graphic') is not None
-            assert _xpath(jats, 'body/sec/fig/graphic/@xlink:href ') == []
+            fig = _get_item(jats, 'body/sec/fig')
+            assert _get_text(fig, 'label') == 'Figura 3.'
+            assert [child.tag for child in _get_item(fig, 'caption')] == ['p']
 
-        def test_should_create_empty_graphic_for_figures_without_graphic(
+        def test_should_not_label_a_figure_without_a_printed_label(
+            self,
+            tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(body=TEI_E.body(TEI_E.figure({XML_ID: 'fig_0'}, TEI_E.figDesc(VALUE_1))))
+            ))
+            assert jats.xpath('body/sec/fig/label') == []
+
+        def test_should_leave_out_a_graphic_whose_file_was_not_kept(
+            self,
+            tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(body=TEI_E.body(
+                    TEI_E.figure(
+                        TEI_E.graphic(type='svg')
+                    )
+                ))
+            ))
+            assert _get_item(jats, 'body/sec/fig') is not None
+            assert jats.xpath('body/sec/fig/graphic') == []
+
+        def test_should_add_no_graphic_to_a_figure_without_one(
             self,
             tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
         ):
@@ -1095,6 +1149,18 @@ class TestTeiToJatsXslt:
                 ))
             ))
             assert _get_text(jats, 'body/sec/fig/@id') == 'fig_0'
+            assert jats.xpath('body/sec/fig/graphic') == []
+
+        def test_should_create_empty_graphic_for_figures_without_graphic_if_enabled(
+            self,
+            tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(body=TEI_E.body(
+                    TEI_E.figure({XML_ID: 'fig_0'})
+                )),
+                {'output_empty_figure_graphic': 'true'}
+            ))
             assert _get_item(jats, 'body/sec/fig/graphic') is not None
 
         def test_should_extract_tables(self, tei_to_jats_xslt_fn):
@@ -1108,7 +1174,8 @@ class TestTeiToJatsXslt:
                             'type': 'table',
                             XML_ID: 'tab_0'
                         },
-                        TEI_E.head('Table 1'),
+                        TEI_E.note('Table', type='<figure_head>'),
+                        TEI_E.head('1'),
                         TEI_E.label('1'),
                         TEI_E.figDesc('Table 1. This is a table'),
                         TEI_E.table('Table content')
@@ -1117,7 +1184,7 @@ class TestTeiToJatsXslt:
             ))
             assert _get_text(jats, 'body/sec/table-wrap/@id') == 'tab_0'
             assert _get_text(jats, 'body/sec/table-wrap/label') == 'Table 1'
-            assert _get_text(jats, 'body/sec/table-wrap/caption/title') == 'Table 1'
+            assert jats.xpath('body/sec/table-wrap/caption/title') == []
             assert _get_text(jats, 'body/sec/table-wrap/caption/p') == 'Table 1. This is a table'
             assert _get_item(jats, 'body/sec/table-wrap/table') is not None
             assert _get_item(jats, 'body/sec/table-wrap/table/tbody') is not None
@@ -1328,7 +1395,8 @@ class TestTeiToJatsXslt:
                     TEI_E.div(
                         {'type': 'annex'},
                         TEI_E.figure(
-                            TEI_E.head('Figure 1'),
+                            TEI_E.note('Figure', type='<figure_head>'),
+                            TEI_E.head('1'),
                             TEI_E.label('1'),
                             TEI_E.figDesc('Figure 1. This is the figure')
                         )
@@ -1339,7 +1407,7 @@ class TestTeiToJatsXslt:
                 }
             ))
             assert _get_text(jats, 'back/sec/fig/label') == 'Figure 1'
-            assert _get_text(jats, 'back/sec/fig/caption/title') == 'Figure 1'
+            assert jats.xpath('back/sec/fig/caption/title') == []
             assert _get_text(jats, 'back/sec/fig/caption/p') == 'Figure 1. This is the figure'
 
         def test_should_extract_annex_figures_as_body_section(
@@ -1350,7 +1418,8 @@ class TestTeiToJatsXslt:
                     TEI_E.div(
                         {'type': 'annex'},
                         TEI_E.figure(
-                            TEI_E.head('Figure 1'),
+                            TEI_E.note('Figure', type='<figure_head>'),
+                            TEI_E.head('1'),
                             TEI_E.label('1'),
                             TEI_E.figDesc('Figure 1. This is the figure')
                         )
@@ -1361,8 +1430,24 @@ class TestTeiToJatsXslt:
                 }
             ))
             assert _get_text(jats, 'body/sec/fig/label') == 'Figure 1'
-            assert _get_text(jats, 'body/sec/fig/caption/title') == 'Figure 1'
+            assert jats.xpath('body/sec/fig/caption/title') == []
             assert _get_text(jats, 'body/sec/fig/caption/p') == 'Figure 1. This is the figure'
+
+        def test_should_put_annex_figures_before_annex_sections_in_the_app(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(back=TEI_E.back(
+                    TEI_E.div(
+                        {'type': 'annex'},
+                        TEI_E.div(TEI_E.head(VALUE_1), TEI_E.p(VALUE_2)),
+                        TEI_E.figure(TEI_E.head('Figure 1'))
+                    )
+                )),
+                {'annex_target': 'app'}
+            ))
+            app = _get_item(jats, 'back/app-group/app')
+            assert [child.tag for child in app] == ['title', 'fig', 'sec']
 
         def test_should_extract_annex_figures_as_app_group(
             self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
@@ -1372,7 +1457,8 @@ class TestTeiToJatsXslt:
                     TEI_E.div(
                         {'type': 'annex'},
                         TEI_E.figure(
-                            TEI_E.head('Figure 1'),
+                            TEI_E.note('Figure', type='<figure_head>'),
+                            TEI_E.head('1'),
                             TEI_E.label('1'),
                             TEI_E.figDesc('Figure 1. This is the figure')
                         )
@@ -1383,7 +1469,7 @@ class TestTeiToJatsXslt:
                 }
             ))
             assert _get_text(jats, 'back/app-group/app/fig/label') == 'Figure 1'
-            assert _get_text(jats, 'back/app-group/app/fig/caption/title') == 'Figure 1'
+            assert jats.xpath('back/app-group/app/fig/caption/title') == []
             assert _get_text(jats, 'back/app-group/app/fig/caption/p') == (
                 'Figure 1. This is the figure'
             )
@@ -1397,7 +1483,8 @@ class TestTeiToJatsXslt:
                         {'type': 'annex'},
                         TEI_E.figure(
                             {'type': 'table'},
-                            TEI_E.head('Table 1'),
+                            TEI_E.note('Table', type='<figure_head>'),
+                            TEI_E.head('1'),
                             TEI_E.label('1'),
                             TEI_E.figDesc('Table 1. This is the table')
                         )
@@ -1408,7 +1495,7 @@ class TestTeiToJatsXslt:
                 }
             ))
             assert _get_text(jats, 'back/sec/table-wrap/label') == 'Table 1'
-            assert _get_text(jats, 'back/sec/table-wrap/caption/title') == 'Table 1'
+            assert jats.xpath('back/sec/table-wrap/caption/title') == []
             assert _get_text(jats, 'back/sec/table-wrap/caption/p') == 'Table 1. This is the table'
 
         def test_should_extract_annex_tables_as_body_section(
@@ -1420,7 +1507,8 @@ class TestTeiToJatsXslt:
                         {'type': 'annex'},
                         TEI_E.figure(
                             {'type': 'table'},
-                            TEI_E.head('Table 1'),
+                            TEI_E.note('Table', type='<figure_head>'),
+                            TEI_E.head('1'),
                             TEI_E.label('1'),
                             TEI_E.figDesc('Table 1. This is the table')
                         )
@@ -1431,7 +1519,7 @@ class TestTeiToJatsXslt:
                 }
             ))
             assert _get_text(jats, 'body/sec/table-wrap/label') == 'Table 1'
-            assert _get_text(jats, 'body/sec/table-wrap/caption/title') == 'Table 1'
+            assert jats.xpath('body/sec/table-wrap/caption/title') == []
             assert _get_text(jats, 'body/sec/table-wrap/caption/p') == 'Table 1. This is the table'
 
         def test_should_extract_annex_tables_as_app_group(
@@ -1443,7 +1531,8 @@ class TestTeiToJatsXslt:
                         {'type': 'annex'},
                         TEI_E.figure(
                             {'type': 'table'},
-                            TEI_E.head('Table 1'),
+                            TEI_E.note('Table', type='<figure_head>'),
+                            TEI_E.head('1'),
                             TEI_E.label('1'),
                             TEI_E.figDesc('Table 1. This is the table')
                         )
@@ -1454,7 +1543,7 @@ class TestTeiToJatsXslt:
                 }
             ))
             assert _get_text(jats, 'back/app-group/app/table-wrap/label') == 'Table 1'
-            assert _get_text(jats, 'back/app-group/app/table-wrap/caption/title') == 'Table 1'
+            assert jats.xpath('back/app-group/app/table-wrap/caption/title') == []
             assert _get_text(jats, 'back/app-group/app/table-wrap/caption/p') == (
                 'Table 1. This is the table'
             )
@@ -1544,6 +1633,27 @@ class TestTeiToJatsXslt:
             ))
             element_citation = _get_item(jats, 'back/ref-list/ref/element-citation')
             assert element_citation[0].tag == 'person-group'
+
+        def test_should_link_a_url_printed_in_angle_brackets(self, tei_to_jats_xslt_fn):
+            bibl_struct = _reference(id='b0')
+            bibl_struct.append(TEI_E.ref('<https://example.org/ data>', type='url'))
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[bibl_struct])))
+            ext_link = _get_item(jats, 'back/ref-list/ref/element-citation/ext-link')
+            assert ext_link.attrib['{http://www.w3.org/1999/xlink}href'] == (
+                'https://example.org/data'
+            )
+            assert ext_link.text == '<https://example.org/ data>'
+
+        def test_should_link_the_url_of_a_reference(self, tei_to_jats_xslt_fn):
+            bibl_struct = _reference(id='b0')
+            bibl_struct.append(TEI_E.ref(' https://example.org/data ', type='url'))
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[bibl_struct])))
+            ext_link = _get_item(jats, 'back/ref-list/ref/element-citation/ext-link')
+            assert ext_link.attrib == {
+                'ext-link-type': 'uri',
+                '{http://www.w3.org/1999/xlink}href': 'https://example.org/data'
+            }
+            assert ext_link.text == 'https://example.org/data'
 
         def test_should_fallback_to_collection_title_if_article_title_does_not_exist(
                 self, tei_to_jats_xslt_fn):

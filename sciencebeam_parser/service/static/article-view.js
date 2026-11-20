@@ -60,6 +60,19 @@ function appendValue(parent, value, tagName, className) {
   return element;
 }
 
+/* Only a web address becomes a link: the text was read from a document. */
+function appendLink(parent, value, href) {
+  if (!href || !/^https?:\/\//i.test(href)) {
+    return appendValue(parent, value);
+  }
+  const link = appendElement(parent, 'a', '', value);
+  link.setAttribute('href', href);
+  link.setAttribute('target', '_blank');
+  link.setAttribute('rel', 'noopener noreferrer');
+  appendText(link, value.text);
+  return link;
+}
+
 function appendRuns(parent, runs) {
   runs.forEach((run) => {
     let target = parent;
@@ -81,8 +94,11 @@ function appendParagraph(parent, paragraph, className) {
 }
 
 function appendCaption(parent, block) {
-  const caption = appendElement(parent, 'figcaption', 'jats-caption');
-  appendValue(caption, block.heading, 'span', 'jats-label');
+  const figcaption = appendElement(parent, 'figcaption', 'jats-caption');
+  appendValue(figcaption, block.heading, 'span', 'jats-label');
+  const caption = block.caption
+    ? appendElement(figcaption, 'div', 'jats-caption-text', block.caption)
+    : figcaption;
   if (block.title && (!block.heading || block.title.text !== block.heading.text)) {
     appendText(caption, ' ');
     appendValue(caption, block.title, 'span', 'jats-caption-title');
@@ -178,11 +194,40 @@ function getAffiliationText(affiliation) {
     .map((item) => item.text).join('').replace(/\s+/g, ' ').trim();
 }
 
+/* What an item of a list is called where the document printed no label for it.
+ *
+ * Its place in the list, which in a list with printed labels is marked as not
+ * printed, since a printed "3" may sit beside the third item. */
+function getGeneratedLabel(items, index) {
+  const isAnyPrinted = items.some((item) => item.heading);
+  return isAnyPrinted ? '#' + (index + 1) : String(index + 1);
+}
+
+function appendItemLabel(item, items, index) {
+  if (items[index].heading) {
+    appendValue(item, items[index].heading, 'span', 'jats-label');
+  } else {
+    const generated = appendElement(item, 'span', 'jats-label jats-generated-label');
+    generated.setAttribute('title', 'not printed: its place in the list');
+    appendText(generated, getGeneratedLabel(items, index));
+  }
+  appendText(item, ' ');
+}
+
+function appendItemList(parent, className, items) {
+  const isAnyPrinted = items.some((item) => item.heading);
+  return appendElement(
+    parent, 'ol', isAnyPrinted ? className + ' jats-printed-labels' : className
+  );
+}
+
 function getAffiliationByRid(affiliations) {
   const byRid = {};
   affiliations.forEach((affiliation, index) => {
     byRid[affiliation.id] = {
-      number: affiliation.heading ? affiliation.heading.text : String(index + 1),
+      number: affiliation.heading
+        ? affiliation.heading.text
+        : getGeneratedLabel(affiliations, index),
       text: getAffiliationText(affiliation)
     };
   });
@@ -260,18 +305,15 @@ function appendAuthors(parent, viewModel) {
   if (!viewModel.affiliations.length) {
     return;
   }
-  const isLabelled = viewModel.affiliations.every((affiliation) => affiliation.heading);
-  const affiliations = appendElement(
-    parent, 'ol', isLabelled ? 'jats-affiliations jats-printed-labels' : 'jats-affiliations'
-  );
-  viewModel.affiliations.forEach((affiliation) => {
+  const affiliations = appendItemList(parent, 'jats-affiliations', viewModel.affiliations);
+  const isAnyPrinted = viewModel.affiliations.some((affiliation) => affiliation.heading);
+  viewModel.affiliations.forEach((affiliation, index) => {
     const item = appendElement(affiliations, 'li', '', affiliation);
     if (affiliation.id) {
       item.setAttribute('id', affiliation.id);
     }
-    if (affiliation.heading) {
-      appendValue(item, affiliation.heading, 'span', 'jats-label');
-      appendText(item, ' ');
+    if (isAnyPrinted) {
+      appendItemLabel(item, viewModel.affiliations, index);
     }
     getAffiliationContent(affiliation).forEach((content, index) => {
       if (content.path) {
@@ -345,11 +387,11 @@ function appendJoined(parent, parts, separator) {
   });
 }
 
-function appendReference(parent, reference) {
+function appendReference(parent, references, index) {
+  const reference = references[index];
   const item = appendElement(parent, 'li', '', reference);
-  if (reference.heading) {
-    appendValue(item, reference.heading, 'span', 'jats-label');
-    appendText(item, ' ');
+  if (references.some((other) => other.heading)) {
+    appendItemLabel(item, references, index);
   }
   const groups = [];
   if (reference.authors.length) {
@@ -365,7 +407,11 @@ function appendReference(parent, reference) {
   appendJoined(item, groups, '. ');
   if (reference.doi) {
     appendText(item, groups.length ? ' doi:' : 'doi:');
-    appendValue(item, reference.doi);
+    appendLink(item, reference.doi, 'https://doi.org/' + encodeURI(reference.doi.text));
+  }
+  if (reference.url) {
+    appendText(item, groups.length || reference.doi ? ' ' : '');
+    appendLink(item, reference.url, reference.url.href);
   }
 }
 
@@ -374,11 +420,8 @@ function appendReferences(parent, references) {
     return;
   }
   appendElement(parent, 'h2', '').textContent = 'References';
-  const isLabelled = references.every((reference) => reference.heading);
-  const list = appendElement(
-    parent, 'ol', isLabelled ? 'jats-references jats-printed-labels' : 'jats-references'
-  );
-  references.forEach((reference) => appendReference(list, reference));
+  const list = appendItemList(parent, 'jats-references', references);
+  references.forEach((reference, index) => appendReference(list, references, index));
 }
 
 function appendTitle(parent, value, tagName) {

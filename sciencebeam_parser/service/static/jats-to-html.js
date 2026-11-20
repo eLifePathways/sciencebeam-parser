@@ -46,7 +46,7 @@ const REFERENCE_FIELDS = [
   ['lastPage', 'lpage']
 ];
 
-const JATS_RUN_STYLES = { b: { bold: true }, i: { italic: true } };
+const JATS_RUN_STYLES = { bold: { bold: true }, italic: { italic: true } };
 
 function getJatsInline(node) {
   if (JATS_RUN_STYLES[node.name]) {
@@ -70,6 +70,7 @@ function getCaption(node) {
     label: node.name,
     path: node.path,
     heading: getValue(node, 'label'),
+    caption: caption ? { label: caption.name, path: caption.path } : null,
     title: caption ? getValue(caption, 'title') : null,
     paragraphs: caption ? getChildElements(caption, 'p').map(getParagraph) : []
   };
@@ -229,6 +230,7 @@ function getReference(node) {
     : null;
   const pubIds = citation ? getChildElements(citation, 'pub-id') : [];
   const doi = pubIds.find((pubId) => getAttribute(pubId, 'pub-id-type') === 'doi');
+  const url = citation ? getFirstChildElement(citation, 'ext-link') : null;
   const reference = {
     label: node.name,
     path: node.path,
@@ -240,6 +242,14 @@ function getReference(node) {
     ].filter((part) => part)),
     doi: doi
       ? { label: 'pub-id', path: doi.path, text: getTextContent(doi).trim() }
+      : null,
+    url: url
+      ? {
+        label: 'ext-link',
+        path: url.path,
+        text: getTextContent(url).trim(),
+        href: getAttribute(url, 'xlink:href')
+      }
       : null
   };
   REFERENCE_FIELDS.forEach(([key, name]) => {

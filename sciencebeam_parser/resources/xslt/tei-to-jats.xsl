@@ -8,15 +8,24 @@
   exclude-result-prefixes="xs mml tei"
   version="1.0"
 >
+  <xsl:output
+    method="xml"
+    encoding="UTF-8"
+    doctype-public="-//NLM//DTD JATS (Z39.96) Journal Archiving and Interchange DTD v1.4 20241031//EN"
+    doctype-system="https://jats.nlm.nih.gov/archiving/1.4/JATS-archivearticle1-4.dtd"
+  />
   <xsl:param name="output_parameters" select="'false'"/>
   <xsl:param name="output_bold" select="'false'"/>
   <xsl:param name="output_italic" select="'false'"/>
-  <xsl:param name="output_empty_figure_graphic" select="'true'"/>
+  <xsl:param name="output_empty_figure_graphic" select="'false'"/>
   <xsl:param name="acknowledgement_target" select="'ack'"/>
   <xsl:param name="annex_target" select="'back'"/>
 
   <xsl:template match="/">
-    <article article-type="research-article">
+    <article article-type="research-article" dtd-version="1.4">
+      <processing-meta tagset-family="jats" base-tagset="archiving">
+        <xsl:apply-templates select="tei:TEI/tei:teiHeader" mode="conversion-details"/>
+      </processing-meta>
       <front>
         <xsl:apply-templates select="tei:TEI/tei:teiHeader"/>
       </front>
@@ -149,43 +158,45 @@
           <xsl:apply-templates select="tei:div/tei:p"/>
         </abstract>
       </xsl:for-each>
-
-      <!-- JATS allows one custom-meta-group, so attribution and the parameters
-           share it. The attribution is read from the TEI rather than passed in,
-           so the two outputs cannot disagree about what produced them. -->
-      <xsl:if test="tei:encodingDesc/tei:appInfo/tei:application or $output_parameters = 'true'">
-        <custom-meta-group>
-          <xsl:for-each select="tei:encodingDesc/tei:appInfo/tei:application">
-            <custom-meta>
-              <meta-name>sciencebeam-parser-version</meta-name>
-              <meta-value><xsl:value-of select="@version"/></meta-value>
-            </custom-meta>
-            <xsl:for-each select="tei:label[@type='profile']">
-              <custom-meta>
-                <meta-name>sciencebeam-parser-profile</meta-name>
-                <meta-value><xsl:value-of select="."/></meta-value>
-              </custom-meta>
-            </xsl:for-each>
-            <xsl:for-each select="tei:label[@type='profile-digest']">
-              <custom-meta>
-                <meta-name>sciencebeam-parser-profile-digest</meta-name>
-                <meta-value><xsl:value-of select="."/></meta-value>
-              </custom-meta>
-            </xsl:for-each>
-          </xsl:for-each>
-          <xsl:if test="$output_parameters = 'true'">
-            <custom-meta>
-              <meta-name>xslt-param-acknowledgement_target</meta-name>
-              <meta-value><xsl:value-of select="$acknowledgement_target"/></meta-value>
-            </custom-meta>
-            <custom-meta>
-              <meta-name>xslt-param-annex_target</meta-name>
-              <meta-value><xsl:value-of select="$annex_target"/></meta-value>
-            </custom-meta>
-          </xsl:if>
-        </custom-meta-group>
-      </xsl:if>
     </article-meta>
+  </xsl:template>
+
+  <xsl:template match="tei:teiHeader" mode="conversion-details">
+    <!-- JATS allows one custom-meta-group, so attribution and the parameters
+         share it. The attribution is read from the TEI rather than passed in,
+         so the two outputs cannot disagree about what produced them. -->
+    <xsl:if test="tei:encodingDesc/tei:appInfo/tei:application or $output_parameters = 'true'">
+      <custom-meta-group>
+        <xsl:for-each select="tei:encodingDesc/tei:appInfo/tei:application">
+          <custom-meta>
+            <meta-name>sciencebeam-parser-version</meta-name>
+            <meta-value><xsl:value-of select="@version"/></meta-value>
+          </custom-meta>
+          <xsl:for-each select="tei:label[@type='profile']">
+            <custom-meta>
+              <meta-name>sciencebeam-parser-profile</meta-name>
+              <meta-value><xsl:value-of select="."/></meta-value>
+            </custom-meta>
+          </xsl:for-each>
+          <xsl:for-each select="tei:label[@type='profile-digest']">
+            <custom-meta>
+              <meta-name>sciencebeam-parser-profile-digest</meta-name>
+              <meta-value><xsl:value-of select="."/></meta-value>
+            </custom-meta>
+          </xsl:for-each>
+        </xsl:for-each>
+        <xsl:if test="$output_parameters = 'true'">
+          <custom-meta>
+            <meta-name>xslt-param-acknowledgement_target</meta-name>
+            <meta-value><xsl:value-of select="$acknowledgement_target"/></meta-value>
+          </custom-meta>
+          <custom-meta>
+            <meta-name>xslt-param-annex_target</meta-name>
+            <meta-value><xsl:value-of select="$annex_target"/></meta-value>
+          </custom-meta>
+        </xsl:if>
+      </custom-meta-group>
+    </xsl:if>
   </xsl:template>
 
   <xsl:template match="tei:body">
@@ -198,15 +209,12 @@
     </xsl:if>
   </xsl:template>
 
-  <xsl:template match="tei:graphic">
-    <graphic>
-      <xsl:if test="@url">
-        <xsl:attribute name='xlink:href'>
-          <xsl:value-of select="@url"/>
-        </xsl:attribute>
-      </xsl:if>
-    </graphic>
+  <xsl:template match="tei:graphic[normalize-space(@url)]">
+    <graphic xlink:href="{@url}"/>
   </xsl:template>
+
+  <!-- a graphic whose file was not kept has nothing for xlink:href to name -->
+  <xsl:template match="tei:graphic"/>
 
   <xsl:template match="tei:figure[not(@type='table')]">
     <fig>
@@ -214,14 +222,13 @@
         <xsl:value-of select="@xml:id"/>
       </xsl:attribute>
       <object-id><xsl:value-of select="@xml:id"/></object-id>
-      <label><xsl:value-of select="tei:head"/></label>
+      <xsl:call-template name="figure-label"/>
       <caption>
-        <xsl:apply-templates select="tei:head"/>
         <p><xsl:apply-templates select="tei:figDesc"/></p>
       </caption>
       <xsl:apply-templates select="tei:graphic"/>
       <xsl:if test="$output_empty_figure_graphic = 'true'">
-        <xsl:if test="not(tei:graphic)">
+        <xsl:if test="not(tei:graphic[normalize-space(@url)])">
           <graphic/>
         </xsl:if>
       </xsl:if>
@@ -233,9 +240,8 @@
       <xsl:attribute name='id'>
         <xsl:value-of select="@xml:id"/>
       </xsl:attribute>
-      <label><xsl:value-of select="tei:head"/></label>
+      <xsl:call-template name="figure-label"/>
       <caption>
-        <xsl:apply-templates select="tei:head"/>
         <p><xsl:apply-templates select="tei:figDesc"/></p>
       </caption>
       <table>
@@ -249,6 +255,21 @@
       </table>
       <xsl:apply-templates select="tei:graphic"/>
     </table-wrap>
+  </xsl:template>
+
+  <!-- the label as printed: the number with the words around it, such as "Figure 3." -->
+  <xsl:template name="figure-label">
+    <xsl:variable name="parts" select="tei:label | tei:note[@type='&lt;figure_head&gt;']"/>
+    <xsl:if test="normalize-space($parts)">
+      <label>
+        <xsl:for-each select="$parts[normalize-space()]">
+          <xsl:if test="position() &gt; 1 and not(contains('.,:;)', substring(normalize-space(), 1, 1)))">
+            <xsl:text> </xsl:text>
+          </xsl:if>
+          <xsl:value-of select="normalize-space()"/>
+        </xsl:for-each>
+      </label>
+    </xsl:if>
   </xsl:template>
 
   <xsl:template match="tei:div">
@@ -287,8 +308,9 @@
         <app-group>
           <app id="appendix-1">
             <title>Appendix 1</title>
-            <xsl:apply-templates select="tei:div[@type='annex']/tei:div"/>
+            <!-- an appendix holds its figures before its sections -->
             <xsl:apply-templates select="tei:div[@type='annex']/tei:figure"/>
+            <xsl:apply-templates select="tei:div[@type='annex']/tei:div"/>
           </app>
         </app-group>
       </xsl:if>
@@ -456,6 +478,10 @@
           </xsl:when>
         </xsl:choose>
 
+        <xsl:for-each select=".//tei:ref[@type='url'][normalize-space()]">
+          <ext-link ext-link-type="uri" xlink:href="{translate(normalize-space(), '&lt;&gt; ', '')}"><xsl:value-of select="normalize-space()"/></ext-link>
+        </xsl:for-each>
+
         <xsl:variable name="doi" select="(tei:analytic | tei:monogr)/tei:idno[@type='DOI']"/>
         <xsl:if test="$doi">
           <pub-id pub-id-type="doi">
@@ -531,7 +557,7 @@
   <xsl:template match="tei:hi[@rend='italic']">
     <xsl:choose>
       <xsl:when test="$output_italic = 'true'">
-        <i><xsl:apply-templates select="node()"/></i>
+        <italic><xsl:apply-templates select="node()"/></italic>
       </xsl:when>
       <xsl:otherwise>
         <xsl:apply-templates select="node()"/>
@@ -542,7 +568,7 @@
   <xsl:template match="tei:hi[@rend='bold']">
     <xsl:choose>
       <xsl:when test="$output_bold = 'true'">
-        <b><xsl:apply-templates select="node()"/></b>
+        <bold><xsl:apply-templates select="node()"/></bold>
       </xsl:when>
       <xsl:otherwise>
         <xsl:apply-templates select="node()"/>

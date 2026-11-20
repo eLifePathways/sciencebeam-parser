@@ -22,7 +22,7 @@ _TEI_BLOCK_ELEMENT_NAMES = frozenset({
 
 _JATS_BLOCK_ELEMENT_NAMES = frozenset({
     'article', 'front', 'body', 'back',
-    'journal-meta', 'article-meta', 'contrib-group', 'custom-meta-group',
+    'processing-meta', 'journal-meta', 'article-meta', 'contrib-group', 'custom-meta-group',
     'abstract', 'sec', 'fig', 'caption', 'table-wrap', 'table', 'tbody',
     'ref-list', 'app-group', 'app', 'ack',
 })

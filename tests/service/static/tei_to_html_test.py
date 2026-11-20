@@ -399,6 +399,25 @@ class TestReferences:
             'label': 'note', 'text': '[1]'
         }
 
+    def test_should_read_the_url_a_citation_links_to(self):
+        view_model = get_tei_view_model(get_tei_xml(back=(
+            '<div type="references"><listBibl><biblStruct xml:id="b0">'
+            '<ref type="url">https://example.org/data</ref></biblStruct></listBibl></div>'
+        )))
+        assert without_paths(view_model['references'][0]['url']) == {
+            'label': 'ref',
+            'text': 'https://example.org/data',
+            'href': 'https://example.org/data'
+        }
+
+    def test_should_point_a_url_printed_in_brackets_where_it_leads(self):
+        view_model = get_tei_view_model(get_tei_xml(back=(
+            '<div type="references"><listBibl><biblStruct xml:id="b0">'
+            '<ref type="url">&lt;https://example.org/ data&gt;</ref>'
+            '</biblStruct></listBibl></div>'
+        )))
+        assert view_model['references'][0]['url']['href'] == 'https://example.org/data'
+
     def test_should_read_a_page_range_the_document_gives_as_one_value(self):
         view_model = get_tei_view_model(get_tei_xml(back=(
             '<div type="references"><listBibl><biblStruct xml:id="b0">'
