@@ -156,20 +156,28 @@ class TestTitle:
     def test_should_carry_no_title_where_the_document_states_none(self):
         assert get_article_view_model(get_article_xml())['titles'] == []
 
-    def test_should_read_a_translated_title_with_the_language_it_declares(self):
+    def test_should_read_each_title_in_the_language_its_title_group_declares(self):
         view_model = get_article_view_model(get_article_xml(
             front=(
-                '<title-group>'
-                '<article-title xml:lang="en">The title</article-title>'
-                '<trans-title-group xml:lang="de">'
-                '<trans-title>Der Titel</trans-title>'
-                '</trans-title-group>'
+                '<title-group><article-title>The title</article-title></title-group>'
+                '<title-group xml:lang="de"><article-title>Der Titel</article-title>'
                 '</title-group>'
             )
-        ))
+        ).replace('<article ', '<article xml:lang="en" '))
         assert without_paths(view_model['titles']) == [
             {'label': 'article-title', 'text': 'The title', 'language': 'en'},
-            {'label': 'trans-title', 'text': 'Der Titel', 'language': 'de'}
+            {'label': 'article-title', 'text': 'Der Titel', 'language': 'de'}
+        ]
+
+    def test_should_read_an_abstract_in_the_language_of_the_article(self):
+        view_model = get_article_view_model(get_article_xml(
+            front=(
+                '<abstract><p>An abstract.</p></abstract>'
+                '<abstract xml:lang="de"><p>Eine Zusammenfassung.</p></abstract>'
+            )
+        ).replace('<article ', '<article xml:lang="en" '))
+        assert [abstract['language'] for abstract in view_model['abstracts']] == [
+            'en', 'de'
         ]
 
 
@@ -645,14 +653,11 @@ class TestRenderedArticle:
     def test_should_show_every_title_with_the_language_it_declares(self):
         html = get_rendered_article(get_article_xml(
             front=(
-                '<title-group>'
-                '<article-title xml:lang="en">The title</article-title>'
-                '<trans-title-group xml:lang="de">'
-                '<trans-title>Der Titel</trans-title>'
-                '</trans-title-group>'
+                '<title-group><article-title>The title</article-title></title-group>'
+                '<title-group xml:lang="de"><article-title>Der Titel</article-title>'
                 '</title-group>'
             )
-        ))
+        ).replace('<article ', '<article xml:lang="en" '))
         assert 'lang="en"' in html
         assert 'lang="de"' in html
         text_only = get_text_without_labels(html)

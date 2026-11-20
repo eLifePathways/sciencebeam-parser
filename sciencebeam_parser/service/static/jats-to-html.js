@@ -279,8 +279,14 @@ function getReference(node) {
   return reference;
 }
 
-function getAbstract(abstract) {
-  const language = getLanguage(abstract);
+/* A value in the language it declares, or else the one its container declares. */
+function withLanguage(value, ...containers) {
+  const language = [value.language, ...containers.map(getLanguage)].find((each) => each);
+  return language ? { ...value, language } : value;
+}
+
+function getAbstract(abstract, article) {
+  const language = getLanguage(abstract) || getLanguage(article);
   const value = {
     label: abstract.name,
     path: abstract.path,
@@ -298,7 +304,6 @@ export function getArticleViewModel(article) {
   }
   const front = getFirstChildElement(article, 'front');
   const articleMeta = getFirstChildElement(front, 'article-meta');
-  const titleGroup = getFirstChildElement(articleMeta, 'title-group');
   const body = getFirstChildElement(article, 'body');
   const back = getFirstChildElement(article, 'back');
   const ack = getFirstChildElement(back, 'ack');
@@ -308,14 +313,11 @@ export function getArticleViewModel(article) {
     ? getFirstDescendantElement(front, 'journal-title')
     : null;
   return {
-    titles: titleGroup ? [
-      ...getValuesWithLanguage(titleGroup, 'article-title'),
-      ...getChildElements(titleGroup, 'trans-title-group').flatMap(
-        (group) => getValuesWithLanguage(group, 'trans-title').map(
-          (value) => ({ ...value, language: value.language || getLanguage(group) })
-        )
+    titles: getChildElements(articleMeta, 'title-group').flatMap(
+      (group) => getValuesWithLanguage(group, 'article-title').map(
+        (value) => withLanguage(value, group, article)
       )
-    ] : [],
+    ),
     language: getLanguageValue(article),
     journal: journalTitle
       ? {
@@ -327,7 +329,9 @@ export function getArticleViewModel(article) {
     authorGroup: getContribGroup(articleMeta),
     authors: getAuthors(articleMeta),
     affiliations: getAffiliations(articleMeta),
-    abstracts: getChildElements(articleMeta, 'abstract').map(getAbstract),
+    abstracts: getChildElements(articleMeta, 'abstract').map(
+      (abstract) => getAbstract(abstract, article)
+    ),
     sections: getChildElements(body, 'sec').map(getSection),
     acknowledgements: ack ? getSectionBlocks(ack) : [],
     appendices: getChildElements(appGroup, 'app').map(getSection),
