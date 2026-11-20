@@ -222,9 +222,25 @@ function getAffiliations(articleMeta) {
   }));
 }
 
+/* What a citation tags, where it stands in the citation's text: a name's
+ * parts each stand for themselves. */
+function getCitationContent(node) {
+  return (node.children || []).flatMap((child) => {
+    if (typeof child === 'string') {
+      return [{ text: child }];
+    }
+    if (child.name === 'person-group' || child.name === 'string-name') {
+      return getCitationContent(child);
+    }
+    const value = { label: child.name, path: child.path, text: getTextContent(child) };
+    const href = getAttribute(child, 'xlink:href');
+    return [href ? { ...value, href } : value];
+  });
+}
+
 function getReference(node) {
-  const citation = getFirstChildElement(node, 'element-citation')
-    || getFirstChildElement(node, 'mixed-citation');
+  const mixedCitation = getFirstChildElement(node, 'mixed-citation');
+  const citation = getFirstChildElement(node, 'element-citation') || mixedCitation;
   const personGroup = citation
     ? getFirstChildElement(citation, 'person-group')
     : null;
@@ -236,10 +252,14 @@ function getReference(node) {
     path: node.path,
     id: getAttribute(node, 'id'),
     heading: getValue(node, 'label'),
-    authors: getChildElements(personGroup, 'name').map((name) => [
+    authors: [
+      ...getChildElements(personGroup, 'name'),
+      ...getChildElements(personGroup, 'string-name')
+    ].map((name) => [
       getValue(name, 'given-names'),
       getValue(name, 'surname')
     ].filter((part) => part)),
+    content: mixedCitation ? getCitationContent(mixedCitation) : null,
     doi: doi
       ? { label: 'pub-id', path: doi.path, text: getTextContent(doi).trim() }
       : null,

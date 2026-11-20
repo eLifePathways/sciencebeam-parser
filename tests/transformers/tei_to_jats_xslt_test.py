@@ -14,18 +14,25 @@ from sciencebeam_parser.utils.xml import get_text_content
 from sciencebeam_parser.document.layout_document import LayoutBlock
 from sciencebeam_parser.document.semantic_document import (
     SemanticAffiliationAddress,
+    SemanticAuthor,
     SemanticCountry,
     SemanticDepartment,
     SemanticDocument,
     SemanticExternalIdentifier,
     SemanticExternalIdentifierTypes,
+    SemanticGivenName,
     SemanticHeading,
     SemanticInstitution,
     SemanticLabel,
     SemanticMarker,
+    SemanticJournal,
     SemanticNote,
+    SemanticRawReferenceText,
     SemanticReference,
-    SemanticSectionTypes
+    SemanticSectionTypes,
+    SemanticSurname,
+    SemanticTitle,
+    SemanticVolume
 )
 from sciencebeam_parser.document.tei.author import (
     get_tei_affiliation_for_semantic_affiliation_address_element
@@ -326,6 +333,26 @@ def _reference(**kwargs):  # pylint: disable=too-many-branches
                 email=None
             ))
     return bibl_struct
+
+
+def _printed_reference(printed: str, *children) -> etree.ElementBase:
+    return TEI_E.biblStruct(
+        {'{http://www.w3.org/XML/1998/namespace}id': 'b0'},
+        TEI_E.note(printed, type='raw_reference'),
+        *children
+    )
+
+
+def _person(surname: str, *forenames: str) -> etree.ElementBase:
+    return TEI_E.author(TEI_E.persName(
+        TEI_E.surname(surname), *[TEI_E.forename(forename) for forename in forenames]
+    ))
+
+
+def _mixed_citation_of(tei_to_jats_xslt_fn, bibl_struct) -> str:
+    jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[bibl_struct])))
+    mixed_citation = _get_item(jats, 'back/ref-list/ref/mixed-citation')
+    return etree.tostring(mixed_citation, encoding='unicode', with_tail=False).split('>', 1)[1]
 
 
 def _xpath(xml, xpath: str):
@@ -1546,6 +1573,130 @@ class TestTeiToJatsXslt:
             assert jats.xpath('back/app-group/app/table-wrap/caption/title') == []
             assert _get_text(jats, 'back/app-group/app/table-wrap/caption/p') == (
                 'Table 1. This is the table'
+            )
+
+    class TestMixedCitation:
+        def test_should_tag_each_part_where_it_is_printed(self, tei_to_jats_xslt_fn):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'Hallgren P, Okafor N. Creep in beams. J Timber Eng. 2019;14(2):101-9.',
+                TEI_E.analytic(
+                    _person('Hallgren', 'P'),
+                    _person('Okafor', 'N'),
+                    TEI_E.title('Creep in beams', level='a', type='main')
+                ),
+                TEI_E.monogr(
+                    TEI_E.title('J Timber Eng', level='j'),
+                    TEI_E.imprint(
+                        TEI_E.biblScope('14', unit='volume'),
+                        TEI_E.biblScope('2', unit='issue'),
+                        TEI_E.biblScope({'unit': 'page', 'from': '101', 'to': '9'}),
+                        TEI_E.date('2019', type='published', when='2019')
+                    )
+                )
+            )) == (
+                '<person-group person-group-type="author">'
+                '<string-name><surname>Hallgren</surname> <given-names>P</given-names>'
+                '</string-name>, '
+                '<string-name><surname>Okafor</surname> <given-names>N</given-names>'
+                '</string-name></person-group>. '
+                '<article-title>Creep in beams</article-title>. '
+                '<source>J Timber Eng</source>. <year>2019</year>;<volume>14</volume>'
+                '(<issue>2</issue>):<fpage>101</fpage>-<lpage>9</lpage>.</mixed-citation>'
+            )
+
+        def test_should_only_tag_a_part_printed_as_a_whole_word(self, tei_to_jats_xslt_fn):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'A title. 2019; 2.',
+                TEI_E.monogr(TEI_E.imprint(TEI_E.biblScope('2', unit='issue')))
+            )) == 'A title. 2019; <issue>2</issue>.</mixed-citation>'
+
+        def test_should_keep_text_no_part_accounts_for(self, tei_to_jats_xslt_fn):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                '. A title, in press.',
+                TEI_E.analytic(TEI_E.title('A title', level='a', type='main'))
+            )) == '. <article-title>A title</article-title>, in press.</mixed-citation>'
+
+        def test_should_tag_initials_printed_together_as_one_given_name(
+            self, tei_to_jats_xslt_fn
+        ):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'Broadhead MJ. A map. J Neurosci.',
+                TEI_E.analytic(_person('Broadhead', 'M', 'J')),
+                TEI_E.monogr(TEI_E.title('J Neurosci', level='j'))
+            )) == (
+                '<person-group person-group-type="author"><string-name>'
+                '<surname>Broadhead</surname> <given-names>MJ</given-names>'
+                '</string-name></person-group>. A map. <source>J Neurosci</source>.'
+                '</mixed-citation>'
+            )
+
+        def test_should_leave_a_name_untagged_where_its_parts_are_printed_apart(
+            self, tei_to_jats_xslt_fn
+        ):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'Smith and colleagues, edited by K.',
+                TEI_E.analytic(_person('Smith', 'K'))
+            )) == 'Smith and colleagues, edited by K.</mixed-citation>'
+
+        def test_should_write_a_doi_and_url_without_the_spaces_a_line_break_left(
+            self, tei_to_jats_xslt_fn
+        ):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'A title. doi: 10. 1000/xyz. Available from: https://example.org/ data',
+                TEI_E.analytic(TEI_E.idno('10.1000/xyz', type='DOI')),
+                TEI_E.ref('https://example.org/data', type='url')
+            )) == (
+                'A title. doi: <pub-id pub-id-type="doi">10.1000/xyz</pub-id>. Available from: '
+                '<ext-link ext-link-type="uri"'
+                ' xlink:href="https://example.org/data">https://example.org/data</ext-link>'
+                '</mixed-citation>'
+            )
+
+        def test_should_keep_the_element_citation_without_the_printed_reference(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                _tei(references=[_reference(**REFERENCE_1)])
+            ))
+            assert [child.tag for child in _get_item(jats, 'back/ref-list/ref')] == [
+                'element-citation'
+            ]
+
+        def test_should_write_an_empty_mixed_citation_where_nothing_is_known(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[
+                TEI_E.biblStruct({'{http://www.w3.org/XML/1998/namespace}id': 'b0'})
+            ])))
+            ref = _get_item(jats, 'back/ref-list/ref')
+            assert [child.tag for child in ref] == ['mixed-citation']
+            assert len(ref[0]) == 0 and not ref[0].text
+
+        def test_should_tag_the_reference_the_parser_produced(self, tei_to_jats_xslt_fn):
+            semantic_reference = SemanticReference(content_id='b0')
+            semantic_reference.add_content(SemanticRawReferenceText(
+                layout_block=LayoutBlock.for_text('Smith J. A title. A Journal 12.')
+            ))
+            semantic_reference.add_content(SemanticAuthor([
+                SemanticSurname(layout_block=LayoutBlock.for_text('Smith')),
+                SemanticGivenName(layout_block=LayoutBlock.for_text('J'))
+            ]))
+            semantic_reference.add_content(
+                SemanticTitle(layout_block=LayoutBlock.for_text('A title'))
+            )
+            semantic_reference.add_content(
+                SemanticJournal(layout_block=LayoutBlock.for_text('A Journal'))
+            )
+            semantic_reference.add_content(
+                SemanticVolume(layout_block=LayoutBlock.for_text('12'))
+            )
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, get_tei_reference_element(
+                semantic_reference, context=DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
+            )) == (
+                '<person-group person-group-type="author"><string-name>'
+                '<surname>Smith</surname> <given-names>J</given-names></string-name>'
+                '</person-group>. <article-title>A title</article-title>. '
+                '<source>A Journal</source> <volume>12</volume>.</mixed-citation>'
             )
 
     class TestReferences:
