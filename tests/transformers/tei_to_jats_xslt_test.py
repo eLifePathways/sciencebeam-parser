@@ -575,30 +575,39 @@ class TestTeiToJatsXslt:
                 jats, 'front/article-meta/title-group/article-title'
             ) == VALUE_1
 
-        def test_should_translate_a_further_title_as_a_translation(self, tei_to_jats_xslt_fn):
+        def test_should_give_each_title_a_title_group_in_its_language(
+            self, tei_to_jats_xslt_fn
+        ):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
                 _tei(titleStmt=TEI_E.titleStmt(
                     TEI_E.title(VALUE_1, **{XML_LANG: 'pt'}),
                     TEI_E.title(VALUE_2, **{XML_LANG: 'en'})
                 ))
             ))
-            assert _get_text(
-                jats, 'front/article-meta/title-group/article-title'
-            ) == VALUE_1
-            trans_group = jats.find(
-                'front/article-meta/title-group/trans-title-group'
-            )
-            assert trans_group.attrib[XML_LANG] == 'en'
-            assert _get_text(trans_group, 'trans-title') == VALUE_2
+            assert [
+                (title_group.get(XML_LANG), _get_text(title_group, 'article-title'))
+                for title_group in jats.findall('front/article-meta/title-group')
+            ] == [('pt', VALUE_1), ('en', VALUE_2)]
+            assert jats.xpath('//trans-title-group') == []
 
-        def test_should_translate_the_language_of_the_title(self, tei_to_jats_xslt_fn):
+        def test_should_leave_the_language_off_a_title_in_the_text_s_language(
+            self, tei_to_jats_xslt_fn
+        ):
             jats = etree.fromstring(tei_to_jats_xslt_fn(
-                _tei(titleStmt=TEI_E.titleStmt(
-                    TEI_E.title(VALUE_1, **{XML_LANG: 'pt'})
+                _tei(text_language='pt', titleStmt=TEI_E.titleStmt(
+                    TEI_E.title(VALUE_1, **{XML_LANG: 'pt'}),
+                    TEI_E.title(VALUE_2, **{XML_LANG: 'en'})
                 ))
             ))
-            title = jats.find('front/article-meta/title-group/article-title')
-            assert title.attrib[XML_LANG] == 'pt'
+            title_groups = jats.findall('front/article-meta/title-group')
+            assert [
+                (title_group.get(XML_LANG), _get_text(title_group, 'article-title'))
+                for title_group in title_groups
+            ] == [(None, VALUE_1), ('en', VALUE_2)]
+
+        def test_should_write_no_article_type(self, tei_to_jats_xslt_fn):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei()))
+            assert 'article-type' not in jats.attrib
 
         def test_should_declare_the_language_of_the_text_on_the_article(
             self, tei_to_jats_xslt_fn
@@ -608,8 +617,8 @@ class TestTeiToJatsXslt:
                 titleStmt=TEI_E.titleStmt(TEI_E.title(VALUE_1, **{XML_LANG: 'pt'}))
             )))
             assert jats.attrib[XML_LANG] == 'pt'
-            title = jats.find('front/article-meta/title-group/article-title')
-            assert XML_LANG not in title.attrib
+            title_group = jats.find('front/article-meta/title-group')
+            assert XML_LANG not in title_group.attrib
 
         def test_should_keep_the_language_of_a_title_in_another_language(
             self, tei_to_jats_xslt_fn
@@ -618,8 +627,8 @@ class TestTeiToJatsXslt:
                 text_language='en',
                 titleStmt=TEI_E.titleStmt(TEI_E.title(VALUE_1, **{XML_LANG: 'pt'}))
             )))
-            title = jats.find('front/article-meta/title-group/article-title')
-            assert title.attrib[XML_LANG] == 'pt'
+            title_group = jats.find('front/article-meta/title-group')
+            assert title_group.attrib[XML_LANG] == 'pt'
 
         def test_should_declare_no_language_where_the_text_declares_none(
             self, tei_to_jats_xslt_fn
@@ -635,8 +644,8 @@ class TestTeiToJatsXslt:
                     TEI_E.title(VALUE_1)
                 ))
             ))
-            title = jats.find('front/article-meta/title-group/article-title')
-            assert XML_LANG not in title.attrib
+            title_group = jats.find('front/article-meta/title-group')
+            assert XML_LANG not in title_group.attrib
 
         def test_should_not_include_title_attributes_in_transformed_title_value(
                 self, tei_to_jats_xslt_fn):

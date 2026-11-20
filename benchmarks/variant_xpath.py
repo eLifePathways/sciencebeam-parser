@@ -181,14 +181,14 @@ def fn_tei_abstract_language_pairs(_, nodes):
 
 
 def title_language_pairs(article: ET.ElementBase) -> List[str]:
-    title_group = article.find("front/article-meta/title-group")
-    if title_group is None:
-        return []
+    title_groups = article.findall("front/article-meta/title-group")
     return [
-        _language_pair(node, article)
+        _language_pair(node, title_group, article)
+        for title_group in title_groups
         for node in title_group.findall("article-title")
     ] + [
         _language_pair(node, node.getparent())
+        for title_group in title_groups
         for node in title_group.iter("trans-title")
     ]
 

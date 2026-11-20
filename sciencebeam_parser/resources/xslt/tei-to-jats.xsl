@@ -27,7 +27,7 @@
   <xsl:variable name="language" select="string(/tei:TEI/tei:text/@xml:lang)"/>
 
   <xsl:template match="/">
-    <article article-type="research-article" dtd-version="1.4">
+    <article dtd-version="1.4">
       <xsl:if test="$language">
         <xsl:attribute name="xml:lang"><xsl:value-of select="$language"/></xsl:attribute>
       </xsl:if>
@@ -73,22 +73,17 @@
     </xsl:if>
 
     <article-meta>
-      <title-group>
-        <article-title>
-          <xsl:for-each select="tei:fileDesc/tei:titleStmt/tei:title[1]">
-            <xsl:call-template name="language-unless-the-document-s"/>
-          </xsl:for-each>
-          <xsl:apply-templates select="tei:fileDesc/tei:titleStmt/tei:title[1]"/>
-        </article-title>
-        <xsl:for-each select="tei:fileDesc/tei:titleStmt/tei:title[position() &gt; 1]">
-          <trans-title-group>
-            <xsl:copy-of select="@xml:lang"/>
-            <trans-title>
-              <xsl:apply-templates select="."/>
-            </trans-title>
-          </trans-title-group>
-        </xsl:for-each>
-      </title-group>
+      <xsl:if test="not(tei:fileDesc/tei:titleStmt/tei:title)">
+        <title-group><article-title/></title-group>
+      </xsl:if>
+      <xsl:for-each select="tei:fileDesc/tei:titleStmt/tei:title">
+        <title-group>
+          <xsl:call-template name="language-unless-the-document-s"/>
+          <article-title>
+            <xsl:apply-templates select="."/>
+          </article-title>
+        </title-group>
+      </xsl:for-each>
 
       <xsl:if test="tei:fileDesc/tei:sourceDesc/tei:biblStruct/tei:analytic/tei:author">
         <contrib-group>

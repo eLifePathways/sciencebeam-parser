@@ -203,6 +203,15 @@ class TestTitleLanguagePairs:
         )
         assert title_language_pairs(article) == [_pair("pt", "O titulo"), _pair("es", "El titulo")]
 
+    def test_should_read_a_title_in_another_title_group_in_that_group_s_language(self):
+        article = etree.fromstring(
+            '<article xml:lang="pt"><front><article-meta>'
+            "<title-group><article-title>O titulo</article-title></title-group>"
+            '<title-group xml:lang="en"><article-title>The title</article-title></title-group>'
+            "</article-meta></front></article>"
+        )
+        assert title_language_pairs(article) == [_pair("pt", "O titulo"), _pair("en", "The title")]
+
     def test_should_give_nothing_where_there_is_no_title_group(self):
         article = etree.fromstring('<article xml:lang="pt"><front/></article>')
         assert title_language_pairs(article) == []
