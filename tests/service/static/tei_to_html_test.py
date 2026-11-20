@@ -246,6 +246,14 @@ class TestBody:
         }
         assert get_paragraph_texts(section['blocks']) == ['A paragraph.']
 
+    def test_should_read_the_printed_section_number(self):
+        view_model = get_tei_view_model(get_tei_xml(
+            body='<div><head n="2.">Methods</head></div>'
+        ))
+        assert without_paths(view_model['sections'][0]['heading']) == {
+            'label': '@n', 'text': '2.'
+        }
+
     def test_should_keep_a_nested_division_inside_its_parent(self):
         view_model = get_tei_view_model(get_tei_xml(
             body='<div><head>Outer</head><div><head>Inner</head></div></div>'
@@ -381,6 +389,15 @@ class TestReferences:
             [part['text'] for part in name]
             for name in view_model['references'][0]['authors']
         ] == [['J', 'Smith'], ['A', 'Jones']]
+
+    def test_should_read_the_printed_reference_number(self):
+        view_model = get_tei_view_model(get_tei_xml(back=(
+            '<div type="references"><listBibl><biblStruct xml:id="b0">'
+            '<note type="label">[1]</note></biblStruct></listBibl></div>'
+        )))
+        assert without_paths(view_model['references'][0]['heading']) == {
+            'label': 'note', 'text': '[1]'
+        }
 
     def test_should_read_a_page_range_the_document_gives_as_one_value(self):
         view_model = get_tei_view_model(get_tei_xml(back=(

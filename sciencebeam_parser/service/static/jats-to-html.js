@@ -128,6 +128,7 @@ function getSection(node) {
     label: node.name,
     path: node.path,
     id: getAttribute(node, 'id'),
+    heading: getValue(node, 'label'),
     title: getValue(node, 'title'),
     blocks: getSectionBlocks(node)
   };
@@ -209,7 +210,8 @@ function getAffiliationContent(aff) {
 }
 
 function getAffiliations(articleMeta) {
-  return getChildElements(articleMeta, 'aff').map((aff) => ({
+  const contribGroup = getFirstChildElement(articleMeta, 'contrib-group');
+  return getChildElements(contribGroup, 'aff').map((aff) => ({
     label: aff.name,
     path: aff.path,
     id: getAttribute(aff, 'id'),
@@ -231,6 +233,7 @@ function getReference(node) {
     label: node.name,
     path: node.path,
     id: getAttribute(node, 'id'),
+    heading: getValue(node, 'label'),
     authors: getChildElements(personGroup, 'name').map((name) => [
       getValue(name, 'given-names'),
       getValue(name, 'surname')

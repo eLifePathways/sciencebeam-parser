@@ -113,12 +113,19 @@ function getDivisionBlocks(node) {
   return blocks;
 }
 
+function getSectionNumber(node) {
+  const head = getFirstChildElement(node, 'head');
+  const number = head ? (getAttribute(head, 'n') || '').trim() : '';
+  return number ? { label: '@n', text: number, path: head.path } : null;
+}
+
 function getDivision(node) {
   return {
     type: 'section',
     label: node.name,
     path: node.path,
     id: getElementId(node),
+    heading: getSectionNumber(node),
     title: getValue(node, 'head'),
     blocks: getDivisionBlocks(node)
   };
@@ -212,6 +219,7 @@ function getReference(node) {
     label: node.name,
     path: node.path,
     id: getElementId(node),
+    heading: getNodeValue(getChildByAttribute(node, 'note', 'type', 'label'), 'note'),
     authors: getAuthorElements(authorParent || node).map(getPersonNameParts),
     articleTitle: analytic
       ? getNodeValue(
