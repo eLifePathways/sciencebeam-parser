@@ -3,7 +3,7 @@
     <fileDesc>
       <titleStmt>
         <title level="a" type="main" xml:lang="pt">Ensaio de pontes de madeira</title>
-        <title level="a" type="main" xml:lang="en">Testing timber bridges</title>
+        <title level="a" type="main" xml:lang="en">Testing <hi rend="italic">Pinus</hi> timber bridges</title>
       </titleStmt>
       <sourceDesc>
         <biblStruct>
@@ -33,20 +33,20 @@
     </fileDesc>
     <encodingDesc><appInfo><application ident="sciencebeam-parser" version="0.0.0"><label type="profile">default</label><label type="profile-digest">000000000000</label></application></appInfo></encodingDesc>
     <profileDesc>
-      <abstract xml:lang="pt"><div><head>Resumo</head><p>Seis pontes foram <hi rend="italic">ensaiadas</hi>.</p></div></abstract>
+      <abstract xml:lang="pt"><div><head>Resumo <hi rend="italic">breve</hi></head><p>Seis pontes foram <hi rend="italic">ensaiadas</hi>.</p></div></abstract>
       <abstract xml:lang="en"><div><p>Six bridges were <hi rend="bold">tested</hi>.</p></div></abstract>
     </profileDesc>
   </teiHeader>
   <text xml:lang="pt">
     <body>
       <div>
-        <head n="1.">Introdução</head>
-        <p>Pontes <ref type="bibr" target="#b0">[1]</ref>, <ref type="figure" target="#fig_0">Figura 1</ref>, <ref type="table" target="#tab_0">Tabela 1</ref> e <ref type="foot">2</ref>.</p>
+        <head n="1."><hi rend="bold">Introdução</hi> <hi rend="italic">geral</hi></head>
+        <p>Pontes<ref type="bibr" target="#b0"><hi rend="superscript">1</hi></ref> com 10<hi rend="superscript">5</hi> ciclos e CO<hi rend="subscript">2</hi>, <hi rend="italic">in <hi rend="bold">situ</hi></hi>, <ref type="figure" target="#fig_0">Figura 1</ref>, <ref type="table" target="#tab_0">Tabela 1</ref> e <ref type="foot">2</ref>.</p>
       </div>
       <div><head>Métodos</head><p>Sem número.</p></div>
-      <figure xml:id="fig_0"><note type="&lt;figure_head&gt;">Figura</note><head>1</head><label>1</label><note type="&lt;figure_head&gt;">.</note><figDesc>Uma ponte.</figDesc><graphic url="fig_0.png"/></figure>
+      <figure xml:id="fig_0"><note type="&lt;figure_head&gt;">Figura</note><head>1</head><label>1</label><note type="&lt;figure_head&gt;">.</note><figDesc>Uma ponte de <hi rend="italic">Pinus</hi>.</figDesc><graphic url="fig_0.png"/></figure>
       <figure xml:id="fig_1"><head>2</head><label>2</label><figDesc>Sem imagem.</figDesc><graphic type="svg"/></figure>
-      <figure type="table" xml:id="tab_0"><note type="&lt;figure_head&gt;">Tabela</note><head>1</head><label>1</label><figDesc>Cargas.</figDesc><table>1 2 3</table></figure>
+      <figure type="table" xml:id="tab_0"><note type="&lt;figure_head&gt;">Tabela</note><head>1</head><label>1</label><figDesc>Cargas em kN m<hi rend="superscript">-2</hi>.</figDesc><table>1 2 3</table></figure>
     </body>
     <back>
       <div type="acknowledgement"><div><head>Agradecimentos</head><p>Aos revisores.</p></div></div>
@@ -58,21 +58,21 @@
         <listBibl>
           <biblStruct xml:id="b0">
             <note type="label">1</note>
-            <note type="raw_reference">Hallgren P. Creep in glued laminated beams. J Timber Eng. 2019;14(2):101-9. doi: 10. 5555/jte.2019.0142</note>
+            <note type="raw_reference">Hallgren P. Creep in glued laminated Pinus beams. J Timber Eng. 2019;14(2):101-9. doi: 10. 5555/jte.2019.0142</note>
             <analytic>
               <author><persName><forename type="first">P</forename><surname>Hallgren</surname></persName></author>
-              <title level="a" type="main">Creep in glued laminated beams</title>
+              <title level="a" type="main">Creep in glued laminated <hi rend="italic">Pinus</hi> beams</title>
               <idno type="DOI">10.5555/jte.2019.0142</idno>
             </analytic>
             <monogr>
-              <title level="j">J Timber Eng</title>
+              <title level="j"><hi rend="italic">J Timber Eng</hi></title>
               <imprint><biblScope unit="volume">14</biblScope><biblScope unit="issue">2</biblScope><biblScope unit="page" from="101" to="109"/><date type="published" when="2019-03-04">2019</date></imprint>
             </monogr>
           </biblStruct>
           <biblStruct xml:id="b1">
             <monogr>
               <author><persName><forename type="first">N</forename><surname>Okafor</surname></persName></author>
-              <title level="m" type="main">Timber Structures</title>
+              <title level="m" type="main">Timber Structures in <hi rend="italic">Pinus</hi></title>
               <imprint><biblScope unit="page">42</biblScope><date type="published" when="2020-05">2020</date></imprint>
             </monogr>
           </biblStruct>
