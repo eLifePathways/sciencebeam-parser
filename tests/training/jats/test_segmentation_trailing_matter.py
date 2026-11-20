@@ -651,3 +651,54 @@ class TestADateAReportIsHeadedWith:
     def test_the_date_stays_with_the_report(self):
         doc, annotated, dated = self._make_doc()
         assert derive_labels(doc, annotated)[id(dated)] == SEG_REVIEW
+
+
+class TestADatePrintedAfterTheDeclarations:
+    """A journal sets when it received the article beside the statement of who
+    contributed what, and no field carries the dates."""
+
+    def _make_doc(self, split_across_two_lines: bool):
+        body = [
+            make_line('The', 'argument', f'runs{index}', 'here', y=60.0 + 14 * index)
+            for index in range(4)
+        ]
+        references = [
+            make_line('Egret', 'A.', f'Wading{index}', 'in', 'the', 'reeds.',
+                      y=140.0 + 14 * index)
+            for index in range(4)
+        ]
+        statement = [
+            make_line('Participation', 'of', 'the', 'authors', y=220.0),
+            make_line('A', 'Egret', 'counted', 'and', 'B', 'Bittern', 'wrote.',
+                      y=234.0),
+        ]
+        dates = (
+            [make_line('Received', ':', y=260.0, x=40.0),
+             make_line('2', '.', '5', '.', '2016', y=260.0, x=140.0)]
+            if split_across_two_lines
+            else [make_line('Received', ':', '2', '.', '5', '.', '2016', y=260.0)]
+        )
+        doc = make_doc_with_page(
+            LayoutBlock(lines=body),
+            LayoutBlock(lines=references),
+            LayoutBlock(lines=statement),
+            LayoutBlock(lines=dates),
+        )
+        order = list(doc.iter_all_lines())
+        fields = {order.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+                  for line in body}
+        fields.update({order.index(line): JatsFieldNames.REFERENCE
+                       for line in references})
+        fields.update({order.index(line): JatsFieldNames.CONTRIBUTION_NOTE
+                       for line in statement})
+        return doc, annotate(doc, fields), dates
+
+    def test_the_date_is_front_matter_under_the_declarations(self):
+        doc, annotated, dates = self._make_doc(split_across_two_lines=False)
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in dates] == [SEG_FRONT]
+
+    def test_the_word_and_the_date_beside_it_are_one_row(self):
+        doc, annotated, dates = self._make_doc(split_across_two_lines=True)
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in dates] == [SEG_FRONT] * 2

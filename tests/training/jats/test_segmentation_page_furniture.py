@@ -782,3 +782,84 @@ class TestARunningHeadOfOneWord:
         doc, annotated, _name, broken = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in broken] == [SEG_HEADNOTE] * 4
+
+
+class TestTheWordATableIsCarriedOverBy:
+    """A table says it goes on at the top of the page it goes on to, where the
+    running head is."""
+
+    def _make_doc(self, word: str):
+        markers = [
+            make_line(word, y=40.0, x=500.0, page_number=page_number)
+            for page_number in (1, 2, 3)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[markers[page_number - 1]]),
+                    LayoutBlock(lines=[make_line(
+                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
+                        y=400.0, x=40.0, page_number=page_number,
+                    )]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (1, 2, 3)
+        ])
+        return doc, annotate(doc, {}), markers
+
+    def test_it_is_not_the_running_head_however_it_is_spelt(self):
+        for word in ('(continued)', '(continues)'):
+            doc, annotated, markers = self._make_doc(word)
+            labels = derive_labels(doc, annotated)
+            assert SEG_HEADNOTE not in [labels[id(line)] for line in markers], word
+
+
+class TestAChartWhoseLastRowCrossesTheFooter:
+    """A chart staggers the lines of a row, so one cell of it falls past the
+    threshold while the cell beside it does not."""
+
+    def _make_doc(self, with_a_cell_beside_it: bool):
+        feet = [
+            make_line('Journal', 'of', 'Marsh', 'Birds,', 'v.', '12,', '2024',
+                      y=960.0, x=40.0, page_number=page_number)
+            for page_number in (1, 2, 3)
+        ]
+        cell = make_line('Egret', 'et', 'al.', '14', y=926.0, x=200.0,
+                         page_number=2, font_size=7.0)
+        beside = make_line('NS', ':', 'not', 'stated', ';', 'IMTG', ':', 'the',
+                           'training', 'group', y=922.0, x=320.0,
+                           page_number=2, font_size=7.0)
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[make_line(
+                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
+                        y=400.0, x=40.0, page_number=page_number,
+                    )]),
+                ] + ([
+                    LayoutBlock(lines=[cell]),
+                ] + ([LayoutBlock(lines=[beside])] if with_a_cell_beside_it else [])
+                    if page_number == 2 else []
+                ) + [LayoutBlock(lines=[feet[page_number - 1]])],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (1, 2, 3)
+        ])
+        order = list(doc.iter_all_lines())
+        fields = (
+            {order.index(beside): JatsFieldNames.BODY_TABLE}
+            if with_a_cell_beside_it else {}
+        )
+        return doc, annotate(doc, fields), cell, feet
+
+    def test_the_cell_past_the_threshold_is_not_a_foot(self):
+        doc, annotated, cell, feet = self._make_doc(with_a_cell_beside_it=True)
+        labels = derive_labels(doc, annotated)
+        assert labels[id(cell)] != SEG_FOOTNOTE
+        assert [labels[id(foot)] for foot in feet] == [SEG_FOOTNOTE] * 3
+
+    def test_a_foot_with_nothing_beside_it_is_a_foot(self):
+        doc, annotated, cell, _feet = self._make_doc(with_a_cell_beside_it=False)
+        labels = derive_labels(doc, annotated)
+        assert labels[id(cell)] == SEG_FOOTNOTE

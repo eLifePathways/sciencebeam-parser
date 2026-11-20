@@ -138,7 +138,7 @@ _FLOAT_LABEL_PATTERN = (
     r"(?:tab(?:le|\.|ela|la)?|fig(?:ure|\.|ura)?|quadro|gr[a\u00e1]fico)\s*\.?\s*\d+\s*\.?"
 )
 _FLOAT_CONTINUES_PATTERN = (
-    r"\(?\s*(?:continued?|continuation|continua(?:[c\u00e7][a\u00e3]o)?"
+    r"\(?\s*(?:continue[sd]?|continuation|continua(?:[c\u00e7][a\u00e3]o)?"
     r"|continuaci[o\u00f3]n|cont'd|cont\.)\s*\)?\.?"
 )
 # Either on its own, or the label with the word after it, which is how a
@@ -1003,15 +1003,33 @@ def _tag_publication_dates(
     has no entry for and reading it as an entry's pages.
     """
     first_reference = _get_first_reference_index(seg_lines)
-    for index, seg_line in enumerate(seg_lines):
+
+    def is_the_page_s_own(index: int, seg_line: _SegLine) -> bool:
         if seg_line.seg_label in _LABELS_A_DATE_DOES_NOT_TAKE:
-            continue
-        if _is_grounded(seg_line, annotated) and not (
+            return False
+        return not _is_grounded(seg_line, annotated) or (
             first_reference is not None and index > first_reference
-        ):
+        )
+
+    for index, seg_line in enumerate(seg_lines):
+        if not is_the_page_s_own(index, seg_line):
             continue
         if _PUBLICATION_DATE_PATTERN.match(seg_line.text):
             seg_line.seg_label = SEG_FRONT
+    # The word and the date it introduces are one row of the page, which
+    # pdfalto hands over as two lines when it sets them apart.
+    by_block: Dict[int, List[Tuple[int, _SegLine]]] = {}
+    for index, seg_line in enumerate(seg_lines):
+        by_block.setdefault(seg_line.block_index, []).append((index, seg_line))
+    for block in by_block.values():
+        if len(block) < 2:
+            continue
+        if not all(is_the_page_s_own(index, seg_line) for index, seg_line in block):
+            continue
+        joined = ' '.join(seg_line.text for _, seg_line in block)
+        if _PUBLICATION_DATE_PATTERN.match(joined):
+            for _, seg_line in block:
+                seg_line.seg_label = SEG_FRONT
 
 
 # The sentence a journal grants its licence in, from the words it opens with.
@@ -1939,9 +1957,13 @@ def _says_something_without_its_numbers(text: str) -> bool:
     """Whether what is left of the line once its numbers are gone is still words.
 
     "15-58, 2005." is nothing but its numbers, and the end of a reference entry
-    rather than anything a page runs across its foot.
+    rather than anything a page runs across its foot.  "et al. 9" leaves two
+    abbreviations behind, which is a column of a table citing its sources and
+    not a foot either: a journal running one carries its own name across it, so
+    one of the words has to be a word.
     """
-    return len(re.findall(r'[^\W\d_]{2,}', _without_the_numbers(text))) >= 2
+    words = re.findall(r'[^\W\d_]{2,}', _without_the_numbers(text))
+    return len(words) >= 2 and max(len(word) for word in words) >= 4
 
 
 def _reclaim_repeated_headnotes(
@@ -3160,6 +3182,56 @@ def _nearest_line_above_in_the_column(
     return nearest
 
 
+def _release_margin_lines_the_page_prints_beside(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """A line the footer zone holds is not a foot where the page is still printing.
+
+    The zone is a band across the foot of the page, and a chart whose last rows
+    reach into it sets cells on both sides of the threshold: one column's
+    citation crosses it while the column beside it, a line higher, does not.
+    What the page says is that the row is still the chart's -- it prints the
+    chart's own legend on it.
+
+    A running foot has nothing beside it but the page number, which is
+    furniture and says nothing.  Released rather than relabelled, as the column
+    rule releases, because the chart around it may not be labelled yet either.
+    """
+    rows_by_page: Dict[int, List[float]] = {}
+    for seg_line in seg_lines:
+        # What the page is still printing, whether or not a region has claimed
+        # it yet: the cell beside this one is as unlabelled as this one is.
+        if seg_line.seg_label not in (None, SEG_BODY) or not seg_line.text.strip():
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        rows_by_page.setdefault(page_number, []).append(position[1])
+    running = _get_running_texts(seg_lines)
+    for seg_line in seg_lines:
+        if seg_line.seg_label != SEG_FOOTNOTE or seg_line.text in running:
+            continue
+        if _is_grounded_in(seg_line, annotated, _DEPOSITED_NOTE_FIELDS):
+            continue
+        # A line of one word says nothing by sharing a row: a document sets a
+        # lone "R" at the end of a column as readily as anywhere.
+        if len(seg_line.text.split()) < 2:
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        # The row is as deep as the type the cell is set in: a chart staggers
+        # the lines of a row rather than setting them to one baseline.
+        tolerance = max(_SAME_ROW_Y_TOLERANCE, _get_line_font_size(seg_line) or 0)
+        if any(
+            abs(row - position[1]) <= tolerance
+            for row in rows_by_page.get(page_number, ())
+        ):
+            seg_line.seg_label = None
+
+
 def _release_margin_lines_continuing_a_column(
     seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
 ) -> None:
@@ -3696,6 +3768,22 @@ def _claim_the_rule_a_region_opens_under(seg_lines: List[_SegLine]) -> None:
             seg_line.seg_label = under_it
 
 
+def _is_a_printed_date(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the run is nothing but a date the article was received on.
+
+    Line by line and read together, because the word and the date it
+    introduces are one row of the page that pdfalto hands over as two lines
+    when the journal sets them apart.
+    """
+    if any(_PUBLICATION_DATE_PATTERN.match(seg_lines[index].text) for index in run):
+        return True
+    return bool(
+        _PUBLICATION_DATE_PATTERN.match(
+            ' '.join(seg_lines[index].text for index in run)
+        )
+    )
+
+
 def _release_front_after_the_body(
     seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
 ) -> None:
@@ -3712,6 +3800,11 @@ def _release_front_after_the_body(
     caption.  By the run rather than the line, because a correspondence block
     printed after the declarations opens with a heading of its own that nothing
     grounds, and what keeps the block is what keeps its heading.
+
+    A line that is nothing but the date the article was received is kept too.
+    No field carries the dates a journal prints at the end, so the pass that
+    reads them has only the line to go on, and letting the run go takes that
+    reading back.
     """
     body_start = next(
         (
@@ -3749,6 +3842,8 @@ def _release_front_after_the_body(
             fields_of(seg_lines[index]) & _FRONT_AFTER_THE_BODY_FIELDS
             for index in run
         ):
+            continue
+        if _is_a_printed_date(seg_lines, run):
             continue
         above = _enclosing_label(seg_lines, run[0], -1)
         if above not in back_labels:
@@ -3942,6 +4037,7 @@ class SegmentationLabelDeriver:
         _release_statements_inside_front(seg_lines)
         _release_body_inside_the_references(seg_lines, annotated)
         _release_margin_lines_continuing_a_column(seg_lines, annotated)
+        _release_margin_lines_the_page_prints_beside(seg_lines, annotated)
         _claim_the_note_a_block_of_notes_opens_with(seg_lines, annotated)
         # After the release, which reads a note set at the foot of a page as the
         # column above it carrying on and lets it go.
