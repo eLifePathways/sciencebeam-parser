@@ -16,6 +16,7 @@ import {
   getFirstDescendantElement,
   getInlineRuns,
   getLanguage,
+  getLanguageValue,
   getTextContent,
   getValue,
   getValuesWithLanguage,
@@ -306,6 +307,7 @@ export function getTeiArticleViewModel(article) {
     : null;
   return {
     titles: titleStmt ? getValuesWithLanguage(titleStmt, 'title') : [],
+    language: getLanguageValue(text),
     journal: getNodeValue(journalTitle, 'title'),
     authorGroup: analytic
       ? { label: analytic.name, path: analytic.path }

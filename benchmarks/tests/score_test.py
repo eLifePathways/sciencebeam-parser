@@ -626,6 +626,44 @@ class TestAttributionIsNotScored:
         )
 
 
+class TestTheDeclaredLanguage:
+    def _language_score(self, gold: bytes, predicted: bytes) -> dict:
+        scores = _score_pair(gold, predicted, ["language"], ["exact"], prepare_judge())
+        return scores[0]["match_score"]
+
+    def _predicted_tei(self, text_attributes: str) -> bytes:
+        return PREDICTED_TEI_1.format(encoding_desc="").replace(
+            "<text>", f"<text{text_attributes}>"
+        ).encode("utf-8")
+
+    def test_should_match_the_text_language_with_the_article_language(self):
+        match_score = self._language_score(
+            GOLD_JATS_1.replace(b"<article>", b'<article xml:lang="pt">'),
+            self._predicted_tei(' xml:lang="pt"'),
+        )
+        assert match_score["true_positive"] == 1
+
+    def test_should_miss_another_language(self):
+        match_score = self._language_score(
+            GOLD_JATS_1.replace(b"<article>", b'<article xml:lang="pt">'),
+            self._predicted_tei(' xml:lang="es"'),
+        )
+        assert match_score["true_positive"] == 0
+
+    def test_should_read_the_language_of_a_jats_prediction_from_its_article(self):
+        match_score = self._language_score(
+            GOLD_JATS_1.replace(b"<article>", b'<article xml:lang="pt">'),
+            GOLD_JATS_1.replace(b"<article>", b'<article xml:lang="pt">'),
+        )
+        assert match_score["true_positive"] == 1
+
+    def test_should_expect_nothing_where_the_gold_declares_no_language(self):
+        match_score = self._language_score(
+            GOLD_JATS_1, self._predicted_tei(' xml:lang="es"')
+        )
+        assert not match_score["expected_something"]
+
+
 class TestAnAffiliationScoredAsThePagePrintsIt:
     """A label identifies an affiliation rather than naming it, and a gold that holds
     the printed string as well as the parts it was built from says it twice."""

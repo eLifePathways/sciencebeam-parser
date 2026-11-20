@@ -196,7 +196,6 @@ curl --fail --show-error \
 
 The default response will be TEI XML (`application/tei+xml`).
 The `Accept` HTTP request header may be used to request JATS, with the mime type `application/vnd.jats+xml`.
-The JATS is JATS 1.4 Archiving (the "Green" tag set), declared by its DOCTYPE and `dtd-version="1.4"`.
 
 ```bash
 curl --fail --show-error \

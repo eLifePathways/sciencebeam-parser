@@ -23,8 +23,14 @@
   <xsl:param name="acknowledgement_target" select="'ack'"/>
   <xsl:param name="annex_target" select="'back'"/>
 
+  <!-- the language the document's text is written in -->
+  <xsl:variable name="language" select="string(/tei:TEI/tei:text/@xml:lang)"/>
+
   <xsl:template match="/">
     <article article-type="research-article" dtd-version="1.4">
+      <xsl:if test="$language">
+        <xsl:attribute name="xml:lang"><xsl:value-of select="$language"/></xsl:attribute>
+      </xsl:if>
       <processing-meta tagset-family="jats" base-tagset="archiving">
         <xsl:apply-templates select="tei:TEI/tei:teiHeader" mode="conversion-details"/>
       </processing-meta>
@@ -69,7 +75,9 @@
     <article-meta>
       <title-group>
         <article-title>
-          <xsl:copy-of select="tei:fileDesc/tei:titleStmt/tei:title[1]/@xml:lang"/>
+          <xsl:for-each select="tei:fileDesc/tei:titleStmt/tei:title[1]">
+            <xsl:call-template name="language-unless-the-document-s"/>
+          </xsl:for-each>
           <xsl:apply-templates select="tei:fileDesc/tei:titleStmt/tei:title[1]"/>
         </article-title>
         <xsl:for-each select="tei:fileDesc/tei:titleStmt/tei:title[position() &gt; 1]">
@@ -149,7 +157,7 @@
       </xsl:if>
       <xsl:for-each select="tei:profileDesc/tei:abstract">
         <abstract>
-          <xsl:copy-of select="@xml:lang"/>
+          <xsl:call-template name="language-unless-the-document-s"/>
           <!-- The heading the page printed above this abstract, which JATS puts
                inside it as a title. -->
           <xsl:if test="tei:div/tei:head">
@@ -161,6 +169,13 @@
         </abstract>
       </xsl:for-each>
     </article-meta>
+  </xsl:template>
+
+  <!-- a part's own language, where it is not the one the document is written in -->
+  <xsl:template name="language-unless-the-document-s">
+    <xsl:if test="@xml:lang and @xml:lang != $language">
+      <xsl:copy-of select="@xml:lang"/>
+    </xsl:if>
   </xsl:template>
 
   <xsl:template match="tei:teiHeader" mode="conversion-details">

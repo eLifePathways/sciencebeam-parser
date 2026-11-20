@@ -154,7 +154,8 @@ def _tei(  # pylint: disable=too-many-arguments
     references: Optional[List[etree.ElementBase]] = None,
     application: Optional[etree.ElementBase] = None,
     abstracts: Optional[List[Any]] = None,
-    abstract_headings: Optional[List[Any]] = None
+    abstract_headings: Optional[List[Any]] = None,
+    text_language: Optional[str] = None
 ) -> etree.ElementBase:
     if authors is None:
         authors = []
@@ -168,6 +169,8 @@ def _tei(  # pylint: disable=too-many-arguments
             )
         )
     tei_text = TEI_E.text()
+    if text_language:
+        tei_text.attrib[XML_LANG] = text_language
     if body is not None:
         tei_text.append(body)
     if back is None:
@@ -535,6 +538,17 @@ class TestTeiToJatsXslt:
                 for node in jats.xpath('front/article-meta/abstract')
             ] == ['en', 'pt']
 
+        def test_should_leave_the_language_off_an_abstract_in_the_text_s_language(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(
+                text_language='pt', abstracts=[(VALUE_1, 'pt'), (VALUE_2, 'en')]
+            )))
+            assert [
+                node.attrib.get(XML_LANG)
+                for node in jats.xpath('front/article-meta/abstract')
+            ] == [None, 'en']
+
         def test_should_not_add_a_language_the_tei_does_not_declare(
                 self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(abstracts=[VALUE_1])))
@@ -585,6 +599,35 @@ class TestTeiToJatsXslt:
             ))
             title = jats.find('front/article-meta/title-group/article-title')
             assert title.attrib[XML_LANG] == 'pt'
+
+        def test_should_declare_the_language_of_the_text_on_the_article(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(
+                text_language='pt',
+                titleStmt=TEI_E.titleStmt(TEI_E.title(VALUE_1, **{XML_LANG: 'pt'}))
+            )))
+            assert jats.attrib[XML_LANG] == 'pt'
+            title = jats.find('front/article-meta/title-group/article-title')
+            assert XML_LANG not in title.attrib
+
+        def test_should_keep_the_language_of_a_title_in_another_language(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(
+                text_language='en',
+                titleStmt=TEI_E.titleStmt(TEI_E.title(VALUE_1, **{XML_LANG: 'pt'}))
+            )))
+            title = jats.find('front/article-meta/title-group/article-title')
+            assert title.attrib[XML_LANG] == 'pt'
+
+        def test_should_declare_no_language_where_the_text_declares_none(
+            self, tei_to_jats_xslt_fn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(
+                titleStmt=TEI_E.titleStmt(TEI_E.title(VALUE_1, **{XML_LANG: 'pt'}))
+            )))
+            assert XML_LANG not in jats.attrib
 
         def test_should_leave_the_language_off_a_title_without_one(self, tei_to_jats_xslt_fn):
             jats = etree.fromstring(tei_to_jats_xslt_fn(

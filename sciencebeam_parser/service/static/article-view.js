@@ -462,6 +462,14 @@ export function renderArticleViewModel(viewModel, document, options) {
   const article = document.createElement('article');
   article.className = 'jats-article';
   appendValue(article, viewModel.journal, 'p', 'jats-journal');
+  if (viewModel.language) {
+    article.setAttribute('lang', viewModel.language.text);
+    // The word is this page's, not the document's.
+    const line = appendElement(article, 'p', 'jats-article-language');
+    line.setAttribute('lang', 'en');
+    appendText(line, 'Written in ');
+    appendValue(line, viewModel.language, 'span', 'jats-language');
+  }
   if (viewModel.titles.length) {
     viewModel.titles.forEach(
       (value, index) => appendTitle(article, value, index === 0 ? 'h1' : 'h2')

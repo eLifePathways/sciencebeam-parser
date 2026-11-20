@@ -48,6 +48,14 @@ export function getLanguage(node) {
   return getAttribute(node, 'xml:lang') || null;
 }
 
+/* The language an element declares, as a value standing for its attribute. */
+export function getLanguageValue(node) {
+  const language = node ? getLanguage(node) : null;
+  return language
+    ? { label: 'xml:lang', text: language, path: `${node.path}/@xml:lang` }
+    : null;
+}
+
 export function getTextContent(node) {
   if (typeof node === 'string') {
     return node;

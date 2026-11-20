@@ -234,6 +234,15 @@ class TestAbstract:
         assert 'language' not in view_model['abstracts'][0]
 
 
+class TestLanguage:
+    def test_should_read_the_language_the_text_declares(self):
+        view_model = get_tei_view_model(get_tei_xml().replace('<text>', '<text xml:lang="pt">'))
+        assert without_paths(view_model['language']) == {'label': 'xml:lang', 'text': 'pt'}
+
+    def test_should_read_no_language_where_the_text_declares_none(self):
+        assert get_tei_view_model(get_tei_xml())['language'] is None
+
+
 class TestBody:
     def test_should_read_a_division_as_a_section_with_its_head(self):
         view_model = get_tei_view_model(get_tei_xml(
