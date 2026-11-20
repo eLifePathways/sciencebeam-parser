@@ -56,7 +56,7 @@ function appendValue(parent, value, tagName, className) {
   const element = appendElement(
     parent, tagName || 'span', className || '', value
   );
-  appendText(element, value.text);
+  appendValueText(element, value);
   return element;
 }
 
@@ -69,7 +69,7 @@ function appendLink(parent, value, href) {
   link.setAttribute('href', href);
   link.setAttribute('target', '_blank');
   link.setAttribute('rel', 'noopener noreferrer');
-  appendText(link, value.text);
+  appendValueText(link, value);
   return link;
 }
 
@@ -82,8 +82,22 @@ function appendRuns(parent, runs) {
     if (run.italic) {
       target = appendElement(target, 'em', '');
     }
+    if (run.subscript) {
+      target = appendElement(target, 'sub', '');
+    }
+    if (run.superscript) {
+      target = appendElement(target, 'sup', '');
+    }
     appendText(target, run.text);
   });
+}
+
+function appendValueText(element, value) {
+  if (value.runs) {
+    appendRuns(element, value.runs);
+  } else {
+    appendText(element, value.text);
+  }
 }
 
 function appendParagraph(parent, paragraph, className) {
