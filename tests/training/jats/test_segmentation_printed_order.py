@@ -6,9 +6,19 @@ from sciencebeam_parser.document.layout_document import (
     LayoutLine,
     LayoutPage,
 )
-from sciencebeam_parser.training.jats.segmentation import get_lines_in_printed_order
+from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
+from sciencebeam_parser.training.jats.segmentation import (
+    SEG_BODY,
+    SEG_FRONT,
+    get_lines_in_printed_order,
+)
 
-from tests.training.jats.segmentation_fixtures import make_line, make_page_meta
+from tests.training.jats.segmentation_fixtures import (
+    annotate,
+    derive_labels,
+    make_line,
+    make_page_meta,
+)
 
 
 class TestLinesInPrintedOrder:
@@ -145,3 +155,106 @@ class TestLinesInPrintedOrder:
         )
         number = doc.pages[0].blocks[2].lines[0]
         assert self._texts(doc, {id(number)})[0] == 'The last words of a statement above it'
+
+
+class TestAnAffiliationColumnHandedOverFirst:
+    """A journal sets its affiliations down the margin of the opening page, and
+    the page hands that column over before the title."""
+
+    def _make_doc(self):
+        column = [
+            make_line('1', 'Marsh', 'Institute,', y=600.0, x=40.0),
+            make_line('Department', 'of', 'Wading', 'Birds,', y=612.0, x=40.0),
+            make_line('Reed', 'University.', 'Tubarao', y=624.0, x=40.0),
+            make_line('88040-970', 'Tubarao', 'SC', 'Brazil.', y=636.0, x=40.0),
+        ]
+        title = make_line('How', 'herons', 'read', 'a', 'marsh', y=80.0, x=140.0)
+        abstract = make_line(
+            'Abstract', 'Herons', 'wade', 'on', 'northern', 'marshes.',
+            y=150.0, x=140.0,
+        )
+        body = [
+            make_line('The', 'argument', f'runs{index}', 'here', y=300.0 + 12 * index,
+                      x=140.0)
+            for index in range(4)
+        ]
+        references = [
+            make_line('Egret', 'A.', f'Wading{index}', 'in', 'the', 'reeds.',
+                      y=500.0 + 12 * index, x=140.0)
+            for index in range(4)
+        ]
+        doc = LayoutDocument(pages=[LayoutPage(
+            blocks=[
+                LayoutBlock(lines=column),
+                LayoutBlock(lines=[title]),
+                LayoutBlock(lines=[abstract]),
+                LayoutBlock(lines=body),
+                LayoutBlock(lines=references),
+            ],
+            meta=make_page_meta(1),
+        )])
+        order = list(doc.iter_all_lines())
+        fields = {order.index(line): JatsFieldNames.AUTHOR_AFF for line in column}
+        # The aligner reads the university and the city for an entry of the list.
+        fields[order.index(column[2])] = JatsFieldNames.REFERENCE
+        fields[order.index(title)] = JatsFieldNames.TITLE
+        fields[order.index(abstract)] = JatsFieldNames.ABSTRACT
+        for line in body:
+            fields[order.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        for line in references:
+            fields[order.index(line)] = JatsFieldNames.REFERENCE
+        return doc, annotate(doc, fields), title, column
+
+    def test_the_title_is_not_past_the_list_the_column_looks_like(self):
+        doc, annotated, title, _column = self._make_doc()
+        assert derive_labels(doc, annotated)[id(title)] == SEG_FRONT
+
+    def test_the_line_the_list_matched_is_the_column_still(self):
+        doc, annotated, _title, column = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in column] == [SEG_FRONT] * 4
+
+
+class TestTheHeadingTheArticleOpensUnder:
+    """The page sets the introduction beside the front matter, and hands the
+    imprint block over between the two."""
+
+    def _make_doc(self):
+        title = make_line('How', 'herons', 'read', 'a', 'marsh', y=80.0, x=40.0)
+        abstract = make_line(
+            'Abstract', 'Herons', 'wade', 'on', 'northern', 'marshes.',
+            y=100.0, x=40.0,
+        )
+        heading = make_line('Introduction', y=400.0, x=320.0)
+        imprint = make_line(
+            'Received', '3', 'May', '2024.', 'Accepted', '9', 'June', '2024.',
+            y=700.0, x=40.0,
+        )
+        body = [
+            make_line('The', 'argument', f'runs{index}', 'here', y=412.0 + 12 * index,
+                      x=320.0)
+            for index in range(4)
+        ]
+        doc = LayoutDocument(pages=[LayoutPage(
+            blocks=[
+                LayoutBlock(lines=[title, abstract]),
+                LayoutBlock(lines=[heading]),
+                LayoutBlock(lines=[imprint]),
+                LayoutBlock(lines=body),
+            ],
+            meta=make_page_meta(1),
+        )])
+        order = list(doc.iter_all_lines())
+        fields = {
+            order.index(title): JatsFieldNames.TITLE,
+            order.index(abstract): JatsFieldNames.ABSTRACT,
+            order.index(heading): JatsFieldNames.BODY_SECTION_TITLE,
+            order.index(imprint): JatsFieldNames.PUBLICATION_DATE,
+        }
+        for line in body:
+            fields[order.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), heading
+
+    def test_a_heading_in_a_column_of_its_own_is_not_the_front_matter(self):
+        doc, annotated, heading = self._make_doc()
+        assert derive_labels(doc, annotated)[id(heading)] == SEG_BODY

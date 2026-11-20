@@ -674,6 +674,24 @@ def _iter_translation_values(
         if text:
             entries.append((position[ref_el], JatsFieldValue(
                 text=text, field_name=JatsFieldNames.REFERENCE)))
+    # The declarations the translation makes in its own language.  A journal
+    # that prints the translation alone prints these and not the article's, and
+    # the article's are what the aligner was being given.
+    for el in sub_article.xpath('front-stub/author-notes/fn'):
+        text = element_text(el)
+        if not text:
+            continue
+        note_field = NOTE_PARAGRAPH_FIELD_BY_KIND.get(get_fn_kind(el) or '')
+        if note_field is None:
+            for prose in _iter_note_prose(text):
+                entries.append((position[el], JatsFieldValue(
+                    text=prose, field_name=JatsFieldNames.AUTHOR_NOTES)))
+            continue
+        statement = statement_text(el)
+        if statement:
+            entries.append(
+                (position[el], JatsFieldValue(text=statement, field_name=note_field))
+            )
     return entries
 
 

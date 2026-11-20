@@ -24,6 +24,7 @@ from sciencebeam_parser.training.jats.segmentation import (
 from tests.training.jats.segmentation_fixtures import (
     annotate,
     derive_labels,
+    make_doc_with_page,
     make_line,
     make_page_meta,
 )
@@ -141,6 +142,13 @@ class TestTheLicenceNoticeAtTheFootOfTheLastPage:
         doc, annotated, printed = self._make_doc(
             'This is an open-access article distributed under the terms of the'
             ' Creative Commons Attribution License.'
+        )
+        assert derive_labels(doc, annotated)[id(printed)] == SEG_FRONT
+
+    def test_the_notice_names_what_it_licenses_first(self):
+        doc, annotated, printed = self._make_doc(
+            'Este texto está licenciado com uma Licença Creative Commons'
+            ' Atribuição 4.0 Internacional.'
         )
         assert derive_labels(doc, annotated)[id(printed)] == SEG_FRONT
 
@@ -425,6 +433,12 @@ class TestTheEditorCreditedUnderTheReferences:
         doc, annotated, printed = self._make_doc('Editor-chefe: A Name Here')
         assert derive_labels(doc, annotated)[id(printed)] == SEG_FRONT
 
+    def test_the_qualifier_may_come_first_or_last(self):
+        for credit in ('Responsible Editor: A Name Here',
+                       'Editora Responsável: A Name Here'):
+            doc, annotated, printed = self._make_doc(credit)
+            assert derive_labels(doc, annotated)[id(printed)] == SEG_FRONT
+
     def test_a_publisher_an_entry_names_is_not(self):
         doc, annotated, printed = self._make_doc('Editora: A Publishing House')
         assert derive_labels(doc, annotated)[id(printed)] != SEG_FRONT
@@ -486,3 +500,39 @@ class TestTheHeadingAnAppendedSectionOpensWith:
             'Conclusion', heading_is_a_body_title=True
         )
         assert derive_labels(doc, annotated)[id(heading)] == SEG_BODY
+
+
+class TestADeclarationFiledWithTheAuthorNotes:
+    """A deposit files the conflict statement under `author-notes` and the
+    journal prints it under the reference list."""
+
+    def _make_doc(self):
+        lines = {
+            'title': make_line('How', 'herons', 'read', 'a', 'marsh', y=60.0),
+            'body': make_line('The', 'argument', 'runs', 'here', y=120.0),
+            'reference': make_line(
+                'Egret,', 'A.', '(2024).', 'Wading.', 'Marsh', 'Press.', y=180.0
+            ),
+            'heading': make_line('Conflict', 'of', 'Interests', y=240.0),
+            'statement': make_line(
+                'The', 'authors', 'declare', 'no', 'conflict', 'of', 'interest.',
+                y=260.0,
+            ),
+        }
+        doc = make_doc_with_page(LayoutBlock(lines=list(lines.values())))
+        order = list(doc.iter_all_lines())
+        annotated = annotate(doc, {
+            order.index(lines['title']): JatsFieldNames.TITLE,
+            order.index(lines['body']): JatsFieldNames.BODY_SECTION_PARAGRAPH,
+            order.index(lines['reference']): JatsFieldNames.REFERENCE,
+            order.index(lines['heading']): JatsFieldNames.CONFLICT_NOTE,
+            order.index(lines['statement']): JatsFieldNames.CONFLICT_NOTE,
+        })
+        return doc, annotated, lines
+
+    def test_the_statement_printed_past_the_list_is_a_conflict_region(self):
+        doc, annotated, lines = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(lines[key])] for key in ('heading', 'statement')] == (
+            [SEG_CONFLICT] * 2
+        )

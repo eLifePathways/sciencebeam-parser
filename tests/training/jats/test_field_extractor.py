@@ -512,6 +512,38 @@ class TestAuthorNotes:
             '. Deputy Editor: Grace Hopper',
         ]
 
+    def test_an_address_block_headed_authorship_is_an_author_note(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="current-aff"><p><bold>Authorship</bold>'
+            ' Ada Lovelace, Marsh Institute, 1 Reed Lane, Tubarao, Brazil.'
+            '</p></fn>'
+            '</author-notes></article-meta></front></article>'
+        )
+        assert not [
+            v for v in fvs if v.field_name == JatsFieldNames.CONTRIBUTION_NOTE
+        ]
+        assert [
+            v.text for v in fvs if v.field_name == JatsFieldNames.AUTHOR_NOTES
+        ] == ['Authorship Ada Lovelace, Marsh Institute, 1 Reed Lane, Tubarao, Brazil.']
+
+    def test_the_translation_declares_in_its_own_language(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="con"><p>Colaboradores A Garca escreveu o texto.</p></fn>'
+            '</author-notes></article-meta></front>'
+            '<sub-article article-type="translation"><front-stub><author-notes>'
+            '<fn fn-type="con"><p>Collaborations A Egret wrote the text.</p></fn>'
+            '</author-notes></front-stub></sub-article></article>'
+        )
+        assert [
+            v.text for v in fvs
+            if v.field_name == JatsFieldNames.CONTRIBUTION_NOTE
+        ] == [
+            'Colaboradores A Garca escreveu o texto.',
+            'Collaborations A Egret wrote the text.',
+        ]
+
 
 class TestFunding:
     def test_extracts_funding_statement(self):

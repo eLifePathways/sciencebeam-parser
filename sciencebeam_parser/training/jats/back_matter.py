@@ -158,6 +158,11 @@ _FN_KIND_BY_TYPE = {
     'supported-by': 'funding',
 }
 
+# An `fn-type` naming the author rather than the work.  One journal heads its
+# block of author addresses "Authorship", which by its heading alone reads as a
+# statement of who contributed what.
+_FN_AUTHOR_TYPES = frozenset({'current-aff', 'present-address'})
+
 _FN_HEADING_LENGTH = 80
 
 
@@ -205,7 +210,13 @@ def _get_fn_heading(el: etree._Element) -> Optional[str]:
 
 
 def get_fn_kind(el: etree._Element) -> Optional[str]:
-    """Which statement a footnote makes, by its heading first and its type second."""
+    """Which statement a footnote makes, by its heading first and its type second.
+
+    A type naming the author settles it before either: the note is about who
+    wrote the paper rather than about the work, whatever it is headed.
+    """
+    if (el.get('fn-type') or '') in _FN_AUTHOR_TYPES:
+        return None
     heading = _get_fn_heading(el)
     by_heading = match_fn_keywords(heading) if heading else None
     return by_heading or _FN_KIND_BY_TYPE.get(el.get('fn-type') or '')
