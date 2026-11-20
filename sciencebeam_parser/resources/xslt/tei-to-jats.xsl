@@ -510,7 +510,10 @@
       </xsl:choose>
 
       <xsl:for-each select=".//tei:ref[@type='url'][normalize-space()]">
-        <ext-link ext-link-type="uri" xlink:href="{translate(normalize-space(), '&lt;&gt; ', '')}"><xsl:value-of select="normalize-space()"/></ext-link>
+        <xsl:call-template name="link">
+          <xsl:with-param name="text" select="normalize-space()"/>
+          <xsl:with-param name="text-element" select="'comment'"/>
+        </xsl:call-template>
       </xsl:for-each>
 
       <xsl:variable name="doi" select="(tei:analytic | tei:monogr)/tei:idno[@type='DOI']"/>
@@ -714,7 +717,82 @@
   </xsl:template>
 
   <xsl:template match="cite:identifier[@kind='ref']" mode="cite-part">
-    <ext-link ext-link-type="uri" xlink:href="{translate(@value, '&lt;&gt; ', '')}"><xsl:value-of select="@value"/></ext-link>
+    <xsl:call-template name="link">
+      <xsl:with-param name="text" select="@value"/>
+    </xsl:call-template>
+  </xsl:template>
+
+  <!-- an ext-link, or the text where the schema would reject its address, in text-element if given -->
+  <xsl:template name="link">
+    <xsl:param name="text"/>
+    <xsl:param name="text-element"/>
+    <xsl:variable name="url" select="translate($text, '&lt;&gt; ', '')"/>
+    <xsl:variable name="host-and-port">
+      <xsl:call-template name="host-and-port">
+        <xsl:with-param name="url" select="$url"/>
+      </xsl:call-template>
+    </xsl:variable>
+    <xsl:variable name="port" select="substring-after($host-and-port, ':')"/>
+    <xsl:variable name="escapes-are-whole">
+      <xsl:call-template name="escapes-are-whole">
+        <xsl:with-param name="text" select="$url"/>
+      </xsl:call-template>
+    </xsl:variable>
+    <xsl:choose>
+      <xsl:when test="
+        (not(contains($host-and-port, ':')) or ($port != '' and translate($port, '0123456789', '') = ''))
+        and not(contains(substring-after($url, '#'), '#'))
+        and $escapes-are-whole = 'true'
+      ">
+        <ext-link ext-link-type="uri" xlink:href="{$url}"><xsl:value-of select="$text"/></ext-link>
+      </xsl:when>
+      <xsl:when test="$text-element">
+        <xsl:element name="{$text-element}"><xsl:value-of select="$text"/></xsl:element>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:value-of select="$text"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template name="host-and-port">
+    <xsl:param name="url"/>
+    <xsl:if test="contains($url, '://')">
+      <xsl:variable name="authority" select="substring-before(
+        translate(concat(substring-after($url, '://'), '/'), '?#', '//'), '/'
+      )"/>
+      <xsl:variable name="host-and-port">
+        <xsl:choose>
+          <xsl:when test="contains($authority, '@')">
+            <xsl:value-of select="substring-after($authority, '@')"/>
+          </xsl:when>
+          <xsl:otherwise><xsl:value-of select="$authority"/></xsl:otherwise>
+        </xsl:choose>
+      </xsl:variable>
+      <xsl:choose>
+        <xsl:when test="starts-with($host-and-port, '[')">
+          <xsl:value-of select="substring-after($host-and-port, ']')"/>
+        </xsl:when>
+        <xsl:otherwise><xsl:value-of select="$host-and-port"/></xsl:otherwise>
+      </xsl:choose>
+    </xsl:if>
+  </xsl:template>
+
+  <!-- 'true' where every % starts a two-digit hex escape -->
+  <xsl:template name="escapes-are-whole">
+    <xsl:param name="text"/>
+    <xsl:choose>
+      <xsl:when test="not(contains($text, '%'))">true</xsl:when>
+      <xsl:when test="
+        string-length(substring-after($text, '%')) &gt;= 2
+        and translate(substring(substring-after($text, '%'), 1, 2), '0123456789abcdefABCDEF', '') = ''
+      ">
+        <xsl:call-template name="escapes-are-whole">
+          <xsl:with-param name="text" select="substring(substring-after($text, '%'), 3)"/>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:otherwise>false</xsl:otherwise>
+    </xsl:choose>
   </xsl:template>
 
   <!-- where value is printed in text, with any whitespace inside it; empty if it is not -->

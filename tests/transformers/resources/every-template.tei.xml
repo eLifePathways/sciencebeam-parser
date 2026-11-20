@@ -79,6 +79,7 @@
           <biblStruct xml:id="b2">
             <note type="label">3</note>
             <ref type="url">&lt;https://example.org/data&gt;</ref>
+            <ref type="url">http://http://example.org/archive</ref>
           </biblStruct>
           <biblStruct xml:id="b3"/>
         </listBibl>

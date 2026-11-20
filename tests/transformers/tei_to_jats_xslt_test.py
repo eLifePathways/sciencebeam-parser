@@ -1704,6 +1704,14 @@ class TestTeiToJatsXslt:
                 '</mixed-citation>'
             )
 
+        def test_should_keep_a_printed_address_the_schema_rejects_as_text(
+            self, tei_to_jats_xslt_fn
+        ):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'A title. Available from: http://http://example.org/data',
+                TEI_E.ref('http://http://example.org/data', type='url')
+            )) == 'A title. Available from: http://http://example.org/data</mixed-citation>'
+
         def test_should_keep_the_element_citation_without_the_printed_reference(
             self, tei_to_jats_xslt_fn
         ):
@@ -1857,6 +1865,37 @@ class TestTeiToJatsXslt:
                 '{http://www.w3.org/1999/xlink}href': 'https://example.org/data'
             }
             assert ext_link.text == 'https://example.org/data'
+
+        @pytest.mark.parametrize('url', [
+            'http://http://example.org/data',
+            'https://example.org:8o/data',
+            'https://example.org/data%c',
+            'https://example.org/data#a#b',
+        ])
+        def test_should_write_an_address_the_schema_rejects_as_a_comment(
+            self, tei_to_jats_xslt_fn, url: str
+        ):
+            bibl_struct = _reference(id='b0')
+            bibl_struct.append(TEI_E.ref(url, type='url'))
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[bibl_struct])))
+            element_citation = _get_item(jats, 'back/ref-list/ref/element-citation')
+            assert element_citation.find('ext-link') is None
+            assert element_citation.findtext('comment') == url
+
+        @pytest.mark.parametrize('url', [
+            'https://example.org:8080/data',
+            'https://user:secret@example.org/data',
+            'https://[2001:db8::1]/data',
+            'https://example.org/data%20set#part',
+        ])
+        def test_should_link_an_address_with_a_port_user_or_escape(
+            self, tei_to_jats_xslt_fn, url: str
+        ):
+            bibl_struct = _reference(id='b0')
+            bibl_struct.append(TEI_E.ref(url, type='url'))
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[bibl_struct])))
+            ext_link = _get_item(jats, 'back/ref-list/ref/element-citation/ext-link')
+            assert ext_link.attrib['{http://www.w3.org/1999/xlink}href'] == url
 
         def test_should_fallback_to_collection_title_if_article_title_does_not_exist(
                 self, tei_to_jats_xslt_fn):
