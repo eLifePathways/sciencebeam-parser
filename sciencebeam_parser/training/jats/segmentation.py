@@ -425,6 +425,13 @@ def _tag_running_heads_by_position(
     It carries over a region the JATS vote has already named, because a running
     head of the authors' surnames is matched by the byline on every page it
     prints on: the guidelines ask for a running title not to be labelled at all.
+
+    A head of one word is taken on the row the document already runs a head
+    across, or in a block the head fills.  A word repeating says little on its
+    own -- "R" ends a line as readily as anything -- but a journal whose name is
+    its running head prints that name where it prints the authors' on the facing
+    page, and a title running across the head breaks onto a second line that is
+    one word long.
     """
     by_text: Dict[str, List[Tuple[_SegLine, int, float]]] = {}
     for seg_line in seg_lines:
@@ -435,17 +442,58 @@ def _tag_running_heads_by_position(
         if y_ratio > _RUNNING_HEAD_MAX_Y_RATIO:
             continue
         by_text.setdefault(seg_line.text, []).append((seg_line, page_number, y_ratio))
-    for text, occurrences in by_text.items():
+
+    def is_run_across_the_pages(
+        text: str, occurrences: List[Tuple[_SegLine, int, float]]
+    ) -> bool:
         pages = {page_number for _, page_number, _ in occurrences}
         if len(pages) < _RUNNING_HEAD_MIN_PAGES:
+            return False
+        if _carries_a_float_over_the_page(text) or re.match(r'^(\d|\s|\.)+$', text):
+            return False
+        spread = (
+            max(y for _, _, y in occurrences) - min(y for _, _, y in occurrences)
+        )
+        return spread <= _RUNNING_HEAD_Y_TOLERANCE
+
+    rows: List[float] = []
+    waiting: List[Tuple[str, List[Tuple[_SegLine, int, float]]]] = []
+    for text, occurrences in by_text.items():
+        if not is_run_across_the_pages(text, occurrences):
             continue
-        if not _is_valid_headnote_candidate(text, len(occurrences)):
+        if len(re.split(r'\s', text.strip())) < 2:
+            waiting.append((text, occurrences))
             continue
-        spread = max(y for _, _, y in occurrences) - min(y for _, _, y in occurrences)
-        if spread > _RUNNING_HEAD_Y_TOLERANCE:
-            continue
+        rows.append(occurrences[0][2])
         for seg_line, _, _ in occurrences:
             if seg_line.seg_label != SEG_COVER:
+                seg_line.seg_label = SEG_HEADNOTE
+    _take_the_head_of_one_word(seg_lines, waiting, rows)
+
+
+def _take_the_head_of_one_word(
+    seg_lines: List[_SegLine],
+    waiting: List[Tuple[str, List[Tuple[_SegLine, int, float]]]],
+    rows: List[float],
+) -> None:
+    """Take each one-word run the head's own row or block vouches for."""
+    by_block = _group_lines_by_block(seg_lines)
+    for _text, occurrences in waiting:
+        on_a_head_row = any(
+            abs(occurrences[0][2] - row) <= _RUNNING_HEAD_Y_TOLERANCE
+            for row in rows
+        )
+        for seg_line, _, _ in occurrences:
+            if seg_line.seg_label == SEG_COVER:
+                continue
+            beside_it = [
+                other for other in by_block.get(seg_line.block_index) or []
+                if other is not seg_line
+            ]
+            if on_a_head_row or (
+                beside_it
+                and all(other.seg_label == SEG_HEADNOTE for other in beside_it)
+            ):
                 seg_line.seg_label = SEG_HEADNOTE
 
 
@@ -512,9 +560,38 @@ def _tag_page_numbers_by_position(
                 seg_line.seg_label = SEG_PAGE
 
 
+def _how_many_pages_make_a_sequence(
+    pages: List[int], page_numbers: Set[int]
+) -> float:
+    """How many pages a number has to be printed on to be counting them.
+
+    More than half of them, and three at least.  Half of the versos where the
+    run is set on versos alone: a journal prints its number in the outer corner
+    of a page it does not set symmetrically, and the two corners are then two
+    insets, each of which the page uses every other page.
+    """
+    parities = {page_number % 2 for page_number in pages}
+    of_the_same_parity = (
+        {
+            page_number for page_number in page_numbers
+            if page_number % 2 in parities
+        }
+        if len(parities) == 1 else page_numbers
+    )
+    return max(len(of_the_same_parity) / 2, 2)
+
+
+# What the deposit declares an affiliation by, marker and all.
+_AFFILIATION_FIELDS = frozenset({
+    JatsFieldNames.AUTHOR_AFF,
+    JatsFieldNames.CORRESP_AFF,
+})
+
+
 def _tag_page_numbers_counting_the_pages(
     seg_lines: List[_SegLine],
     page_meta_by_number: Mapping[int, LayoutPageMeta],
+    annotated: JatsAnnotatedLayoutDocument,
 ) -> None:
     """Take the number that counts the pages, wherever the page sets it.
 
@@ -532,12 +609,20 @@ def _tag_page_numbers_counting_the_pages(
     whose table happens to count as its pages do -- which says nothing, so it
     says nothing here either.
 
+    One size as well as one inset, because a journal numbers its pages in a
+    type of its own and the superscript marker beside an author's name is set
+    in the margin a verso's number uses, at half its size.
+
+    An affiliation is never the page's number.  A marker is a digit and the
+    deposit declares it as one, so a line the aligner grounds in an affiliation
+    reads as a page number only by having nothing else to read it as.
+
     GROBID's corpus files no lone page marker as a headnote in its 931
     documents, and 63 of them print one on the page the front matter is on, so
     what the line already has gives way -- except on a cover page, which GROBID
     asks for whole.
     """
-    by_inset: Dict[float, List[Tuple[_SegLine, int, int]]] = {}
+    by_setting: Dict[Tuple[float, Optional[float]], List[Tuple[_SegLine, int, int]]] = {}
     page_numbers: Set[int] = set()
     for seg_line in seg_lines:
         page_number = _get_page_number(seg_line)
@@ -548,11 +633,16 @@ def _tag_page_numbers_counting_the_pages(
         printed = _parse_page_number(seg_line.text)
         if inset is None or printed is None:
             continue
-        by_inset.setdefault(
-            round(inset, -_PAGE_NUMBER_INSET_PRECISION), []
+        if _is_grounded_in(seg_line, annotated, _AFFILIATION_FIELDS):
+            continue
+        by_setting.setdefault(
+            (
+                round(inset, -_PAGE_NUMBER_INSET_PRECISION),
+                _get_line_font_size(seg_line),
+            ),
+            [],
         ).append((seg_line, page_number, printed))
-    threshold = max(len(page_numbers) / 2, 2)
-    for at_inset in by_inset.values():
+    for at_inset in by_setting.values():
         by_step: Dict[int, Dict[int, List[_SegLine]]] = {}
         for seg_line, page_number, printed in at_inset:
             by_step.setdefault(printed - page_number, {}).setdefault(
@@ -560,11 +650,14 @@ def _tag_page_numbers_counting_the_pages(
             ).append(seg_line)
         for in_step in by_step.values():
             counted = [
-                lines[0] for lines in in_step.values() if len(lines) == 1
+                (page_number, lines[0])
+                for page_number, lines in in_step.items() if len(lines) == 1
             ]
-            if len(counted) <= threshold:
+            if len(counted) <= _how_many_pages_make_a_sequence(
+                [page_number for page_number, _ in counted], page_numbers
+            ):
                 continue
-            for seg_line in counted:
+            for _, seg_line in counted:
                 if seg_line.seg_label != SEG_COVER:
                     seg_line.seg_label = SEG_PAGE
 
@@ -3688,7 +3781,9 @@ def _tag_the_margins_and_the_headings(
         seg_lines, config.page_header_max_first_line_index
     )
     _tag_page_numbers_by_position(seg_lines, page_meta_by_number)
-    _tag_page_numbers_counting_the_pages(seg_lines, page_meta_by_number)
+    _tag_page_numbers_counting_the_pages(
+        seg_lines, page_meta_by_number, annotated
+    )
     _release_furniture_inside_references(seg_lines)
     _claim_region_heading(seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated)
     _claim_region_heading_by_position(seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS)

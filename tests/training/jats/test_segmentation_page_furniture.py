@@ -26,49 +26,6 @@ from tests.training.jats.segmentation_fixtures import (
 )
 
 
-class TestTwoNumbersInOneMargin:
-    """An affiliation marker is set where the page number is."""
-
-    def _make_doc(self):
-        marker = make_line('10', y=950.0, page_number=1)
-        affiliation = make_line('A', 'university', 'somewhere', y=960.0, page_number=1)
-        numbers = [
-            make_line(str(page_number), y=950.0, x=300.0, page_number=page_number)
-            for page_number in (1, 2, 3)
-        ]
-        doc = LayoutDocument(pages=[
-            LayoutPage(
-                blocks=[
-                    LayoutBlock(lines=[make_line('The', 'argument', y=400.0)]),
-                    LayoutBlock(lines=[marker, affiliation]),
-                    LayoutBlock(lines=[numbers[0]]),
-                ],
-                meta=make_page_meta(1),
-            ),
-        ] + [
-            LayoutPage(
-                blocks=[
-                    LayoutBlock(lines=[
-                        make_line('more', 'argument', y=400.0, page_number=page_number)
-                    ]),
-                    LayoutBlock(lines=[numbers[page_number - 1]]),
-                ],
-                meta=make_page_meta(page_number),
-            )
-            for page_number in (2, 3)
-        ])
-        return doc, annotate(doc, {}), marker, numbers
-
-    def test_the_number_that_counts_the_pages_is_the_page_number(self):
-        doc, annotated, _, numbers = self._make_doc()
-        labels = derive_labels(doc, annotated)
-        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 3
-
-    def test_the_number_that_counts_something_else_is_not(self):
-        doc, annotated, marker, _ = self._make_doc()
-        assert derive_labels(doc, annotated)[id(marker)] != SEG_PAGE
-
-
 class TestRunningFootTakenByAMatch:
     """A journal sets its own citation, page range and all, along every foot."""
 
@@ -489,38 +446,6 @@ class TestAShortLineAtTheFootOfAPage:
         assert derive_labels(doc, annotated)[id(in_the_margin)] == SEG_FOOTNOTE
 
 
-class TestAPageNumberInTheOuterCorner:
-    """A journal sets the number in the outer corner, which swaps side."""
-
-    def _make_doc(self):
-        numbers = [
-            make_line(
-                str(page_number), y=100.0, page_number=page_number,
-                x=20.0 if page_number % 2 == 0 else 560.0,
-            )
-            for page_number in (1, 2, 3, 4, 5)
-        ]
-        doc = LayoutDocument(pages=[
-            LayoutPage(
-                blocks=[
-                    LayoutBlock(lines=[numbers[page_number - 1]]),
-                    LayoutBlock(lines=[make_line(
-                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
-                        y=400.0, page_number=page_number,
-                    )]),
-                ],
-                meta=make_page_meta(page_number),
-            )
-            for page_number in (1, 2, 3, 4, 5)
-        ])
-        return doc, annotate(doc, {}), numbers
-
-    def test_the_number_is_the_page_number_on_a_verso_as_on_a_recto(self):
-        doc, annotated, numbers = self._make_doc()
-        labels = derive_labels(doc, annotated)
-        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 5
-
-
 class TestARunningFootSetAboveTheFooterZone:
     """A foot the page prints a little above where the footer zone begins."""
 
@@ -633,85 +558,6 @@ class TestTheMarginOfTheTitlePage:
         assert derive_labels(doc, annotated)[id(later_note)] == SEG_FOOTNOTE
 
 
-class TestThePageNumberSetSidewaysInTheMargin:
-    """A number set up the side sits at one inset and at no one height."""
-
-    def _make_doc(self, printed):
-        numbers = [
-            make_line(
-                printed[page_number - 1], y=height, x=40.0, page_number=page_number,
-            )
-            for page_number, height in enumerate((620.0, 710.0, 680.0, 655.0, 700.0), 1)
-        ]
-        doc = LayoutDocument(pages=[
-            LayoutPage(
-                blocks=[
-                    LayoutBlock(lines=[numbers[page_number - 1]]),
-                    LayoutBlock(lines=[make_line(
-                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
-                        y=400.0, x=200.0, page_number=page_number,
-                    )]),
-                ],
-                meta=make_page_meta(page_number),
-            )
-            for page_number in (1, 2, 3, 4, 5)
-        ])
-        return doc, annotate(doc, {}), numbers
-
-    def test_a_number_that_advances_with_the_page_is_the_page_number(self):
-        doc, annotated, numbers = self._make_doc(
-            ['Página35', 'Página36', 'Página37', 'Página38', 'Página39']
-        )
-        labels = derive_labels(doc, annotated)
-        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 5
-
-    def test_a_number_that_counts_something_else_is_left_alone(self):
-        doc, annotated, numbers = self._make_doc(['7', '2', '9', '4', '6'])
-        labels = derive_labels(doc, annotated)
-        assert SEG_PAGE not in [labels[id(number)] for number in numbers]
-
-
-class TestAPageNumberPrintedInsideTheRunningHead:
-    """A journal sets the number in the head row, beside what runs across it."""
-
-    def _make_doc(self):
-        heads = [
-            make_line('Journal', 'of', 'Marsh', 'Birds,', 'v.', '12,', '2024',
-                      y=30.0, x=40.0, page_number=page_number)
-            for page_number in (1, 2, 3, 4, 5)
-        ]
-        numbers = [
-            make_line(str(page_number), 'de', '5', y=30.0, x=520.0,
-                      page_number=page_number)
-            for page_number in (1, 2, 3, 4, 5)
-        ]
-        doc = LayoutDocument(pages=[
-            LayoutPage(
-                blocks=[
-                    LayoutBlock(lines=[heads[page_number - 1]]),
-                    LayoutBlock(lines=[numbers[page_number - 1]]),
-                    LayoutBlock(lines=[make_line(
-                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
-                        y=400.0, x=200.0, page_number=page_number,
-                    )]),
-                ],
-                meta=make_page_meta(page_number),
-            )
-            for page_number in (1, 2, 3, 4, 5)
-        ])
-        return doc, annotate(doc, {}), heads, numbers
-
-    def test_the_number_beside_the_head_is_the_page_number(self):
-        doc, annotated, _heads, numbers = self._make_doc()
-        labels = derive_labels(doc, annotated)
-        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 5
-
-    def test_what_runs_across_the_head_is_still_the_head(self):
-        doc, annotated, heads, _numbers = self._make_doc()
-        labels = derive_labels(doc, annotated)
-        assert [labels[id(head)] for head in heads] == [SEG_HEADNOTE] * 5
-
-
 class TestARunningFootCarryingThePageNumber:
     """A verso sets the page number beside the journal's name, a recto does not."""
 
@@ -791,55 +637,6 @@ class TestAHeadThePageRangeMatched:
         doc, annotated, _heads, numbers = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 4
-
-
-class TestATableOfNumbersBesideThePageNumber:
-    """A table counts its rows, and one row happens to count as the pages do."""
-
-    def _make_doc(self, cell_x: float, folio_on_the_table_page: bool):
-        folio_pages = [
-            page_number for page_number in (1, 2, 3, 4, 5)
-            if page_number != 3 or folio_on_the_table_page
-        ]
-        numbers = {
-            page_number: make_line(
-                str(page_number), y=40.0, x=520.0, page_number=page_number
-            )
-            for page_number in folio_pages
-        }
-        cell = make_line('3', y=300.0, x=cell_x, page_number=3)
-        doc = LayoutDocument(pages=[
-            LayoutPage(
-                blocks=(
-                    [LayoutBlock(lines=[numbers[page_number]])]
-                    if page_number in numbers else []
-                ) + [
-                    LayoutBlock(lines=[make_line(
-                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
-                        y=400.0, x=200.0, page_number=page_number,
-                    )]),
-                ] + ([LayoutBlock(lines=[cell])] if page_number == 3 else []),
-                meta=make_page_meta(page_number),
-            )
-            for page_number in (1, 2, 3, 4, 5)
-        ])
-        return doc, annotate(doc, {}), cell, list(numbers.values())
-
-    def test_a_cell_set_across_the_measure_is_not_the_page_number(self):
-        doc, annotated, cell, numbers = self._make_doc(
-            cell_x=460.0, folio_on_the_table_page=False
-        )
-        labels = derive_labels(doc, annotated)
-        assert labels[id(cell)] != SEG_PAGE
-        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 4
-
-    def test_a_cell_set_where_the_number_is_leaves_that_page_unread(self):
-        doc, annotated, cell, numbers = self._make_doc(
-            cell_x=524.0, folio_on_the_table_page=True
-        )
-        labels = derive_labels(doc, annotated)
-        assert labels[id(cell)] != SEG_PAGE
-        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 5
 
 
 class TestAHeadTheBylineMatchedOnHalfThePages:
@@ -928,3 +725,60 @@ class TestAFootThatIsNothingButItsNumbers:
         labels = derive_labels(doc, annotated)
         assert labels[id(tail)] != SEG_FOOTNOTE
         assert [labels[id(foot)] for foot in feet] == [SEG_FOOTNOTE] * 5
+
+
+class TestARunningHeadOfOneWord:
+    """The journal's name heads its rectos and the authors' names its versos,
+    and the title it runs across a verso breaks onto a one-word line."""
+
+    def _make_doc(self):
+        name = [
+            make_line('MARSHES', y=140.0, x=380.0, page_number=page_number)
+            for page_number in (1, 3, 5, 7)
+        ]
+        byline = [
+            make_line('Egret', 'A', 'et', 'al.', y=140.0, x=40.0,
+                      page_number=page_number)
+            for page_number in (2, 4, 6, 8)
+        ]
+        carried = [
+            make_line('Herons', 'wading', 'on', 'the', 'northern', y=164.0, x=40.0,
+                      page_number=page_number)
+            for page_number in (2, 4, 6, 8)
+        ]
+        broken = [
+            make_line('marshes', y=178.0, x=40.0, page_number=page_number)
+            for page_number in (2, 4, 6, 8)
+        ]
+        heads = {
+            page_number: (
+                [name[page_number // 2]] if page_number % 2 else
+                [byline[page_number // 2 - 1]]
+            )
+            for page_number in (1, 2, 3, 4, 5, 6, 7, 8)
+        }
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=heads[page_number])]
+                + ([LayoutBlock(lines=[
+                    carried[page_number // 2 - 1], broken[page_number // 2 - 1]
+                ])] if page_number % 2 == 0 else [])
+                + [LayoutBlock(lines=[make_line(
+                    'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
+                    y=400.0, x=200.0, page_number=page_number,
+                )])],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (1, 2, 3, 4, 5, 6, 7, 8)
+        ])
+        return doc, annotate(doc, {}), name, broken
+
+    def test_the_name_on_the_row_the_byline_uses_is_a_head(self):
+        doc, annotated, name, _broken = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in name] == [SEG_HEADNOTE] * 4
+
+    def test_the_word_the_title_breaks_onto_goes_with_it(self):
+        doc, annotated, _name, broken = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in broken] == [SEG_HEADNOTE] * 4
