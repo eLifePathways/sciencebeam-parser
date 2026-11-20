@@ -258,3 +258,59 @@ class TestTheHeadingTheArticleOpensUnder:
     def test_a_heading_in_a_column_of_its_own_is_not_the_front_matter(self):
         doc, annotated, heading = self._make_doc()
         assert derive_labels(doc, annotated)[id(heading)] == SEG_BODY
+
+
+class TestAFloatCaptionHandedOverAfterTheList:
+    """A journal prints a flowchart past its reference list, and the page hands
+    the caption over after both columns of the list."""
+
+    def _make_doc(self):
+        caption = make_line(
+            'Figure', '1', '-', 'Clinical', 'algorithm', 'for', 'the', 'count',
+            y=100.0, x=40.0,
+        )
+        references = [
+            make_line('Egret', 'A.', f'Wading{index}', 'in', 'the', 'reeds.',
+                      y=400.0 + 14 * index, x=40.0)
+            for index in range(5)
+        ]
+        more = [
+            make_line('Bittern', 'B.', f'Counting{index}', 'herons.',
+                      y=400.0 + 14 * index, x=320.0)
+            for index in range(5)
+        ]
+        carried = [
+            make_line('Crake', 'C.', f'Reeds{index}', 'and', 'the', 'bed.',
+                      y=100.0 + 14 * index, x=40.0, page_number=2)
+            for index in range(4)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[make_line(
+                        'The', 'argument', 'runs', 'here', y=60.0, x=320.0
+                    )]),
+                    LayoutBlock(lines=references),
+                    LayoutBlock(lines=more),
+                    LayoutBlock(lines=[caption]),
+                ],
+                meta=make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=carried)], meta=make_page_meta(2)
+            ),
+        ])
+        order = list(doc.iter_all_lines())
+        fields = {
+            order.index(line): JatsFieldNames.REFERENCE
+            for line in references + more + carried
+        }
+        fields[order.index(caption)] = JatsFieldNames.BODY_FIGURE
+        fields[order.index(doc.pages[0].blocks[0].lines[0])] = (
+            JatsFieldNames.BODY_SECTION_PARAGRAPH
+        )
+        return doc, annotate(doc, fields), caption
+
+    def test_the_caption_is_not_an_entry_of_the_list(self):
+        doc, annotated, caption = self._make_doc()
+        assert derive_labels(doc, annotated)[id(caption)] == SEG_BODY

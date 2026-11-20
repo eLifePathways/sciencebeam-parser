@@ -1655,7 +1655,18 @@ def _claim_the_margin_note_the_front_matter_is_printed_beside(
         seg_line.seg_label = SEG_FRONT
 
 
-def _release_body_inside_the_references(seg_lines: List[_SegLine]) -> None:
+# What the deposit names a float by, caption and all.
+_FLOAT_CAPTION_FIELDS = frozenset({
+    JatsFieldNames.BODY_FIGURE,
+    JatsFieldNames.BODY_TABLE,
+    JatsFieldNames.FLOAT_FIGURE,
+    JatsFieldNames.FLOAT_TABLE,
+})
+
+
+def _release_body_inside_the_references(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
     """Take back the section heading that matched an entry of the reference list.
 
     A deposit declares the article's body once for every language it carries,
@@ -1674,6 +1685,11 @@ def _release_body_inside_the_references(seg_lines: List[_SegLine]) -> None:
     them as it carries languages and the list is long enough to hold several:
     asked one at a time, each has another of them on one side and the list on
     the other, and neither is enclosed.
+
+    A float's caption is not one of these.  A journal that prints a flowchart
+    past its reference list has the page hand the caption over after both
+    columns of the list, and the deposit names it a figure rather than a
+    section: it matched what it says it is.
     """
     runs = list(_iter_label_runs(seg_lines, SEG_BODY))
     index = 0
@@ -1686,6 +1702,11 @@ def _release_body_inside_the_references(seg_lines: List[_SegLine]) -> None:
             group.append(runs[index + len(group)])
         index += len(group)
         if sum(len(run) for run in group) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if any(
+            _is_grounded_in(seg_lines[position], annotated, _FLOAT_CAPTION_FIELDS)
+            for run in group for position in run
+        ):
             continue
         if (
             _enclosing_label(seg_lines, group[0][0], -1)
@@ -1744,6 +1765,27 @@ def _release_references_inside_front(seg_lines: List[_SegLine]) -> None:
         ):
             for index in run:
                 seg_lines[index].seg_label = SEG_FRONT
+
+
+def _release_front_inside_the_review(seg_lines: List[_SegLine]) -> None:
+    """Take back the date a reviewer's report is headed with.
+
+    A report prints the day it was written over it -- "Author Response 13 Mar
+    2023" -- and the article's own history carries a date the aligner can read
+    that as.  The reports are one region at the end of the document, so a short
+    stretch of front matter inside them is that match rather than the paper's
+    front matter printed among the reviews.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_FRONT):
+        if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_REVIEW
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = SEG_REVIEW
 
 
 def _release_front_inside_body(seg_lines: List[_SegLine]) -> None:
@@ -2786,12 +2828,14 @@ def _find_missing_page_numbers(
 # Front matter a paper may print after its reference list.  A correspondence
 # block names who to write to, which a preprint server sets at the end, and an
 # author note carries the rest.  A journal in several languages closes with
-# the abstract in each of them, a page of front matter at a time.
+# the abstract in each of them, a page of front matter at a time, and when it
+# was submitted and accepted is printed under the last of them.
 _LATE_FRONT_FIELDS = frozenset({
     JatsFieldNames.ABSTRACT,
     JatsFieldNames.AUTHOR_NOTES,
     JatsFieldNames.CORRESPONDENCE,
     JatsFieldNames.SUBJECT_CLASSIFICATION,
+    JatsFieldNames.HISTORY_DATE,
 })
 
 
@@ -3599,12 +3643,15 @@ _KEPT_PAST_THE_FRONT_MATTER = _LATE_FRONT_FIELDS | frozenset({
 # that the box is the publisher's front matter.
 
 # The front matter a paper does print after its body: a preprint server sets the
-# correspondence block at the end, and it is the front matter wherever it is set.
+# correspondence block at the end, and a journal prints when it received and
+# accepted the article under the last thing it prints.  Either is the front
+# matter wherever it is set.
 _FRONT_AFTER_THE_BODY_FIELDS = frozenset({
     JatsFieldNames.CORRESPONDENCE,
     JatsFieldNames.CORRESP_AFF,
     JatsFieldNames.CORRESP_ADDRESS,
     JatsFieldNames.CORRESP_PHONE,
+    JatsFieldNames.HISTORY_DATE,
 })
 
 
@@ -3620,6 +3667,33 @@ def _names_another_declaration(text: str, label: str) -> bool:
     """Whether the line heads a declaration other than the one running on."""
     named = _declaration_named_by(text)
     return named is not None and named != label
+
+
+# A line the page rules between two things, printed in nothing but the marks a
+# rule is made of.
+_RULE_OF_PUNCTUATION = re.compile(
+    r'^[_\-\u2010-\u2015\u2500-\u257f.*\u00b7\u2022\s]{8,}$'
+)
+
+
+def _claim_the_rule_a_region_opens_under(seg_lines: List[_SegLine]) -> None:
+    """Give a rule of punctuation to the region it introduces.
+
+    A journal rules a line between its reference list and the address to write
+    to, and the list reaches over the rule.  GROBID's corpus writes such a rule
+    in the region around it 490 times and in a `listBibl` none at all, so where
+    the regions either side differ it goes with the one below -- which is what
+    a rule is printed for.  Twelve of them open the front matter a page closes
+    with, and the 442 set in the body have the body under them as well as over.
+    """
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label in _FURNITURE_LABELS or seg_line.seg_label == SEG_COVER:
+            continue
+        if not _RULE_OF_PUNCTUATION.match(seg_line.text.strip()):
+            continue
+        under_it = _enclosing_label(seg_lines, index, 1)
+        if under_it is not None:
+            seg_line.seg_label = under_it
 
 
 def _release_front_after_the_body(
@@ -3804,6 +3878,7 @@ def _release_the_regions_a_false_match_won(seg_lines: List[_SegLine]) -> None:
     _release_references_inside_front(seg_lines)
     _release_body_inside_front(seg_lines)
     _release_front_inside_body(seg_lines)
+    _release_front_inside_the_review(seg_lines)
     _release_annex_inside_body(seg_lines)
 
 
@@ -3865,7 +3940,7 @@ class SegmentationLabelDeriver:
         # front run in two, and the merge then has no run to carry across the
         # page break to the front matter printed after it.
         _release_statements_inside_front(seg_lines)
-        _release_body_inside_the_references(seg_lines)
+        _release_body_inside_the_references(seg_lines, annotated)
         _release_margin_lines_continuing_a_column(seg_lines, annotated)
         _claim_the_note_a_block_of_notes_opens_with(seg_lines, annotated)
         # After the release, which reads a note set at the foot of a page as the
@@ -3949,6 +4024,9 @@ class SegmentationLabelDeriver:
         # And after it too, which is what decides where a declaration printed
         # in the imprint block belongs.
         _claim_the_rest_of_the_block_the_front_matter_fills(seg_lines)
+        # Last of them, because the region a rule introduces is the region
+        # these have finished deciding.
+        _claim_the_rule_a_region_opens_under(seg_lines)
         # Last of the front-matter passes, because the pages it reads are the
         # pages the run ends up on.
         _claim_the_margin_note_the_front_matter_is_printed_beside(seg_lines)

@@ -18,6 +18,7 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_CONTRIBUTION,
     SEG_FOOTNOTE,
     SEG_FRONT,
+    SEG_REVIEW,
     SEG_FUNDING,
     SEG_REFERENCES,
 )
@@ -536,3 +537,117 @@ class TestADeclarationFiledWithTheAuthorNotes:
         assert [labels[id(lines[key])] for key in ('heading', 'statement')] == (
             [SEG_CONFLICT] * 2
         )
+
+
+class TestTheSubmissionHistoryTheDepositCarries:
+    """A journal prints when it received and accepted the article under the
+    last thing on its last page."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'argument', f'runs{index}', 'here', y=100.0 + 20 * index)
+            for index in range(4)
+        ]
+        references = [
+            make_line('Egret', 'A.', f'Wading{index}', 'in', 'the', 'reeds.',
+                      y=200.0 + 20 * index)
+            for index in range(4)
+        ]
+        biography = [
+            make_line('Egret', 'A', 'is', 'a', 'reader', 'of', 'marshes',
+                      y=300.0 + 20 * index)
+            for index in range(3)
+        ]
+        history = make_line(
+            'Received', '30', 'September', '2024', 'and', 'accepted', '2', 'July',
+            '2025.', y=400.0,
+        )
+        doc = make_doc_with_page(
+            LayoutBlock(lines=body),
+            LayoutBlock(lines=references),
+            LayoutBlock(lines=biography),
+            LayoutBlock(lines=[history]),
+        )
+        order = list(doc.iter_all_lines())
+        fields = {order.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+                  for line in body}
+        fields.update({order.index(line): JatsFieldNames.REFERENCE
+                       for line in references})
+        fields.update({order.index(line): JatsFieldNames.AUTHOR_NOTES
+                       for line in biography})
+        fields[order.index(history)] = JatsFieldNames.HISTORY_DATE
+        return doc, annotate(doc, fields), history
+
+    def test_it_is_the_front_matter_wherever_it_is_printed(self):
+        doc, annotated, history = self._make_doc()
+        assert derive_labels(doc, annotated)[id(history)] == SEG_FRONT
+
+
+class TestTheRuleBetweenTheListAndTheAddress:
+    """A journal rules a line between its reference list and the address to
+    write to."""
+
+    def _make_doc(self):
+        references = [
+            make_line('Egret', 'A.', f'Wading{index}', 'in', 'the', 'reeds.',
+                      y=100.0 + 14 * index)
+            for index in range(6)
+        ]
+        rule = make_line('______________________________', y=200.0)
+        correspondence = [
+            make_line('Correspondence', 'address', ':', y=220.0),
+            make_line('A', 'Egret,', 'Marsh', 'Institute,', 'Tubarao.', y=234.0),
+        ]
+        doc = make_doc_with_page(
+            LayoutBlock(lines=references),
+            LayoutBlock(lines=[rule]),
+            LayoutBlock(lines=correspondence),
+        )
+        order = list(doc.iter_all_lines())
+        fields = {order.index(line): JatsFieldNames.REFERENCE for line in references}
+        fields.update({
+            order.index(line): JatsFieldNames.CORRESPONDENCE
+            for line in correspondence
+        })
+        return doc, annotate(doc, fields), rule
+
+    def test_the_rule_goes_with_what_it_introduces(self):
+        doc, annotated, rule = self._make_doc()
+        assert derive_labels(doc, annotated)[id(rule)] == SEG_FRONT
+
+
+class TestADateAReportIsHeadedWith:
+    """A reviewer's report prints the day it was written over it, and the
+    article's own history carries a date that reads like one."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'argument', f'runs{index}', 'here', y=60.0 + 14 * index)
+            for index in range(4)
+        ]
+        report = [
+            make_line('I', 'have', 'read', 'this', 'submission', 'and', 'believe',
+                      y=140.0),
+            make_line('it', 'is', 'of', 'an', 'acceptable', 'standard.', y=154.0),
+        ]
+        dated = make_line('Author', 'Response', '13', 'March', '2023', y=168.0)
+        answer = [
+            make_line('Thank', 'you', 'for', 'the', 'comprehensive', 'review.',
+                      y=182.0),
+            make_line('We', 'have', 'counted', 'the', 'herons', 'again.', y=196.0),
+        ]
+        doc = make_doc_with_page(
+            LayoutBlock(lines=body),
+            LayoutBlock(lines=report + [dated] + answer),
+        )
+        order = list(doc.iter_all_lines())
+        fields = {order.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+                  for line in body}
+        fields.update({order.index(line): JatsFieldNames.SUB_ARTICLE
+                       for line in report + answer})
+        fields[order.index(dated)] = JatsFieldNames.HISTORY_DATE
+        return doc, annotate(doc, fields), dated
+
+    def test_the_date_stays_with_the_report(self):
+        doc, annotated, dated = self._make_doc()
+        assert derive_labels(doc, annotated)[id(dated)] == SEG_REVIEW
