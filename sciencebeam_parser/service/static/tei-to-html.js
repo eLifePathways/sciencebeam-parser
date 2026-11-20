@@ -205,6 +205,12 @@ function getReferencePages(imprint) {
   };
 }
 
+/* A printed URL, and where it points without the brackets or breaks around it. */
+function getUrl(node) {
+  const value = getNodeValue(node, 'ref');
+  return value ? { ...value, href: value.text.replace(/[<>\s]/g, '') } : null;
+}
+
 function getReference(node) {
   const analytic = getFirstChildElement(node, 'analytic');
   const monogr = getFirstChildElement(node, 'monogr');
@@ -233,6 +239,7 @@ function getReference(node) {
       ? getNodeValue(getFirstChildElement(imprint, 'date'), 'date')
       : null,
     doi: getNodeValue(doi, 'idno'),
+    url: getUrl(getChildByAttribute(node, 'ref', 'type', 'url')),
     ...getReferencePages(imprint || node)
   };
   REFERENCE_SCOPES.forEach(([key, unit]) => {

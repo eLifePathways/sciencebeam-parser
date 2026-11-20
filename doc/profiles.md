@@ -255,7 +255,7 @@ The TEI records them where GROBID records its own, in
 ```
 
 The JATS carries the same values as `custom-meta` entries in
-`article-meta/custom-meta-group`, under the names
+`processing-meta/custom-meta-group`, under the names
 `sciencebeam-parser-version`, `sciencebeam-parser-profile` and
 `sciencebeam-parser-profile-digest`. They are read from the TEI during the
 transform, so the two outputs cannot disagree. The asset zip's `tei.xml` is the

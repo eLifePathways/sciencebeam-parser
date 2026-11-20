@@ -1,0 +1,55 @@
+<?xml-stylesheet href="xsd.xsl" type="text/xsl"?>
+<xsd:schema xmlns:ali="http://www.niso.org/schemas/ali/1.0/"
+            xmlns:c="http://www.w3.org/ns/xproc-step"
+            xmlns:mml="http://www.w3.org/1998/Math/MathML"
+            xmlns:mtl="http://www.mulberrytech.com/taglib"
+            xmlns:xlink="http://www.w3.org/1999/xlink"
+            xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+   <xsd:annotation>
+      <xsd:documentation>
+         <div xmlns="http://www.w3.org/1999/xhtml"
+              xmlns:dxdy="http://mulberrytech.com/2014/dxdy"
+              xmlns:xsd="http://www.w3.org/2000/10/XMLSchema"
+              class="bodytext">
+            <h1>MODULE: JATS-archivearticle1-4 DTD in XSD form (driver file)</h1>
+            <h2>MODEL: Journal Archiving and Interchange DTD (MathML 2.0)</h2>
+            <h2>VERSION:  1.4</h2>
+            <h2>DATE:  October 2024</h2>
+            <dl>
+               <dt>SYSTEM</dt>
+               <dd>
+                  <p>Journal Archiving and Interchange model of the JATS Suite</p>
+               </dd>
+               <dt>PURPOSE</dt>
+               <dd>
+                  <p>Driver file: include and import all other schema documents</p>
+               </dd>
+               <dt>CREATED FOR</dt>
+               <dd>
+                  <p>NLM/NCBI</p>
+               </dd>
+            </dl>
+         </div>
+      </xsd:documentation>
+   </xsd:annotation>
+   <xsd:import namespace="http://www.w3.org/1999/xlink"
+               schemaLocation="standard-modules/xlink.xsd"/>
+   <xsd:import namespace="http://www.w3.org/1998/Math/MathML"
+               schemaLocation="standard-modules/mathml2/mathml2.xsd">
+      <xsd:annotation xmlns:dxdy="http://mulberrytech.com/2014/dxdy">
+         <xsd:documentation>
+            This is a modified copy of the MathML 2 schema documents
+            at http://www.w3.org/Math/XMLSchema/mathml2.tgz
+            -- an explicit reference to an incomplete copy of the
+            XLink schema document has been suppressed to avoid
+            conflicts with the full XLink schema document.
+          </xsd:documentation>
+      </xsd:annotation>
+   </xsd:import>
+   <xsd:import namespace="http://www.niso.org/schemas/ali/1.0/"
+               schemaLocation="standard-modules/module-ali.xsd"/>
+   <xsd:import namespace="http://www.w3.org/XML/1998/namespace"
+               schemaLocation="standard-modules/xml.xsd"/>
+   <xsd:include schemaLocation="JATS-archivearticle1-4-elements.xsd"/>
+</xsd:schema>

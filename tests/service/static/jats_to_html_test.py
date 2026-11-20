@@ -341,7 +341,7 @@ class TestSections:
 
     def test_should_read_the_marked_up_runs_of_a_paragraph(self):
         view_model = get_article_view_model(get_article_xml(
-            body='<sec><p>Plain <b>bold</b> and <i>italic</i>.</p></sec>'
+            body='<sec><p>Plain <bold>bold</bold> and <italic>italic</italic>.</p></sec>'
         ))
         runs = view_model['sections'][0]['blocks'][0]['runs']
         assert [(run['text'], run.get('bold'), run.get('italic')) for run in runs] == [
@@ -457,7 +457,8 @@ class TestReferences:
             'issue': {'label': 'issue', 'text': '3'},
             'firstPage': {'label': 'fpage', 'text': '100'},
             'lastPage': {'label': 'lpage', 'text': '110'},
-            'doi': {'label': 'pub-id', 'text': '10.1000/xyz'}
+            'doi': {'label': 'pub-id', 'text': '10.1000/xyz'},
+            'url': None
         }]
 
     def test_should_read_the_printed_reference_number(self):
@@ -469,6 +470,21 @@ class TestReferences:
         ))
         assert without_paths(view_model['references'][0]['heading']) == {
             'label': 'label', 'text': '1'
+        }
+
+    def test_should_read_the_url_a_citation_links_to(self):
+        view_model = get_article_view_model(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><element-citation>'
+                '<ext-link ext-link-type="uri" xlink:href="https://example.org/data">'
+                'https://example.org/data</ext-link>'
+                '</element-citation></ref></ref-list>'
+            )
+        ))
+        assert without_paths(view_model['references'][0]['url']) == {
+            'label': 'ext-link',
+            'text': 'https://example.org/data',
+            'href': 'https://example.org/data'
         }
 
     def test_should_read_a_citation_that_states_almost_nothing(self):
@@ -625,6 +641,56 @@ class TestRenderedArticle:
         assert 'References' in text_only
         assert text_only.endswith('A Journal')
 
+    def test_should_show_the_url_a_reference_links_to(self):
+        html = get_rendered_article(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><element-citation><source>A Journal</source>'
+                '<ext-link ext-link-type="uri" xlink:href="https://example.org/data">'
+                'https://example.org/data</ext-link>'
+                '</element-citation></ref></ref-list>'
+            )
+        ))
+        assert 'A Journal https://example.org/data' in get_text_without_labels(html)
+        assert 'data-jats="ext-link"' in html
+        assert 'href="https://example.org/data"' in html
+        assert 'rel="noopener noreferrer"' in html
+
+    def test_should_link_the_doi_of_a_reference(self):
+        html = get_rendered_article(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><element-citation>'
+                '<pub-id pub-id-type="doi">10.1000/xyz</pub-id>'
+                '</element-citation></ref></ref-list>'
+            )
+        ))
+        assert 'href="https://doi.org/10.1000/xyz"' in html
+
+    def test_should_not_link_a_url_that_is_not_a_web_address(self):
+        html = get_rendered_article(get_article_xml(
+            back=(
+                '<ref-list><ref id="b0"><element-citation>'
+                '<ext-link ext-link-type="uri" xlink:href="javascript:alert(1)">'
+                'javascript:alert(1)</ext-link>'
+                '</element-citation></ref></ref-list>'
+            )
+        ))
+        assert 'javascript:alert(1)' in get_text_without_labels(html)
+        assert 'href=' not in html
+
+    def test_should_show_the_figure_label_beside_its_caption(self):
+        html = get_rendered_article(get_article_xml(
+            body=(
+                '<sec><fig id="fig_0"><label>Figure 1.</label>'
+                '<caption><p>What it shows.</p></caption></fig></sec>'
+            )
+        ))
+        figcaption = re.search(r'<figcaption.*?</figcaption>', html)
+        assert figcaption
+        assert re.findall(r'data-jats="([^"]+)"', figcaption.group(0)) == [
+            'label', 'caption', 'p'
+        ]
+        assert 'Figure 1.What it shows.' in get_text_without_labels(figcaption.group(0))
+
     def test_should_read_a_document_that_prints_no_numbers(self):
         html = get_rendered_article(get_article_xml(
             front=(
@@ -678,7 +744,7 @@ class TestRenderedArticle:
         assert '[2] Another Journal' in text_only
         assert 'jats-references jats-printed-labels' in html
 
-    def test_should_keep_the_reference_list_numbers_where_not_every_number_was_printed(
+    def test_should_mark_the_number_of_a_reference_printed_without_one(
         self
     ):
         html = get_rendered_article(get_article_xml(
@@ -691,7 +757,9 @@ class TestRenderedArticle:
                 '</ref-list>'
             )
         ))
-        assert 'jats-printed-labels' not in html
+        text_only = get_text_without_labels(html)
+        assert '[1] A Journal' in text_only
+        assert '#2 Another Journal' in text_only
 
 
 FIGURE_ARTICLE_XML = get_article_xml(
@@ -872,7 +940,7 @@ class TestAffiliationReferences:
         assert 'title="A University (A City)"' in html
         assert 'jats-printed-labels' in html
 
-    def test_should_keep_the_list_numbers_where_not_every_label_was_printed(self):
+    def test_should_mark_the_number_of_an_affiliation_printed_without_a_label(self):
         html = get_rendered_article(get_article_xml(
             front=(
                 '<contrib-group><contrib><name><surname>Smith</surname></name>'
@@ -882,8 +950,23 @@ class TestAffiliationReferences:
                 '<aff id="aff2">An Institute</aff></contrib-group>'
             )
         ))
-        assert 'jats-printed-labels' not in html
-        assert 'Smith a 2' in get_text_without_labels(html)
+        text_only = get_text_without_labels(html)
+        assert 'Smith a #2' in text_only
+        assert 'a A University' in text_only
+        assert '#2 An Institute' in text_only
+        assert 'title="not printed: its place in the list"' in html
+
+    def test_should_not_number_an_affiliation_the_way_another_was_printed(self):
+        html = get_rendered_article(get_article_xml(
+            front=(
+                '<contrib-group><contrib><name><surname>Smith</surname></name>'
+                '<xref ref-type="aff" rid="aff1"/>'
+                '<xref ref-type="aff" rid="aff2">1</xref></contrib>'
+                '<aff id="aff1">An Institute</aff>'
+                '<aff id="aff2"><label>1</label> A University</aff></contrib-group>'
+            )
+        ))
+        assert 'Smith #1 1' in get_text_without_labels(html)
 
     def test_should_name_the_element_a_reference_came_from(self):
         html = get_rendered_article(AFFILIATED_ARTICLE_XML)

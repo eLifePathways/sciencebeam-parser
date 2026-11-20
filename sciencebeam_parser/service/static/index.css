@@ -162,6 +162,8 @@ pre {
   padding-left: 0;
 }
 
+.jats-generated-label { color: var(--muted); font-weight: normal; }
+
 .jats-abstract { margin-bottom: 8px; }
 
 .jats-figure, .jats-table {

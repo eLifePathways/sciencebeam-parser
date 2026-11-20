@@ -64,7 +64,7 @@ xslt:
       output_parameters: 'false'
       output_bold: 'false'
       output_italic: 'false'
-      output_empty_figure_graphic: 'true'
+      output_empty_figure_graphic: 'false'
       acknowledgement_target: 'ack'
       annex_target: 'back'
 lookup:
