@@ -14,6 +14,7 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_BODY,
     SEG_FOOTNOTE,
     SEG_FRONT,
+    SEG_HEADNOTE,
 )
 from tests.training.jats.segmentation_fixtures import (
     annotate,
@@ -641,3 +642,205 @@ class TestAChartWhoseLastRowCrossesTheFooter:
         doc, annotated, cell, _feet = self._make_doc(with_a_cell_beside_it=False)
         labels = derive_labels(doc, annotated)
         assert labels[id(cell)] == SEG_FOOTNOTE
+
+
+class TestTheTabAJournalPrintsUpItsEdge:
+    """A journal that names the kind of article up the outer edge of a page."""
+
+    def _make_doc(self, in_the_margin: bool = True):
+        pages = range(1, 4)
+        columns = {
+            page_number: [
+                make_line('The', 'marshes', 'held', f'birds{page_number}{index}',
+                          x=100.0, y=100.0 + 14 * index, page_number=page_number)
+                for index in range(6)
+            ]
+            for page_number in pages
+        }
+        tabs = [
+            make_line(
+                'Research',
+                x=(20.0 if page_number % 2 else 560.0) if in_the_margin else 110.0,
+                y=500.0, page_number=page_number,
+            )
+            for page_number in pages
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=columns[page_number]),
+                    LayoutBlock(lines=[tabs[page_number - 1]]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in pages
+        ])
+        order = list(doc.iter_all_lines())
+        fields = {
+            order.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+            for lines in columns.values() for line in lines
+        }
+        return doc, annotate(doc, fields), tabs
+
+    def test_the_tab_is_the_furniture_of_every_page(self):
+        doc, annotated, tabs = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(tab)] for tab in tabs] == [SEG_HEADNOTE] * 3
+
+    def test_the_same_word_set_in_the_column_is_not(self):
+        doc, annotated, tabs = self._make_doc(in_the_margin=False)
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(tab)] for tab in tabs] != [SEG_HEADNOTE] * 3
+
+
+class TestTheLinesAPageSetsAmongItsNotes:
+    """A marker the deposit carries nothing for, and a note matched as body."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'marshes', 'held', f'birds{index}', x=100.0,
+                      y=100.0 + 14 * index, page_number=1, font_size=12.0)
+            for index in range(6)
+        ]
+        marker = make_line('6', x=90.0, y=740.0, page_number=1, font_size=6.0)
+        note = [
+            make_line('Taken', 'from', 'the', 'count', 'of', 'that', 'spring',
+                      x=100.0, y=741.0, page_number=1, font_size=8.0),
+            make_line('7', 'The', 'herons', 'were', 'counted', 'at', 'dawn',
+                      x=100.0, y=755.0, page_number=1, font_size=8.0),
+            make_line('and', 'again', 'at', 'dusk', '.', x=100.0, y=769.0,
+                      page_number=1, font_size=8.0),
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=body),
+                    LayoutBlock(lines=[marker]),
+                    LayoutBlock(lines=note),
+                ],
+                meta=make_page_meta(1),
+            ),
+        ])
+        order = list(doc.iter_all_lines())
+        fields = {
+            order.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+            for line in body
+        }
+        for line in note:
+            fields[order.index(line)] = JatsFieldNames.BACK_FOOTNOTE
+        # The note gives the same count as a sentence of the body, so the
+        # deposit matches one of its lines to the paragraph instead.
+        fields[order.index(note[1])] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), marker, note
+
+    def test_the_marker_on_the_row_the_note_opens_is_the_note(self):
+        doc, annotated, marker, _ = self._make_doc()
+        assert derive_labels(doc, annotated)[id(marker)] == SEG_FOOTNOTE
+
+    def test_the_line_set_in_the_block_of_notes_is_a_note(self):
+        doc, annotated, _, note = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in note] == [SEG_FOOTNOTE] * 3
+
+
+class TestTheSourceLineAFigureIsPrintedUnder:
+    """A caption's source line carrying the address a note gives as well."""
+
+    def _make_doc(self):
+        caption = make_line('Figure', '4', '-', 'The', 'marsh', 'at', 'dawn',
+                            x=100.0, y=300.0, page_number=1, font_size=12.0)
+        source = make_line('Source', ':', 'the', 'count', 'of', 'that',
+                           'spring', x=100.0, y=320.0, page_number=1,
+                           font_size=9.0)
+        body = [
+            make_line('The', 'marshes', 'held', f'birds{index}', x=100.0,
+                      y=340.0 + 14 * index, page_number=1, font_size=12.0)
+            for index in range(6)
+        ]
+        note = [
+            make_line('7', 'The', 'herons', 'were', 'counted', 'at', 'dawn',
+                      x=100.0, y=740.0, page_number=1, font_size=8.0),
+            make_line('and', 'again', 'at', 'dusk', '.', x=100.0, y=754.0,
+                      page_number=1, font_size=8.0),
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[caption]),
+                    LayoutBlock(lines=[source]),
+                    LayoutBlock(lines=body),
+                    LayoutBlock(lines=note),
+                ],
+                meta=make_page_meta(1),
+            ),
+        ])
+        order = list(doc.iter_all_lines())
+        fields = {order.index(caption): JatsFieldNames.BODY_FIGURE}
+        for line in body:
+            fields[order.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        for line in note:
+            fields[order.index(line)] = JatsFieldNames.BACK_FOOTNOTE
+        # The note gives the same source as the line under the caption.
+        fields[order.index(source)] = JatsFieldNames.BACK_FOOTNOTE
+        return doc, annotate(doc, fields), source, note
+
+    def test_the_line_among_the_text_is_the_text(self):
+        doc, annotated, source, _ = self._make_doc()
+        assert derive_labels(doc, annotated)[id(source)] == SEG_BODY
+
+    def test_the_notes_at_the_foot_are_left_alone(self):
+        doc, annotated, _, note = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in note] == [SEG_FOOTNOTE] * 2
+
+
+class TestANoteSetInTheOtherColumn:
+    """A page that sets its notes beside an address block, not under it."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'marshes', 'held', f'birds{index}', x=100.0,
+                      y=100.0 + 14 * index, page_number=1, font_size=12.0)
+            for index in range(6)
+        ]
+        address = [
+            make_line('Marsh', 'Institute', ',', 'Department', 'of', 'Wading',
+                      x=100.0, y=400.0, page_number=1, font_size=10.0),
+            make_line('Birds', x=100.0, y=414.0, page_number=1, font_size=10.0),
+        ]
+        note = [
+            make_line('7', 'The', 'herons', 'were', 'counted', 'at', 'dawn',
+                      x=400.0, y=400.0, page_number=1, font_size=10.0),
+            make_line('and', 'again', 'at', 'dusk', '.', x=400.0, y=414.0,
+                      page_number=1, font_size=10.0),
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=body),
+                    LayoutBlock(lines=address),
+                    LayoutBlock(lines=note),
+                ],
+                meta=make_page_meta(1),
+            ),
+        ])
+        order = list(doc.iter_all_lines())
+        fields = {
+            order.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+            for line in body
+        }
+        for line in address:
+            fields[order.index(line)] = JatsFieldNames.AUTHOR_NOTES
+        for line in note:
+            fields[order.index(line)] = JatsFieldNames.BACK_FOOTNOTE
+        return doc, annotate(doc, fields), address, note
+
+    def test_the_line_level_with_it_is_not_the_note_s(self):
+        doc, annotated, address, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert SEG_FOOTNOTE not in [labels[id(line)] for line in address]
+
+    def test_the_note_beside_it_is_still_a_note(self):
+        doc, annotated, _, note = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in note] == [SEG_FOOTNOTE] * 2

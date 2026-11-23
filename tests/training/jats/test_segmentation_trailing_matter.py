@@ -746,3 +746,46 @@ class TestAnAppendixCellThatMatchedAnEntry:
     def test_the_cell_stays_with_the_appendix(self):
         doc, annotated, cell = self._make_doc()
         assert derive_labels(doc, annotated)[id(cell)] == SEG_ANNEX
+
+
+class TestWhatAJournalDeclaresAboutThePublication:
+    """A journal closes with who holds the copyright and how the article was
+    reviewed, and the deposit files each among the notes of the back matter."""
+
+    def _make_doc(self, heading: str):
+        references = [
+            make_line('Egret', 'A.', f'Wading{index}', 'in', 'the', 'reeds.',
+                      y=100.0 + 14 * index)
+            for index in range(5)
+        ]
+        declaration = [
+            make_line(*heading.split(' '), y=200.0),
+            make_line('The', 'journal', 'checks', 'every', 'article', 'it',
+                      'takes.', y=214.0),
+        ]
+        foot = make_line('Journal', 'of', 'Marsh', 'Birds,', 'v.', '12,', '2024',
+                         y=228.0)
+        doc = make_doc_with_page(
+            LayoutBlock(lines=references),
+            LayoutBlock(lines=declaration + [foot]),
+        )
+        order = list(doc.iter_all_lines())
+        fields = {order.index(line): JatsFieldNames.REFERENCE for line in references}
+        fields[order.index(declaration[1])] = JatsFieldNames.BACK_FOOTNOTE
+        return doc, annotate(doc, fields), declaration
+
+    def test_a_sentence_that_opens_with_the_word_is_not_a_heading(self):
+        doc, annotated, declaration = self._make_doc(
+            'Copyright protection in the USA does not apply to this work, which'
+            ' may be protected elsewhere.'
+        )
+        labels = derive_labels(doc, annotated)
+        assert labels[id(declaration[0])] != SEG_FRONT
+
+    def test_the_declaration_and_its_prose_are_front_matter(self):
+        for heading in ('Copyrights', 'Peer Review Method', 'Plagiarism Check'):
+            doc, annotated, declaration = self._make_doc(heading)
+            labels = derive_labels(doc, annotated)
+            assert [labels[id(line)] for line in declaration] == (
+                [SEG_FRONT] * 2
+            ), heading
