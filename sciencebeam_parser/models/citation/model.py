@@ -9,7 +9,9 @@ from sciencebeam_parser.models.citation.training_data import (
 
 from sciencebeam_parser.models.data import (
     AppFeaturesContext,
-    DocumentFeaturesContext
+    DocumentFeaturesContext,
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM
 )
 from sciencebeam_parser.models.model import LabeledLayoutToken, Model
 from sciencebeam_parser.models.citation.data import CitationDataGenerator
@@ -48,15 +50,19 @@ def _has_tokens(layout_document: LayoutDocument) -> bool:
 
 class CitationModel(Model):
     @property
-    def match_grobid_input(self) -> bool:
+    def feature_flavour(self) -> str:
+        return self.model_config.get('feature_flavour', FEATURE_FLAVOUR_SCIENCEBEAM)
+
+    @property
+    def is_grobid_flavour(self) -> bool:
         """Whether the model takes a reference the way GROBID's citation parser gives it."""
-        return bool(self.model_config.get('match_grobid_input', False))
+        return self.feature_flavour == FEATURE_FLAVOUR_GROBID
 
     def get_layout_document_for_raw_reference(
         self,
         semantic_raw_reference: SemanticRawReference
     ) -> LayoutDocument:
-        if self.match_grobid_input:
+        if self.is_grobid_flavour:
             return LayoutDocument.for_blocks([
                 semantic_raw_reference.view_by_type(SemanticRawReferenceText).merged_block
             ])
@@ -66,7 +72,7 @@ class CitationModel(Model):
         self,
         layout_documents: List[LayoutDocument]
     ) -> List[LayoutDocument]:
-        if self.match_grobid_input:
+        if self.is_grobid_flavour:
             layout_documents = [
                 remove_leading_punctuation_tokens(doc) for doc in layout_documents
             ]
@@ -102,7 +108,7 @@ class CitationModel(Model):
     ) -> CitationDataGenerator:
         return CitationDataGenerator(
             document_features_context=document_features_context,
-            match_grobid_citation_input=self.match_grobid_input
+            feature_flavour=self.feature_flavour
         )
 
     def get_semantic_extractor(self) -> CitationSemanticExtractor:

@@ -4,7 +4,10 @@ from sciencebeam_parser.models.data import (
     ContextAwareLayoutTokenFeatures,
     ContextAwareLayoutTokenModelDataGenerator,
     DocumentFeaturesContext,
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM,
     FeatureDef,
+    validate_feature_flavour
 )
 
 
@@ -12,11 +15,13 @@ class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
     def __init__(
         self,
         document_features_context: DocumentFeaturesContext,
-        match_grobid_citation_input: bool = False
+        feature_flavour: str = FEATURE_FLAVOUR_SCIENCEBEAM
     ):
+        self.feature_flavour = validate_feature_flavour(feature_flavour)
+        is_grobid_flavour = feature_flavour == FEATURE_FLAVOUR_GROBID
         super().__init__(
             document_features_context,
-            match_grobid_citation_input=match_grobid_citation_input
+            grobid_citation_features=is_grobid_flavour
         )
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = [
             FeatureDef('token_text', lambda f: f.token_text),
@@ -32,7 +37,7 @@ class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
             FeatureDef(
                 'line_status',
                 (lambda f: f.get_sentence_line_status())
-                if match_grobid_citation_input
+                if is_grobid_flavour
                 else (lambda f: f.get_line_status_with_lineend_for_single_token())
             ),
             FeatureDef('capitalisation',

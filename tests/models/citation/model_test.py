@@ -36,13 +36,13 @@ class CapturingModelImpl(ModelImpl):
 
 def _make_citation_model(
     retokenize_subdigits=None,
-    match_grobid_input=None
+    feature_flavour=None
 ) -> Tuple[CitationModel, CapturingModelImpl]:
     impl = CapturingModelImpl()
     impl_factory = MagicMock(return_value=impl)
     model_config: dict = {}
-    if match_grobid_input is not None:
-        model_config['match_grobid_input'] = match_grobid_input
+    if feature_flavour is not None:
+        model_config['feature_flavour'] = feature_flavour
     if retokenize_subdigits is not None:
         model_config['retokenize_subdigits'] = retokenize_subdigits
     model = CitationModel(impl_factory, model_config=model_config)
@@ -106,8 +106,8 @@ class TestCitationModelLeadingPunctuation:
         )
         assert impl.received_texts == [['.', 'Doe', 'J', '.']]
 
-    def test_leading_punctuation_is_not_labelled_when_matching_grobid_input(self):
-        model, impl = _make_citation_model(match_grobid_input=True)
+    def test_leading_punctuation_is_not_labelled_with_grobid_features(self):
+        model, impl = _make_citation_model(feature_flavour='grobid')
         model.predict_labels_for_layout_documents(
             [_doc_with_tokens('.', '(', 'Doe', 'J', '.')],
             DEFAULT_APP_FEATURES_CONTEXT
@@ -115,7 +115,7 @@ class TestCitationModelLeadingPunctuation:
         assert impl.received_texts == [['Doe', 'J', '.']]
 
     def test_document_of_punctuation_only_gets_no_labels(self):
-        model, impl = _make_citation_model(match_grobid_input=True)
+        model, impl = _make_citation_model(feature_flavour='grobid')
         result = model.predict_labels_for_layout_documents(
             [_doc_with_tokens('Doe'), _doc_with_tokens('.', ','), _doc_with_tokens('Roe')],
             DEFAULT_APP_FEATURES_CONTEXT
@@ -139,8 +139,8 @@ class TestCitationModelRawReferenceInput:
         )
         assert [t.text for t in layout_document.iter_all_tokens()][:2] == ['3', '.']
 
-    def test_leaves_out_the_label_when_matching_grobid_input(self):
-        model, _ = _make_citation_model(match_grobid_input=True)
+    def test_leaves_out_the_label_with_grobid_features(self):
+        model, _ = _make_citation_model(feature_flavour='grobid')
         layout_document = model.get_layout_document_for_raw_reference(
             _raw_reference_with_label()
         )

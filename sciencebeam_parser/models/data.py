@@ -1018,10 +1018,10 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         document_features_context: DocumentFeaturesContext,
         persist_indentation_reference_across_blocks: bool = False,
         compare_indentation_across_blocks: bool = False,
-        match_grobid_citation_input: bool = False
+        grobid_citation_features: bool = False
     ):
         self.document_features_context = document_features_context
-        self._match_grobid_citation_input = match_grobid_citation_input
+        self._grobid_citation_features = grobid_citation_features
         self._persist_indentation_reference_across_blocks = (
             persist_indentation_reference_across_blocks
         )
@@ -1073,7 +1073,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         }
         max_grobid_line_length = max(grobid_line_length_by_line_id.values())
         all_tokens = list(layout_document.iter_all_tokens())
-        count_line_breaks = self._match_grobid_citation_input
+        count_line_breaks = self._grobid_citation_features
         sentence_token_spans = [
             _get_sentence_token_span(
                 token, count_line_breaks and index == len(line.tokens) - 1
@@ -1097,7 +1097,7 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                 app_features_context.publisher_name_phrase_match,
                 app_features_context.collaboration_name_phrase_match,
             ]
-            if self._match_grobid_citation_input
+            if self._grobid_citation_features
             else [None, None, None, None]
         )
         (
