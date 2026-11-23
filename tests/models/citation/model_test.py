@@ -85,3 +85,22 @@ class TestCitationModelSubdigitRetokenization:
             DEFAULT_APP_FEATURES_CONTEXT
         )
         assert impl.received_texts == [['e', '1006572']]
+
+
+class TestCitationModelLeadingPunctuation:
+    def test_leading_punctuation_is_not_labelled(self):
+        model, impl = _make_citation_model()
+        model.predict_labels_for_layout_documents(
+            [_doc_with_tokens('.', '(', 'Doe', 'J', '.')],
+            DEFAULT_APP_FEATURES_CONTEXT
+        )
+        assert impl.received_texts == [['Doe', 'J', '.']]
+
+    def test_document_of_punctuation_only_gets_no_labels(self):
+        model, impl = _make_citation_model()
+        result = model.predict_labels_for_layout_documents(
+            [_doc_with_tokens('Doe'), _doc_with_tokens('.', ','), _doc_with_tokens('Roe')],
+            DEFAULT_APP_FEATURES_CONTEXT
+        )
+        assert impl.received_texts == [['Doe'], ['Roe']]
+        assert [[t.layout_token.text for t in doc] for doc in result] == [['Doe'], [], ['Roe']]

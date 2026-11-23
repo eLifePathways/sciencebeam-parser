@@ -621,7 +621,9 @@ class FullTextProcessor:
         semantic_raw_references: List[SemanticRawReference]
     ) -> Iterable[Union[SemanticReference, SemanticInvalidReference]]:
         layout_documents = [
-            LayoutDocument.for_blocks([semantic_raw_reference.merged_block])
+            LayoutDocument.for_blocks([
+                semantic_raw_reference.view_by_type(SemanticRawReferenceText).merged_block
+            ])
             for semantic_raw_reference in semantic_raw_references
         ]
         labeled_layout_tokens_list = (
@@ -646,7 +648,7 @@ class FullTextProcessor:
             for semantic_content in semantic_content_iterable:
                 if isinstance(semantic_content, (SemanticReference, SemanticInvalidReference)):
                     ref = semantic_content
-            if not ref:
+            if ref is None:
                 raise AssertionError('no semantic reference extracted')
             yield ref
 

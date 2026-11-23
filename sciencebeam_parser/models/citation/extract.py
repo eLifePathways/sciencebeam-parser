@@ -211,21 +211,28 @@ class CitationSemanticExtractor(SimpleModelSemanticExtractor):
         entity_tokens = list(entity_tokens)
         LOGGER.debug('entity_tokens: %s', entity_tokens)
         ids_iterator = iter(iter_ids('b'))
-        ref: Optional[SemanticReference] = None
+
+        def _new_reference() -> SemanticReference:
+            new_ref = SemanticReference()
+            if semantic_raw_reference is not None:
+                new_ref.content_id = semantic_raw_reference.content_id
+                for semantic_content in semantic_raw_reference:
+                    new_ref.add_content(semantic_content)
+            if not new_ref.content_id:
+                new_ref.content_id = next(ids_iterator, '?')
+            return new_ref
+
+        ref: Optional[SemanticReference] = (
+            _new_reference() if semantic_raw_reference is not None else None
+        )
         for name, layout_block in entity_tokens:
-            if not ref:
-                ref = SemanticReference()
-                if semantic_raw_reference:
-                    ref.content_id = semantic_raw_reference.content_id
-                    for semantic_content in semantic_raw_reference:
-                        ref.add_content(semantic_content)
-                if not ref.content_id:
-                    ref.content_id = next(ids_iterator, '?')
+            if ref is None:
+                ref = _new_reference()
             semantic_content = self.get_semantic_content_for_entity_name(
                 name, layout_block=layout_block
             )
             ref.add_content(semantic_content)
-        if ref and not is_reference_valid(ref):
+        if ref is not None and not is_reference_valid(ref):
             yield get_invalid_reference(ref)
-        elif ref:
+        elif ref is not None:
             yield ref

@@ -2,7 +2,7 @@ import logging
 import re
 from functools import cache
 from pathlib import Path
-from typing import Iterable, List, Optional, Set, Tuple
+from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 
 LOGGER = logging.getLogger(__name__)
@@ -80,18 +80,18 @@ class SequencePhraseMatch:
         for end in range(1, len(tokens)):
             continued.add(tokens[:end])
 
-    def match_token_indices(self, tokens: List[str]) -> Set[int]:
+    def match_spans(self, tokens: List[str]) -> List[Tuple[int, int]]:
         """
-        Return the set of raw token-list indices that fall within at least one matched span.
+        Return the inclusive (start, end) token-list spans of every match, in the
+        order FastMatcher.matchLayoutToken reports them.
 
-        Mirrors FastMatcher.matchLayoutToken: delimiter tokens (single-char in
-        _DELIMITER_CHARS) are skipped for matching purposes but their positions
-        are included when they fall inside a matched span.
+        Delimiter tokens (single-char in _DELIMITER_CHARS) are skipped for
+        matching purposes; a span still covers any delimiters inside it.
         """
         complete = self._complete
         continued = self._continued
         candidates: List[_Candidate] = []
-        results: Set[int] = set()
+        spans: List[Tuple[int, int]] = []
 
         for current_pos, token_text in enumerate(tokens):
             if token_text in (' ', '\n'):
@@ -102,7 +102,7 @@ class SequencePhraseMatch:
             next_candidates: List[_Candidate] = []
             for phrase, start_pos, last_non_sep_pos in candidates:
                 if phrase in complete:
-                    results.update(range(start_pos, last_non_sep_pos + 1))
+                    spans.append((start_pos, last_non_sep_pos))
                 extended = phrase + (token_lower,)
                 if extended in continued or extended in complete:
                     next_candidates.append((extended, start_pos, current_pos))
@@ -111,23 +111,64 @@ class SequencePhraseMatch:
                 next_candidates.append((started, current_pos, current_pos))
             candidates = next_candidates
 
-        # Flush matches that ended at the last token of the stream
         for phrase, start_pos, last_non_sep_pos in candidates:
             if phrase in complete:
-                results.update(range(start_pos, last_non_sep_pos + 1))
+                spans.append((start_pos, last_non_sep_pos))
 
-        return results
+        return spans
+
+    def match_token_indices(self, tokens: List[str]) -> Set[int]:
+        """Return the token-list indices that fall within at least one matched span."""
+        return {
+            index
+            for start, end in self.match_spans(tokens)
+            for index in range(start, end + 1)
+        }
+
+    def match_token_indices_as_grobid_citation_features(
+        self,
+        tokens: List[str]
+    ) -> Set[int]:
+        """
+        Return the token-list indices GROBID's citation features flag for these matches.
+
+        FeaturesVectorCitation walks the spans with a cursor that only moves forward,
+        in the order they were reported rather than by start, so a span reported after
+        an overlapping one that starts later can leave some of its tokens unflagged.
+        """
+        spans = self.match_spans(tokens)
+        flagged: Set[int] = set()
+        cursor = 0
+        for index in range(len(tokens)):
+            if not spans:
+                break
+            if cursor == len(spans) - 1 and spans[cursor][1] < index:
+                continue
+            for span_index in range(cursor, len(spans)):
+                start, end = spans[span_index]
+                if start <= index <= end:
+                    flagged.add(index)
+                    cursor = span_index
+                    break
+                if start > index:
+                    cursor = span_index
+                    break
+        return flagged
 
 
 @cache
-def load_phrase_match_from_text_file(path: str) -> SequencePhraseMatch:
-    """Load a SequencePhraseMatch from a plain-text file with one phrase per line."""
-    LOGGER.info('loading phrase match from: %r', path)
-    lines = Path(path).read_text(encoding='utf-8').splitlines()
-    return SequencePhraseMatch(line for line in lines if line)
+def _load_phrase_match_from_text_files(paths: Tuple[str, ...]) -> SequencePhraseMatch:
+    LOGGER.info('loading phrase match from: %r', paths)
+    return SequencePhraseMatch(
+        line
+        for path in paths
+        for line in Path(path).read_text(encoding='utf-8').splitlines()
+        if line
+    )
 
 
-def load_phrase_match_from_path(path: Optional[str]) -> Optional[SequencePhraseMatch]:
-    if not path:
+def load_phrase_match_from_paths(paths: Sequence[str]) -> Optional[SequencePhraseMatch]:
+    """Return one matcher over the phrases of every file, or None without files."""
+    if not paths:
         return None
-    return load_phrase_match_from_text_file(path)
+    return _load_phrase_match_from_text_files(tuple(paths))

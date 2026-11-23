@@ -255,3 +255,17 @@ class TestReferenceSegmenterSemanticExtractor:
         ref = semantic_content_list[0]
         assert isinstance(ref, SemanticInvalidReference)
         assert ref.get_text() == semantic_raw_ref_text.get_text()
+
+    def test_should_reject_raw_reference_without_any_labelled_tokens(self):
+        semantic_raw_ref = SemanticRawReference([
+            SemanticLabel(layout_block=LayoutBlock.for_text('7'))
+        ], content_id='raw1')
+        semantic_content_list = list(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                [], semantic_raw_reference=semantic_raw_ref
+            )
+        )
+        assert len(semantic_content_list) == 1
+        ref = semantic_content_list[0]
+        assert isinstance(ref, SemanticInvalidReference)
+        assert ref.get_text() == '7'

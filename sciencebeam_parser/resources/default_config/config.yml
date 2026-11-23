@@ -92,6 +92,19 @@ lookup:
   location_name:
     paths:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/places/location.txt
+  journal_name:
+    paths:
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/journals/journals.txt
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/journals/abbrev_journals.txt
+  conference_name:
+    paths:
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/journals/proceedings.txt
+  publisher_name:
+    paths:
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/publishers/publishers.txt
+  collaboration_name:
+    paths:
+      - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/organisations/inspire_collaborations.txt
 processors:
   fulltext:
     # Which abstracts reach the output where the header model labels more than one

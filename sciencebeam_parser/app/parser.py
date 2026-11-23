@@ -32,7 +32,10 @@ from sciencebeam_parser.external.pdfium.renderer import (
 )
 from sciencebeam_parser.external.wapiti.wrapper import LazyWapitiBinaryWrapper
 from sciencebeam_parser.lookup.loader import load_lookup_from_config
-from sciencebeam_parser.lookup.phrase_match import load_phrase_match_from_path
+from sciencebeam_parser.lookup.phrase_match import (
+    SequencePhraseMatch,
+    load_phrase_match_from_paths
+)
 from sciencebeam_parser.models.data import AppFeaturesContext
 from sciencebeam_parser.document.layout_document import LayoutDocument
 from sciencebeam_parser.document.semantic_document import (
@@ -105,16 +108,21 @@ def normalize_layout_document(
     )
 
 
+def _load_phrase_match_from_config(
+    lookup_config: Optional[dict],
+    download_manager: DownloadManager
+) -> Optional[SequencePhraseMatch]:
+    paths = (lookup_config or {}).get('paths', [])
+    return load_phrase_match_from_paths([
+        download_manager.download_if_url(path) for path in paths
+    ])
+
+
 def load_app_features_context(
     config: AppConfig,
     download_manager: DownloadManager
 ):
-    location_name_config = config.get('lookup', {}).get('location_name')
-    location_name_path: Optional[str] = None
-    if location_name_config:
-        paths = location_name_config.get('paths', [])
-        if paths:
-            location_name_path = download_manager.download_if_url(paths[0])
+    lookup_config = config.get('lookup', {})
     return AppFeaturesContext(
         country_lookup=load_lookup_from_config(
             config.get('lookup', {}).get('country'),
@@ -132,7 +140,21 @@ def load_app_features_context(
             config.get('lookup', {}).get('common_name'),
             download_manager=download_manager
         ),
-        location_name_phrase_match=load_phrase_match_from_path(location_name_path)
+        location_name_phrase_match=_load_phrase_match_from_config(
+            lookup_config.get('location_name'), download_manager
+        ),
+        journal_name_phrase_match=_load_phrase_match_from_config(
+            lookup_config.get('journal_name'), download_manager
+        ),
+        conference_name_phrase_match=_load_phrase_match_from_config(
+            lookup_config.get('conference_name'), download_manager
+        ),
+        publisher_name_phrase_match=_load_phrase_match_from_config(
+            lookup_config.get('publisher_name'), download_manager
+        ),
+        collaboration_name_phrase_match=_load_phrase_match_from_config(
+            lookup_config.get('collaboration_name'), download_manager
+        )
     )
 
 
