@@ -15,6 +15,10 @@ from sciencebeam_parser.models.model import LabeledLayoutToken, Model
 from sciencebeam_parser.models.citation.data import CitationDataGenerator
 from sciencebeam_parser.models.citation.extract import CitationSemanticExtractor
 from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken
+from sciencebeam_parser.document.semantic_document import (
+    SemanticRawReference,
+    SemanticRawReferenceText
+)
 from sciencebeam_parser.utils.tokenizer import get_subdigit_tokenized_tokens
 
 
@@ -43,13 +47,29 @@ def _has_tokens(layout_document: LayoutDocument) -> bool:
 
 
 class CitationModel(Model):
+    @property
+    def match_grobid_input(self) -> bool:
+        """Whether the model takes a reference the way GROBID's citation parser gives it."""
+        return bool(self.model_config.get('match_grobid_input', False))
+
+    def get_layout_document_for_raw_reference(
+        self,
+        semantic_raw_reference: SemanticRawReference
+    ) -> LayoutDocument:
+        if self.match_grobid_input:
+            return LayoutDocument.for_blocks([
+                semantic_raw_reference.view_by_type(SemanticRawReferenceText).merged_block
+            ])
+        return LayoutDocument.for_blocks([semantic_raw_reference.merged_block])
+
     def retokenize_layout_documents(
         self,
         layout_documents: List[LayoutDocument]
     ) -> List[LayoutDocument]:
-        layout_documents = [
-            remove_leading_punctuation_tokens(doc) for doc in layout_documents
-        ]
+        if self.match_grobid_input:
+            layout_documents = [
+                remove_leading_punctuation_tokens(doc) for doc in layout_documents
+            ]
         if self.model_config.get('retokenize_subdigits', True):
             return [
                 doc.retokenize(tokenize_fn=get_subdigit_tokenized_tokens)
@@ -81,7 +101,8 @@ class CitationModel(Model):
         document_features_context: DocumentFeaturesContext
     ) -> CitationDataGenerator:
         return CitationDataGenerator(
-            document_features_context=document_features_context
+            document_features_context=document_features_context,
+            match_grobid_citation_input=self.match_grobid_input
         )
 
     def get_semantic_extractor(self) -> CitationSemanticExtractor:

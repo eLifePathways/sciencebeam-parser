@@ -11,9 +11,13 @@ from sciencebeam_parser.models.data import (
 class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
     def __init__(
         self,
-        document_features_context: DocumentFeaturesContext
+        document_features_context: DocumentFeaturesContext,
+        match_grobid_citation_input: bool = False
     ):
-        super().__init__(document_features_context)
+        super().__init__(
+            document_features_context,
+            match_grobid_citation_input=match_grobid_citation_input
+        )
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = [
             FeatureDef('token_text', lambda f: f.token_text),
             FeatureDef('lower_token_text', lambda f: f.get_lower_token_text()),
@@ -25,7 +29,12 @@ class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
             FeatureDef('suffix_2', lambda f: f.get_suffix(2)),
             FeatureDef('suffix_3', lambda f: f.get_suffix(3)),
             FeatureDef('suffix_4', lambda f: f.get_suffix(4)),
-            FeatureDef('line_status', lambda f: f.get_sentence_line_status()),
+            FeatureDef(
+                'line_status',
+                (lambda f: f.get_sentence_line_status())
+                if match_grobid_citation_input
+                else (lambda f: f.get_line_status_with_lineend_for_single_token())
+            ),
             FeatureDef('capitalisation',
                        lambda f: f.get_capitalisation_status_using_allcap()),
             FeatureDef('digit_status',

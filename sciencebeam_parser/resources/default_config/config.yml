@@ -239,6 +239,7 @@ sequence_model_profiles:
     citation:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/citation'
       engine: 'wapiti'
+      match_grobid_input: true
   # Retrained wapiti models, named for the data they were trained on.
   # One profile per model so a regression can be attributed, plus a combined one.
   wapiti_grobid_only:
@@ -259,6 +260,7 @@ sequence_model_profiles:
     citation:
       path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/e266cc546e035e0d41734b9403b9cb496b6895a1/citation/wapiti/2026-09-08_wapiti_grobid_090_scielo_preprints_ore'
       engine: 'wapiti'
+      match_grobid_input: false
   wapiti_references_scielo_preprints_ore:
     extends:
       - wapiti_refseg_scielo_preprints_ore
@@ -274,6 +276,7 @@ sequence_model_profiles:
     citation:
       path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/dd39a9d6246b94a4e5861cf548921a7a3f1ba0ca/citation/delft/2026-09-18_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore'
       engine: 'delft'
+      match_grobid_input: false
   delft_references_scielo_preprints_ore:
     extends:
       - delft_refseg_scielo_preprints_ore
@@ -336,6 +339,7 @@ sequence_model_profiles:
     citation:
       engine: 'llm'
       task: 'citation'
+      match_grobid_input: false
       response_shape: 'values'
       model: 'qwen/qwen3.5-9b'
       # Venice over SiliconFlow on measurement, not preference: 33 references in
@@ -430,6 +434,7 @@ sequence_model_profiles:
     citation:
       path: 'hf://sciencialab/grobid-model-citation@3db81cd58276cb3a446bbb274c610d1233b7ce8c/grobid-citation-BidLSTM_CRF_FEATURES-no_embeddings'
       engine: 'delft'
+      match_grobid_input: true
     reference_segmenter:
       path: 'hf://sciencialab/grobid-model-reference-segmenter@c9d959488a08324fa53d40013e9b02f85af4886d/grobid-reference-segmenter-BidLSTM_CRF_FEATURES-no_embeddings'
       engine: 'delft'

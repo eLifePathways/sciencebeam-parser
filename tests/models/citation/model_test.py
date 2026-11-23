@@ -7,6 +7,11 @@ from sciencebeam_parser.document.layout_document import (
     LayoutLine,
     LayoutToken
 )
+from sciencebeam_parser.document.semantic_document import (
+    SemanticLabel,
+    SemanticRawReference,
+    SemanticRawReferenceText
+)
 from sciencebeam_parser.models.data import DEFAULT_APP_FEATURES_CONTEXT
 from sciencebeam_parser.models.citation.model import CitationModel
 from sciencebeam_parser.models.model_impl import ModelImpl
@@ -29,10 +34,15 @@ class CapturingModelImpl(ModelImpl):
         pass
 
 
-def _make_citation_model(retokenize_subdigits=None) -> Tuple[CitationModel, CapturingModelImpl]:
+def _make_citation_model(
+    retokenize_subdigits=None,
+    match_grobid_input=None
+) -> Tuple[CitationModel, CapturingModelImpl]:
     impl = CapturingModelImpl()
     impl_factory = MagicMock(return_value=impl)
     model_config: dict = {}
+    if match_grobid_input is not None:
+        model_config['match_grobid_input'] = match_grobid_input
     if retokenize_subdigits is not None:
         model_config['retokenize_subdigits'] = retokenize_subdigits
     model = CitationModel(impl_factory, model_config=model_config)
@@ -88,8 +98,16 @@ class TestCitationModelSubdigitRetokenization:
 
 
 class TestCitationModelLeadingPunctuation:
-    def test_leading_punctuation_is_not_labelled(self):
+    def test_leading_punctuation_is_labelled_by_default(self):
         model, impl = _make_citation_model()
+        model.predict_labels_for_layout_documents(
+            [_doc_with_tokens('.', 'Doe', 'J', '.')],
+            DEFAULT_APP_FEATURES_CONTEXT
+        )
+        assert impl.received_texts == [['.', 'Doe', 'J', '.']]
+
+    def test_leading_punctuation_is_not_labelled_when_matching_grobid_input(self):
+        model, impl = _make_citation_model(match_grobid_input=True)
         model.predict_labels_for_layout_documents(
             [_doc_with_tokens('.', '(', 'Doe', 'J', '.')],
             DEFAULT_APP_FEATURES_CONTEXT
@@ -97,10 +115,33 @@ class TestCitationModelLeadingPunctuation:
         assert impl.received_texts == [['Doe', 'J', '.']]
 
     def test_document_of_punctuation_only_gets_no_labels(self):
-        model, impl = _make_citation_model()
+        model, impl = _make_citation_model(match_grobid_input=True)
         result = model.predict_labels_for_layout_documents(
             [_doc_with_tokens('Doe'), _doc_with_tokens('.', ','), _doc_with_tokens('Roe')],
             DEFAULT_APP_FEATURES_CONTEXT
         )
         assert impl.received_texts == [['Doe'], ['Roe']]
         assert [[t.layout_token.text for t in doc] for doc in result] == [['Doe'], [], ['Roe']]
+
+
+def _raw_reference_with_label() -> SemanticRawReference:
+    return SemanticRawReference([
+        SemanticLabel(layout_block=LayoutBlock.for_text('3.')),
+        SemanticRawReferenceText(layout_block=LayoutBlock.for_text('Doe J. Ferns.'))
+    ])
+
+
+class TestCitationModelRawReferenceInput:
+    def test_includes_the_label_by_default(self):
+        model, _ = _make_citation_model()
+        layout_document = model.get_layout_document_for_raw_reference(
+            _raw_reference_with_label()
+        )
+        assert [t.text for t in layout_document.iter_all_tokens()][:2] == ['3', '.']
+
+    def test_leaves_out_the_label_when_matching_grobid_input(self):
+        model, _ = _make_citation_model(match_grobid_input=True)
+        layout_document = model.get_layout_document_for_raw_reference(
+            _raw_reference_with_label()
+        )
+        assert [t.text for t in layout_document.iter_all_tokens()][0] == 'Doe'

@@ -17,12 +17,16 @@ def _get_feature_for_tokens(
     token_texts_with_whitespace: list,
     target_token_text: str,
     feature_name: str,
-    app_features_context: AppFeaturesContext = AppFeaturesContext()
+    app_features_context: AppFeaturesContext = AppFeaturesContext(),
+    match_grobid_citation_input: bool = False
 ) -> str:
     tokens = [LayoutToken(text, whitespace=ws) for text, ws in token_texts_with_whitespace]
     line = LayoutLine(tokens)
     doc = LayoutDocument.for_blocks([LayoutBlock(lines=[line])])
-    gen = CitationDataGenerator(DocumentFeaturesContext(app_features_context))
+    gen = CitationDataGenerator(
+        DocumentFeaturesContext(app_features_context),
+        match_grobid_citation_input=match_grobid_citation_input
+    )
     idx = gen.feature_names.index(feature_name)
     for item in gen.iter_model_data_for_layout_document(doc):
         if item.data_line and item.data_line.split()[0] == target_token_text:
@@ -157,22 +161,22 @@ _LEXICON_CONTEXT = AppFeaturesContext(
 class TestKnownNameLexicons:
     def test_journal_title_tokens_give_1(self):
         assert _get_feature_for_tokens(
-            _REFERENCE_TOKENS, 'Imaginary', 'is_known_journal_title', _LEXICON_CONTEXT
+            _REFERENCE_TOKENS, 'Imaginary', 'is_known_journal_title', _LEXICON_CONTEXT, True
         ) == '1'
 
     def test_conference_title_tokens_give_1(self):
         assert _get_feature_for_tokens(
-            _REFERENCE_TOKENS, 'Meeting', 'is_known_conference_title', _LEXICON_CONTEXT
+            _REFERENCE_TOKENS, 'Meeting', 'is_known_conference_title', _LEXICON_CONTEXT, True
         ) == '1'
 
     def test_publisher_tokens_give_1(self):
         assert _get_feature_for_tokens(
-            _REFERENCE_TOKENS, 'Acme', 'is_known_publisher', _LEXICON_CONTEXT
+            _REFERENCE_TOKENS, 'Acme', 'is_known_publisher', _LEXICON_CONTEXT, True
         ) == '1'
 
     def test_collaboration_tokens_give_1(self):
         assert _get_feature_for_tokens(
-            _REFERENCE_TOKENS, 'Collaboration', 'is_known_collaboration', _LEXICON_CONTEXT
+            _REFERENCE_TOKENS, 'Collaboration', 'is_known_collaboration', _LEXICON_CONTEXT, True
         ) == '1'
 
     def test_title_outside_any_name_gives_0(self):
@@ -181,10 +185,57 @@ class TestKnownNameLexicons:
             'is_known_publisher', 'is_known_collaboration'
         ]:
             assert _get_feature_for_tokens(
-                _REFERENCE_TOKENS, 'Ferns', feature_name, _LEXICON_CONTEXT
+                _REFERENCE_TOKENS, 'Ferns', feature_name, _LEXICON_CONTEXT, True
             ) == '0'
 
     def test_without_lexicons_gives_0(self):
         assert _get_feature_for_tokens(
-            _REFERENCE_TOKENS, 'Imaginary', 'is_known_journal_title'
+            _REFERENCE_TOKENS, 'Imaginary', 'is_known_journal_title',
+            match_grobid_citation_input=True
         ) == '0'
+
+    def test_without_matching_grobid_input_gives_0(self):
+        assert _get_feature_for_tokens(
+            _REFERENCE_TOKENS, 'Imaginary', 'is_known_journal_title', _LEXICON_CONTEXT
+        ) == '0'
+
+
+def _get_features_for_lines(
+    line_token_texts: list,
+    feature_name: str,
+    match_grobid_citation_input: bool
+) -> list:
+    doc = LayoutDocument.for_blocks([LayoutBlock(lines=[
+        LayoutLine([LayoutToken(text) for text in token_texts])
+        for token_texts in line_token_texts
+    ])])
+    gen = CitationDataGenerator(
+        DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+        match_grobid_citation_input=match_grobid_citation_input
+    )
+    idx = gen.feature_names.index(feature_name)
+    return [
+        item.data_line.split()[idx]
+        for item in gen.iter_model_data_for_layout_document(doc)
+    ]
+
+
+_TWO_LINES = [['Doe', 'J', 'Ferns'], ['of', 'the', 'North']]
+
+
+class TestMultiLineReference:
+    def test_marks_each_line_without_matching_grobid_input(self):
+        assert _get_features_for_lines(_TWO_LINES, 'line_status', False) == [
+            'LINESTART', 'LINEIN', 'LINEEND', 'LINESTART', 'LINEIN', 'LINEEND'
+        ]
+
+    def test_marks_only_the_reference_ends_when_matching_grobid_input(self):
+        assert _get_features_for_lines(_TWO_LINES, 'line_status', True) == [
+            'LINESTART', 'LINEIN', 'LINEIN', 'LINEIN', 'LINEIN', 'LINEEND'
+        ]
+
+    def test_counts_the_line_break_in_the_position_when_matching_grobid_input(self):
+        # Doe 0, J 2, Ferns 4, line break 6, of 7, the 9, North 11, of 12 positions
+        assert _get_features_for_lines(
+            _TWO_LINES, 'sentence_token_relative_position', True
+        ) == ['0', '2', '4', '7', '9', '11']

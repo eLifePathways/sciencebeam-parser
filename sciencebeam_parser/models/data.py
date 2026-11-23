@@ -81,9 +81,9 @@ def _get_identifier_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
     return _get_pattern_token_indices(tokens, _DOI_PATTERN, required_substring='10.')
 
 
-def _get_grobid_sentence_token_span(token: LayoutToken, is_line_end: bool) -> int:
-    """Positions GROBID gives the token: itself, its whitespace and any line break after it."""
-    return 1 + (1 if token.whitespace else 0) + (1 if is_line_end else 0)
+def _get_sentence_token_span(token: LayoutToken, is_counted_line_end: bool) -> int:
+    """Positions the token takes: itself, its whitespace and a line break after it."""
+    return 1 + (1 if token.whitespace else 0) + (1 if is_counted_line_end else 0)
 
 
 def _get_phrase_match_token_indices(
@@ -1017,9 +1017,11 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         self,
         document_features_context: DocumentFeaturesContext,
         persist_indentation_reference_across_blocks: bool = False,
-        compare_indentation_across_blocks: bool = False
+        compare_indentation_across_blocks: bool = False,
+        match_grobid_citation_input: bool = False
     ):
         self.document_features_context = document_features_context
+        self._match_grobid_citation_input = match_grobid_citation_input
         self._persist_indentation_reference_across_blocks = (
             persist_indentation_reference_across_blocks
         )
@@ -1071,29 +1073,42 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         }
         max_grobid_line_length = max(grobid_line_length_by_line_id.values())
         all_tokens = list(layout_document.iter_all_tokens())
+        count_line_breaks = self._match_grobid_citation_input
         sentence_token_spans = [
-            _get_grobid_sentence_token_span(token, index == len(line.tokens) - 1)
+            _get_sentence_token_span(
+                token, count_line_breaks and index == len(line.tokens) - 1
+            )
             for line in layout_document.iter_all_lines()
             for index, token in enumerate(line.tokens)
         ]
-        sentence_token_count = sum(sentence_token_spans[:-1]) + 1
+        sentence_token_count = (
+            sum(sentence_token_spans[:-1]) + 1 if count_line_breaks
+            else sum(sentence_token_spans)
+        )
         app_features_context = self.document_features_context.app_features_context
         all_token_texts = [t.text for t in all_tokens]
         location_name_indices = _get_phrase_match_token_indices(
             app_features_context.location_name_phrase_match, all_token_texts
         )
-        journal_name_indices = _get_citation_phrase_match_token_indices(
-            app_features_context.journal_name_phrase_match, all_token_texts
+        citation_phrase_matches = (
+            [
+                app_features_context.journal_name_phrase_match,
+                app_features_context.conference_name_phrase_match,
+                app_features_context.publisher_name_phrase_match,
+                app_features_context.collaboration_name_phrase_match,
+            ]
+            if self._match_grobid_citation_input
+            else [None, None, None, None]
         )
-        conference_name_indices = _get_citation_phrase_match_token_indices(
-            app_features_context.conference_name_phrase_match, all_token_texts
-        )
-        publisher_name_indices = _get_citation_phrase_match_token_indices(
-            app_features_context.publisher_name_phrase_match, all_token_texts
-        )
-        collaboration_name_indices = _get_citation_phrase_match_token_indices(
-            app_features_context.collaboration_name_phrase_match, all_token_texts
-        )
+        (
+            journal_name_indices,
+            conference_name_indices,
+            publisher_name_indices,
+            collaboration_name_indices
+        ) = [
+            _get_citation_phrase_match_token_indices(phrase_match, all_token_texts)
+            for phrase_match in citation_phrase_matches
+        ]
         email_token_indices = _get_email_token_indices(all_tokens)
         http_token_indices = _get_http_token_indices(all_tokens)
         identifier_token_indices = _get_identifier_token_indices(all_tokens)
@@ -1174,8 +1189,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                         # GROBID double-counts each space: space token contributes len(' ')+1 = 2.
                         if token.whitespace:
                             grobid_nn += 2 * len(token.whitespace)
-                        sentence_token_index += _get_grobid_sentence_token_span(
-                            token, token_index == token_count - 1
+                        sentence_token_index += _get_sentence_token_span(
+                            token, count_line_breaks and token_index == token_count - 1
                         )
                         document_char_index += len(token.text)
                         document_token_index += 1

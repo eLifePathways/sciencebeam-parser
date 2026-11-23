@@ -621,9 +621,7 @@ class FullTextProcessor:
         semantic_raw_references: List[SemanticRawReference]
     ) -> Iterable[Union[SemanticReference, SemanticInvalidReference]]:
         layout_documents = [
-            LayoutDocument.for_blocks([
-                semantic_raw_reference.view_by_type(SemanticRawReferenceText).merged_block
-            ])
+            self.citation_model.get_layout_document_for_raw_reference(semantic_raw_reference)
             for semantic_raw_reference in semantic_raw_references
         ]
         labeled_layout_tokens_list = (
