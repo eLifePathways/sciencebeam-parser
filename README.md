@@ -91,12 +91,22 @@ ones the biorxiv models were trained on. A model entry says which it was trained
 `feature_flavour` (`sciencebeam`, the default, or `grobid`); `delft_hub` sets `grobid` on its
 header model. So far only the header model reads it.
 
-Authors are read off the name model's labels the way GROBID 0.9.1 reads them. A marker closes
-the author it follows, and a second title, forename or surname starts a new author. An author
-the header names more than once, by surname and forename initial, is merged into their first
-mention as GROBID's `Person.deduplicate` merges them, keeping the fullest form of the name and
-every marker; two mentions whose forenames clash ("James" and "John") are left apart. The JATS
-carries each affiliation once, with a cross reference from each of its authors.
+Authors and affiliations are read off the models' labels the way GROBID 0.9.1 reads them. A
+marker closes the author it follows, and a second title, forename or surname starts a new author.
+An author the header names more than once, by surname and forename initial, is merged into their
+first mention as GROBID's `Person.deduplicate` merges them, keeping the fullest form of the name
+and every marker; two mentions whose forenames clash ("James" and "John") are left apart.
+Affiliations are attached to authors as GROBID's `AuthorAffiliationAssigner` attaches them, with
+the markers first. In order: an affiliation goes to the authors carrying its marker; its marker
+is looked for in the text of the author blocks and the affiliation goes to the author whose
+surname ends nearest; with no marker anywhere, an affiliation block goes to the authors named in
+the author blocks right before it in the header; a lone affiliation goes to every author and a
+lone author takes every affiliation; an author still without one takes the nearest unattached
+affiliation on the page; failing positions, the remaining affiliations are dealt out in
+sequence; and an affiliation still attached to nothing goes to the nearest author, unless that
+author already has one saying the same. The TEI writes an affiliation out under each author it
+is attached to, and one attached to no author under a dummy author; the JATS carries each
+affiliation once, with a cross reference from each of its authors.
 
 A model directory can hold its weights in more than one file. A delft model entry may name the
 one to load with `weight_file` (for instance `model.safetensors`); left out, the loader's

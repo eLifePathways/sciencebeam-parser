@@ -194,9 +194,11 @@ class NameSemanticExtractor(SimpleModelSemanticExtractor):
         """Cuts the labelled sequence into names the way GROBID's
         AuthorParser.processing does: a marker closes the author it follows and is
         recorded on that author (GROBID notes a marker usually belongs to the author
-        before it, rarely to the one after); a second title, forename or surname
-        starts a new author, where middle names and suffixes accumulate on the
-        current one. Text labelled as other stays with the author it falls in."""
+        before it, rarely to the one after; the attachment of affiliations reads
+        the markers first and falls back to the author text, see
+        attach_affiliations); a second title, forename or surname starts a new
+        author, where middle names and suffixes accumulate on the current one. Text
+        labelled as other stays with the author it falls in."""
         _name_type: Type[T_SemanticName] = cast(
             Type[T_SemanticName],
             name_type if name_type is not None else SemanticAuthor
