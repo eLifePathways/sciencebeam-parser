@@ -93,6 +93,14 @@ side's distinct words, sorted, compared by the same edit similarity `edit_sim`
 uses. Word order and a repeated phrase stop counting, while a misspelt word
 still scores in part. The field is also scored without regard to case.
 
+`reference_title` compares the title of the work each reference cites: an article's
+or a chapter's title where there is one, in JATS `article-title` or `chapter-title`
+and in TEI `title[@level="a"]`, and otherwise the title of the book, report or page
+cited whole, which JATS gives as its `source` and TEI as a `title[@level="m"]`. A
+journal's name is not read on either side. Publishers tag a book's title either way,
+as an `article-title` or as a `source`, and the field scores it the same whichever
+they chose.
+
 Precision and recall sit behind every F1 in the full report, as a second table
 under each corpus. A posted comment carries the F1 table alone.
 
