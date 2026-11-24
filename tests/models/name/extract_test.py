@@ -19,6 +19,7 @@ from sciencebeam_parser.models.name.extract import (
     NameSemanticExtractor,
     capitalize_fully,
     iter_semantic_markers_for_layout_block,
+    split_name_lists_at_et_al,
     split_tokens_at_et_al
 )
 
@@ -118,6 +119,27 @@ class TestSplitTokensAtEtAl:
 
     def test_should_keep_all_tokens_without_et_al(self):
         assert _get_split_texts('Fernley A, Mossby B') == ['Fernley A, Mossby B', '']
+
+
+def _get_split_name_list_texts(texts: List[str]) -> List[List[str]]:
+    return [
+        [LayoutBlock.for_tokens(part).text for part in parts]
+        for parts in split_name_lists_at_et_al([
+            list(LayoutBlock.for_text(text).iter_all_tokens()) for text in texts
+        ])
+    ]
+
+
+class TestSplitNameListsAtEtAl:
+    def test_should_keep_no_names_after_the_first_et_al(self):
+        assert _get_split_name_list_texts(['Fernley A, et al.', '', 'Mossby B']) == [
+            ['Fernley A,', 'et al.'], ['', ''], ['', 'Mossby B']
+        ]
+
+    def test_should_keep_every_list_without_et_al(self):
+        assert _get_split_name_list_texts(['Fernley A', 'Mossby B']) == [
+            ['Fernley A', ''], ['Mossby B', '']
+        ]
 
 
 class TestCapitalizeFully:

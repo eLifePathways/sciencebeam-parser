@@ -163,6 +163,22 @@ def split_tokens_at_et_al(
     return list(tokens[:cut_index]), list(tokens[cut_index:])
 
 
+def split_name_lists_at_et_al(
+    token_lists: Sequence[Sequence[LayoutToken]]
+) -> List[Tuple[List[LayoutToken], List[LayoutToken]]]:
+    """Each of a reference's name lists split at the reference's first "et al"."""
+    result: List[Tuple[List[LayoutToken], List[LayoutToken]]] = []
+    is_after_et_al = False
+    for tokens in token_lists:
+        if is_after_et_al:
+            result.append(([], list(tokens)))
+            continue
+        name_tokens, other_tokens = split_tokens_at_et_al(tokens)
+        result.append((name_tokens, other_tokens))
+        is_after_et_al = bool(other_tokens)
+    return result
+
+
 def _get_local_block(text: str) -> LayoutBlock:
     return LayoutBlock.for_tokens([LayoutToken(text, whitespace='')])
 

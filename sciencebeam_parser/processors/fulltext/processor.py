@@ -73,7 +73,7 @@ from sciencebeam_parser.models.segmentation.model import SegmentationModel
 from sciencebeam_parser.models.header.model import HeaderModel
 from sciencebeam_parser.models.name.model import NameModel
 from sciencebeam_parser.models.name.deduplicate import get_deduplicated_authors
-from sciencebeam_parser.models.name.extract import split_tokens_at_et_al
+from sciencebeam_parser.models.name.extract import split_name_lists_at_et_al
 from sciencebeam_parser.models.affiliation_address.model import AffiliationAddressModel
 from sciencebeam_parser.models.fulltext.model import FullTextModel
 from sciencebeam_parser.models.figure.model import FigureModel
@@ -712,13 +712,13 @@ class FullTextProcessor:
         name_tokens_list: List[List[LayoutToken]] = []
         other_tokens_list: List[List[LayoutToken]] = []
         for reference_raw_name_lists in semantic_raw_name_lists_by_reference:
-            is_after_et_al = False
-            for semantic_raw_name_list in reference_raw_name_lists:
-                tokens = list(semantic_raw_name_list.merged_block.iter_all_tokens())
-                name_tokens, other_tokens = (
-                    ([], tokens) if is_after_et_al else split_tokens_at_et_al(tokens)
-                )
-                is_after_et_al = bool(other_tokens)
+            split_token_lists = split_name_lists_at_et_al([
+                list(semantic_raw_name_list.merged_block.iter_all_tokens())
+                for semantic_raw_name_list in reference_raw_name_lists
+            ])
+            for semantic_raw_name_list, (name_tokens, other_tokens) in zip(
+                reference_raw_name_lists, split_token_lists
+            ):
                 semantic_raw_name_lists.append(semantic_raw_name_list)
                 name_tokens_list.append(name_tokens)
                 other_tokens_list.append(other_tokens)
