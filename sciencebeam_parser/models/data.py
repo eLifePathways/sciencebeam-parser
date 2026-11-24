@@ -407,13 +407,12 @@ def _is_grobid_header_block_end(
 def get_grobid_header_line_status(
     line_index: int, line_count: int, token_index: int, token_count: int
 ) -> str:
-    # GROBID HeaderParser: the first token of a block is LINESTART whatever the
-    # length of its line, and a line of a single token otherwise keeps LINESTART
-    # (only the block's last token takes LINEEND).
-    if _is_grobid_header_block_start(line_index, token_index):
-        return 'LINESTART'
+    # GROBID HeaderParser: a block's last token takes LINEEND, even when it is also
+    # its first; any other line of a single token keeps LINESTART.
     if _is_grobid_header_block_end(line_index, line_count, token_index, token_count):
         return 'LINEEND'
+    if _is_grobid_header_block_start(line_index, token_index):
+        return 'LINESTART'
     if token_index == 0:
         return 'LINESTART'
     if token_index == token_count - 1:
@@ -424,10 +423,10 @@ def get_grobid_header_line_status(
 def get_grobid_header_block_status(
     line_index: int, line_count: int, token_index: int, token_count: int
 ) -> str:
-    if _is_grobid_header_block_start(line_index, token_index):
-        return 'BLOCKSTART'
     if _is_grobid_header_block_end(line_index, line_count, token_index, token_count):
         return 'BLOCKEND'
+    if _is_grobid_header_block_start(line_index, token_index):
+        return 'BLOCKSTART'
     return 'BLOCKIN'
 
 
