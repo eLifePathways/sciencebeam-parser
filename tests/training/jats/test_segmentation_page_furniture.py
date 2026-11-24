@@ -856,3 +856,54 @@ class TestANoteSetInTheOtherColumn:
         doc, annotated, _, note = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in note] == [SEG_FOOTNOTE] * 2
+
+
+class TestTheQuotationAPageSetsAmongItsText:
+    """A deposit files the author's translation of a quotation as a note."""
+
+    def _make_doc(self):
+        argument = [
+            make_line('The', 'warden', 'of', 'the', 'reserve', f'wrote{index}',
+                      y=100.0 + 15 * index, x=57.0, font_size=11.5)
+            for index in range(3)
+        ]
+        quoted = [
+            make_line('Rather', 'than', 'count', 'the', 'nests', 'from', 'the',
+                      f'hide{index}', y=160.0 + 15 * index, x=117.0,
+                      font_size=11.0)
+            for index in range(3)
+        ]
+        after = [
+            make_line('The', 'wardens', 'kept', 'to', 'that', f'rule{index}',
+                      y=220.0 + 15 * index, x=57.0, font_size=11.5)
+            for index in range(2)
+        ]
+        note = make_line('8', 'A', 'hide', 'is', 'a', 'hut', 'the', 'wardens',
+                         'watch', 'from', y=900.0, x=57.0, font_size=8.5)
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=argument),
+                    LayoutBlock(lines=quoted),
+                    LayoutBlock(lines=after),
+                    LayoutBlock(lines=[note]),
+                ],
+                meta=make_page_meta(1),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {lines.index(note): JatsFieldNames.BACK_FOOTNOTE}
+        for line in argument + after:
+            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        for line in quoted:
+            fields[lines.index(line)] = JatsFieldNames.BACK_FOOTNOTE
+        return doc, annotate(doc, fields), quoted, note
+
+    def test_the_block_set_in_among_the_text_is_the_body(self):
+        doc, annotated, quoted, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in quoted] == [SEG_BODY] * 3
+
+    def test_the_note_the_page_sets_at_its_foot_is_left_alone(self):
+        doc, annotated, _, note = self._make_doc()
+        assert derive_labels(doc, annotated)[id(note)] == SEG_FOOTNOTE

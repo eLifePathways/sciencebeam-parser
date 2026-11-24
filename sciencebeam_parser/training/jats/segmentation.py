@@ -1120,7 +1120,8 @@ _EDITOR_CREDIT_PATTERN = re.compile(
     # "Editora Responsável:", where the qualifier is what tells the editor from
     # the publisher.
     r'editor[ao]?[\s\u2010-\u2015-]*respons[a\u00e1]ve[li]'
-    r'|(?:handling|section|academic|associate|managing|guest|responsible)?\s*'
+    r'|(?:handling|section|academic|associate|managing|guest|responsible'
+    r'|scientific|cient[i\u00ed]fic[oa])?[\s\u2010-\u2015-]*'
     r'editor(?:es|s)?'
     r'(?:[\s\u2010-\u2015-]*(?:chefe|cient[i\u00ed]fico|in[\s-]chief|associad[oa]))?'
     r')\s*:',
@@ -3758,6 +3759,32 @@ def _shares_a_row_with_a_note(
     return False
 
 
+def _nearest_line_in_the_column(
+    page_lines: List[_SegLine], seg_line: _SegLine, upwards: bool
+) -> Optional[_SegLine]:
+    """The line the page sets nearest to this one in the same column."""
+    position = _get_line_position(seg_line)
+    if position is None:
+        return None
+    candidates = []
+    for other in page_lines:
+        if other is seg_line or other.seg_label in {SEG_HEADNOTE, SEG_PAGE}:
+            continue
+        other_position = _get_line_position(other)
+        if other_position is None:
+            continue
+        if abs(other_position[0] - position[0]) > _SAME_COLUMN_MAX_X_GAP:
+            continue
+        if (other_position[1] < position[1]) != upwards:
+            continue
+        candidates.append((
+            round(abs(other_position[0] - position[0]) / _COLUMN_EDGE_TOLERANCE),
+            -other_position[1] if upwards else other_position[1],
+            other,
+        ))
+    return min(candidates, key=lambda entry: entry[:2])[2] if candidates else None
+
+
 def _the_labels_the_column_sets_around_it(
     page_lines: List[_SegLine], seg_line: _SegLine
 ) -> Optional[Tuple[Optional[str], Optional[str]]]:
@@ -3768,32 +3795,8 @@ def _the_labels_the_column_sets_around_it(
     it, and the line above a margin note is the note's own -- which is why
     the notes count here where the page number and the running head do not.
     """
-    position = _get_line_position(seg_line)
-    if position is None:
-        return None
-
-    def nearest(upwards: bool) -> Optional[_SegLine]:
-        candidates = []
-        for other in page_lines:
-            if other is seg_line or other.seg_label in {SEG_HEADNOTE, SEG_PAGE}:
-                continue
-            other_position = _get_line_position(other)
-            if other_position is None:
-                continue
-            if abs(other_position[0] - position[0]) > _SAME_COLUMN_MAX_X_GAP:
-                continue
-            if (other_position[1] < position[1]) != upwards:
-                continue
-            candidates.append((
-                round(
-                    abs(other_position[0] - position[0]) / _COLUMN_EDGE_TOLERANCE
-                ),
-                -other_position[1] if upwards else other_position[1],
-                other,
-            ))
-        return min(candidates, key=lambda entry: entry[:2])[2] if candidates else None
-
-    above, below = nearest(upwards=True), nearest(upwards=False)
+    above = _nearest_line_in_the_column(page_lines, seg_line, upwards=True)
+    below = _nearest_line_in_the_column(page_lines, seg_line, upwards=False)
     if above is None or below is None:
         return None
     return above.seg_label, below.seg_label
@@ -3821,6 +3824,83 @@ def _release_the_note_the_page_prints_among_its_text(
             around = _the_labels_the_column_sets_around_it(page_lines, seg_line)
             if around == (SEG_BODY, SEG_BODY):
                 seg_line.seg_label = SEG_BODY
+
+
+# A note is set appreciably smaller than the text around it; a quotation set
+# in from the margins is barely smaller at all.
+_NOTE_TYPE_SIZE_RATIO = 0.9
+
+# How far a page sets a quotation in from the column it sets its text to.
+_QUOTATION_INDENT = 20.0
+
+
+def _is_set_in_the_type_of_the_text(
+    seg_line: _SegLine, page_lines: List[_SegLine]
+) -> bool:
+    """Whether the page sets the line in the type it sets its text in."""
+    text_size = _get_prevailing_type_size(page_lines)
+    size = _get_line_font_size(seg_line)
+    return (
+        text_size is not None
+        and size is not None
+        and size >= text_size * _NOTE_TYPE_SIZE_RATIO
+    )
+
+
+def _is_set_in_from(seg_line: _SegLine, neighbour: _SegLine) -> bool:
+    """Whether the page sets the line in from the one above it."""
+    position = _get_line_position(seg_line)
+    neighbour_position = _get_line_position(neighbour)
+    return (
+        position is not None
+        and neighbour_position is not None
+        and position[0] - neighbour_position[0] >= _QUOTATION_INDENT
+    )
+
+
+def _release_the_quotation_a_page_sets_among_its_text(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Let go the block a page quotes in the type it sets its text in.
+
+    A deposit files the author's translation of a quotation as a note, and
+    the note says what the quotation says, so the match lands on the block
+    the page sets among its text rather than on anything at its foot.  What
+    a page sets at its foot is set appreciably smaller than the text, and
+    starts at the margin; a quotation is set in from it and barely smaller
+    at all.
+    """
+    running = _get_texts_printed_on_more_than_one_page(seg_lines)
+    pages = _get_seg_lines_by_page_number(seg_lines)
+    blocks: Dict[int, List[int]] = {}
+    for index, seg_line in enumerate(seg_lines):
+        blocks.setdefault(seg_line.block_index, []).append(index)
+    for block in blocks.values():
+        quoted = seg_lines[block[0]]
+        if any(
+            seg_lines[index].seg_label != SEG_FOOTNOTE
+            or seg_lines[index].text in running
+            for index in block
+        ):
+            continue
+        page_lines = pages.get(_get_page_number(quoted) or -1, [])
+        if not _is_set_in_the_type_of_the_text(quoted, page_lines):
+            continue
+        beside = (
+            _nearest_line_in_the_column(page_lines, quoted, upwards=True),
+            _nearest_line_in_the_column(
+                page_lines, seg_lines[block[-1]], upwards=False
+            ),
+        )
+        if not any(
+            neighbour is not None
+            and neighbour.seg_label == SEG_BODY
+            and _is_set_in_from(quoted, neighbour)
+            for neighbour in beside
+        ):
+            continue
+        for index in block:
+            seg_lines[index].seg_label = SEG_BODY
 
 
 def _claim_the_lines_the_page_sets_among_its_notes(
@@ -4836,6 +4916,54 @@ def _release_the_regions_a_false_match_won(seg_lines: List[_SegLine]) -> None:
     _release_statements_inside_body(seg_lines)
 
 
+# What a journal prints when it names its authors: the name, where they work,
+# how to reach them and the number that identifies them.
+_AUTHOR_BLOCK_FIELDS = frozenset({
+    JatsFieldNames.AUTHOR,
+    JatsFieldNames.AUTHOR_AFF,
+    JatsFieldNames.EMAIL,
+    JatsFieldNames.ORCID,
+})
+
+
+def _claim_the_authors_a_closing_statement_ran_on_over(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Give the front matter the authors a closing statement ran on over.
+
+    A journal that thanks its helpers and then names its authors prints the
+    two one after the other, and the statement's region carries the names
+    away with it.  An ORCID is what says a stretch is the authors' own: a
+    name and an affiliation are matched inside a statement about the work as
+    readily as beside it.
+    """
+    for label in _STATEMENT_LABELS:
+        for run in _iter_label_runs(seg_lines, label):
+            stretch: List[int] = []
+            for index in [*run, None]:
+                if index is not None and (
+                    not _is_grounded(seg_lines[index], annotated)
+                    or _is_grounded_in(
+                        seg_lines[index], annotated, _AUTHOR_BLOCK_FIELDS
+                    )
+                ):
+                    stretch.append(index)
+                    continue
+                if any(
+                    _is_grounded_in(seg_lines[at], annotated, _AUTHOR_MATTER_FIELDS)
+                    for at in stretch
+                ):
+                    for at in stretch:
+                        seg_lines[at].seg_label = SEG_FRONT
+                stretch = []
+
+
+def _release_what_the_page_sets_among_its_text(seg_lines: List[_SegLine]) -> None:
+    """The notes and the quotations a match placed in the body's own column."""
+    _release_the_note_the_page_prints_among_its_text(seg_lines)
+    _release_the_quotation_a_page_sets_among_its_text(seg_lines)
+
+
 def _claim_the_regions_a_heading_names(
     seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
 ) -> None:
@@ -4968,7 +5096,7 @@ class SegmentationLabelDeriver:
         # After the furniture has been taken back: a running foot still read
         # as the body is a line of text under a note, and the note then looks
         # like one the page prints among its text.
-        _release_the_note_the_page_prints_among_its_text(seg_lines)
+        _release_what_the_page_sets_among_its_text(seg_lines)
         _claim_amendments_box(seg_lines)
         _claim_the_annex_and_its_heading(seg_lines, annotated)
         # After the appended sections have been claimed, which is what a
@@ -4997,6 +5125,7 @@ class SegmentationLabelDeriver:
         # Beside the citation, and after the release for the same reason: the
         # deposit files the editor's name as a note on the authors.
         _claim_the_editor_credited_after_the_references(seg_lines)
+        _claim_the_authors_a_closing_statement_ran_on_over(seg_lines, annotated)
         _claim_the_publishing_declarations_after_the_references(
             seg_lines, annotated
         )

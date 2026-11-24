@@ -310,3 +310,56 @@ class TestTheThanksTheOpeningPagePrints:
         )
         labels = derive_labels(doc, annotated)
         assert labels[id(thanks[0])] != SEG_ACKNOWLEDGEMENT
+
+
+class TestTheAuthorsAClosingStatementRanOnOver:
+    """A journal that thanks its helpers and then names its authors."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'colonies', f'grew{index}', y=100.0 + 13 * index)
+            for index in range(3)
+        ]
+        thanks = [
+            make_line('We', 'thank', 'the', 'wardens', 'of', 'the', 'Fenwick',
+                      f'reserve{index}', y=100.0 + 13 * index, page_number=2)
+            for index in range(2)
+        ]
+        named = make_line('Alida', 'Teal', y=140.0, page_number=2)
+        orcid = make_line('ORCID', ':', 'https://orcid.org/0000-0002-1825-0097',
+                          y=153.0, page_number=2)
+        works_at = make_line('Reader', 'in', 'Wetland', 'Ecology', ',',
+                             'Fenwick', 'Institute', y=166.0, page_number=2)
+        writes_to = make_line('E', '-', 'mail', ':', 'a.teal@example.org',
+                              y=179.0, page_number=2)
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=body)], meta=make_page_meta(1)),
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=thanks),
+                    LayoutBlock(lines=[named, orcid, works_at, writes_to]),
+                ],
+                meta=make_page_meta(2),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(named): JatsFieldNames.AUTHOR,
+            lines.index(orcid): JatsFieldNames.ORCID,
+            lines.index(writes_to): JatsFieldNames.EMAIL,
+        }
+        for line in body:
+            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        for line in thanks:
+            fields[lines.index(line)] = JatsFieldNames.ACK_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), thanks, [named, orcid, works_at, writes_to]
+
+    def test_the_authors_are_the_front_matter(self):
+        doc, annotated, _, authors = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in authors] == [SEG_FRONT] * 4
+
+    def test_the_thanks_above_them_are_left_alone(self):
+        doc, annotated, thanks, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in thanks] == [SEG_ACKNOWLEDGEMENT] * 2
