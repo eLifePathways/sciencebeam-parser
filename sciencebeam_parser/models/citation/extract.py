@@ -4,6 +4,7 @@ from typing import Iterable, Mapping, Optional, Set, Tuple, Type, Union
 
 from sciencebeam_parser.utils.misc import iter_ids
 from sciencebeam_parser.document.semantic_document import (
+    SemanticBookTitle,
     SemanticContentWrapper,
     SemanticDate,
     SemanticExternalIdentifier,
@@ -58,6 +59,7 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
     '<editor>': SemanticRawEditors,
     '<title>': SemanticTitle,
     '<journal>': SemanticJournal,
+    '<booktitle>': SemanticBookTitle,
     '<volume>': SemanticVolume,
     '<issue>': SemanticIssue,
     '<publisher>': SemanticPublisher,
@@ -68,6 +70,7 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
 VALID_REFERENCE_TYPES: Set[Type[SemanticContentWrapper]] = {
     SemanticTitle,
     SemanticJournal,
+    SemanticBookTitle,
     SemanticRawAuthors,
     SemanticRawEditors,
     SemanticExternalIdentifier,

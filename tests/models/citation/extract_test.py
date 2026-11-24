@@ -8,6 +8,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticExternalUrl,
     SemanticInvalidReference,
     SemanticIssue,
+    SemanticBookTitle,
     SemanticJournal,
     SemanticLabel,
     SemanticLocation,
@@ -212,6 +213,15 @@ class TestReferenceSegmenterSemanticExtractor:
         semantic_date = list(ref.iter_by_type(SemanticDate))[0]
         assert semantic_date.year == 1991
         assert ref.content_id == 'b0'
+
+    def test_should_extract_book_title(self):
+        ref = next(iter(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<booktitle>', LayoutBlock.for_text('A Field Guide to Ferns'))
+            ])
+        ))
+        assert isinstance(ref, SemanticReference)
+        assert ref.view_by_type(SemanticBookTitle).get_text() == 'A Field Guide to Ferns'
 
     def test_should_add_raw_reference_semantic_content(self):
         semantic_marker = SemanticLabel(layout_block=LayoutBlock.for_text('1'))

@@ -463,9 +463,11 @@
         </xsl:when>
       </xsl:choose>
 
-      <xsl:if test="tei:monogr/tei:title[@level='j']">
+      <xsl:variable name="source" select="(tei:monogr/tei:title[@level='j']
+        | tei:monogr/tei:title[@level='m'][not(@type='main')])[1]"/>
+      <xsl:if test="$source">
         <source>
-          <xsl:apply-templates select="tei:monogr/tei:title[@level='j'][1]"/>
+          <xsl:apply-templates select="$source"/>
         </source>
       </xsl:if>
 
@@ -541,6 +543,7 @@
       | tei:analytic/tei:title[@type='main']
       | tei:monogr/tei:title[@type='main'][not(@level='j')][not(../../tei:analytic/tei:title[@type='main'])]
       | tei:monogr/tei:title[@level='j']
+      | tei:monogr/tei:title[@level='m'][not(@type='main')]
       | tei:monogr/tei:imprint/tei:date[@type='published']
       | tei:monogr/tei:imprint/tei:biblScope[@unit='volume' or @unit='issue']
       | tei:monogr/tei:imprint/tei:biblScope[@unit='page'][not(@from or @to)]
@@ -686,7 +689,7 @@
     <given-names cite:author="{generate-id(ancestor::tei:author[1])}"><xsl:value-of select="."/></given-names>
   </xsl:template>
 
-  <xsl:template match="tei:title[@level='j']" mode="cite-part">
+  <xsl:template match="tei:title[@level='j'] | tei:title[@level='m'][not(@type='main')]" mode="cite-part">
     <source><xsl:apply-templates select="node()"/></source>
   </xsl:template>
 

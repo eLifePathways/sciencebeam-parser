@@ -40,7 +40,6 @@ CITATION_LABELS: FrozenSet[str] = frozenset({
 # Labels with no semantic counterpart, which CitationSemanticExtractor keeps as notes.
 # Anything else in CITATION_LABELS has to map to semantic content.
 NOTE_CITATION_LABELS: AbstractSet[str] = frozenset({
-    '<booktitle>',
     '<collaboration>',
     '<institution>',
     '<note>',
