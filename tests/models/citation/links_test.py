@@ -46,6 +46,9 @@ class TestGetDoiForLinkUri:
     def test_should_take_the_doi_from_a_publisher_link(self):
         assert get_doi_for_link_uri(f'https://publisher.example/doi/{DOI_1}') == DOI_1
 
+    def test_should_drop_a_malformed_doi_org_prefix(self):
+        assert get_doi_for_link_uri(f'https://doi.org:{DOI_1}') == DOI_1
+
     def test_should_take_a_bare_doi(self):
         assert get_doi_for_link_uri(f'doi:{DOI_1}') == DOI_1
 

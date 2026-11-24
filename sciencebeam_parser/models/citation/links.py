@@ -19,7 +19,7 @@ def _remove_combining_marks(text: str) -> str:
 
 
 def get_doi_for_link_uri(uri: str) -> Optional[str]:
-    """Return the DOI a link points to, cleaned as GROBID's BiblioItem.cleanDOI does."""
+    """Return the DOI a link points to, cleaned much as GROBID's BiblioItem.cleanDOI does."""
     if not re.search(LINK_DOI_PATTERN, uri):
         return None
     doi = re.sub(r'\s', '', uri)
@@ -43,7 +43,9 @@ def get_doi_for_link_uri(uri: str) -> Optional[str]:
         doi = doi[1:]
     if doi.endswith((')', ']', '⟩')):
         doi = doi[:-1]
-    return doi
+    # GROBID would keep a prefix such as "https://doi.org:"
+    doi_start = doi.find('10.')
+    return doi[doi_start:] if doi_start > 0 else doi
 
 
 def set_reference_doi_from_links(
