@@ -1931,27 +1931,8 @@ def _claim_the_rest_of_the_block_the_front_matter_fills(
                 seg_line.seg_label = SEG_FRONT
 
 
-def _claim_the_margin_note_the_front_matter_is_printed_beside(
-    seg_lines: List[_SegLine]
-) -> None:
-    """Give the front matter a margin note set beside it and printed nowhere else.
-
-    What a journal sets in the margins of the page it opens the article on is
-    mostly about the article rather than about the page: the licence it is
-    published under, how to cite it, where the study was carried out, the
-    dissertation it comes from.  GROBID's corpus puts those in `<front>`, and
-    sets a footnote above the body on 31 of its 931 segmentation documents,
-    where what it sets there is the journal's running foot.
-
-    The page the article opens on and no other.  Front matter printed further
-    in -- a box of amendments beside the second column, a panel of reviewers --
-    says nothing about the notes at the foot of the page it shares, which are
-    the article's own.
-
-    The running foot is the one thing this must not take, so a line the document
-    prints more than once is left alone -- read without its numbers, because a
-    foot that carries the page number differs on every page it prints on.
-    """
+def _the_page_the_article_opens_on(seg_lines: List[_SegLine]) -> Optional[int]:
+    """The first page the front matter is printed on."""
     front_pages = [
         page_number
         for page_number in (
@@ -1960,21 +1941,97 @@ def _claim_the_margin_note_the_front_matter_is_printed_beside(
         )
         if page_number is not None
     ]
-    if not front_pages:
+    return min(front_pages) if front_pages else None
+
+
+# The thanks a journal prints as a note on the page it opens the article on,
+# called by a marker standing in the title or beside an author's name.
+_NOTED_THANKS_PATTERN = re.compile(
+    r'^\s*[\*\u2020\u2021\u00a7\u00b6\d]+[\.\)]?\s+'
+    r'(?:(?:nossos|nossas|os\s+autores|as\s+autoras)\s+)?'
+    r'(?:agradec|agradez'
+    r'|(?:the\s+authors?|we)\s+(?:would\s+like\s+to\s+)?(?:thank|acknowledge)'
+    r'|acknowledg)',
+    re.IGNORECASE,
+)
+
+
+def _claim_the_thanks_a_note_opens_the_article_with(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take a note of thanks the opening page prints under no heading of its own.
+
+    GROBID's corpus reads a block of thanks by what it says rather than by
+    where it is printed -- `<div type="acknowledgement">` 553 times against
+    one footnote -- and in the two documents where the block is a note called
+    from the opening page it is an acknowledgement there as well.
+    """
+    opening_page = _the_page_the_article_opens_on(seg_lines)
+    if opening_page is None:
         return
-    opening_page = min(front_pages)
-    printings: Counter = Counter(
-        _without_the_numbers(seg_line.text)
-        for seg_line in seg_lines if seg_line.text.strip()
-    )
+    for block in _group_lines_by_block(seg_lines).values():
+        if _get_page_number(block[0]) != opening_page:
+            continue
+        if any(
+            seg_line.seg_label in _TRAILING_MATTER_LABELS
+            or _is_grounded_in(seg_line, annotated, _DECLARED_REGION_FIELDS)
+            for seg_line in block
+        ):
+            continue
+        if not _NOTED_THANKS_PATTERN.match(block[0].text):
+            continue
+        for seg_line in block:
+            seg_line.seg_label = SEG_ACKNOWLEDGEMENT
+        for seg_line in _the_lines_the_sentence_runs_on_into(seg_lines, block):
+            seg_line.seg_label = SEG_ACKNOWLEDGEMENT
+
+
+# What a foot names the maker of the file by, rather than the article.
+_FILE_MAKER_PATTERN = re.compile(
+    r'^\s*(?:powered\s+by|downloaded\s+from|generated\s+by)\b',
+    re.IGNORECASE,
+)
+
+
+def _claim_the_notes_the_opening_page_prints_around_the_article(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Give the front matter the notes set around the page the article opens on.
+
+    What a journal sets in the margins and at the foot of that page is mostly
+    about the article rather than about the page: the licence it is published
+    under, how to cite it, the journal and issue it appears in, where the study
+    was carried out.  GROBID's corpus takes the running foot into `<front>`
+    where the opening page prints it 262 times of 280, and keeps it a footnote
+    on the pages after.
+
+    The page the article opens on and no other.  Front matter printed further
+    in -- a box of amendments beside the second column, a panel of reviewers --
+    says nothing about the notes at the foot of the page it shares, which are
+    the article's own.
+
+    The stamp a file carries is not one of them.  Where GROBID's corpus leaves
+    a foot of the opening page outside `<front>`, what it leaves is the server
+    the file came from rather than anything the article is published as.
+    """
+    opening_page = _the_page_the_article_opens_on(seg_lines)
+    if opening_page is None:
+        return
     for seg_line in seg_lines:
         if seg_line.seg_label != SEG_FOOTNOTE:
             continue
         if _get_page_number(seg_line) != opening_page:
             continue
-        if printings[_without_the_numbers(seg_line.text)] > 1:
+        if _FILE_MAKER_PATTERN.search(seg_line.text):
             continue
         seg_line.seg_label = SEG_FRONT
+
+
+def _claim_the_opening_page_notes(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    _claim_the_thanks_a_note_opens_the_article_with(seg_lines, annotated)
+    _claim_the_notes_the_opening_page_prints_around_the_article(seg_lines)
 
 
 # What the deposit names a float by, caption and all.
@@ -4708,7 +4765,7 @@ class SegmentationLabelDeriver:
         _claim_the_rule_a_region_opens_under(seg_lines)
         # Last of the front-matter passes, because the pages it reads are the
         # pages the run ends up on.
-        _claim_the_margin_note_the_front_matter_is_printed_beside(seg_lines)
+        _claim_the_opening_page_notes(seg_lines, annotated)
 
         # ── Default remaining untagged lines → body ──
         for sl in seg_lines:

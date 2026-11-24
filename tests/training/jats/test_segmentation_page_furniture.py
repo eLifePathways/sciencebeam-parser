@@ -439,7 +439,11 @@ class TestARunningFootSetAboveTheFooterZone:
 class TestTheMarginOfTheTitlePage:
     """What a journal prints at the foot of the page it opens the article on."""
 
-    def _make_doc(self, front_matter_on_the_later_page: bool = False):
+    def _make_doc(
+        self,
+        front_matter_on_the_later_page: bool = False,
+        foot: str = 'Journal of Marsh Birds, v. 12, 2024',
+    ):
         title = make_line('Herons', 'of', 'the', 'northern', 'marshes', y=100.0)
         author = make_line('A', 'Nilsson', y=130.0)
         note = make_line(
@@ -447,8 +451,7 @@ class TestTheMarginOfTheTitlePage:
             'Varanger', 'marshes.', y=950.0,
         )
         feet = [
-            make_line('Journal', 'of', 'Marsh', 'Birds,', 'v.', '12,', '2024',
-                      y=965.0, page_number=page_number)
+            make_line(*foot.split(), y=965.0, page_number=page_number)
             for page_number in (1, 2, 3)
         ]
         later_note = make_line(
@@ -502,8 +505,17 @@ class TestTheMarginOfTheTitlePage:
         doc, annotated, note, _, _ = self._make_doc()
         assert derive_labels(doc, annotated)[id(note)] == SEG_FRONT
 
-    def test_the_foot_printed_on_every_page_is_still_a_running_foot(self):
+    def test_the_foot_the_opening_page_prints_is_the_front_matter(self):
         doc, annotated, _, feet, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(foot)] for foot in feet] == [
+            SEG_FRONT, SEG_FOOTNOTE, SEG_FOOTNOTE
+        ]
+
+    def test_the_stamp_the_file_carries_is_not_the_front_matter(self):
+        doc, annotated, _, feet, _ = self._make_doc(
+            foot='Powered by TCPDF (www.tcpdf.org)'
+        )
         labels = derive_labels(doc, annotated)
         assert [labels[id(foot)] for foot in feet] == [SEG_FOOTNOTE] * 3
 

@@ -11,6 +11,8 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
+    SEG_ACKNOWLEDGEMENT,
+    SEG_BODY,
     SEG_CONFLICT,
     SEG_CONTRIBUTION,
     SEG_FRONT,
@@ -252,3 +254,59 @@ class TestTheConflictDeclaredWithoutAHeading:
         )
         labels = derive_labels(doc, annotated)
         assert labels[id(declaration[0])] != SEG_CONFLICT
+
+
+class TestTheThanksTheOpeningPagePrints:
+    """A journal that calls its thanks from the title and sets them at the foot."""
+
+    def _make_doc(self, opening: str):
+        title = make_line('Herons', 'of', 'the', 'northern', 'marshes', '*', y=100.0)
+        author = make_line('A', 'Nilsson', y=130.0)
+        body = [
+            make_line('The', 'herons', f'waded{index}', y=200.0 + 20 * index)
+            for index in range(4)
+        ]
+        thanks = [
+            make_line(*opening.split(), y=900.0, font_size=8.0),
+            make_line('on', 'an', 'earlier', 'draft', 'of', 'this', 'paper', '.',
+                      y=912.0, font_size=8.0),
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[title, author]),
+                    LayoutBlock(lines=body),
+                    LayoutBlock(lines=thanks),
+                ],
+                meta=make_page_meta(1),
+            ),
+        ])
+        order = list(doc.iter_all_lines())
+        fields = {
+            order.index(title): JatsFieldNames.TITLE,
+            order.index(author): JatsFieldNames.AUTHOR,
+        }
+        for line in body:
+            fields[order.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), body, thanks
+
+    def test_the_note_of_thanks_is_an_acknowledgement(self):
+        doc, annotated, _, thanks = self._make_doc(
+            '* We thank the wardens of the Fenwick reserve for their comments'
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in thanks] == [SEG_ACKNOWLEDGEMENT] * 2
+
+    def test_the_argument_the_note_is_printed_under_is_left_alone(self):
+        doc, annotated, body, _ = self._make_doc(
+            '* We thank the wardens of the Fenwick reserve for their comments'
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in body] == [SEG_BODY] * 4
+
+    def test_a_note_that_thanks_nobody_is_left_alone(self):
+        doc, annotated, _, thanks = self._make_doc(
+            '* The counts were made from the hide at the north end'
+        )
+        labels = derive_labels(doc, annotated)
+        assert labels[id(thanks[0])] != SEG_ACKNOWLEDGEMENT
