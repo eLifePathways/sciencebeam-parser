@@ -340,11 +340,37 @@ class LayoutGraphic(NamedTuple):
     page_meta: LayoutPageMeta = DEFAULT_LAYOUT_PAGE_META
 
 
+def _contains(outer: BoundingBox, inner: BoundingBox) -> bool:
+    return (
+        outer.x <= inner.x and inner.right <= outer.right
+        and outer.y <= inner.y and inner.bottom <= outer.bottom
+    )
+
+
+class LayoutLink(NamedTuple):
+    uri: str
+    coordinates_list: Sequence[LayoutPageCoordinates] = ()
+
+    def covers(self, token: LayoutToken) -> bool:
+        """Whether a box of the link holds the token or a quarter of its area, as GROBID's."""
+        if not token.coordinates:
+            return False
+        token_box = token.coordinates.bounding_box
+        return any(
+            _contains(box, token_box)
+            or box.intersection(token_box).area > token_box.area / 4
+            for coordinates in self.coordinates_list
+            if coordinates.page_number == token.coordinates.page_number
+            for box in [coordinates.bounding_box]
+        )
+
+
 @dataclass
 class LayoutPage:
     blocks: List[LayoutBlock]
     graphics: Sequence[LayoutGraphic] = field(default_factory=list)
     meta: LayoutPageMeta = DEFAULT_LAYOUT_PAGE_META
+    links: Sequence[LayoutLink] = field(default_factory=list)
 
     def replace(self, **changes) -> 'LayoutPage':
         return dataclasses.replace(self, **changes)
@@ -363,7 +389,8 @@ class LayoutPage:
                 for block in self.blocks
             ],
             graphics=self.graphics,
-            meta=self.meta
+            meta=self.meta,
+            links=self.links
         )
 
     def remove_empty_blocks(self) -> 'LayoutPage':
@@ -378,7 +405,8 @@ class LayoutPage:
                 if block.lines
             ],
             graphics=self.graphics,
-            meta=self.meta
+            meta=self.meta,
+            links=self.links
         )
 
 
@@ -417,6 +445,13 @@ class LayoutDocument:
             token
             for block in self.iter_all_blocks()
             for token in block.iter_all_tokens()
+        )
+
+    def iter_all_links(self) -> Iterable[LayoutLink]:
+        return (
+            link
+            for page in self.pages
+            for link in page.links
         )
 
     def iter_all_graphics(self) -> Iterable[LayoutGraphic]:

@@ -15,6 +15,7 @@ from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutFont,
 from sciencebeam_parser.document.semantic_document import (
     SemanticAffiliationAddress,
     SemanticAuthor,
+    SemanticBookTitle,
     SemanticCountry,
     SemanticDepartment,
     SemanticDocument,
@@ -1393,6 +1394,26 @@ class TestTeiToJatsXslt:
             assert _get_text(citation, 'article-title/italic') == 'Quillonia'
             assert _get_text(citation, 'source/italic') == 'Quillonia'
 
+        def test_should_carry_a_run_in_a_reference_s_book_title(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            reference = TEI_E.biblStruct(
+                {XML_ID: 'b0'},
+                TEI_E.analytic(TEI_E.title('Roots', level='a', type='main')),
+                TEI_E.monogr(TEI_E.title('Ferns of ', _italic('Quillonia'), level='m'))
+            )
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[reference])))
+            citation = _get_item(jats, 'back/ref-list/ref/element-citation')
+            assert _get_text(citation, 'source/italic') == 'Quillonia'
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'Roots. Ferns of Quillonia.',
+                TEI_E.analytic(TEI_E.title('Roots', level='a', type='main')),
+                TEI_E.monogr(TEI_E.title('Ferns of ', _italic('Quillonia'), level='m'))
+            )) == (
+                '<article-title>Roots</article-title>. '
+                '<source>Ferns of <italic>Quillonia</italic></source>.</mixed-citation>'
+            )
+
         def test_should_carry_a_run_in_a_printed_reference_s_title_and_source(
             self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
         ):
@@ -1788,6 +1809,12 @@ class TestTeiToJatsXslt:
                 '(<issue>2</issue>):<fpage>101</fpage>-<lpage>9</lpage>.</mixed-citation>'
             )
 
+        def test_should_tag_a_book_title_as_the_source(self, tei_to_jats_xslt_fn):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'A Field Guide to Ferns. 2019.',
+                TEI_E.monogr(TEI_E.title('A Field Guide to Ferns', level='m'))
+            )) == '<source>A Field Guide to Ferns</source>. 2019.</mixed-citation>'
+
         def test_should_only_tag_a_part_printed_as_a_whole_word(self, tei_to_jats_xslt_fn):
             assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
                 'A title. 2019; 2.',
@@ -1918,6 +1945,24 @@ class TestTeiToJatsXslt:
             assert _get_text(
                 element_citation, 'pub-id[@pub-id-type="doi"]'
             ) == REFERENCE_1['doi']
+
+        def test_should_take_the_source_from_a_book_title(self, tei_to_jats_xslt_fn):
+            semantic_reference = SemanticReference(content_id='b0')
+            semantic_reference.add_content(SemanticTitle(
+                layout_block=LayoutBlock.for_text('Ferns at dusk')
+            ))
+            semantic_reference.add_content(SemanticBookTitle(
+                layout_block=LayoutBlock.for_text('A Field Guide to Ferns')
+            ))
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[
+                get_tei_reference_element(
+                    semantic_reference, context=DEFAULT_TEI_ELEMENT_FACTORY_CONTEXT
+                )
+            ])))
+
+            element_citation = _get_item(jats, 'back/ref-list/ref/element-citation')
+            assert _get_text(element_citation, 'article-title') == 'Ferns at dusk'
+            assert _get_text(element_citation, 'source') == 'A Field Guide to Ferns'
 
         def test_should_carry_the_doi_the_parser_produced(self, tei_to_jats_xslt_fn):
             semantic_reference = SemanticReference(content_id='b0')

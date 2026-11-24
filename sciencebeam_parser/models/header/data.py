@@ -5,7 +5,7 @@ from sciencebeam_parser.models.data import (
     ContextAwareLayoutTokenModelDataGenerator,
     DocumentFeaturesContext,
     FEATURE_FLAVOUR_GROBID,
-    FEATURE_FLAVOUR_SCIENCEBEAM,
+    DEFAULT_FEATURE_FLAVOUR,
     FeatureDef,
     validate_feature_flavour
 )
@@ -16,7 +16,7 @@ class HeaderDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
         self,
         document_features_context: DocumentFeaturesContext,
         persist_indentation_reference_across_blocks: bool = False,
-        feature_flavour: str = FEATURE_FLAVOUR_SCIENCEBEAM
+        feature_flavour: str = DEFAULT_FEATURE_FLAVOUR
     ):
         self.feature_flavour = validate_feature_flavour(feature_flavour)
         super().__init__(

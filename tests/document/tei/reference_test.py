@@ -13,6 +13,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticExternalUrl,
     SemanticGivenName,
     SemanticIssue,
+    SemanticBookTitle,
     SemanticJournal,
     SemanticLabel,
     SemanticLocation,
@@ -53,6 +54,7 @@ class TestGetTeiReference:
             ]),
             SemanticRawEditors(layout_block=LayoutBlock.for_text('Editor 1')),
             SemanticJournal(layout_block=LayoutBlock.for_text('Journal 1')),
+            SemanticBookTitle(layout_block=LayoutBlock.for_text('Book Title 1')),
             SemanticVolume(layout_block=LayoutBlock.for_text('Volume 1')),
             SemanticIssue(layout_block=LayoutBlock.for_text('Issue 1')),
             SemanticPageRange(
@@ -103,6 +105,9 @@ class TestGetTeiReference:
         assert tei_ref.get_xpath_text_content_list(
             'tei:monogr/tei:title[@level="j"]'
         ) == ['Journal 1']
+        assert tei_ref.get_xpath_text_content_list(
+            'tei:monogr/tei:title[@level="m"]'
+        ) == ['Book Title 1']
         assert tei_ref.get_xpath_text_content_list(
             'tei:monogr/tei:imprint/tei:biblScope[@unit="volume"]'
         ) == ['Volume 1']

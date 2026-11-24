@@ -14,6 +14,10 @@ from sciencebeam_parser.app.profiles import (
     get_selectable_profile_names
 )
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.models.data import (
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM
+)
 from sciencebeam_parser.models.header.extract import ABSTRACTS_MODES
 from sciencebeam_parser.models.model_impl_factory import EngineNames, get_engine_name_for_config
 from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfig
@@ -82,6 +86,13 @@ COMPOSED_MODEL_PARAMS = sorted({
 HUB_PROFILE = 'delft_hub'
 
 HUB_PROFILE_BASE = 'grobid_crf_0_9_0'
+
+# The models whose features `feature_flavour` selects, and where the ones GROBID trained live
+FEATURE_FLAVOUR_MODEL_NAMES = ('header', 'citation')
+GROBID_TRAINED_PATH_PREFIXES = (
+    'https://github.com/kermitt2/grobid/',
+    'hf://sciencialab/'
+)
 
 # What the delft engine recognises as a Hub reference
 HUB_PATH_PREFIX = 'hf://'
@@ -366,9 +377,6 @@ class TestShippedDelftHubProfile:
             if model_name in unchanged
         }
 
-    def test_should_give_grobid_features_to_its_grobid_header_model(self):
-        assert get_resolved_models(HUB_PROFILE)['header'].get('feature_flavour') == 'grobid'
-
     def test_should_override_at_least_one_model_with_a_hub_path(self):
         assert [
             model_name
@@ -391,3 +399,22 @@ class TestShippedDelftHubProfile:
             and get_engine_name_for_config(entry) != EngineNames.DELFT
         }
         assert not wrongly_served
+
+
+def _get_trained_feature_flavour(model_path: str) -> str:
+    if model_path.startswith(GROBID_TRAINED_PATH_PREFIXES):
+        return FEATURE_FLAVOUR_GROBID
+    return FEATURE_FLAVOUR_SCIENCEBEAM
+
+
+class TestShippedFeatureFlavours:
+    def test_should_name_the_features_each_model_was_trained_on(self):
+        wrong_flavours = {
+            (profile_name, model_name): entry.get('feature_flavour')
+            for profile_name in get_shipped_config()['sequence_model_profiles']
+            for model_name, entry in get_resolved_models(profile_name).items()
+            if model_name in FEATURE_FLAVOUR_MODEL_NAMES
+            and get_engine_name_for_config(entry) != EngineNames.LLM
+            and entry.get('feature_flavour') != _get_trained_feature_flavour(entry['path'])
+        }
+        assert not wrong_flavours

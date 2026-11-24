@@ -1,11 +1,13 @@
 import logging
-from typing import Dict, List
+from collections import defaultdict
+from typing import Dict, List, Sequence
 
 from lxml import etree
 
 from sciencebeam_parser.document.layout_document import (
     LayoutGraphic,
     LayoutLineMeta,
+    LayoutLink,
     LayoutPageCoordinates,
     LayoutFont,
     LayoutPageMeta,
@@ -190,3 +192,51 @@ class AltoParser:
 
 def parse_alto_root(root: etree.ElementBase) -> LayoutDocument:
     return AltoParser().parse_root(root)
+
+
+def _parse_quadrilateral(
+    quadrilateral_node: etree.ElementBase,
+    page_number: int
+) -> LayoutPageCoordinates:
+    points = quadrilateral_node.xpath('POINT')
+    xs = [float(point.attrib['HPOS']) for point in points]
+    ys = [float(point.attrib['VPOS']) for point in points]
+    return LayoutPageCoordinates(
+        x=min(xs),
+        y=min(ys),
+        width=max(xs) - min(xs),
+        height=max(ys) - min(ys),
+        page_number=page_number
+    )
+
+
+def parse_alto_annotations_root(root: etree.ElementBase) -> List[LayoutLink]:
+    """Return the links to a URI among the annotations pdfalto wrote for a PDF."""
+    return [
+        LayoutLink(
+            uri=''.join(annotation_node.xpath('ACTION/DEST/text()')).strip(),
+            coordinates_list=[
+                _parse_quadrilateral(
+                    quadrilateral_node,
+                    page_number=int(annotation_node.attrib['pagenum'])
+                )
+                for quadrilateral_node in annotation_node.xpath('QUADPOINTS/QUADRILATERAL')
+            ]
+        )
+        for annotation_node in root.xpath('//ANNOTATION[@subtype="Link"][ACTION/@type="uri"]')
+    ]
+
+
+def get_layout_document_with_links(
+    layout_document: LayoutDocument,
+    links: Sequence[LayoutLink]
+) -> LayoutDocument:
+    """Return the document with each link on the page its first box is on."""
+    links_by_page_number: Dict[int, List[LayoutLink]] = defaultdict(list)
+    for link in links:
+        if link.coordinates_list:
+            links_by_page_number[link.coordinates_list[0].page_number].append(link)
+    return layout_document.replace(pages=[
+        page.replace(links=links_by_page_number.get(page.meta.page_number, []))
+        for page in layout_document.pages
+    ])

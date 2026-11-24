@@ -8,6 +8,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticExternalUrl,
     SemanticInvalidReference,
     SemanticIssue,
+    SemanticBookTitle,
     SemanticJournal,
     SemanticLabel,
     SemanticLocation,
@@ -213,6 +214,15 @@ class TestReferenceSegmenterSemanticExtractor:
         assert semantic_date.year == 1991
         assert ref.content_id == 'b0'
 
+    def test_should_extract_book_title(self):
+        ref = next(iter(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<booktitle>', LayoutBlock.for_text('A Field Guide to Ferns'))
+            ])
+        ))
+        assert isinstance(ref, SemanticReference)
+        assert ref.view_by_type(SemanticBookTitle).get_text() == 'A Field Guide to Ferns'
+
     def test_should_add_raw_reference_semantic_content(self):
         semantic_marker = SemanticLabel(layout_block=LayoutBlock.for_text('1'))
         semantic_raw_ref_text = SemanticRawReferenceText(
@@ -255,3 +265,17 @@ class TestReferenceSegmenterSemanticExtractor:
         ref = semantic_content_list[0]
         assert isinstance(ref, SemanticInvalidReference)
         assert ref.get_text() == semantic_raw_ref_text.get_text()
+
+    def test_should_reject_raw_reference_without_any_labelled_tokens(self):
+        semantic_raw_ref = SemanticRawReference([
+            SemanticLabel(layout_block=LayoutBlock.for_text('7'))
+        ], content_id='raw1')
+        semantic_content_list = list(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                [], semantic_raw_reference=semantic_raw_ref
+            )
+        )
+        assert len(semantic_content_list) == 1
+        ref = semantic_content_list[0]
+        assert isinstance(ref, SemanticInvalidReference)
+        assert ref.get_text() == '7'

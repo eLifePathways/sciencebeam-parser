@@ -380,8 +380,8 @@ class TestGetGrobidHeaderStatus:
     def test_should_start_block_on_a_first_line_of_a_single_token(self):
         assert self._get_status(0, 3, 0, 1) == ('LINESTART', 'BLOCKSTART')
 
-    def test_should_start_block_made_of_a_single_token(self):
-        assert self._get_status(0, 1, 0, 1) == ('LINESTART', 'BLOCKSTART')
+    def test_should_end_block_made_of_a_single_token(self):
+        assert self._get_status(0, 1, 0, 1) == ('LINEEND', 'BLOCKEND')
 
     def test_should_end_block_on_its_last_token(self):
         assert self._get_status(2, 3, 4, 5) == ('LINEEND', 'BLOCKEND')

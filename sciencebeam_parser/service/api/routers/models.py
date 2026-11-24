@@ -14,7 +14,7 @@ from sciencebeam_parser.app.parser import (
     normalize_layout_document
 )
 from sciencebeam_parser.app.profiles import ProfileBundle
-from sciencebeam_parser.document.layout_document import LayoutDocument
+from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutDocument
 from sciencebeam_parser.document.layout_noise_filter import (
     get_noise_blocks,
     remove_noise_blocks,
@@ -35,6 +35,7 @@ from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 from sciencebeam_parser.external.pdfalto.wrapper import PdfAltoWrapper
 from sciencebeam_parser.models.data import AppFeaturesContext, DocumentFeaturesContext
 from sciencebeam_parser.models.model import Model
+from sciencebeam_parser.models.name.extract import split_name_lists_at_et_al
 from sciencebeam_parser.service.api.dependencies import (
     get_profile_bundle,
     get_sciencebeam_parser_session_source_dependency_factory
@@ -494,8 +495,8 @@ class NameCitationModelRouterFactory(SegmentedModelRouterFactory):
                 app_features_context=self.app_features_context
             )
         )
-        raw_authors = [
-            raw_author
+        raw_authors_by_reference = [
+            list(ref.iter_by_type(SemanticRawAuthors))
             for citation_labeled_layout_tokens in citation_labeled_layout_tokens_list
             for ref in (
                 citation_model.iter_semantic_content_for_labeled_layout_tokens(
@@ -503,11 +504,15 @@ class NameCitationModelRouterFactory(SegmentedModelRouterFactory):
                 )
             )
             if isinstance(ref, SemanticReference)
-            for raw_author in ref.iter_by_type(SemanticRawAuthors)
         ]
         return [
-            LayoutDocument.for_blocks([raw_author.merged_block]).remove_empty_blocks()
-            for raw_author in raw_authors
+            LayoutDocument.for_blocks([LayoutBlock.for_tokens(name_tokens)])
+            for raw_authors in raw_authors_by_reference
+            for name_tokens, _ in split_name_lists_at_et_al([
+                list(raw_author.merged_block.iter_all_tokens())
+                for raw_author in raw_authors
+            ])
+            if name_tokens
         ]
 
 

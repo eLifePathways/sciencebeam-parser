@@ -292,6 +292,10 @@ class SemanticJournal(SemanticSimpleContentWrapper):
     pass
 
 
+class SemanticBookTitle(SemanticSimpleContentWrapper):
+    pass
+
+
 class SemanticVolume(SemanticSimpleContentWrapper):
     pass
 

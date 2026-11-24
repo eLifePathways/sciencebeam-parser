@@ -4,16 +4,25 @@ from sciencebeam_parser.models.data import (
     ContextAwareLayoutTokenFeatures,
     ContextAwareLayoutTokenModelDataGenerator,
     DocumentFeaturesContext,
+    FEATURE_FLAVOUR_GROBID,
+    DEFAULT_FEATURE_FLAVOUR,
     FeatureDef,
+    validate_feature_flavour
 )
 
 
 class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
     def __init__(
         self,
-        document_features_context: DocumentFeaturesContext
+        document_features_context: DocumentFeaturesContext,
+        feature_flavour: str = DEFAULT_FEATURE_FLAVOUR
     ):
-        super().__init__(document_features_context)
+        self.feature_flavour = validate_feature_flavour(feature_flavour)
+        is_grobid_flavour = feature_flavour == FEATURE_FLAVOUR_GROBID
+        super().__init__(
+            document_features_context,
+            grobid_citation_features=is_grobid_flavour
+        )
         self._feature_defs: List[FeatureDef[ContextAwareLayoutTokenFeatures]] = [
             FeatureDef('token_text', lambda f: f.token_text),
             FeatureDef('lower_token_text', lambda f: f.get_lower_token_text()),
@@ -25,8 +34,12 @@ class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
             FeatureDef('suffix_2', lambda f: f.get_suffix(2)),
             FeatureDef('suffix_3', lambda f: f.get_suffix(3)),
             FeatureDef('suffix_4', lambda f: f.get_suffix(4)),
-            FeatureDef('line_status',
-                       lambda f: f.get_line_status_with_lineend_for_single_token()),
+            FeatureDef(
+                'line_status',
+                (lambda f: f.get_sentence_line_status())
+                if is_grobid_flavour
+                else (lambda f: f.get_line_status_with_lineend_for_single_token())
+            ),
             FeatureDef('capitalisation',
                        lambda f: f.get_capitalisation_status_using_allcap()),
             FeatureDef('digit_status',
@@ -41,13 +54,13 @@ class CitationDataGenerator(ContextAwareLayoutTokenModelDataGenerator):
             FeatureDef('is_month', lambda f: f.get_str_is_month()),
             FeatureDef('is_http', lambda f: f.get_str_is_http()),
             FeatureDef('is_known_collaboration',
-                       lambda f: f.get_dummy_str_is_known_collaboration()),
+                       lambda f: f.get_str_is_known_collaboration()),
             FeatureDef('is_known_journal_title',
-                       lambda f: f.get_dummy_str_is_known_journal_title()),
+                       lambda f: f.get_str_is_known_journal_title()),
             FeatureDef('is_known_conference_title',
-                       lambda f: f.get_dummy_str_is_known_conference_title()),
+                       lambda f: f.get_str_is_known_conference_title()),
             FeatureDef('is_known_publisher',
-                       lambda f: f.get_dummy_str_is_known_publisher()),
+                       lambda f: f.get_str_is_known_publisher()),
             FeatureDef('is_known_identifier',
                        lambda f: f.get_str_is_known_identifier()),
             FeatureDef('punctuation_type', lambda f: f.get_punctuation_type_feature()),

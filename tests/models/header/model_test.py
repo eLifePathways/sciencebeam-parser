@@ -20,15 +20,15 @@ def _is_persisting_indentation(data_generator: HeaderDataGenerator) -> bool:
 
 
 class TestHeaderModelFeatureFlavour:
-    def test_should_default_to_sciencebeam_features(self):
+    def test_should_default_to_grobid_features_and_persist_indentation(self):
         data_generator = _get_data_generator()
-        assert data_generator.feature_flavour == FEATURE_FLAVOUR_SCIENCEBEAM
-        assert not _is_persisting_indentation(data_generator)
-
-    def test_should_pass_grobid_flavour_and_persist_indentation(self):
-        data_generator = _get_data_generator(feature_flavour=FEATURE_FLAVOUR_GROBID)
         assert data_generator.feature_flavour == FEATURE_FLAVOUR_GROBID
         assert _is_persisting_indentation(data_generator)
+
+    def test_should_pass_sciencebeam_flavour_without_persisting_indentation(self):
+        data_generator = _get_data_generator(feature_flavour=FEATURE_FLAVOUR_SCIENCEBEAM)
+        assert data_generator.feature_flavour == FEATURE_FLAVOUR_SCIENCEBEAM
+        assert not _is_persisting_indentation(data_generator)
 
     def test_should_let_an_explicit_indentation_setting_win_over_the_flavour(self):
         data_generator = _get_data_generator(

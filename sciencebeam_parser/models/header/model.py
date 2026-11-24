@@ -6,7 +6,7 @@ from sciencebeam_parser.document.semantic_document import SemanticDocument
 from sciencebeam_parser.models.data import (
     DocumentFeaturesContext,
     FEATURE_FLAVOUR_GROBID,
-    FEATURE_FLAVOUR_SCIENCEBEAM
+    DEFAULT_FEATURE_FLAVOUR
 )
 from sciencebeam_parser.models.header.data import HeaderDataGenerator
 from sciencebeam_parser.models.header.extract import HeaderSemanticExtractor
@@ -25,7 +25,7 @@ class HeaderModel(Model):
         self,
         document_features_context: DocumentFeaturesContext
     ) -> HeaderDataGenerator:
-        feature_flavour = self.model_config.get('feature_flavour', FEATURE_FLAVOUR_SCIENCEBEAM)
+        feature_flavour = self.model_config.get('feature_flavour', DEFAULT_FEATURE_FLAVOUR)
         return HeaderDataGenerator(
             document_features_context=document_features_context,
             # GROBID's HeaderParser keeps the indentation reference across blocks,

@@ -4,19 +4,31 @@ from sciencebeam_parser.document.layout_document import (
     LayoutLine,
     LayoutToken
 )
-from sciencebeam_parser.models.data import DEFAULT_DOCUMENT_FEATURES_CONTEXT
+from sciencebeam_parser.lookup.phrase_match import SequencePhraseMatch
+from sciencebeam_parser.models.data import (
+    DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+    AppFeaturesContext,
+    DocumentFeaturesContext,
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM
+)
 from sciencebeam_parser.models.citation.data import CitationDataGenerator
 
 
 def _get_feature_for_tokens(
     token_texts_with_whitespace: list,
     target_token_text: str,
-    feature_name: str
+    feature_name: str,
+    app_features_context: AppFeaturesContext = AppFeaturesContext(),
+    feature_flavour: str = FEATURE_FLAVOUR_SCIENCEBEAM
 ) -> str:
     tokens = [LayoutToken(text, whitespace=ws) for text, ws in token_texts_with_whitespace]
     line = LayoutLine(tokens)
     doc = LayoutDocument.for_blocks([LayoutBlock(lines=[line])])
-    gen = CitationDataGenerator(DEFAULT_DOCUMENT_FEATURES_CONTEXT)
+    gen = CitationDataGenerator(
+        DocumentFeaturesContext(app_features_context),
+        feature_flavour=feature_flavour
+    )
     idx = gen.feature_names.index(feature_name)
     for item in gen.iter_model_data_for_layout_document(doc):
         if item.data_line and item.data_line.split()[0] == target_token_text:
@@ -131,3 +143,105 @@ class TestSentenceTokenRelativePosition:
         # sub-tokens of a DOI with no whitespace: same as before
         tokens = [('10', ''), ('.', ''), ('1016', ''), ('/', ''), ('abcde', '')]
         assert _get_feature_for_tokens(tokens, '10', 'sentence_token_relative_position') == '0'
+
+
+_REFERENCE_TOKENS = [
+    ('Doe', ' '), ('J', ''), ('.', ' '), ('Ferns', ' '), ('.', ' '),
+    ('Journal', ' '), ('of', ' '), ('Imaginary', ' '), ('Botany', ''), ('.', ' '),
+    ('Proc', ''), ('.', ' '), ('Fern', ' '), ('Meeting', ''), ('.', ' '),
+    ('Acme', ' '), ('Press', ''), ('.', ' '), ('FERN', ' '), ('Collaboration', '')
+]
+
+_LEXICON_CONTEXT = AppFeaturesContext(
+    journal_name_phrase_match=SequencePhraseMatch(['Journal of Imaginary Botany']),
+    conference_name_phrase_match=SequencePhraseMatch(['Proc. Fern Meeting']),
+    publisher_name_phrase_match=SequencePhraseMatch(['Acme Press']),
+    collaboration_name_phrase_match=SequencePhraseMatch(['FERN Collaboration'])
+)
+
+
+class TestKnownNameLexicons:
+    def test_journal_title_tokens_give_1(self):
+        assert _get_feature_for_tokens(
+            _REFERENCE_TOKENS, 'Imaginary', 'is_known_journal_title',
+            _LEXICON_CONTEXT, FEATURE_FLAVOUR_GROBID
+        ) == '1'
+
+    def test_conference_title_tokens_give_1(self):
+        assert _get_feature_for_tokens(
+            _REFERENCE_TOKENS, 'Meeting', 'is_known_conference_title',
+            _LEXICON_CONTEXT, FEATURE_FLAVOUR_GROBID
+        ) == '1'
+
+    def test_publisher_tokens_give_1(self):
+        assert _get_feature_for_tokens(
+            _REFERENCE_TOKENS, 'Acme', 'is_known_publisher',
+            _LEXICON_CONTEXT, FEATURE_FLAVOUR_GROBID
+        ) == '1'
+
+    def test_collaboration_tokens_give_1(self):
+        assert _get_feature_for_tokens(
+            _REFERENCE_TOKENS, 'Collaboration', 'is_known_collaboration',
+            _LEXICON_CONTEXT, FEATURE_FLAVOUR_GROBID
+        ) == '1'
+
+    def test_title_outside_any_name_gives_0(self):
+        for feature_name in [
+            'is_known_journal_title', 'is_known_conference_title',
+            'is_known_publisher', 'is_known_collaboration'
+        ]:
+            assert _get_feature_for_tokens(
+                _REFERENCE_TOKENS, 'Ferns', feature_name, _LEXICON_CONTEXT, FEATURE_FLAVOUR_GROBID
+            ) == '0'
+
+    def test_without_lexicons_gives_0(self):
+        assert _get_feature_for_tokens(
+            _REFERENCE_TOKENS, 'Imaginary', 'is_known_journal_title',
+            feature_flavour=FEATURE_FLAVOUR_GROBID
+        ) == '0'
+
+    def test_with_sciencebeam_features_gives_0(self):
+        assert _get_feature_for_tokens(
+            _REFERENCE_TOKENS, 'Imaginary', 'is_known_journal_title', _LEXICON_CONTEXT
+        ) == '0'
+
+
+def _get_features_for_lines(
+    line_token_texts: list,
+    feature_name: str,
+    feature_flavour: str
+) -> list:
+    doc = LayoutDocument.for_blocks([LayoutBlock(lines=[
+        LayoutLine([LayoutToken(text) for text in token_texts])
+        for token_texts in line_token_texts
+    ])])
+    gen = CitationDataGenerator(
+        DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+        feature_flavour=feature_flavour
+    )
+    idx = gen.feature_names.index(feature_name)
+    return [
+        item.data_line.split()[idx]
+        for item in gen.iter_model_data_for_layout_document(doc)
+    ]
+
+
+_TWO_LINES = [['Doe', 'J', 'Ferns'], ['of', 'the', 'North']]
+
+
+class TestMultiLineReference:
+    def test_marks_each_line_with_sciencebeam_features(self):
+        assert _get_features_for_lines(_TWO_LINES, 'line_status', FEATURE_FLAVOUR_SCIENCEBEAM) == [
+            'LINESTART', 'LINEIN', 'LINEEND', 'LINESTART', 'LINEIN', 'LINEEND'
+        ]
+
+    def test_marks_only_the_reference_ends_with_grobid_features(self):
+        assert _get_features_for_lines(_TWO_LINES, 'line_status', FEATURE_FLAVOUR_GROBID) == [
+            'LINESTART', 'LINEIN', 'LINEIN', 'LINEIN', 'LINEIN', 'LINEEND'
+        ]
+
+    def test_counts_the_line_break_in_the_position_with_grobid_features(self):
+        # Doe 0, J 2, Ferns 4, line break 6, of 7, the 9, North 11, of 12 positions
+        assert _get_features_for_lines(
+            _TWO_LINES, 'sentence_token_relative_position', FEATURE_FLAVOUR_GROBID
+        ) == ['0', '2', '4', '7', '9', '11']

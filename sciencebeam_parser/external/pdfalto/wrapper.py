@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import stat
 from typing import Optional
 
@@ -24,6 +25,11 @@ def get_default_pdfalto_binary_path() -> str:
     return str(pdfalto.binary_path())
 
 
+def get_annotation_xml_path(alto_xml_path: str) -> str:
+    """Return the path pdfalto writes the PDF's annotations to, beside the ALTO XML."""
+    return re.sub(r'\.xml$', '', alto_xml_path) + '_annot.xml'
+
+
 class PdfAltoWrapper:
     def __init__(self, binary_path: str):
         self.binary_path = binary_path
@@ -46,7 +52,8 @@ class PdfAltoWrapper:
             '-noImageInline',
             '-fullFontName',
             '-noLineNumbers',
-            '-discardClippedText'
+            '-discardClippedText',
+            '-annotation'
         ]
         if first_page:
             command.extend(['-f', str(first_page)])

@@ -1,4 +1,9 @@
-from sciencebeam_parser.lookup.phrase_match import SequencePhraseMatch
+from pathlib import Path
+
+from sciencebeam_parser.lookup.phrase_match import (
+    SequencePhraseMatch,
+    load_phrase_match_from_paths
+)
 
 
 def _match(phrases, tokens):
@@ -70,3 +75,34 @@ class TestSequencePhraseMatchDelimiters:
         # 'ON' is in location.txt; matching must be case-insensitive
         result = _match(['ON'], ['based', 'on', 'a'])
         assert result == {1}
+
+
+class TestLoadPhraseMatchFromPaths:
+    def test_matches_phrases_of_every_file(self, tmp_path: Path):
+        first = tmp_path / 'first.txt'
+        second = tmp_path / 'second.txt'
+        first.write_text('Journal of Ferns\n', encoding='utf-8')
+        second.write_text('J. Ferns\n', encoding='utf-8')
+        phrase_match = load_phrase_match_from_paths([str(first), str(second)])
+        assert phrase_match is not None
+        assert phrase_match.match_token_indices(['J', '.', 'Ferns']) == {0, 1, 2}
+        assert phrase_match.match_token_indices(['Journal', 'of', 'Ferns']) == {0, 1, 2}
+
+    def test_returns_none_without_paths(self):
+        assert load_phrase_match_from_paths([]) is None
+
+
+class TestMatchTokenIndicesAsGrobidCitationFeatures:
+    def test_flags_every_token_of_a_lone_match(self):
+        phrase_match = SequencePhraseMatch(['Journal of Ferns'])
+        assert phrase_match.match_token_indices_as_grobid_citation_features(
+            ['A', 'Journal', 'of', 'Ferns']
+        ) == {1, 2, 3}
+
+    def test_skips_a_token_where_a_later_starting_match_was_reported_first(self):
+        phrase_match = SequencePhraseMatch(['Fern', 'Moss', 'Fern Res Moss Syst'])
+        tokens = ['Fern', 'Res', 'Moss', 'Syst']
+        assert phrase_match.match_token_indices(tokens) == {0, 1, 2, 3}
+        assert phrase_match.match_token_indices_as_grobid_citation_features(
+            tokens
+        ) == {0, 2, 3}

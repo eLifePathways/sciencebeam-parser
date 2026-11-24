@@ -1,7 +1,20 @@
-from lxml.builder import ElementMaker
+from lxml.builder import ElementMaker, E
 
-from sciencebeam_parser.document.layout_document import LayoutPageCoordinates
-from sciencebeam_parser.external.pdfalto.parser import AltoParser, parse_alto_root, ALTO_NS
+from sciencebeam_parser.document.layout_document import (
+    LayoutBlock,
+    LayoutDocument,
+    LayoutLink,
+    LayoutPage,
+    LayoutPageCoordinates,
+    LayoutPageMeta
+)
+from sciencebeam_parser.external.pdfalto.parser import (
+    AltoParser,
+    get_layout_document_with_links,
+    parse_alto_annotations_root,
+    parse_alto_root,
+    ALTO_NS
+)
 
 
 ALTO_E = ElementMaker(namespace=ALTO_NS, nsmap={
@@ -231,3 +244,49 @@ class TestParseAltoRoot:
         assert tokens[0].line_meta is not None
         assert tokens[0].line_meta == tokens[1].line_meta
         assert tokens[0].line_meta.page_meta == layout_document.pages[0].meta
+
+
+def _annotation(subtype: str, action_type: str, uri: str, page_number: int):
+    return E.ANNOTATION(
+        E.ACTION(E.DEST(uri), type=action_type),
+        E.QUADPOINTS(E.QUADRILATERAL(
+            E.POINT(HPOS='10', VPOS='30'),
+            E.POINT(HPOS='10', VPOS='20'),
+            E.POINT(HPOS='50', VPOS='30'),
+            E.POINT(HPOS='50', VPOS='20')
+        )),
+        subtype=subtype,
+        pagenum=str(page_number)
+    )
+
+
+LINK_COORDINATES = LayoutPageCoordinates(x=10, y=20, width=40, height=10, page_number=2)
+
+
+class TestParseAltoAnnotationsRoot:
+    def test_should_parse_link_to_uri(self):
+        links = parse_alto_annotations_root(E.ANNOTATIONS(
+            _annotation('Link', 'uri', 'https://example.org/ferns', page_number=2)
+        ))
+        assert links == [LayoutLink(
+            uri='https://example.org/ferns', coordinates_list=[LINK_COORDINATES]
+        )]
+
+    def test_should_ignore_links_within_the_document_and_other_annotations(self):
+        assert not parse_alto_annotations_root(E.ANNOTATIONS(
+            _annotation('Link', 'goto', 'p3', page_number=2),
+            _annotation('Highlight', 'uri', 'https://example.org/ferns', page_number=2)
+        ))
+
+
+class TestGetLayoutDocumentWithLinks:
+    def test_should_put_each_link_on_its_page(self):
+        link = LayoutLink(uri='https://example.org/ferns', coordinates_list=[LINK_COORDINATES])
+        layout_document = get_layout_document_with_links(
+            LayoutDocument(pages=[
+                LayoutPage(blocks=[LayoutBlock.for_text('a')], meta=LayoutPageMeta(page_number=1)),
+                LayoutPage(blocks=[LayoutBlock.for_text('b')], meta=LayoutPageMeta(page_number=2))
+            ]),
+            [link]
+        )
+        assert [list(page.links) for page in layout_document.pages] == [[], [link]]

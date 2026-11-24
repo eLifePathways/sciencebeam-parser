@@ -5,6 +5,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import (
+    AbstractSet,
     Callable,
     FrozenSet,
     Generic,
@@ -80,6 +81,29 @@ def _get_identifier_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
     return _get_pattern_token_indices(tokens, _DOI_PATTERN, required_substring='10.')
 
 
+def _get_sentence_token_span(token: LayoutToken, is_counted_line_end: bool) -> int:
+    """Positions the token takes: itself, its whitespace and a line break after it."""
+    return 1 + (1 if token.whitespace else 0) + (1 if is_counted_line_end else 0)
+
+
+def _get_phrase_match_token_indices(
+    phrase_match: Optional[SequencePhraseMatch],
+    token_texts: List[str]
+) -> AbstractSet[int]:
+    if phrase_match is None:
+        return frozenset()
+    return phrase_match.match_token_indices(token_texts)
+
+
+def _get_citation_phrase_match_token_indices(
+    phrase_match: Optional[SequencePhraseMatch],
+    token_texts: List[str]
+) -> AbstractSet[int]:
+    if phrase_match is None:
+        return frozenset()
+    return phrase_match.match_token_indices_as_grobid_citation_features(token_texts)
+
+
 MONTH_NAMES = frozenset({
     'january', 'february', 'march', 'april', 'may', 'june',
     'july', 'august', 'september', 'october', 'november', 'december',
@@ -92,6 +116,10 @@ class AppFeaturesContext(NamedTuple):
     last_name_lookup: Optional[TextLookUp] = None
     common_name_lookup: Optional[TextLookUp] = None
     location_name_phrase_match: Optional[SequencePhraseMatch] = None
+    journal_name_phrase_match: Optional[SequencePhraseMatch] = None
+    conference_name_phrase_match: Optional[SequencePhraseMatch] = None
+    publisher_name_phrase_match: Optional[SequencePhraseMatch] = None
+    collaboration_name_phrase_match: Optional[SequencePhraseMatch] = None
 
 
 DEFAULT_APP_FEATURES_CONTEXT = AppFeaturesContext()
@@ -355,6 +383,7 @@ def get_block_status_with_blockstart_for_single_token(
 FEATURE_FLAVOUR_SCIENCEBEAM = 'sciencebeam'
 FEATURE_FLAVOUR_GROBID = 'grobid'
 FEATURE_FLAVOURS = (FEATURE_FLAVOUR_SCIENCEBEAM, FEATURE_FLAVOUR_GROBID)
+DEFAULT_FEATURE_FLAVOUR = FEATURE_FLAVOUR_GROBID
 
 
 def validate_feature_flavour(feature_flavour: str) -> str:
@@ -378,13 +407,12 @@ def _is_grobid_header_block_end(
 def get_grobid_header_line_status(
     line_index: int, line_count: int, token_index: int, token_count: int
 ) -> str:
-    # GROBID HeaderParser: the first token of a block is LINESTART whatever the
-    # length of its line, and a line of a single token otherwise keeps LINESTART
-    # (only the block's last token takes LINEEND).
-    if _is_grobid_header_block_start(line_index, token_index):
-        return 'LINESTART'
+    # GROBID HeaderParser: a block's last token takes LINEEND, even when it is also
+    # its first; any other line of a single token keeps LINESTART.
     if _is_grobid_header_block_end(line_index, line_count, token_index, token_count):
         return 'LINEEND'
+    if _is_grobid_header_block_start(line_index, token_index):
+        return 'LINESTART'
     if token_index == 0:
         return 'LINESTART'
     if token_index == token_count - 1:
@@ -395,10 +423,10 @@ def get_grobid_header_line_status(
 def get_grobid_header_block_status(
     line_index: int, line_count: int, token_index: int, token_count: int
 ) -> str:
-    if _is_grobid_header_block_start(line_index, token_index):
-        return 'BLOCKSTART'
     if _is_grobid_header_block_end(line_index, line_count, token_index, token_count):
         return 'BLOCKEND'
+    if _is_grobid_header_block_start(line_index, token_index):
+        return 'BLOCKSTART'
     return 'BLOCKIN'
 
 
@@ -637,18 +665,6 @@ class CommonLayoutTokenFeatures(ABC):  # pylint: disable=too-many-public-methods
     def get_dummy_str_is_month(self) -> str:
         return '0'
 
-    def get_dummy_str_is_known_collaboration(self) -> str:
-        return '0'
-
-    def get_dummy_str_is_known_journal_title(self) -> str:
-        return '0'
-
-    def get_dummy_str_is_known_conference_title(self) -> str:
-        return '0'
-
-    def get_dummy_str_is_known_publisher(self) -> str:
-        return '0'
-
     def get_dummy_label(self) -> str:
         return '0'
 
@@ -682,6 +698,10 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         grobid_line_length: int = 0,
         max_grobid_line_length: int = 0,
         is_location_name: bool = False,
+        is_journal_name: bool = False,
+        is_conference_name: bool = False,
+        is_publisher_name: bool = False,
+        is_collaboration_name: bool = False,
         is_email: bool = False,
         is_http: bool = False,
         is_identifier: bool = False,
@@ -709,6 +729,10 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
         self.grobid_line_length = grobid_line_length
         self.max_grobid_line_length = max_grobid_line_length
         self.is_location_name = is_location_name
+        self.is_journal_name = is_journal_name
+        self.is_conference_name = is_conference_name
+        self.is_publisher_name = is_publisher_name
+        self.is_collaboration_name = is_collaboration_name
         self.is_email = is_email
         self.is_http = is_http
         self.is_identifier = is_identifier
@@ -769,6 +793,18 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
 
     def get_str_is_location_name(self) -> str:
         return '1' if self.is_location_name else '0'
+
+    def get_str_is_known_journal_title(self) -> str:
+        return '1' if self.is_journal_name else '0'
+
+    def get_str_is_known_conference_title(self) -> str:
+        return '1' if self.is_conference_name else '0'
+
+    def get_str_is_known_publisher(self) -> str:
+        return '1' if self.is_publisher_name else '0'
+
+    def get_str_is_known_collaboration(self) -> str:
+        return '1' if self.is_collaboration_name else '0'
 
     def get_str_is_email(self) -> str:
         return '1' if self.is_email else '0'
@@ -868,6 +904,14 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
             self.max_grobid_line_length,
             _LINESCALE
         ))
+
+    def get_sentence_line_status(self) -> str:
+        """LINESTART and LINEEND for the first and last token of the whole sequence."""
+        if self.sentence_token_index == 0:
+            return 'LINESTART'
+        if self.sentence_token_index == self.sentence_token_count - 1:
+            return 'LINEEND'
+        return 'LINEIN'
 
     def get_str_sentence_token_relative_position(self) -> str:
         return str(feature_linear_scaling_int(
@@ -973,9 +1017,11 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         self,
         document_features_context: DocumentFeaturesContext,
         persist_indentation_reference_across_blocks: bool = False,
-        compare_indentation_across_blocks: bool = False
+        compare_indentation_across_blocks: bool = False,
+        grobid_citation_features: bool = False
     ):
         self.document_features_context = document_features_context
+        self._grobid_citation_features = grobid_citation_features
         self._persist_indentation_reference_across_blocks = (
             persist_indentation_reference_across_blocks
         )
@@ -1027,20 +1073,42 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         }
         max_grobid_line_length = max(grobid_line_length_by_line_id.values())
         all_tokens = list(layout_document.iter_all_tokens())
-        sentence_token_count = sum(1 + (1 if t.whitespace else 0) for t in all_tokens)
-        # Pre-compute location name indices if a phrase match is configured.
-        # This mirrors GROBID's HeaderParser which runs tokenPositionsLocationNames()
-        # before the feature loop and marks tokens within matched spans.
-        location_phrase_match = (
-            self.document_features_context.app_features_context.location_name_phrase_match
-        )
-        location_name_indices: frozenset = frozenset()
-        if location_phrase_match is not None:
-            location_name_indices = frozenset(
-                location_phrase_match.match_token_indices(
-                    [t.text for t in all_tokens]
-                )
+        count_line_breaks = self._grobid_citation_features
+        sentence_token_spans = [
+            _get_sentence_token_span(
+                token, count_line_breaks and index == len(line.tokens) - 1
             )
+            for line in layout_document.iter_all_lines()
+            for index, token in enumerate(line.tokens)
+        ]
+        sentence_token_count = (
+            sum(sentence_token_spans[:-1]) + 1 if count_line_breaks
+            else sum(sentence_token_spans)
+        )
+        app_features_context = self.document_features_context.app_features_context
+        all_token_texts = [t.text for t in all_tokens]
+        location_name_indices = _get_phrase_match_token_indices(
+            app_features_context.location_name_phrase_match, all_token_texts
+        )
+        citation_phrase_matches = (
+            [
+                app_features_context.journal_name_phrase_match,
+                app_features_context.conference_name_phrase_match,
+                app_features_context.publisher_name_phrase_match,
+                app_features_context.collaboration_name_phrase_match,
+            ]
+            if self._grobid_citation_features
+            else [None, None, None, None]
+        )
+        (
+            journal_name_indices,
+            conference_name_indices,
+            publisher_name_indices,
+            collaboration_name_indices
+        ) = [
+            _get_citation_phrase_match_token_indices(phrase_match, all_token_texts)
+            for phrase_match in citation_phrase_matches
+        ]
         email_token_indices = _get_email_token_indices(all_tokens)
         http_token_indices = _get_http_token_indices(all_tokens)
         identifier_token_indices = _get_identifier_token_indices(all_tokens)
@@ -1097,6 +1165,16 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                                 grobid_line_length=grobid_line_length,
                                 max_grobid_line_length=max_grobid_line_length,
                                 is_location_name=(document_token_index in location_name_indices),
+                                is_journal_name=(document_token_index in journal_name_indices),
+                                is_conference_name=(
+                                    document_token_index in conference_name_indices
+                                ),
+                                is_publisher_name=(
+                                    document_token_index in publisher_name_indices
+                                ),
+                                is_collaboration_name=(
+                                    document_token_index in collaboration_name_indices
+                                ),
                                 is_email=(document_token_index in email_token_indices),
                                 is_http=(document_token_index in http_token_indices),
                                 is_identifier=(document_token_index in identifier_token_indices),
@@ -1111,6 +1189,8 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                         # GROBID double-counts each space: space token contributes len(' ')+1 = 2.
                         if token.whitespace:
                             grobid_nn += 2 * len(token.whitespace)
-                        sentence_token_index += 1 + (1 if token.whitespace else 0)
+                        sentence_token_index += _get_sentence_token_span(
+                            token, count_line_breaks and token_index == token_count - 1
+                        )
                         document_char_index += len(token.text)
                         document_token_index += 1

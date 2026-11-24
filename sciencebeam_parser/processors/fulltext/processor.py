@@ -56,7 +56,12 @@ from sciencebeam_parser.document.semantic_document import (
     T_SemanticRawNameList
 )
 from sciencebeam_parser.document.tei_document import TeiDocument, get_tei_for_semantic_document
-from sciencebeam_parser.document.layout_document import LayoutDocument
+from sciencebeam_parser.document.layout_document import (
+    LayoutBlock,
+    LayoutDocument,
+    LayoutLink,
+    LayoutToken
+)
 from sciencebeam_parser.document.layout_noise_filter import (
     NOISE_ACTION_RELABEL,
     LayoutNoiseFilterConfig,
@@ -68,11 +73,13 @@ from sciencebeam_parser.models.segmentation.model import SegmentationModel
 from sciencebeam_parser.models.header.model import HeaderModel
 from sciencebeam_parser.models.name.model import NameModel
 from sciencebeam_parser.models.name.deduplicate import get_deduplicated_authors
+from sciencebeam_parser.models.name.extract import split_name_lists_at_et_al
 from sciencebeam_parser.models.affiliation_address.model import AffiliationAddressModel
 from sciencebeam_parser.models.fulltext.model import FullTextModel
 from sciencebeam_parser.models.figure.model import FigureModel
 from sciencebeam_parser.models.table.model import TableModel
 from sciencebeam_parser.models.reference_segmenter.model import ReferenceSegmenterModel
+from sciencebeam_parser.models.citation.links import set_reference_doi_from_links
 from sciencebeam_parser.models.citation.model import CitationModel
 from sciencebeam_parser.processors.ref_matching import (
     ChainedContentIdMatcher,
@@ -275,7 +282,8 @@ class FullTextProcessor:
             )
         if self.config.extract_citation_fields:
             self._extract_reference_fields_from_raw_references(
-                semantic_document=document
+                semantic_document=document,
+                links=list(layout_document.iter_all_links())
             )
             if self.config.extract_citation_authors or self.config.extract_citation_editors:
                 self._extract_reference_name_lists_from_raw_references(
@@ -618,10 +626,11 @@ class FullTextProcessor:
 
     def _iter_parse_semantic_references(
         self,
-        semantic_raw_references: List[SemanticRawReference]
+        semantic_raw_references: List[SemanticRawReference],
+        links: Sequence[LayoutLink] = ()
     ) -> Iterable[Union[SemanticReference, SemanticInvalidReference]]:
         layout_documents = [
-            LayoutDocument.for_blocks([semantic_raw_reference.merged_block])
+            self.citation_model.get_layout_document_for_raw_reference(semantic_raw_reference)
             for semantic_raw_reference in semantic_raw_references
         ]
         labeled_layout_tokens_list = (
@@ -646,13 +655,18 @@ class FullTextProcessor:
             for semantic_content in semantic_content_iterable:
                 if isinstance(semantic_content, (SemanticReference, SemanticInvalidReference)):
                     ref = semantic_content
-            if not ref:
+            if ref is None:
                 raise AssertionError('no semantic reference extracted')
+            if isinstance(ref, SemanticReference):
+                set_reference_doi_from_links(
+                    ref, list(semantic_raw_reference.iter_tokens()), links
+                )
             yield ref
 
     def _extract_reference_fields_from_raw_references(
         self,
-        semantic_document: SemanticDocument
+        semantic_document: SemanticDocument,
+        links: Sequence[LayoutLink] = ()
     ):
         reference_lists = list(semantic_document.back_section.iter_by_type(
             SemanticReferenceList
@@ -663,7 +677,8 @@ class FullTextProcessor:
             for raw_reference in reference_list.iter_by_type(SemanticRawReference)
         ]
         semantic_references = list(self._iter_parse_semantic_references(
-            semantic_raw_references
+            semantic_raw_references,
+            links=links
         ))
         LOGGER.debug('semantic_references: %r', semantic_references)
         semantic_reference_by_semantic_raw_reference_id = {
@@ -690,32 +705,54 @@ class FullTextProcessor:
 
     def _iter_parse_semantic_name_lists(
         self,
-        semantic_raw_name_lists: Sequence[T_SemanticRawNameList],
+        semantic_raw_name_lists_by_reference: Sequence[Sequence[T_SemanticRawNameList]],
         name_type: Type[T_SemanticName]
     ) -> Iterable[Tuple[T_SemanticRawNameList, List[SemanticContentWrapper]]]:
-        layout_documents = [
-            LayoutDocument.for_blocks([semantic_raw_name_list.merged_block])
-            for semantic_raw_name_list in semantic_raw_name_lists
-        ]
-        labeled_layout_tokens_list = (
+        semantic_raw_name_lists: List[T_SemanticRawNameList] = []
+        name_tokens_list: List[List[LayoutToken]] = []
+        other_tokens_list: List[List[LayoutToken]] = []
+        for reference_raw_name_lists in semantic_raw_name_lists_by_reference:
+            split_token_lists = split_name_lists_at_et_al([
+                list(semantic_raw_name_list.merged_block.iter_all_tokens())
+                for semantic_raw_name_list in reference_raw_name_lists
+            ])
+            for semantic_raw_name_list, (name_tokens, other_tokens) in zip(
+                reference_raw_name_lists, split_token_lists
+            ):
+                semantic_raw_name_lists.append(semantic_raw_name_list)
+                name_tokens_list.append(name_tokens)
+                other_tokens_list.append(other_tokens)
+        labeled_layout_tokens_list = list(
             self.name_citation_model
             .predict_labels_for_layout_documents(
-                layout_documents,
+                [
+                    LayoutDocument.for_blocks([LayoutBlock.for_tokens(name_tokens)])
+                    for name_tokens in name_tokens_list
+                    if name_tokens
+                ],
                 app_features_context=self.app_features_context
             )
         )
-        LOGGER.debug('labeled_layout_tokens_list: %r', labeled_layout_tokens_list)
-        for labeled_layout_tokens, semantic_raw_name_list in zip(
-            labeled_layout_tokens_list, semantic_raw_name_lists
+        labeled_index = 0
+        for semantic_raw_name_list, name_tokens, other_tokens in zip(
+            semantic_raw_name_lists, name_tokens_list, other_tokens_list
         ):
-            semantic_content_iterable = (
-                self.name_citation_model
-                .iter_semantic_content_for_labeled_layout_tokens(
-                    labeled_layout_tokens,
-                    name_type=name_type
+            content_list: List[SemanticContentWrapper] = []
+            if name_tokens:
+                content_list.extend(
+                    self.name_citation_model
+                    .iter_semantic_content_for_labeled_layout_tokens(
+                        labeled_layout_tokens_list[labeled_index],
+                        name_type=name_type
+                    )
                 )
-            )
-            yield semantic_raw_name_list, list(semantic_content_iterable)
+                labeled_index += 1
+            if other_tokens:
+                content_list.append(SemanticNote(
+                    layout_block=LayoutBlock.for_tokens(other_tokens),
+                    note_type='O'
+                ))
+            yield semantic_raw_name_list, content_list
 
     def _extract_reference_name_lists_from_raw_references(
         self,
@@ -730,31 +767,33 @@ class FullTextProcessor:
             for ref in reference_list.iter_by_type(SemanticReference)
         ]
         if self.config.extract_citation_authors:
-            raw_authors = [
-                raw_author
+            raw_authors_by_reference = [
+                list(ref.iter_by_type(SemanticRawAuthors))
                 for ref in ref_list
-                for raw_author in ref.iter_by_type(SemanticRawAuthors)
             ]
         else:
-            raw_authors = []
+            raw_authors_by_reference = []
         if self.config.extract_citation_editors:
-            raw_editors = [
-                raw_author
+            raw_editors_by_reference = [
+                list(ref.iter_by_type(SemanticRawEditors))
                 for ref in ref_list
-                for raw_author in ref.iter_by_type(SemanticRawEditors)
             ]
         else:
-            raw_editors = []
+            raw_editors_by_reference = []
         content_list_by_raw_author_id = {
             id(raw_author): content_list
             for raw_author, content_list in (
-                self._iter_parse_semantic_name_lists(raw_authors, name_type=SemanticAuthor)
+                self._iter_parse_semantic_name_lists(
+                    raw_authors_by_reference, name_type=SemanticAuthor
+                )
             )
         }
         content_list_by_raw_editor_id = {
             id(raw_author): content_list
             for raw_author, content_list in (
-                self._iter_parse_semantic_name_lists(raw_editors, name_type=SemanticEditor)
+                self._iter_parse_semantic_name_lists(
+                    raw_editors_by_reference, name_type=SemanticEditor
+                )
             )
         }
         LOGGER.debug(

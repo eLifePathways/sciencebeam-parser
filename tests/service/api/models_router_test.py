@@ -15,6 +15,7 @@ from sciencebeam_trainer_delft.sequence_labelling.tag_formatter import (
 )
 
 from sciencebeam_parser.app.profiles import ProfileBundle
+from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutDocument, LayoutPage
 from sciencebeam_parser.models.data import (
     DEFAULT_APP_FEATURES_CONTEXT,
     DocumentFeaturesContext
@@ -23,6 +24,7 @@ from sciencebeam_parser.processors.fulltext.config import FullTextProcessorConfi
 from sciencebeam_parser.service.api.routers.models import (
     ModelOutputFormats,
     ModelResponseRouterFactory,
+    NameCitationModelRouterFactory,
     create_models_router
 )
 from tests.processors.fulltext.model_mocks import MockFullTextModels
@@ -220,3 +222,38 @@ class TestModelOutputFormats:
         assert ModelOutputFormats.JSON == TagOutputFormats.JSON
         assert ModelOutputFormats.DATA == TagOutputFormats.DATA
         assert ModelOutputFormats.XML == TagOutputFormats.XML
+
+
+class TestNameCitationModelRouterFactory:
+    def test_should_give_the_name_model_only_the_names_before_et_al(
+        self, mock_fulltext_models: MockFullTextModels, profile_bundle: ProfileBundle
+    ):
+        authors_block = LayoutBlock.for_text('Ada Fernley, et al. ')
+        title_block = LayoutBlock.for_text('Ferns of the north ')
+        later_authors_block = LayoutBlock.for_text('Bo Mossby')
+        ref_block = LayoutBlock.merge_blocks([authors_block, title_block, later_authors_block])
+        mock_fulltext_models.segmentation_model_mock.update_label_by_layout_block(
+            ref_block, '<references>'
+        )
+        mock_fulltext_models.reference_segmenter_model_mock.update_label_by_layout_block(
+            ref_block, '<reference>'
+        )
+        citation_model_mock = mock_fulltext_models.citation_model_mock
+        citation_model_mock.update_label_by_layout_block(authors_block, '<author>')
+        citation_model_mock.update_label_by_layout_block(title_block, '<title>')
+        citation_model_mock.update_label_by_layout_block(later_authors_block, '<author>')
+        factory = NameCitationModelRouterFactory(
+            'Name Citation',
+            sequence_model_name='name_citation',
+            pdfalto_wrapper=MagicMock(name='pdfalto_wrapper'),
+            app_features_context=DEFAULT_APP_FEATURES_CONTEXT,
+            segmentation_labels=['<references>']
+        )
+        layout_documents = list(factory.iter_filter_layout_document(
+            LayoutDocument(pages=[LayoutPage(blocks=[ref_block])]),
+            filter_params={'no_use_segmentation': False},
+            profile_bundle=profile_bundle
+        ))
+        assert [
+            [token.text for token in doc.iter_all_tokens()] for doc in layout_documents
+        ] == [['Ada', 'Fernley', ',']]
