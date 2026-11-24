@@ -15,6 +15,7 @@ _REFERENCE_MODEL_LABELS: Dict[str, frozenset] = {
 # first -- which is why first_reference_text moves when only the citation model changes.
 REFERENCE_PRESENCE_LABELS: FrozenSet[str] = frozenset({
     '<author>',
+    '<booktitle>',
     '<editor>',
     '<journal>',
     '<title>',
