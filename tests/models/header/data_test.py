@@ -10,7 +10,8 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.models.data import (
     DEFAULT_DOCUMENT_FEATURES_CONTEXT,
-    FEATURE_FLAVOUR_GROBID
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM
 )
 from sciencebeam_parser.models.header.data import HeaderDataGenerator
 
@@ -97,10 +98,11 @@ def _get_doc_with_block_starting_with_single_token_line() -> LayoutDocument:
 
 
 class TestBlockAndLineStatus:
-    def test_should_not_start_block_on_single_token_line_by_default(self):
-        # what the biorxiv models were trained on
+    def test_should_not_start_block_on_single_token_line_with_sciencebeam_flavour(self):
         doc = _get_doc_with_block_starting_with_single_token_line()
-        assert _get_block_and_line_status(doc)[2:] == [
+        assert _get_block_and_line_status(
+            doc, feature_flavour=FEATURE_FLAVOUR_SCIENCEBEAM
+        )[2:] == [
             ('Resumo', 'BLOCKIN', 'LINEEND'),
             ('Text', 'BLOCKIN', 'LINESTART'),
             ('here', 'BLOCKEND', 'LINEEND')

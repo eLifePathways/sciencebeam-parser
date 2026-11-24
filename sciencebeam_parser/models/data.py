@@ -383,6 +383,7 @@ def get_block_status_with_blockstart_for_single_token(
 FEATURE_FLAVOUR_SCIENCEBEAM = 'sciencebeam'
 FEATURE_FLAVOUR_GROBID = 'grobid'
 FEATURE_FLAVOURS = (FEATURE_FLAVOUR_SCIENCEBEAM, FEATURE_FLAVOUR_GROBID)
+DEFAULT_FEATURE_FLAVOUR = FEATURE_FLAVOUR_GROBID
 
 
 def validate_feature_flavour(feature_flavour: str) -> str:

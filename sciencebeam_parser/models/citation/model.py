@@ -11,7 +11,7 @@ from sciencebeam_parser.models.data import (
     AppFeaturesContext,
     DocumentFeaturesContext,
     FEATURE_FLAVOUR_GROBID,
-    FEATURE_FLAVOUR_SCIENCEBEAM
+    DEFAULT_FEATURE_FLAVOUR
 )
 from sciencebeam_parser.models.model import LabeledLayoutToken, Model
 from sciencebeam_parser.models.citation.data import CitationDataGenerator
@@ -51,7 +51,7 @@ def _has_tokens(layout_document: LayoutDocument) -> bool:
 class CitationModel(Model):
     @property
     def feature_flavour(self) -> str:
-        return self.model_config.get('feature_flavour', FEATURE_FLAVOUR_SCIENCEBEAM)
+        return self.model_config.get('feature_flavour', DEFAULT_FEATURE_FLAVOUR)
 
     @property
     def is_grobid_flavour(self) -> bool:

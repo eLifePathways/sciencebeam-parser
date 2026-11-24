@@ -98,16 +98,16 @@ class TestCitationModelSubdigitRetokenization:
 
 
 class TestCitationModelLeadingPunctuation:
-    def test_leading_punctuation_is_labelled_by_default(self):
-        model, impl = _make_citation_model()
+    def test_leading_punctuation_is_labelled_with_sciencebeam_features(self):
+        model, impl = _make_citation_model(feature_flavour='sciencebeam')
         model.predict_labels_for_layout_documents(
             [_doc_with_tokens('.', 'Doe', 'J', '.')],
             DEFAULT_APP_FEATURES_CONTEXT
         )
         assert impl.received_texts == [['.', 'Doe', 'J', '.']]
 
-    def test_leading_punctuation_is_not_labelled_with_grobid_features(self):
-        model, impl = _make_citation_model(feature_flavour='grobid')
+    def test_leading_punctuation_is_not_labelled_by_default(self):
+        model, impl = _make_citation_model()
         model.predict_labels_for_layout_documents(
             [_doc_with_tokens('.', '(', 'Doe', 'J', '.')],
             DEFAULT_APP_FEATURES_CONTEXT
@@ -132,15 +132,15 @@ def _raw_reference_with_label() -> SemanticRawReference:
 
 
 class TestCitationModelRawReferenceInput:
-    def test_includes_the_label_by_default(self):
-        model, _ = _make_citation_model()
+    def test_includes_the_label_with_sciencebeam_features(self):
+        model, _ = _make_citation_model(feature_flavour='sciencebeam')
         layout_document = model.get_layout_document_for_raw_reference(
             _raw_reference_with_label()
         )
         assert [t.text for t in layout_document.iter_all_tokens()][:2] == ['3', '.']
 
-    def test_leaves_out_the_label_with_grobid_features(self):
-        model, _ = _make_citation_model(feature_flavour='grobid')
+    def test_leaves_out_the_label_by_default(self):
+        model, _ = _make_citation_model()
         layout_document = model.get_layout_document_for_raw_reference(
             _raw_reference_with_label()
         )
