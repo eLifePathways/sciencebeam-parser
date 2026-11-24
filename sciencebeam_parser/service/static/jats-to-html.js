@@ -22,7 +22,8 @@ import {
   getLanguage,
   getLanguageValue,
   getValuesWithLanguage,
-  parseXmlNode
+  parseXmlNode,
+  withRuns
 } from './xml-nodes.js';
 import { renderArticleViewModel } from './article-view.js';
 
@@ -64,28 +65,12 @@ function getJatsInline(node) {
   return null;
 }
 
-function isStyled(run) {
-  return run.bold || run.italic || run.subscript || run.superscript;
-}
-
-function trimRuns(runs) {
-  const trimmed = runs.map((run) => ({ ...run }));
-  trimmed[0].text = trimmed[0].text.trimStart();
-  trimmed[trimmed.length - 1].text = trimmed[trimmed.length - 1].text.trimEnd();
-  return trimmed.filter((run) => run.text !== '');
-}
-
-/* The value, with its runs where any of them is formatted. */
-function withRuns(value, element) {
-  if (!value || !element) {
-    return value;
-  }
-  const runs = getInlineRuns(element, getJatsInline);
-  return runs.some(isStyled) ? { ...value, runs: trimRuns(runs) } : value;
+function withJatsRuns(value, element) {
+  return withRuns(value, element, getJatsInline);
 }
 
 function getFormattedValue(node, name) {
-  return withRuns(getValue(node, name), getFirstChildElement(node, name));
+  return withJatsRuns(getValue(node, name), getFirstChildElement(node, name));
 }
 
 function getParagraph(node) {
@@ -262,7 +247,7 @@ function getCitationContent(node) {
     if (child.name === 'person-group' || child.name === 'string-name') {
       return getCitationContent(child);
     }
-    const value = withRuns(
+    const value = withJatsRuns(
       { label: child.name, path: child.path, text: getTextContent(child) }, child
     );
     const href = getAttribute(child, 'xlink:href');
@@ -346,7 +331,7 @@ export function getArticleViewModel(article) {
   return {
     titles: getChildElements(articleMeta, 'title-group').flatMap(
       (group) => getValuesWithLanguage(group, 'article-title').map(
-        (value) => withLanguage(withRuns(
+        (value) => withLanguage(withJatsRuns(
           value,
           getChildElements(group, 'article-title').find((title) => title.path === value.path)
         ), group, article)
