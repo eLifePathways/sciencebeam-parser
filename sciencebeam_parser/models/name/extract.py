@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Iterable, List, Mapping, Optional, Tuple, Type, Union, cast
+from typing import Iterable, List, Mapping, Optional, Sequence, Tuple, Type, Union, cast
 
 from sciencebeam_parser.document.semantic_document import (
     SemanticAuthor,
@@ -139,6 +139,28 @@ def normalize_name_parts(name: T_SemanticName):
 MARKER_PATTERN = re.compile(r'[0-9a-zA-Z]+|,{2,}|([^0-9a-zA-Z,\s])\1*')
 
 MARKER_DELIMITER_NOTE_TYPE = 'marker_delimiter'
+
+# GROBID's AuthorParser.ET_AL_PATTERN, with any whitespace where GROBID's text has one space
+ET_AL_PATTERN = re.compile(r'et\.?\s+al\.?')
+
+
+def split_tokens_at_et_al(
+    tokens: Sequence[LayoutToken]
+) -> Tuple[List[LayoutToken], List[LayoutToken]]:
+    """The tokens before the first "et al", and the tokens from it on."""
+    text = ''
+    token_starts: List[int] = []
+    for token in tokens:
+        token_starts.append(len(text))
+        text += token.text + token.whitespace
+    match = ET_AL_PATTERN.search(text)
+    if not match:
+        return list(tokens), []
+    cut_index = next(
+        index for index, (start, token) in enumerate(zip(token_starts, tokens))
+        if start + len(token.text) > match.start()
+    )
+    return list(tokens[:cut_index]), list(tokens[cut_index:])
 
 
 def _get_local_block(text: str) -> LayoutBlock:

@@ -1,7 +1,7 @@
 import logging
 from typing import List
 
-from sciencebeam_parser.document.layout_document import LayoutBlock
+from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutToken
 from sciencebeam_parser.document.semantic_document import (
     SemanticAuthor,
     SemanticContentWrapper,
@@ -18,7 +18,8 @@ from sciencebeam_parser.document.semantic_document import (
 from sciencebeam_parser.models.name.extract import (
     NameSemanticExtractor,
     capitalize_fully,
-    iter_semantic_markers_for_layout_block
+    iter_semantic_markers_for_layout_block,
+    split_tokens_at_et_al
 )
 
 
@@ -88,6 +89,35 @@ class TestIterSemanticMarkersForLayoutBlock:
             'ab', 'c', ',,'
         ]
         assert semantic_content_wrapper.merged_block.text == 'ab, c,,'
+
+
+def _get_split_texts(text: str) -> List[str]:
+    tokens = list(LayoutBlock.for_text(text).iter_all_tokens())
+    return [
+        LayoutBlock.for_tokens(part).text
+        for part in split_tokens_at_et_al(tokens)
+    ]
+
+
+class TestSplitTokensAtEtAl:
+    def test_should_cut_at_et_al(self):
+        assert _get_split_texts('Fernley A, Mossby B, et al.: Ferns') == [
+            'Fernley A, Mossby B,', 'et al.: Ferns'
+        ]
+
+    def test_should_cut_at_et_al_without_dots(self):
+        assert _get_split_texts('Fernley A, et al') == ['Fernley A,', 'et al']
+
+    def test_should_cut_at_et_al_across_a_line_break(self):
+        tokens = [
+            LayoutToken('Fernley', whitespace=' '),
+            LayoutToken('et', whitespace='\n'),
+            LayoutToken('al.')
+        ]
+        assert split_tokens_at_et_al(tokens) == (tokens[:1], tokens[1:])
+
+    def test_should_keep_all_tokens_without_et_al(self):
+        assert _get_split_texts('Fernley A, Mossby B') == ['Fernley A, Mossby B', '']
 
 
 class TestCapitalizeFully:
