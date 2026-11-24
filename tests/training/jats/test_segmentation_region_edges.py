@@ -83,14 +83,20 @@ class TestStructuredAbstractHeading:
 class TestAppendixMatchInsideTheBody:
     """An appendix restates a sentence of the body, and can win the line."""
 
-    def _make_doc(self, at_the_page_foot: bool, restated_lines: int = 1):
+    def _make_doc(self, at_the_page_foot: bool, restated_lines: int = 1,
+                  heading_text: str = ''):
         before = [
             make_line('The', 'argument', f'continues{index}', y=100.0 + 10 * index)
             for index in range(3)
         ]
         restated = [
-            make_line('the', 'aim', 'of', 'the', f'study{index}',
-                      y=(780.0 if at_the_page_foot else 130.0) + 10 * index)
+            make_line(*heading_text.split(' '), bold=True,
+                      y=780.0 if at_the_page_foot else 130.0)
+        ] if heading_text else []
+        restated = restated + [
+            make_line('The', 'aim', 'of', 'the', f'study{index}',
+                      y=(780.0 if at_the_page_foot else 130.0)
+                      + 10 * (index + len(restated)))
             for index in range(restated_lines)
         ]
         matched = restated[0]
@@ -136,6 +142,12 @@ class TestAppendixMatchInsideTheBody:
     def test_the_appendix_itself_is_left_alone(self):
         doc, annotated, _, appendix = self._make_doc(at_the_page_foot=False)
         assert derive_labels(doc, annotated)[id(appendix)] == SEG_ANNEX
+
+    def test_a_section_opening_on_its_own_heading_is_left_alone(self):
+        doc, annotated, matched, _ = self._make_doc(
+            at_the_page_foot=False, heading_text='Ethics and consent'
+        )
+        assert derive_labels(doc, annotated)[id(matched)] == SEG_ANNEX
 
 
 class TestStatementHeading:

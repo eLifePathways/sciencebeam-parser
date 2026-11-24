@@ -2295,6 +2295,21 @@ def _continues_the_lines_around_it(seg_lines: List[_SegLine], run: List[int]) ->
     )
 
 
+def _completes_the_paragraph_above(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the run reads as the rest of the paragraph set above it."""
+    return run[0] > 0 and _follows_on_from(seg_lines[run[0]], seg_lines[run[0] - 1])
+
+
+def _is_set_inside_a_paragraph(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the page sets the run between two lines of one block of type."""
+    return (
+        _completes_the_paragraph_above(seg_lines, run)
+        and seg_lines[run[0]].block_index == seg_lines[run[0] - 1].block_index
+        and run[-1] + 1 < len(seg_lines)
+        and seg_lines[run[-1] + 1].block_index == seg_lines[run[-1]].block_index
+    )
+
+
 def _release_annex_inside_body(seg_lines: List[_SegLine]) -> None:
     """Take back a body line that matched the appendix restating it.
 
@@ -2314,17 +2329,54 @@ def _release_annex_inside_body(seg_lines: List[_SegLine]) -> None:
     statement the methods set out in full takes six lines -- so the length a
     marooned reference is held to is not the length to hold this to.  The
     paragraph test is what decides either way.
+
+    The paragraph above is the whole of that test.  What comes after the run
+    says nothing: the sentence it finishes is as often the last of the body,
+    with the reference list under it or the page ending beneath it, as one in
+    the middle.
+
+    An appended section is headed, which a sentence carried on from the line
+    above is not, so a run the page heads -- at its first line, or in the line
+    standing over it -- is the section it says it is, however closely it
+    follows the text.
     """
+    text_size = _get_prevailing_type_size(seg_lines)
+    measure_by_page = _get_measure_by_page(seg_lines)
     for run in _iter_label_runs(seg_lines, SEG_ANNEX):
         if len(run) > _RESTATED_DECLARATION_MAX_LINES:
             continue
-        if not _continues_the_lines_around_it(seg_lines, run):
+        if not _completes_the_paragraph_above(seg_lines, run):
             continue
-        if (
-            _enclosing_label(seg_lines, run[0], -1)
-            == SEG_BODY
-            == _enclosing_label(seg_lines, run[-1], 1)
+        if any(
+            _is_set_as_a_heading(seg_lines, index, text_size, measure_by_page)
+            for index in (run[0] - 1, run[0])
         ):
+            continue
+        if _enclosing_label(seg_lines, run[0], -1) == SEG_BODY:
+            for index in run:
+                seg_lines[index].seg_label = None
+
+
+def _release_statements_inside_body(seg_lines: List[_SegLine]) -> None:
+    """Take back a body line that matched the declaration restating it.
+
+    A contribution statement says what each author did in the words the
+    methods use, so a sentence of the argument occurs in both and the
+    declaration match wins the line.  One such line in the middle of a
+    paragraph carries the front matter over the heading the body opens with.
+
+    In the middle of one and nowhere else: a declaration the page prints under
+    the body is a region of its own, opening where the paragraph above it has
+    ended, and the lines of that paragraph are what tell them apart.
+    """
+    for label in _STATEMENT_LABELS:
+        for run in _iter_label_runs(seg_lines, label):
+            if len(run) > _RESTATED_DECLARATION_MAX_LINES:
+                continue
+            if not _is_set_inside_a_paragraph(seg_lines, run):
+                continue
+            if _enclosing_label(seg_lines, run[0], -1) != SEG_BODY:
+                continue
             for index in run:
                 seg_lines[index].seg_label = None
 
@@ -2665,6 +2717,19 @@ _NOTE_HEADINGS = frozenset(heading.replace(' ', '') for heading in (
     'notes de fin', 'anmerkungen',
 ))
 
+# What a journal calls the section an article opens its argument with.
+_BODY_OPENING_HEADINGS = frozenset(heading.replace(' ', '') for heading in (
+    'introduction', 'introducao', 'introdução',
+    'introduccion', 'introducción', 'introduzione',
+    'einleitung', 'einfuhrung', 'einführung',
+))
+
+# What a journal heads an abstract with, in the languages these print in.
+_ABSTRACT_HEADINGS = frozenset(heading.replace(' ', '') for heading in (
+    'abstract', 'summary', 'resumo', 'resumen', 'resume', 'résumé',
+    'riassunto', 'zusammenfassung',
+))
+
 _HEADING_NOISE_PATTERN = re.compile(r'[^a-z\u00c0-\u024f ]+')
 
 
@@ -2768,6 +2833,27 @@ def _claim_repeated_front_field(
                 break
             following.seg_label = SEG_FRONT
             position += 1
+
+
+def _settle_the_line_left_alone_between_two_regions(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Give a line standing alone between two lines of one region to that region.
+
+    Only a line the default left as the body: nothing grounds it and nothing
+    read it, where the lines either side agree on what the page is printing.
+    """
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label != SEG_BODY:
+            continue
+        if _is_grounded(seg_line, annotated):
+            continue
+        around = _enclosing_label(seg_lines, index, -1)
+        if around is None or around == seg_line.seg_label:
+            continue
+        if around != _enclosing_label(seg_lines, index, 1):
+            continue
+        seg_line.seg_label = around
 
 
 def _release_front_alone_at_the_page_top(seg_lines: List[_SegLine]) -> None:
@@ -2903,6 +2989,142 @@ def _claim_region_heading_by_position(
         if abs(position[0] - highest[0]) > _SAME_COLUMN_MAX_X_GAP:
             continue
         seg_line.seg_label = label
+
+
+def _claim_the_notes_a_section_gathers_after_the_body(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Read the notes an article gathers under a heading of its own as a section.
+
+    `<note place="footnote">` is what a page sets in its footer and the
+    numbered notes under it.  Notes an article collects after the conclusion,
+    under "NOTAS" or "Notes", are additional information printed after the
+    body, which GROBID's guidelines put in an annex and which its corpus
+    labels an annex or an endnote, never a footnote.
+
+    The running foot keeps crossing such a section, and it is a foot still.
+    """
+    body_start = next(
+        (
+            index for index, seg_line in enumerate(seg_lines)
+            if seg_line.seg_label == SEG_BODY
+        ),
+        None,
+    )
+    if body_start is None:
+        return
+    running = _get_running_texts(seg_lines)
+    for index in range(body_start, len(seg_lines)):
+        if seg_lines[index].seg_label not in (None, SEG_FOOTNOTE):
+            continue
+        if not _reads_as_a_heading(seg_lines[index].text, _NOTE_HEADINGS):
+            continue
+        gathered = [index]
+        for position in range(index + 1, len(seg_lines)):
+            label = seg_lines[position].seg_label
+            if label in (SEG_HEADNOTE, SEG_PAGE):
+                continue
+            if seg_lines[position].text in running:
+                continue
+            if label != SEG_FOOTNOTE:
+                break
+            gathered.append(position)
+        if len(gathered) == 1:
+            continue
+        for position in gathered:
+            seg_lines[position].seg_label = SEG_ANNEX
+
+
+def _reads_as_a_heading(text: str, headings: FrozenSet[str]) -> bool:
+    """Whether the line names a region rather than ending a sentence in it.
+
+    "...por su contribucion con algunas referencias bibliograficas" wraps onto
+    a line that says nothing but the name of the list.  A heading is set with
+    a capital, and the tail of a sentence is not.
+    """
+    stripped = text.strip()
+    return (
+        bool(stripped)
+        and not stripped[0].islower()
+        and _normalised_heading(stripped) in headings
+    )
+
+
+def _claim_the_list_a_reference_heading_opens(seg_lines: List[_SegLine]) -> None:
+    """Give the reference list the lines another region took from under its heading.
+
+    Where the aligner places almost none of the entries, the list is a page of
+    lines nothing claims and whichever region is running when the page begins
+    takes it.  The heading the page prints over the list says where the list
+    starts, and the first entry the aligner did place says that the stretch
+    between them is the list rather than more of the region above it.
+    """
+    for index, seg_line in enumerate(seg_lines):
+        taken = seg_line.seg_label
+        if taken is None or taken in _FURNITURE_LABELS or taken == SEG_REFERENCES:
+            continue
+        if not _reads_as_a_heading(seg_line.text, _REFERENCE_HEADINGS):
+            continue
+        swallowed = [index]
+        following: Optional[str] = None
+        for position in range(index + 1, len(seg_lines)):
+            label = seg_lines[position].seg_label
+            if label in _FURNITURE_LABELS:
+                continue
+            if label != taken:
+                following = label
+                break
+            swallowed.append(position)
+        if following != SEG_REFERENCES:
+            continue
+        for position in swallowed:
+            seg_lines[position].seg_label = SEG_REFERENCES
+
+
+def _claim_the_heading_the_body_opens_with(seg_lines: List[_SegLine]) -> None:
+    """Open the body at the heading the page prints over the first section.
+
+    Where no field grounds the opening paragraphs, one false match among them
+    is enough for the front run to grow over the argument, and the heading is
+    what says it may not.
+    """
+    for seg_line in seg_lines:
+        if seg_line.seg_label == SEG_BODY:
+            return
+        if seg_line.seg_label is not None:
+            continue
+        if _normalised_heading(seg_line.text) in _BODY_OPENING_HEADINGS:
+            seg_line.seg_label = SEG_BODY
+            return
+
+
+_ABSTRACT_HEADING_BLOCK_MAX_LINES = 3
+
+
+def _claim_the_block_an_abstract_is_headed_by(seg_lines: List[_SegLine]) -> None:
+    """Give the front matter the heading a trailing abstract is printed under.
+
+    A journal closing on its abstracts in the other languages heads each one
+    and sets the title in that language beside the heading, and the aligner
+    has nothing left to match either on: it places the title where the article
+    opens, and a reference entry takes the second printing instead.
+    """
+    blocks: Dict[int, List[int]] = {}
+    for index, seg_line in enumerate(seg_lines):
+        blocks.setdefault(seg_line.block_index, []).append(index)
+    for block in blocks.values():
+        if len(block) > _ABSTRACT_HEADING_BLOCK_MAX_LINES:
+            continue
+        if not any(
+            _normalised_heading(seg_lines[index].text) in _ABSTRACT_HEADINGS
+            for index in block
+        ):
+            continue
+        if _enclosing_label(seg_lines, block[-1], 1) != SEG_FRONT:
+            continue
+        for index in block:
+            if seg_lines[index].seg_label not in _FURNITURE_LABELS:
+                seg_lines[index].seg_label = SEG_FRONT
 
 
 # The page sets a statement's heading in bold where the JATS carries no title
@@ -4590,6 +4812,8 @@ def _tag_the_margins_and_the_headings(
     _claim_region_heading(seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated)
     _claim_region_heading_by_position(seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS)
     _claim_region_heading(seg_lines, SEG_FOOTNOTE, _NOTE_HEADINGS, annotated)
+    _claim_the_block_an_abstract_is_headed_by(seg_lines)
+    _claim_the_heading_the_body_opens_with(seg_lines)
     _claim_statement_heading(seg_lines, annotated)
     _claim_statement_by_heading(seg_lines, annotated)
 
@@ -4609,6 +4833,25 @@ def _release_the_regions_a_false_match_won(seg_lines: List[_SegLine]) -> None:
     _release_front_inside_body(seg_lines)
     _release_front_inside_the_review(seg_lines)
     _release_annex_inside_body(seg_lines)
+    _release_statements_inside_body(seg_lines)
+
+
+def _claim_the_regions_a_heading_names(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """What the page says each region is, read over the regions as they stand."""
+    _claim_statement_by_heading(seg_lines, annotated)
+    _claim_the_list_a_reference_heading_opens(seg_lines)
+    _claim_the_notes_a_section_gathers_after_the_body(seg_lines)
+
+
+def _settle_what_the_default_left(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Read the lines no field grounds again, now every region has its label."""
+    _release_trailing_heading(seg_lines, SEG_REFERENCES)
+    _release_front_alone_at_the_page_top(seg_lines)
+    _settle_the_line_left_alone_between_two_regions(seg_lines, annotated)
 
 
 def _take_back_the_page_furniture(
@@ -4747,7 +4990,7 @@ class SegmentationLabelDeriver:
         _release_front_after_the_body(seg_lines, annotated)
         # Again, because the run of declarations an article closes with is only
         # a run of declarations once the pass above has released it.
-        _claim_statement_by_heading(seg_lines, annotated)
+        _claim_the_regions_a_heading_names(seg_lines, annotated)
         # After the release above, which reads the citation as front matter
         # printed past the body and lets it go.
         _claim_the_citation_printed_after_the_references(seg_lines, annotated)
@@ -4772,10 +5015,9 @@ class SegmentationLabelDeriver:
             if sl.seg_label is None:
                 sl.seg_label = SEG_BODY
 
-        # Last, because it reads the label of what follows the region, and what
-        # follows is only settled once the default has been applied.
-        _release_trailing_heading(seg_lines, SEG_REFERENCES)
-        _release_front_alone_at_the_page_top(seg_lines)
+        # Last, because they read the label of what surrounds a line, and what
+        # surrounds it is only settled once the default has been applied.
+        _settle_what_the_default_left(seg_lines, annotated)
 
         # Build id(LayoutLine) → label mapping — safe because layout_document holds strong refs
         result: Dict[int, str] = {}
