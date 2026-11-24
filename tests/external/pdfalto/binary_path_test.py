@@ -5,6 +5,7 @@ from unittest.mock import patch
 from sciencebeam_parser.external.pdfalto.wrapper import (
     PDFALTO_VERSION,
     PdfAltoWrapper,
+    get_annotation_xml_path,
     get_default_pdfalto_binary_path
 )
 
@@ -38,3 +39,11 @@ class TestPdfAltoWrapperEnsureExecutable:
         with patch('os.chmod') as chmod_mock:
             PdfAltoWrapper(str(fake_binary)).ensure_executable()
         chmod_mock.assert_not_called()
+
+
+class TestGetAnnotationXmlPath:
+    def test_should_replace_an_xml_extension(self):
+        assert get_annotation_xml_path('/tmp/out.xml') == '/tmp/out_annot.xml'
+
+    def test_should_append_to_another_extension(self):
+        assert get_annotation_xml_path('/tmp/temp.lxml') == '/tmp/temp.lxml_annot.xml'

@@ -89,7 +89,8 @@ export SCIENCEBEAM_PARSER__PROFILE=delft_hub
 A model trained by GROBID expects the features GROBID computes, which differ in places from the
 ones the biorxiv models were trained on. A model entry says which it was trained with, through
 `feature_flavour` (`sciencebeam`, the default, or `grobid`); `delft_hub` sets `grobid` on its
-header model. So far only the header model reads it.
+header and citation models, and `grobid_crf_0_9_0` on its citation model. The header and citation
+models read it.
 
 Authors are read off the name model's labels the way GROBID 0.9.1 reads them. A marker closes
 the author it follows, and a second title, forename or surname starts a new author. An author

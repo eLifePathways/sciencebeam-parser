@@ -56,7 +56,7 @@ from sciencebeam_parser.document.semantic_document import (
     T_SemanticRawNameList
 )
 from sciencebeam_parser.document.tei_document import TeiDocument, get_tei_for_semantic_document
-from sciencebeam_parser.document.layout_document import LayoutDocument
+from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutLink
 from sciencebeam_parser.document.layout_noise_filter import (
     NOISE_ACTION_RELABEL,
     LayoutNoiseFilterConfig,
@@ -73,6 +73,7 @@ from sciencebeam_parser.models.fulltext.model import FullTextModel
 from sciencebeam_parser.models.figure.model import FigureModel
 from sciencebeam_parser.models.table.model import TableModel
 from sciencebeam_parser.models.reference_segmenter.model import ReferenceSegmenterModel
+from sciencebeam_parser.models.citation.links import set_reference_doi_from_links
 from sciencebeam_parser.models.citation.model import CitationModel
 from sciencebeam_parser.processors.ref_matching import (
     ChainedContentIdMatcher,
@@ -275,7 +276,8 @@ class FullTextProcessor:
             )
         if self.config.extract_citation_fields:
             self._extract_reference_fields_from_raw_references(
-                semantic_document=document
+                semantic_document=document,
+                links=list(layout_document.iter_all_links())
             )
             if self.config.extract_citation_authors or self.config.extract_citation_editors:
                 self._extract_reference_name_lists_from_raw_references(
@@ -618,7 +620,8 @@ class FullTextProcessor:
 
     def _iter_parse_semantic_references(
         self,
-        semantic_raw_references: List[SemanticRawReference]
+        semantic_raw_references: List[SemanticRawReference],
+        links: Sequence[LayoutLink] = ()
     ) -> Iterable[Union[SemanticReference, SemanticInvalidReference]]:
         layout_documents = [
             self.citation_model.get_layout_document_for_raw_reference(semantic_raw_reference)
@@ -648,11 +651,16 @@ class FullTextProcessor:
                     ref = semantic_content
             if ref is None:
                 raise AssertionError('no semantic reference extracted')
+            if isinstance(ref, SemanticReference):
+                set_reference_doi_from_links(
+                    ref, list(semantic_raw_reference.iter_tokens()), links
+                )
             yield ref
 
     def _extract_reference_fields_from_raw_references(
         self,
-        semantic_document: SemanticDocument
+        semantic_document: SemanticDocument,
+        links: Sequence[LayoutLink] = ()
     ):
         reference_lists = list(semantic_document.back_section.iter_by_type(
             SemanticReferenceList
@@ -663,7 +671,8 @@ class FullTextProcessor:
             for raw_reference in reference_list.iter_by_type(SemanticRawReference)
         ]
         semantic_references = list(self._iter_parse_semantic_references(
-            semantic_raw_references
+            semantic_raw_references,
+            links=links
         ))
         LOGGER.debug('semantic_references: %r', semantic_references)
         semantic_reference_by_semantic_raw_reference_id = {

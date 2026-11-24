@@ -12,6 +12,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutDocument,
     LayoutGraphic,
     LayoutLineMeta,
+    LayoutLink,
     LayoutPage,
     LayoutPageCoordinates,
     LayoutPageMeta
@@ -22,6 +23,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticCaption,
     SemanticCountry,
     SemanticEditor,
+    SemanticExternalIdentifier,
     SemanticFigure,
     SemanticFigureCitation,
     SemanticGraphic,
@@ -744,6 +746,41 @@ class TestFullTextProcessorAffiliation:
         )
         assert len(ref_citations) == 1
         assert ref_citations[0].target_content_id == 'b0'
+
+    def test_should_take_the_reference_doi_from_a_link_over_it(
+        self, fulltext_models_mock: MockFullTextModels
+    ):
+        label_block = LayoutBlock.for_text('1')
+        ref_title_block = _get_layout_block_for_text('Reference Title 1', COORDINATES_1)
+        ref_block = LayoutBlock.merge_blocks([label_block, ref_title_block])
+        fulltext_processor = FullTextProcessor(
+            fulltext_models_mock,
+            FullTextProcessorConfig(extract_citation_fields=True)
+        )
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            ref_block, '<references>'
+        )
+        reference_segmenter_model_mock = fulltext_models_mock.reference_segmenter_model_mock
+        reference_segmenter_model_mock.update_label_by_layout_block(label_block, '<label>')
+        reference_segmenter_model_mock.update_label_by_layout_block(
+            ref_title_block, '<reference>'
+        )
+        fulltext_models_mock.citation_model_mock.update_label_by_layout_block(
+            ref_title_block, '<title>'
+        )
+        layout_document = LayoutDocument(pages=[LayoutPage(
+            blocks=[ref_block],
+            links=[LayoutLink(
+                uri='https://doi.org/10.12345/fern.2001', coordinates_list=[COORDINATES_1]
+            )]
+        )])
+        semantic_document = fulltext_processor.get_semantic_document_for_layout_document(
+            layout_document=layout_document
+        )
+        ref = next(iter(semantic_document.iter_by_type_recursively(SemanticReference)))
+        assert [
+            identifier.value for identifier in ref.iter_by_type(SemanticExternalIdentifier)
+        ] == ['10.12345/fern.2001']
 
     def test_should_extract_invalid_reference_from_document(
         self, fulltext_models_mock: MockFullTextModels

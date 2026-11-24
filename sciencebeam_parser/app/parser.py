@@ -22,9 +22,14 @@ from sciencebeam_parser.app.profiles import (
 from sciencebeam_parser.config.config import AppConfig, get_download_dir
 from sciencebeam_parser.external.pdfalto.wrapper import (
     PdfAltoWrapper,
+    get_annotation_xml_path,
     get_default_pdfalto_binary_path
 )
-from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
+from sciencebeam_parser.external.pdfalto.parser import (
+    get_layout_document_with_links,
+    parse_alto_annotations_root,
+    parse_alto_root
+)
 from sciencebeam_parser.external.pdfium.renderer import (
     DEFAULT_MAX_RENDER_WORKERS,
     DEFAULT_RENDER_TIMEOUT,
@@ -611,11 +616,17 @@ class ScienceBeamParserSessionSource(_ScienceBeamParserSessionDerivative):
         self
     ) -> ScienceBeamParserSessionParsedLayoutDocument:
         pdf_path = self.lazy_pdf_path.get()
-        root = etree.parse(self.lazy_alto_xml_path.get())
+        alto_xml_path = self.lazy_alto_xml_path.get()
         layout_document = normalize_layout_document(
-            parse_alto_root(root),
+            parse_alto_root(etree.parse(alto_xml_path)),
             preserve_empty_pages=True
         )
+        annotation_xml_path = get_annotation_xml_path(alto_xml_path)
+        if os.path.exists(annotation_xml_path):
+            layout_document = get_layout_document_with_links(
+                layout_document,
+                parse_alto_annotations_root(etree.parse(annotation_xml_path))
+            )
         return ScienceBeamParserSessionParsedLayoutDocument(
             self.session,
             layout_document=layout_document,

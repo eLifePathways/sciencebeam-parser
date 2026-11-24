@@ -1,6 +1,7 @@
 from sciencebeam_parser.document.layout_document import (
     EMPTY_BLOCK,
     LayoutLineMeta,
+    LayoutLink,
     LayoutPageCoordinates,
     LayoutPageMeta,
     LayoutToken,
@@ -253,3 +254,41 @@ class TestRemoveEmptyBlocks:
         retokenized_layout_document = remove_empty_blocks(layout_document)
         page = retokenized_layout_document.pages[0]
         assert page.meta == page_meta
+
+
+TOKEN_COORDINATES = LayoutPageCoordinates(x=100, y=200, width=40, height=10, page_number=1)
+
+
+def _link_over(coordinates: LayoutPageCoordinates) -> LayoutLink:
+    return LayoutLink(uri='https://example.org/ferns', coordinates_list=[coordinates])
+
+
+class TestLayoutLink:
+    def test_should_cover_a_token_inside_its_box(self):
+        token = LayoutToken('Ferns', coordinates=TOKEN_COORDINATES)
+        assert _link_over(LayoutPageCoordinates(
+            x=90, y=195, width=100, height=20, page_number=1
+        )).covers(token)
+
+    def test_should_cover_a_token_it_overlaps_by_more_than_a_quarter(self):
+        token = LayoutToken('Ferns', coordinates=TOKEN_COORDINATES)
+        assert _link_over(TOKEN_COORDINATES.move_by(dx=20)).covers(token)
+
+    def test_should_not_cover_a_token_it_overlaps_by_a_quarter_or_less(self):
+        token = LayoutToken('Ferns', coordinates=TOKEN_COORDINATES)
+        assert not _link_over(TOKEN_COORDINATES.move_by(dx=30)).covers(token)
+
+    def test_should_not_cover_a_token_on_another_page(self):
+        token = LayoutToken('Ferns', coordinates=TOKEN_COORDINATES)
+        assert not _link_over(TOKEN_COORDINATES._replace(page_number=2)).covers(token)
+
+    def test_should_not_cover_a_token_without_coordinates(self):
+        assert not _link_over(TOKEN_COORDINATES).covers(LayoutToken('Ferns'))
+
+    def test_should_be_kept_on_its_page_when_retokenizing(self):
+        link = _link_over(TOKEN_COORDINATES)
+        layout_document = LayoutDocument(pages=[LayoutPage(
+            blocks=[LayoutBlock.for_text('Ferns of the North')],
+            links=[link]
+        )])
+        assert list(layout_document.retokenize().remove_empty_blocks().iter_all_links()) == [link]
