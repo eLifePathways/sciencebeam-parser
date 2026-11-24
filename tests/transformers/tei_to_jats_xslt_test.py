@@ -1394,6 +1394,26 @@ class TestTeiToJatsXslt:
             assert _get_text(citation, 'article-title/italic') == 'Quillonia'
             assert _get_text(citation, 'source/italic') == 'Quillonia'
 
+        def test_should_carry_a_run_in_a_reference_s_book_title(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            reference = TEI_E.biblStruct(
+                {XML_ID: 'b0'},
+                TEI_E.analytic(TEI_E.title('Roots', level='a', type='main')),
+                TEI_E.monogr(TEI_E.title('Ferns of ', _italic('Quillonia'), level='m'))
+            )
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[reference])))
+            citation = _get_item(jats, 'back/ref-list/ref/element-citation')
+            assert _get_text(citation, 'source/italic') == 'Quillonia'
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'Roots. Ferns of Quillonia.',
+                TEI_E.analytic(TEI_E.title('Roots', level='a', type='main')),
+                TEI_E.monogr(TEI_E.title('Ferns of ', _italic('Quillonia'), level='m'))
+            )) == (
+                '<article-title>Roots</article-title>. '
+                '<source>Ferns of <italic>Quillonia</italic></source>.</mixed-citation>'
+            )
+
         def test_should_carry_a_run_in_a_printed_reference_s_title_and_source(
             self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
         ):
