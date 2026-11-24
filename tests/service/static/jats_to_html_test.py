@@ -595,6 +595,82 @@ def iter_labelled_values(value) -> List[dict]:
     return []
 
 
+class TestInlineFormatting:
+    def test_should_read_sub_and_superscript_runs_of_a_paragraph(self):
+        view_model = get_article_view_model(get_article_xml(
+            body='<sec><p>CO<sub>2</sub> at 10<sup>5</sup></p></sec>'
+        ))
+        runs = view_model['sections'][0]['blocks'][0]['runs']
+        assert [
+            (run['text'], run.get('subscript'), run.get('superscript')) for run in runs
+        ] == [
+            ('CO', None, None), ('2', True, None), (' at 10', None, None), ('5', None, True)
+        ]
+
+    def test_should_read_the_runs_of_a_printed_reference_s_title(self):
+        view_model = get_article_view_model(get_article_xml(back=(
+            '<ref-list><ref id="b0"><mixed-citation>'
+            '<article-title>Roots of <italic>Quillonia</italic></article-title>.'
+            '</mixed-citation></ref></ref-list>'
+        )))
+        title = without_paths(view_model['references'][0]['content'][0])
+        assert title == {
+            'label': 'article-title',
+            'text': 'Roots of Quillonia',
+            'runs': [{'text': 'Roots of '}, {'text': 'Quillonia', 'italic': True}]
+        }
+
+    def test_should_read_no_runs_where_a_value_carries_no_formatting(self):
+        view_model = get_article_view_model(get_article_xml(
+            body='<sec><title>Methods</title><p>Text.</p></sec>'
+        ))
+        assert 'runs' not in view_model['sections'][0]['title']
+
+    def test_should_show_a_printed_reference_s_title_in_italics(self):
+        html = get_rendered_article(get_article_xml(back=(
+            '<ref-list><ref id="b0"><mixed-citation>'
+            '<article-title>Roots of <italic>Quillonia</italic></article-title>.'
+            '</mixed-citation></ref></ref-list>'
+        )))
+        assert '<em>Quillonia</em>' in html
+        assert 'Roots of Quillonia.' in get_text_without_labels(html)
+
+    def test_should_show_a_reference_s_source_in_italics(self):
+        html = get_rendered_article(get_article_xml(back=(
+            '<ref-list><ref id="b0"><element-citation>'
+            '<source>Bulletin of <italic>Quillonia</italic></source>'
+            '</element-citation></ref></ref-list>'
+        )))
+        assert '<em>Quillonia</em>' in html
+
+    def test_should_show_the_article_title_in_italics(self):
+        html = get_rendered_article(get_article_xml(front=(
+            '<title-group><article-title>Roots of <italic>Quillonia</italic>'
+            '</article-title></title-group>'
+        )))
+        assert '<em>Quillonia</em>' in html
+
+    def test_should_show_formatting_in_section_abstract_and_caption_titles(self):
+        html = get_rendered_article(get_article_xml(
+            front='<abstract><title>Summary <italic>a</italic></title><p>Text.</p></abstract>',
+            body=(
+                '<sec><title>Growth at 10<sup>5</sup></title><p>Text.</p>'
+                '<fig id="fig_0"><caption><title>CO<sub>2</sub> uptake</title>'
+                '<p>Text.</p></caption></fig></sec>'
+            )
+        ))
+        assert '<em>a</em>' in html
+        assert '<sup>5</sup>' in html
+        assert '<sub>2</sub>' in html
+
+    def test_should_show_sub_and_superscript_in_a_paragraph(self):
+        html = get_rendered_article(get_article_xml(
+            body='<sec><p>CO<sub>2</sub> at 10<sup>5</sup></p></sec>'
+        ))
+        assert '<sub>2</sub>' in html
+        assert '<sup>5</sup>' in html
+
+
 class TestElementLabels:
     def test_should_name_the_element_every_value_came_from(self):
         values = iter_labelled_values(get_article_view_model(FULL_ARTICLE_XML))

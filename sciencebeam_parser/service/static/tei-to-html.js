@@ -20,7 +20,8 @@ import {
   getTextContent,
   getValue,
   getValuesWithLanguage,
-  parseXmlNode
+  parseXmlNode,
+  withRuns
 } from './xml-nodes.js';
 import { renderArticleViewModel } from './article-view.js';
 
@@ -57,6 +58,18 @@ function getTeiInline(node) {
   return null;
 }
 
+function withTeiRuns(value, element) {
+  return withRuns(value, element, getTeiInline);
+}
+
+function getFormattedValue(node, name) {
+  return withTeiRuns(getValue(node, name), getFirstChildElement(node, name));
+}
+
+function getFormattedNodeValue(node, label) {
+  return withTeiRuns(getNodeValue(node, label), node);
+}
+
 function getElementId(node) {
   return getAttribute(node, 'xml:id') || getAttribute(node, 'id');
 }
@@ -89,7 +102,7 @@ function getFigure(node) {
     path: node.path,
     id: getElementId(node),
     heading: getValue(node, 'label'),
-    title: getValue(node, 'head'),
+    title: getFormattedValue(node, 'head'),
     paragraphs: getChildElements(node, 'figDesc').map(getParagraph),
     rows: [],
     graphics: getChildElements(node, 'graphic').map((graphic) => ({
@@ -127,7 +140,7 @@ function getDivision(node) {
     path: node.path,
     id: getElementId(node),
     heading: getSectionNumber(node),
-    title: getValue(node, 'head'),
+    title: getFormattedValue(node, 'head'),
     blocks: getDivisionBlocks(node)
   };
 }
@@ -229,12 +242,12 @@ function getReference(node) {
     heading: getNodeValue(getChildByAttribute(node, 'note', 'type', 'label'), 'note'),
     authors: getAuthorElements(authorParent || node).map(getPersonNameParts),
     articleTitle: analytic
-      ? getNodeValue(
+      ? getFormattedNodeValue(
         getChildByAttribute(analytic, 'title', 'level', 'a'), 'title'
       )
       : null,
     source: monogr
-      ? getNodeValue(getChildByAttribute(monogr, 'title', 'level', 'j'), 'title')
+      ? getFormattedNodeValue(getChildByAttribute(monogr, 'title', 'level', 'j'), 'title')
       : null,
     year: imprint
       ? getNodeValue(getFirstChildElement(imprint, 'date'), 'date')
@@ -268,7 +281,7 @@ function getAbstract(abstract) {
   const value = {
     label: abstract.name,
     path: abstract.path,
-    title: head ? { label: head.name, path: head.path, text: getTextContent(head).trim() } : null,
+    title: withTeiRuns(getNodeValue(head), head),
     paragraphs: getChildElements(division, 'p').map(getParagraph)
   };
   return language ? { ...value, language } : value;
@@ -306,7 +319,12 @@ export function getTeiArticleViewModel(article) {
     ? getFirstDescendantElement(references, 'listBibl')
     : null;
   return {
-    titles: titleStmt ? getValuesWithLanguage(titleStmt, 'title') : [],
+    titles: titleStmt
+      ? getValuesWithLanguage(titleStmt, 'title').map((value) => withTeiRuns(
+        value,
+        getChildElements(titleStmt, 'title').find((title) => title.path === value.path)
+      ))
+      : [],
     language: getLanguageValue(text),
     journal: getNodeValue(journalTitle, 'title'),
     authorGroup: analytic

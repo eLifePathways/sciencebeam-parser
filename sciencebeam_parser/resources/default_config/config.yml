@@ -63,7 +63,9 @@ xslt:
       # parameters for tei-to-jats.xsl
       output_parameters: 'false'
       output_bold: 'false'
-      output_italic: 'false'
+      output_italic: 'true'
+      output_subscript: 'true'
+      output_superscript: 'true'
       output_empty_figure_graphic: 'false'
       acknowledgement_target: 'ack'
       annex_target: 'back'

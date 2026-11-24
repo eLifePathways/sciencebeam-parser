@@ -18,7 +18,9 @@
   />
   <xsl:param name="output_parameters" select="'false'"/>
   <xsl:param name="output_bold" select="'false'"/>
-  <xsl:param name="output_italic" select="'false'"/>
+  <xsl:param name="output_italic" select="'true'"/>
+  <xsl:param name="output_subscript" select="'true'"/>
+  <xsl:param name="output_superscript" select="'true'"/>
   <xsl:param name="output_empty_figure_graphic" select="'false'"/>
   <xsl:param name="acknowledgement_target" select="'ack'"/>
   <xsl:param name="annex_target" select="'back'"/>
@@ -157,7 +159,7 @@
                inside it as a title. -->
           <xsl:if test="tei:div/tei:head">
             <title>
-              <xsl:value-of select="tei:div/tei:head"/>
+              <xsl:apply-templates select="(tei:div/tei:head)[1]/node()"/>
             </title>
           </xsl:if>
           <xsl:apply-templates select="tei:div/tei:p"/>
@@ -451,19 +453,19 @@
       <xsl:choose>
         <xsl:when test="tei:analytic/tei:title[@type='main']">
           <article-title>
-            <xsl:value-of select="tei:analytic/tei:title[@type='main']"/>
+            <xsl:apply-templates select="tei:analytic/tei:title[@type='main'][1]"/>
           </article-title>
         </xsl:when>
         <xsl:when test="tei:monogr/tei:title[@type='main']">
           <article-title>
-            <xsl:value-of select="tei:monogr/tei:title[@type='main']"/>
+            <xsl:apply-templates select="tei:monogr/tei:title[@type='main'][1]"/>
           </article-title>
         </xsl:when>
       </xsl:choose>
 
       <xsl:if test="tei:monogr/tei:title[@level='j']">
         <source>
-          <xsl:value-of select="tei:monogr/tei:title[@level='j']"/>
+          <xsl:apply-templates select="tei:monogr/tei:title[@level='j'][1]"/>
         </source>
       </xsl:if>
 
@@ -685,11 +687,11 @@
   </xsl:template>
 
   <xsl:template match="tei:title[@level='j']" mode="cite-part">
-    <source><xsl:value-of select="."/></source>
+    <source><xsl:apply-templates select="node()"/></source>
   </xsl:template>
 
   <xsl:template match="tei:title" mode="cite-part">
-    <article-title><xsl:value-of select="."/></article-title>
+    <article-title><xsl:apply-templates select="node()"/></article-title>
   </xsl:template>
 
   <xsl:template match="tei:date" mode="cite-part">
@@ -1001,21 +1003,21 @@
     </p>
   </xsl:template>
 
-  <xsl:template match="tei:hi[@rend='italic']">
+  <xsl:template match="tei:hi">
+    <xsl:variable name="element">
+      <xsl:choose>
+        <xsl:when test="@rend = 'italic' and $output_italic = 'true'">italic</xsl:when>
+        <xsl:when test="@rend = 'bold' and $output_bold = 'true'">bold</xsl:when>
+        <xsl:when test="@rend = 'subscript' and $output_subscript = 'true'">sub</xsl:when>
+        <xsl:when test="@rend = 'superscript' and $output_superscript = 'true'">sup</xsl:when>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:variable name="field"
+      select="ancestor::*[self::tei:title or self::tei:head or self::tei:p or self::tei:figDesc][1]"/>
+    <xsl:variable name="covers-the-whole-field" select="normalize-space(.) = normalize-space($field)"/>
     <xsl:choose>
-      <xsl:when test="$output_italic = 'true'">
-        <italic><xsl:apply-templates select="node()"/></italic>
-      </xsl:when>
-      <xsl:otherwise>
-        <xsl:apply-templates select="node()"/>
-      </xsl:otherwise>
-    </xsl:choose>
-  </xsl:template>
-
-  <xsl:template match="tei:hi[@rend='bold']">
-    <xsl:choose>
-      <xsl:when test="$output_bold = 'true'">
-        <bold><xsl:apply-templates select="node()"/></bold>
+      <xsl:when test="string($element) and not($covers-the-whole-field)">
+        <xsl:element name="{$element}"><xsl:apply-templates select="node()"/></xsl:element>
       </xsl:when>
       <xsl:otherwise>
         <xsl:apply-templates select="node()"/>

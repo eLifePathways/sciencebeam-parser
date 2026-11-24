@@ -457,6 +457,50 @@ FULL_TEI_XML = get_tei_xml(
 )
 
 
+class TestInlineFormatting:
+    def test_should_read_the_runs_of_the_article_title(self):
+        view_model = get_tei_view_model(get_tei_xml(header=(
+            '<fileDesc><titleStmt><title level="a" type="main">'
+            'Roots of <hi rend="italic">Quillonia</hi></title></titleStmt></fileDesc>'
+        )))
+        assert without_paths(view_model['titles']) == [{
+            'label': 'title',
+            'text': 'Roots of Quillonia',
+            'runs': [{'text': 'Roots of '}, {'text': 'Quillonia', 'italic': True}]
+        }]
+
+    def test_should_read_no_runs_where_a_title_carries_no_formatting(self):
+        view_model = get_tei_view_model(get_tei_xml(header=TITLE_STMT))
+        assert 'runs' not in view_model['titles'][0]
+
+    def test_should_show_a_reference_s_title_and_source_in_italics(self):
+        html = get_rendered_tei(get_tei_xml(back=(
+            '<div type="references"><listBibl><biblStruct xml:id="b0">'
+            '<analytic><title level="a" type="main">Roots of '
+            '<hi rend="italic">Quillonia</hi></title></analytic>'
+            '<monogr><title level="j">Bulletin of <hi rend="italic">Sporia</hi></title>'
+            '</monogr></biblStruct></listBibl></div>'
+        )))
+        assert '<em>Quillonia</em>' in html
+        assert '<em>Sporia</em>' in html
+
+    def test_should_show_formatting_in_section_abstract_and_figure_titles(self):
+        html = get_rendered_tei(get_tei_xml(
+            header=(
+                '<profileDesc><abstract><div><head>Summary <hi rend="italic">a</hi></head>'
+                '<p>Text.</p></div></abstract></profileDesc>'
+            ),
+            body=(
+                '<div><head>Growth at 10<hi rend="superscript">5</hi></head><p>Text.</p>'
+                '<figure xml:id="fig_0"><head>CO<hi rend="subscript">2</hi> uptake</head>'
+                '</figure></div>'
+            )
+        ))
+        assert '<em>a</em>' in html
+        assert '<sup>5</sup>' in html
+        assert '<sub>2</sub>' in html
+
+
 class TestElementPaths:
     def test_should_say_where_in_the_document_a_value_was_found(self):
         view_model = get_tei_view_model(FULL_TEI_XML)

@@ -149,6 +149,26 @@ export function getInlineRuns(node, getInline, style) {
   return runs.filter((run) => run.text !== '');
 }
 
+function isStyled(run) {
+  return run.bold || run.italic || run.subscript || run.superscript;
+}
+
+function trimRuns(runs) {
+  const trimmed = runs.map((run) => ({ ...run }));
+  trimmed[0].text = trimmed[0].text.trimStart();
+  trimmed[trimmed.length - 1].text = trimmed[trimmed.length - 1].text.trimEnd();
+  return trimmed.filter((run) => run.text !== '');
+}
+
+/* The value, with the element's runs where any of them is formatted. */
+export function withRuns(value, element, getInline) {
+  if (!value || !element) {
+    return value;
+  }
+  const runs = getInlineRuns(element, getInline);
+  return runs.some(isStyled) ? { ...value, runs: trimRuns(runs) } : value;
+}
+
 export function getXmlNode(element) {
   return {
     name: element.localName,

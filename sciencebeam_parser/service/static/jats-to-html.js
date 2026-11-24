@@ -22,7 +22,8 @@ import {
   getLanguage,
   getLanguageValue,
   getValuesWithLanguage,
-  parseXmlNode
+  parseXmlNode,
+  withRuns
 } from './xml-nodes.js';
 import { renderArticleViewModel } from './article-view.js';
 
@@ -47,7 +48,12 @@ const REFERENCE_FIELDS = [
   ['lastPage', 'lpage']
 ];
 
-const JATS_RUN_STYLES = { bold: { bold: true }, italic: { italic: true } };
+const JATS_RUN_STYLES = {
+  bold: { bold: true },
+  italic: { italic: true },
+  sub: { subscript: true },
+  sup: { superscript: true }
+};
 
 function getJatsInline(node) {
   if (JATS_RUN_STYLES[node.name]) {
@@ -57,6 +63,14 @@ function getJatsInline(node) {
     return { leaf: { reference: getAttribute(node, 'rid') } };
   }
   return null;
+}
+
+function withJatsRuns(value, element) {
+  return withRuns(value, element, getJatsInline);
+}
+
+function getFormattedValue(node, name) {
+  return withJatsRuns(getValue(node, name), getFirstChildElement(node, name));
 }
 
 function getParagraph(node) {
@@ -72,7 +86,7 @@ function getCaption(node) {
     path: node.path,
     heading: getValue(node, 'label'),
     caption: caption ? { label: caption.name, path: caption.path } : null,
-    title: caption ? getValue(caption, 'title') : null,
+    title: caption ? getFormattedValue(caption, 'title') : null,
     paragraphs: caption ? getChildElements(caption, 'p').map(getParagraph) : []
   };
 }
@@ -131,7 +145,7 @@ function getSection(node) {
     path: node.path,
     id: getAttribute(node, 'id'),
     heading: getValue(node, 'label'),
-    title: getValue(node, 'title'),
+    title: getFormattedValue(node, 'title'),
     blocks: getSectionBlocks(node)
   };
 }
@@ -233,7 +247,9 @@ function getCitationContent(node) {
     if (child.name === 'person-group' || child.name === 'string-name') {
       return getCitationContent(child);
     }
-    const value = { label: child.name, path: child.path, text: getTextContent(child) };
+    const value = withJatsRuns(
+      { label: child.name, path: child.path, text: getTextContent(child) }, child
+    );
     const href = getAttribute(child, 'xlink:href');
     return [href ? { ...value, href } : value];
   });
@@ -274,7 +290,7 @@ function getReference(node) {
       : null
   };
   REFERENCE_FIELDS.forEach(([key, name]) => {
-    reference[key] = citation ? getValue(citation, name) : null;
+    reference[key] = citation ? getFormattedValue(citation, name) : null;
   });
   return reference;
 }
@@ -290,7 +306,7 @@ function getAbstract(abstract, article) {
   const value = {
     label: abstract.name,
     path: abstract.path,
-    title: getValue(abstract, 'title'),
+    title: getFormattedValue(abstract, 'title'),
     paragraphs: getDescendantElements(abstract, 'p').map(getParagraph)
   };
   return language ? { ...value, language } : value;
@@ -315,7 +331,10 @@ export function getArticleViewModel(article) {
   return {
     titles: getChildElements(articleMeta, 'title-group').flatMap(
       (group) => getValuesWithLanguage(group, 'article-title').map(
-        (value) => withLanguage(value, group, article)
+        (value) => withLanguage(withJatsRuns(
+          value,
+          getChildElements(group, 'article-title').find((title) => title.path === value.path)
+        ), group, article)
       )
     ),
     language: getLanguageValue(article),

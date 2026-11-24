@@ -11,7 +11,7 @@ from lxml import etree
 from lxml.builder import ElementMaker
 
 from sciencebeam_parser.utils.xml import get_text_content
-from sciencebeam_parser.document.layout_document import LayoutBlock
+from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutFont, LayoutToken
 from sciencebeam_parser.document.semantic_document import (
     SemanticAffiliationAddress,
     SemanticAuthor,
@@ -202,9 +202,11 @@ def _tei(  # pylint: disable=too-many-arguments
             element
             for heading, abstract in abstract_headings
             for element in (
-                [TEI_E.abstract(TEI_E.div(TEI_E.head(heading), TEI_E.p(abstract)))]
+                [TEI_E.abstract(TEI_E.div(
+                    TEI_E.head(*_as_list(heading)), TEI_E.p(*_as_list(abstract))
+                ))]
                 if heading
-                else [TEI_E.abstract(TEI_E.div(TEI_E.p(abstract)))]
+                else [TEI_E.abstract(TEI_E.div(TEI_E.p(*_as_list(abstract))))]
             )
         ]))
     if application is not None:
@@ -213,6 +215,10 @@ def _tei(  # pylint: disable=too-many-arguments
         teiHeader,
         tei_text
     )
+
+
+def _as_list(content: Any) -> list:
+    return content if isinstance(content, list) else [content]
 
 
 def _application(
@@ -350,6 +356,20 @@ def _person(surname: str, *forenames: str) -> etree.ElementBase:
     return TEI_E.author(TEI_E.persName(
         TEI_E.surname(surname), *[TEI_E.forename(forename) for forename in forenames]
     ))
+
+
+def _italic(text: str) -> etree.ElementBase:
+    return TEI_E.hi({'rend': 'italic'}, text)
+
+
+def _formatted_paragraph_of(
+    tei_to_jats_xslt_fn, paragraph: etree.ElementBase, parameters: Optional[dict] = None
+) -> str:
+    jats = etree.fromstring(tei_to_jats_xslt_fn(
+        _tei(body=TEI_E.body(TEI_E.div(paragraph))), parameters
+    ))
+    p = _get_item(jats, 'body/sec/p')
+    return etree.tostring(p, encoding='unicode', with_tail=False).split('>', 1)[1][:-len('</p>')]
 
 
 def _mixed_citation_of(tei_to_jats_xslt_fn, bibl_struct) -> str:
@@ -1086,62 +1106,6 @@ class TestTeiToJatsXslt:
             assert _get_text(jats, 'body/sec/label') == '3.'
             assert _get_text(jats, 'body/sec/title') == VALUE_1
 
-        def test_should_add_italics_formatting_to_head_and_p_divs(
-            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
-        ):
-            jats = etree.fromstring(tei_to_jats_xslt_fn(
-                _tei(body=TEI_E.body(TEI_E.div(
-                    TEI_E.head(TEI_E.hi({'rend': 'italic'}, VALUE_1)),
-                    TEI_E.p(TEI_E.hi({'rend': 'italic'}, VALUE_2))
-                ))),
-                {'output_italic': 'true'}
-            ))
-            assert _get_text(jats, 'body/sec/title/italic') == VALUE_1
-            assert _get_text(jats, 'body/sec/p/italic') == VALUE_2
-
-        def test_should_not_add_italics_formatting_if_disabled(
-            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
-        ):
-            jats = etree.fromstring(tei_to_jats_xslt_fn(
-                _tei(body=TEI_E.body(TEI_E.div(
-                    TEI_E.head(TEI_E.hi({'rend': 'italic'}, VALUE_1)),
-                    TEI_E.p(TEI_E.hi({'rend': 'italic'}, VALUE_2))
-                ))),
-                {'output_italic': 'false'}
-            ))
-            assert _get_text(jats, 'body/sec/title') == VALUE_1
-            assert not jats.xpath('body/sec/title/italic')
-            assert _get_text(jats, 'body/sec/p') == VALUE_2
-            assert not jats.xpath('body/sec/p/italic')
-
-        def test_should_add_bold_formatting_to_head_and_p_divs(
-            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
-        ):
-            jats = etree.fromstring(tei_to_jats_xslt_fn(
-                _tei(body=TEI_E.body(TEI_E.div(
-                    TEI_E.head(TEI_E.hi({'rend': 'bold'}, VALUE_1)),
-                    TEI_E.p(TEI_E.hi({'rend': 'bold'}, VALUE_2))
-                ))),
-                {'output_bold': 'true'}
-            ))
-            assert _get_text(jats, 'body/sec/title/bold') == VALUE_1
-            assert _get_text(jats, 'body/sec/p/bold') == VALUE_2
-
-        def test_should_not_add_bold_formatting_to_head_and_p_divs_if_disabled(
-            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
-        ):
-            jats = etree.fromstring(tei_to_jats_xslt_fn(
-                _tei(body=TEI_E.body(TEI_E.div(
-                    TEI_E.head(TEI_E.hi({'rend': 'bold'}, VALUE_1)),
-                    TEI_E.p(TEI_E.hi({'rend': 'bold'}, VALUE_2))
-                ))),
-                {'output_bold': 'false'}
-            ))
-            assert _get_text(jats, 'body/sec/title') == VALUE_1
-            assert not jats.xpath('body/sec/title/bold')
-            assert _get_text(jats, 'body/sec/p') == VALUE_2
-            assert not jats.xpath('body/sec/p/bold')
-
         def test_should_extract_figures_with_graphic_having_url(
             self,
             tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
@@ -1303,6 +1267,174 @@ class TestTeiToJatsXslt:
             ))
             assert _get_text(jats, 'body/sec/p') == 'Some ref'
             assert not jats.xpath('body/sec/p/xref')
+
+    class TestInlineFormatting:
+        @pytest.mark.parametrize('rend,jats_element', [
+            ('italic', 'italic'), ('subscript', 'sub'), ('superscript', 'sup')
+        ])
+        def test_should_write_a_run_by_default(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn, rend: str, jats_element: str
+        ):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(
+                'x', TEI_E.hi({'rend': rend}, '2'), ' more'
+            )) == f'x<{jats_element}>2</{jats_element}> more'
+
+        def test_should_leave_bold_off_by_default(self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(
+                'A ', TEI_E.hi({'rend': 'bold'}, 'word'), ' here'
+            )) == 'A word here'
+
+        def test_should_write_bold_where_it_is_turned_on(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(
+                'A ', TEI_E.hi({'rend': 'bold'}, 'word'), ' here'
+            ), {'output_bold': 'true'}) == 'A <bold>word</bold> here'
+
+        @pytest.mark.parametrize('rend,parameter', [
+            ('italic', 'output_italic'),
+            ('bold', 'output_bold'),
+            ('subscript', 'output_subscript'),
+            ('superscript', 'output_superscript')
+        ])
+        def test_should_write_a_run_as_plain_text_where_its_style_is_turned_off(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn, rend: str, parameter: str
+        ):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(
+                'A ', TEI_E.hi({'rend': rend}, 'word'), ' here'
+            ), {parameter: 'false'}) == 'A word here'
+
+        def test_should_nest_runs_as_the_tei_does(self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(
+                'Grown in ',
+                TEI_E.hi({'rend': 'italic'}, 'K', TEI_E.hi({'rend': 'subscript'}, 'm')),
+                ' medium'
+            )) == 'Grown in <italic>K<sub>m</sub></italic> medium'
+
+        def test_should_drop_a_run_covering_the_whole_field(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(
+                ' ', TEI_E.hi({'rend': 'italic'}, 'A whole paragraph'), ' '
+            )) == ' A whole paragraph '
+
+        def test_should_keep_a_run_with_punctuation_outside_it(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(
+                TEI_E.hi({'rend': 'italic'}, 'Quillonia'), ','
+            )) == '<italic>Quillonia</italic>,'
+
+        def test_should_keep_a_run_inside_one_covering_the_whole_field(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(TEI_E.hi(
+                {'rend': 'italic'}, 'Rate of 10', TEI_E.hi({'rend': 'superscript'}, '5')
+            ))) == 'Rate of 10<sup>5</sup>'
+
+        def test_should_leave_a_callout_s_text_plain(self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn):
+            assert _formatted_paragraph_of(tei_to_jats_xslt_fn, TEI_E.p(
+                'Shown before', TEI_E.ref(
+                    {'type': 'bibr', 'target': '#b0'}, TEI_E.hi({'rend': 'superscript'}, '4,5')
+                ), '.'
+            )) == 'Shown before<xref ref-type="bibr" rid="b0">4,5</xref>.'
+
+        def test_should_carry_a_run_in_the_article_title(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(titleStmt=TEI_E.titleStmt(
+                TEI_E.title('Growth of ', _italic('Quillonia'), ' roots', level='a', type='main')
+            ))))
+            assert _get_text(
+                jats, 'front/article-meta/title-group/article-title/italic'
+            ) == 'Quillonia'
+
+        def test_should_carry_a_run_in_a_section_title(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(body=TEI_E.body(TEI_E.div(
+                TEI_E.head('Roots of ', _italic('Quillonia')), TEI_E.p(VALUE_1)
+            )))))
+            assert _get_text(jats, 'body/sec/title/italic') == 'Quillonia'
+
+        def test_should_carry_a_run_in_the_abstract_and_its_heading(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(abstract_headings=[(
+                ['Summary for ', _italic('Quillonia')],
+                ['Roots of ', _italic('Quillonia'), ' grow.']
+            )])))
+            assert _get_text(jats, 'front/article-meta/abstract/title/italic') == 'Quillonia'
+            assert _get_text(jats, 'front/article-meta/abstract/p/italic') == 'Quillonia'
+
+        @pytest.mark.parametrize('figure_type', [None, 'table'])
+        def test_should_carry_a_run_in_a_caption(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn, figure_type: Optional[str]
+        ):
+            figure = TEI_E.figure(
+                {XML_ID: 'fig_0'}, TEI_E.figDesc('Roots of ', _italic('Quillonia'), '.')
+            )
+            if figure_type:
+                figure.attrib['type'] = figure_type
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(body=TEI_E.body(figure))))
+            assert _get_text(jats, 'body/sec//caption/p/italic') == 'Quillonia'
+
+        def test_should_carry_a_run_in_a_reference_title_and_source(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            jats = etree.fromstring(tei_to_jats_xslt_fn(_tei(references=[TEI_E.biblStruct(
+                {XML_ID: 'b0'},
+                TEI_E.analytic(TEI_E.title(
+                    'Roots of ', _italic('Quillonia'), level='a', type='main'
+                )),
+                TEI_E.monogr(TEI_E.title('Bulletin of ', _italic('Quillonia'), level='j'))
+            )])))
+            citation = _get_item(jats, 'back/ref-list/ref/element-citation')
+            assert _get_text(citation, 'article-title/italic') == 'Quillonia'
+            assert _get_text(citation, 'source/italic') == 'Quillonia'
+
+        def test_should_carry_a_run_in_a_printed_reference_s_title_and_source(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'Roots of Quillonia. Bulletin of Quillonia. 2019.',
+                TEI_E.analytic(TEI_E.title(
+                    'Roots of ', _italic('Quillonia'), level='a', type='main'
+                )),
+                TEI_E.monogr(TEI_E.title('Bulletin of ', _italic('Quillonia'), level='j'))
+            )) == (
+                '<article-title>Roots of <italic>Quillonia</italic></article-title>. '
+                '<source>Bulletin of <italic>Quillonia</italic></source>. 2019.'
+                '</mixed-citation>'
+            )
+
+        def test_should_drop_a_run_covering_a_whole_reference_source(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            assert _mixed_citation_of(tei_to_jats_xslt_fn, _printed_reference(
+                'A title. J Timber Eng.',
+                TEI_E.monogr(TEI_E.title(_italic('J Timber Eng'), level='j'))
+            )) == 'A title. <source>J Timber Eng</source>.</mixed-citation>'
+
+        def test_should_carry_the_runs_the_parser_produced(
+            self, tei_to_jats_xslt_fn: T_TeiToJatsXsltFn
+        ):
+            semantic_document = SemanticDocument()
+            section = semantic_document.body_section.add_new_section()
+            section.add_new_paragraph().add_block_content(
+                LayoutBlock.for_tokens([
+                    LayoutToken('Roots', whitespace=' '),
+                    LayoutToken('of', whitespace=' '),
+                    LayoutToken(
+                        'Quillonia', whitespace='', font=LayoutFont('italic', is_italics=True)
+                    ),
+                    LayoutToken('.')
+                ])
+            )
+            jats = etree.fromstring(tei_to_jats_xslt_fn(
+                get_tei_for_semantic_document(semantic_document).root
+            ))
+            assert _get_text(jats, 'body/sec/p/italic') == 'Quillonia'
 
     class TestBack:
         def test_should_add_back(self, tei_to_jats_xslt_fn):
