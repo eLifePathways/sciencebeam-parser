@@ -17,6 +17,7 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_CONTRIBUTION,
     SEG_FOOTNOTE,
     SEG_FRONT,
+    SEG_REFERENCES,
     SEG_REVIEW,
 )
 from tests.training.jats.segmentation_fixtures import (
@@ -132,6 +133,29 @@ class TestTheStandardsTheJournalPublishesUnder:
             ' principles of the Committee on Publication Ethics (COPE).'
         )
         assert derive_labels(doc, annotated)[id(standing)] == SEG_FRONT
+
+    def test_an_entry_that_cites_the_body_is_left_to_the_list(self):
+        entries = [
+            make_line('A', 'reference', f'listed{index}', y=100.0 + 20 * index)
+            for index in range(2)
+        ]
+        cited = make_line('Committee', 'on', 'Publication', 'Ethics', '.',
+                          'Guidelines', 'on', 'good', 'practice', '.', '2003', '.',
+                          y=140.0)
+        after = [
+            make_line('A', 'reference', f'listed{index}', y=160.0 + 20 * index)
+            for index in range(3)
+        ]
+        listed = entries + [cited] + after
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=listed)], meta=make_page_meta(1)),
+        ])
+        order = list(doc.iter_all_lines())
+        annotated = annotate(doc, {
+            order.index(line): JatsFieldNames.REFERENCE for line in listed
+        })
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in listed] == [SEG_REFERENCES] * 6
 
     def test_a_line_that_names_no_body_is_left_to_the_list(self):
         doc, annotated, standing = self._make_doc(

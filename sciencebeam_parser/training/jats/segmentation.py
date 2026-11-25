@@ -1116,8 +1116,27 @@ def _claim_the_citation_printed_after_the_references(
             seg_line.seg_label = SEG_FRONT
 
 
+def _runs_to_the_end_of_its_block(
+    seg_lines: List[_SegLine], index: int, annotated: JatsAnnotatedLayoutDocument
+) -> bool:
+    """Whether what follows the line in its block is the journal's own too.
+
+    An entry of the list cites the body whose standards the journal publishes
+    under as readily as the journal names it, and the entry has the rest of
+    the list under it in the block the page sets them in.
+    """
+    block_index = seg_lines[index].block_index
+    return not any(
+        _is_grounded(seg_line, annotated)
+        for seg_line in seg_lines[index + 1:]
+        if seg_line.block_index == block_index
+    )
+
+
 def _claim_the_block_printed_after_the_references(
-    seg_lines: List[_SegLine], pattern: Pattern[str]
+    seg_lines: List[_SegLine],
+    pattern: Pattern[str],
+    annotated: JatsAnnotatedLayoutDocument,
 ) -> None:
     """Give the front matter each block past the list that the pattern opens."""
     opened = _get_first_reference_index(seg_lines)
@@ -1127,6 +1146,8 @@ def _claim_the_block_printed_after_the_references(
         if seg_lines[index].seg_label in _TRAILING_MATTER_LABELS:
             continue
         if not pattern.match(seg_lines[index].text):
+            continue
+        if not _runs_to_the_end_of_its_block(seg_lines, index, annotated):
             continue
         block_index = seg_lines[index].block_index
         for seg_line in seg_lines[index:]:
@@ -1338,7 +1359,7 @@ _PUBLISHING_STANDARDS_PATTERN = re.compile(
 
 
 def _claim_the_standards_the_journal_publishes_under(
-    seg_lines: List[_SegLine]
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
 ) -> None:
     """Take the line naming the body whose standards the journal follows.
 
@@ -1348,19 +1369,21 @@ def _claim_the_standards_the_journal_publishes_under(
     the publication, as the licence and the copyright declaration are.
     """
     _claim_the_block_printed_after_the_references(
-        seg_lines, _PUBLISHING_STANDARDS_PATTERN
+        seg_lines, _PUBLISHING_STANDARDS_PATTERN, annotated
     )
 
 
 def _claim_what_the_journal_says_past_the_references(
-    seg_lines: List[_SegLine]
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
 ) -> None:
     """The journal's own lines, printed where the article has ended."""
-    _claim_the_licence_printed_after_the_references(seg_lines)
-    _claim_the_standards_the_journal_publishes_under(seg_lines)
+    _claim_the_licence_printed_after_the_references(seg_lines, annotated)
+    _claim_the_standards_the_journal_publishes_under(seg_lines, annotated)
 
 
-def _claim_the_licence_printed_after_the_references(seg_lines: List[_SegLine]) -> None:
+def _claim_the_licence_printed_after_the_references(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
     """Take a licence notice printed past the reference list.
 
     A journal grants its licence at the foot of the last page, and the
@@ -1378,7 +1401,9 @@ def _claim_the_licence_printed_after_the_references(seg_lines: List[_SegLine]) -
     The notice is as long as the block the page sets it in, the sentence
     running on over two or three lines of which only the first says what it is.
     """
-    _claim_the_block_printed_after_the_references(seg_lines, _LICENCE_NOTICE_PATTERN)
+    _claim_the_block_printed_after_the_references(
+        seg_lines, _LICENCE_NOTICE_PATTERN, annotated
+    )
 
 
 # What the deposit files a note of the article's under.
@@ -5296,7 +5321,7 @@ class SegmentationLabelDeriver:
         # page prints among the declarations and says what that one thing is.
         _claim_the_declarations_the_closing_pages_name(seg_lines, annotated)
         _tag_publication_dates(seg_lines, annotated)
-        _claim_what_the_journal_says_past_the_references(seg_lines)
+        _claim_what_the_journal_says_past_the_references(seg_lines, annotated)
         _claim_lines_sharing_a_row(seg_lines, page_meta_by_number)
 
         _claim_the_banner_above_the_front_matter(
