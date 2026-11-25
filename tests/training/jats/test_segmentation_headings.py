@@ -243,6 +243,64 @@ class TestALineLeftAloneBetweenTwoRegions:
         assert derive_labels(doc, annotated)[id(alone)] == SEG_BODY
 
 
+class TestTheLineAnEntryOfTheListWrapsOnto:
+    """A reference entry naming its article in the words the argument used."""
+
+    def _make_doc(self, wrapped: bool = True):
+        body = [
+            make_line('The', 'colonies', f'grew{index}', y=100.0 + 13 * index)
+            for index in range(3)
+        ]
+        opening = make_line('12', '.', 'Teal', 'R', '.', 'The', 'wardens',
+                            'counted', 'the', 'herons', 'of', 'the',
+                            x=320.0, y=100.0, page_number=2)
+        matched = make_line(
+            *(('marshes', 'the', 'reserve', 'was', 'drained', 'from') if wrapped
+              else ('13', '.', 'Snipe', 'A', '.', 'Marshes', 'of', 'Fenwick')),
+            x=320.0, y=113.0, page_number=2,
+        )
+        under = make_line(
+            *(('between', '1961', 'and', '1964', '.', 'J', '.', 'Marsh',
+               'Birds', '.') if wrapped
+              else ('Pipit', 'W', '.', '1972', '.', 'Wardens', '.')),
+            x=320.0, y=126.0, page_number=2,
+        )
+        carried = [opening, matched, under]
+        heading = make_line('References', x=20.0, y=100.0, page_number=2)
+        unplaced = [
+            make_line('Teal', ',', 'R', '.', f'201{index}', '.', 'Marsh',
+                      'birds', '.', x=20.0, y=113.0 + 13 * index, page_number=2)
+            for index in range(3)
+        ]
+        placed = make_line('Wren', ',', 'P', '.', '2022', '.', 'Reed', 'beds',
+                           '.', x=20.0, y=152.0, page_number=2)
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=body)], meta=make_page_meta(1)),
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=carried),
+                    LayoutBlock(lines=[heading] + unplaced + [placed]),
+                ],
+                meta=make_page_meta(2),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
+        }
+        fields[lines.index(placed)] = JatsFieldNames.REFERENCE
+        fields[lines.index(matched)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), matched
+
+    def test_the_line_the_entry_wrapped_onto_goes_back_to_the_list(self):
+        doc, annotated, matched = self._make_doc()
+        assert derive_labels(doc, annotated)[id(matched)] == SEG_REFERENCES
+
+    def test_an_entry_that_opens_a_line_of_its_own_is_left_alone(self):
+        doc, annotated, matched = self._make_doc(wrapped=False)
+        assert derive_labels(doc, annotated)[id(matched)] == SEG_BODY
+
+
 class TestTheNotesASectionGathersAfterTheBody:
     """A journal that prints its notes together at the end of the article."""
 

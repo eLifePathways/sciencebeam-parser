@@ -2476,6 +2476,34 @@ def _release_statements_inside_body(seg_lines: List[_SegLine]) -> None:
                 seg_lines[index].seg_label = None
 
 
+_ENCLOSED_BODY_MAX_LINES = 2
+
+
+def _is_set_mid_sentence(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the page wraps one sentence from above the run to below it."""
+    opens = seg_lines[run[0]].text.strip()
+    carries_on = seg_lines[run[-1] + 1].text.strip()
+    return bool(opens and carries_on) and opens[0].islower() and carries_on[0].islower()
+
+
+def _release_the_body_a_sentence_wraps_over(seg_lines: List[_SegLine]) -> None:
+    """Give back a body line the page sets in the middle of another region's sentence."""
+    for run in _iter_label_runs(seg_lines, SEG_BODY):
+        if len(run) > _ENCLOSED_BODY_MAX_LINES:
+            continue
+        if not _continues_the_lines_around_it(seg_lines, run):
+            continue
+        if not _is_set_mid_sentence(seg_lines, run):
+            continue
+        around = _enclosing_label(seg_lines, run[0], -1)
+        if around is None or around == SEG_BODY:
+            continue
+        if around != _enclosing_label(seg_lines, run[-1], 1):
+            continue
+        for index in run:
+            seg_lines[index].seg_label = around
+
+
 def _without_the_numbers(text: str) -> str:
     """What the line says apart from the numbers that change with the page."""
     return re.sub(r'[\d\W_]+', ' ', text).strip()
@@ -5102,6 +5130,7 @@ def _settle_what_the_default_left(
     """Read the lines no field grounds again, now every region has its label."""
     _release_trailing_heading(seg_lines, SEG_REFERENCES)
     _release_front_alone_at_the_page_top(seg_lines)
+    _release_the_body_a_sentence_wraps_over(seg_lines)
     _settle_the_line_left_alone_between_two_regions(seg_lines, annotated)
 
 
