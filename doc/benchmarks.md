@@ -556,7 +556,11 @@ again for documents that still have no prediction; `1` never retries. CI uses
 `2`, a local run the default, so a failure stays in front of you.
 
 In CI, label a PR `benchmark:smoke` (or `:small`, `:medium`, `:large`, `:full`,
-`:plos`). Each run posts a new comment and collapses the previous ones.
+`:plos`). Adding one of these starts a run, and so does each new commit while
+one is present. A `profile:<name>` label picks the profile, and like
+`benchmark:jats` and any other label, adding it starts no run of its own: it
+applies to the next run. Each run posts a new comment and collapses the
+previous ones.
 
 ## Scoring the JATS
 
