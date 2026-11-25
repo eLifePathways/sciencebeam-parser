@@ -2522,18 +2522,19 @@ def _says_something_without_its_numbers(text: str) -> bool:
     return len(words) >= 2 and max(len(word) for word in words) >= 4
 
 
-def _is_on_the_row_the_head_runs_across(
+def _is_on_the_row_it_runs_across(
     seg_line: _SegLine,
     page_meta_by_number: Mapping[int, LayoutPageMeta],
     rows: List[float],
+    tolerance: float = _RUNNING_HEAD_Y_TOLERANCE,
 ) -> bool:
-    """Whether the page sets the line where it already runs this head."""
+    """Whether the page sets the line where it already runs this furniture."""
     if not rows:
         return True
     y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
     if y_ratio is None:
         return True
-    return any(abs(y_ratio - row) <= _RUNNING_HEAD_Y_TOLERANCE for row in rows)
+    return any(abs(y_ratio - row) <= tolerance for row in rows)
 
 
 def _reclaim_repeated_headnotes(
@@ -2578,6 +2579,8 @@ def _reclaim_repeated_headnotes(
         page_number = _get_page_number(seg_line)
         if page_number is None:
             continue
+        if not _says_something_without_its_numbers(seg_line.text):
+            continue
         if seg_line.seg_label == SEG_HEADNOTE or _is_in_header_zone(
             seg_line, page_meta_by_number, config
         ):
@@ -2593,12 +2596,14 @@ def _reclaim_repeated_headnotes(
             seg_line.text
         ):
             continue
+        if not _says_something_without_its_numbers(seg_line.text):
+            continue
         count = len(pages_by_text.get(_without_the_numbers(seg_line.text), ()))
         if count < 2 or not _is_valid_headnote_candidate(seg_line.text, count, min_count=2):
             continue
         if not _is_in_header_zone(seg_line, page_meta_by_number, config):
             continue
-        if not _is_on_the_row_the_head_runs_across(
+        if not _is_on_the_row_it_runs_across(
             seg_line, page_meta_by_number,
             rows_by_text.get(_without_the_numbers(seg_line.text)) or [],
         ):
@@ -2622,22 +2627,34 @@ def _reclaim_repeated_running_feet(
     every page and the same foot.  Only where that leaves words behind, because
     the end of a reference entry is a page range and a year and nothing else.
     """
-    foot_counts: Counter = Counter(
-        _without_the_numbers(sl.text)
-        for sl in seg_lines
-        if sl.seg_label == SEG_FOOTNOTE
-        and _says_something_without_its_numbers(sl.text)
-    )
+    foot_counts: Counter = Counter()
+    rows_by_text: Dict[str, List[float]] = {}
+    for seg_line in seg_lines:
+        if seg_line.seg_label != SEG_FOOTNOTE:
+            continue
+        if not _says_something_without_its_numbers(seg_line.text):
+            continue
+        read = _without_the_numbers(seg_line.text)
+        foot_counts[read] += 1
+        y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+        if y_ratio is not None:
+            rows_by_text.setdefault(read, []).append(y_ratio)
     for seg_line in seg_lines:
         if seg_line.seg_label in (SEG_FOOTNOTE, SEG_COVER, None):
             continue
         if not _says_something_without_its_numbers(seg_line.text):
             continue
-        count = foot_counts.get(_without_the_numbers(seg_line.text), 0)
+        read = _without_the_numbers(seg_line.text)
+        count = foot_counts.get(read, 0)
         if count < 2 or not _is_valid_headnote_candidate(seg_line.text, count, min_count=2):
             continue
         y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
         if y_ratio is None or y_ratio < _RUNNING_FOOT_MIN_Y_RATIO:
+            continue
+        if not _is_on_the_row_it_runs_across(
+            seg_line, page_meta_by_number, rows_by_text.get(read) or [],
+            tolerance=_RUNNING_FOOT_Y_TOLERANCE,
+        ):
             continue
         seg_line.seg_label = SEG_FOOTNOTE
 
@@ -3274,7 +3291,7 @@ def _claim_the_block_an_abstract_is_headed_by(seg_lines: List[_SegLine]) -> None
         if _enclosing_label(seg_lines, block[-1], 1) != SEG_FRONT:
             continue
         for index in block:
-            if seg_lines[index].seg_label not in _FURNITURE_LABELS:
+            if seg_lines[index].seg_label not in _TRAILING_MATTER_LABELS:
                 seg_lines[index].seg_label = SEG_FRONT
 
 

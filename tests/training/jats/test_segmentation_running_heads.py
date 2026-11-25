@@ -14,6 +14,7 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_FRONT,
     SEG_HEADNOTE,
     SEG_PAGE,
+    SEG_REFERENCES,
 )
 from tests.training.jats.segmentation_fixtures import (
     annotate,
@@ -283,3 +284,45 @@ class TestAHeadThatIsTheArticlesOwnTitle:
         doc, annotated, _title, heads = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(head)] for head in heads] == [SEG_HEADNOTE] * 3
+
+
+class TestAnEntryEndingAtTheTopOfAPage:
+    """A reference entry whose page range and year end high on the page, where
+    the number counting the pages is also nothing but its numbers."""
+
+    def _make_doc(self):
+        numbers = [
+            make_line(str(40 + page_number), y=40.0, x=520.0, page_number=page_number)
+            for page_number in (1, 2, 3)
+        ]
+        tail = make_line('15', '-', '58', ',', '2005', '.',
+                         y=60.0, x=40.0, page_number=3)
+        entries = [
+            make_line('Teal', ',', 'R', '.', f'201{page_number}', '.', 'Marsh',
+                      'birds', '.', y=200.0, x=40.0, page_number=page_number)
+            for page_number in (1, 2, 3)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[numbers[page_number - 1]]),
+                ] + ([LayoutBlock(lines=[tail])] if page_number == 3 else []) + [
+                    LayoutBlock(lines=[entries[page_number - 1]]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (1, 2, 3)
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {lines.index(entry): JatsFieldNames.REFERENCE for entry in entries}
+        fields[lines.index(tail)] = JatsFieldNames.REFERENCE
+        return doc, annotate(doc, fields), tail, numbers
+
+    def test_the_end_of_an_entry_is_not_the_running_head(self):
+        doc, annotated, tail, _numbers = self._make_doc()
+        assert derive_labels(doc, annotated)[id(tail)] == SEG_REFERENCES
+
+    def test_the_numbers_counting_the_pages_are_still_the_page(self):
+        doc, annotated, _tail, numbers = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 3

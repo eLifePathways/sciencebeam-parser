@@ -15,6 +15,7 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_FOOTNOTE,
     SEG_FRONT,
     SEG_HEADNOTE,
+    SEG_REFERENCES,
 )
 from tests.training.jats.segmentation_fixtures import (
     annotate,
@@ -907,3 +908,59 @@ class TestTheQuotationAPageSetsAmongItsText:
     def test_the_note_the_page_sets_at_its_foot_is_left_alone(self):
         doc, annotated, _, note = self._make_doc()
         assert derive_labels(doc, annotated)[id(note)] == SEG_FOOTNOTE
+
+
+class TestAnEntryNamingTheJournalTheFootNames:
+    """A journal running its own citation along the foot of every page, and a
+    reference entry that breaks with the same journal's name on a line."""
+
+    def _make_doc(self):
+        feet = [
+            make_line('Rev', '.', 'Marsh', 'Birds', '.',
+                      f'2018;12(4):{390 + page_number}',
+                      y=950.0, x=40.0, page_number=page_number)
+            for page_number in (1, 2, 3, 4, 5)
+        ]
+        body = [
+            make_line('The', 'colonies', f'grew{page_number}', 'in', 'the',
+                      'reeds', y=200.0, x=40.0, page_number=page_number)
+            for page_number in (1, 2, 3, 4)
+        ]
+        entries = [
+            make_line('Teal', ',', 'R', '.', f'201{index}', '.', 'Wardens',
+                      'of', 'the', 'reserve', '.',
+                      y=200.0 + 20 * index, x=40.0, page_number=5)
+            for index in range(3)
+        ]
+        carried = make_line('Rev', '.', 'Marsh', 'Birds', '.', '2015;30(2):112-8',
+                            y=700.0, x=40.0, page_number=5)
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=(
+                        [body[page_number - 1]] if page_number < 5
+                        else entries + [carried]
+                    )),
+                    LayoutBlock(lines=[feet[page_number - 1]]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (1, 2, 3, 4, 5)
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
+        }
+        for entry in entries:
+            fields[lines.index(entry)] = JatsFieldNames.REFERENCE
+        fields[lines.index(carried)] = JatsFieldNames.REFERENCE
+        return doc, annotate(doc, fields), carried, feet
+
+    def test_the_line_the_entry_breaks_onto_is_not_the_foot(self):
+        doc, annotated, carried, _feet = self._make_doc()
+        assert derive_labels(doc, annotated)[id(carried)] == SEG_REFERENCES
+
+    def test_the_foot_itself_is_still_the_foot(self):
+        doc, annotated, _carried, feet = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(foot)] for foot in feet] == [SEG_FOOTNOTE] * 5

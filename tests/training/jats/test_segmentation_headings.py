@@ -13,6 +13,7 @@ from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
     SEG_ANNEX,
     SEG_BODY,
+    SEG_COVER,
     SEG_CONTRIBUTION,
     SEG_FOOTNOTE,
     SEG_FRONT,
@@ -350,3 +351,45 @@ class TestTheNotesASectionGathersAfterTheBody:
     def test_the_foot_the_page_prints_across_it_is_left_alone(self):
         doc, annotated, _, _, foot_again = self._make_doc()
         assert derive_labels(doc, annotated)[id(foot_again)] == SEG_FOOTNOTE
+
+
+class TestTheAbstractHeadingACoverPagePrints:
+    """A preprint server restating the abstract on the cover it opens with."""
+
+    def _make_doc(self):
+        notice = make_line('Situacao:', 'O', 'preprint', 'nao', 'foi',
+                           'submetido', 'para', 'publicacao', y=100.0)
+        restated = [
+            make_line('Resumo', y=200.0),
+            make_line('Ninhos', 'de', 'garças', 'nos', 'pântanos', y=220.0),
+        ]
+        title = make_line('Nesting', 'herons', 'of', 'the', 'Fenwick', 'marshes',
+                          y=100.0, page_number=2)
+        abstract = make_line('We', 'counted', 'the', 'nests', 'of', 'four',
+                             'colonies', y=120.0, page_number=2)
+        body = [
+            make_line('The', 'colonies', f'grew{index}', y=100.0 + 13 * index,
+                      page_number=3)
+            for index in range(3)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=[notice]),
+                               LayoutBlock(lines=restated)],
+                       meta=make_page_meta(1)),
+            LayoutPage(blocks=[LayoutBlock(lines=[title, abstract])],
+                       meta=make_page_meta(2)),
+            LayoutPage(blocks=[LayoutBlock(lines=body)], meta=make_page_meta(3)),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(title): JatsFieldNames.TITLE,
+            lines.index(abstract): JatsFieldNames.ABSTRACT,
+        }
+        for line in body:
+            fields[lines.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), restated
+
+    def test_the_cover_keeps_the_heading_it_prints(self):
+        doc, annotated, restated = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in restated] == [SEG_COVER] * 2
