@@ -163,6 +163,10 @@ class SegmentationLineFeatures(ContextAwareLayoutTokenFeatures):
     def get_formatted_whole_line_feature(self) -> str:
         return format_feature_text(self.line_text)
 
+    def get_str_is_http(self) -> str:
+        """Whether the line's first token contains "http", as GROBID's Segmentation."""
+        return get_str_bool_feature_value('http' in self.token_text)
+
     def get_str_is_repetitive_pattern(self) -> str:
         return get_str_bool_feature_value(self.is_repetitive_pattern)
 
