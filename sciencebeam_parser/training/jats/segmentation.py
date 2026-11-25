@@ -394,7 +394,13 @@ def _tag_headnotes_by_text_repetition(
                 sl.seg_label = SEG_HEADNOTE
 
 
-_PAGE_NUMBER_POSITION_PRECISION = 2
+_PAGE_NUMBER_ROW_PRECISION = 2
+
+# Two numbers are in the same corner where their insets differ by less than a
+# margin.  The inset is read from where the line starts, so a number set against
+# the right edge reads wider than its mirror by its own width, and a journal
+# whose margins differ a little sets one spot rather than two half-spots.
+_PAGE_NUMBER_INSET_TOLERANCE = 25.0
 
 # How closely the inset a number is set at has to repeat for the number to be
 # the same number: to the nearest ten points, which is a margin rather than a
@@ -513,6 +519,22 @@ def _get_inset_from_the_nearer_edge(
     return min(position[0], coordinates.width - position[0])
 
 
+def _iter_the_numbers_set_at_one_inset(
+    placed: List[Tuple[float, _SegLine]]
+) -> Iterator[List[_SegLine]]:
+    """The numbers a document sets the same distance from the edge of the page."""
+    cluster: List[_SegLine] = []
+    last: Optional[float] = None
+    for inset, seg_line in sorted(placed, key=lambda item: item[0]):
+        if last is not None and inset - last > _PAGE_NUMBER_INSET_TOLERANCE:
+            yield cluster
+            cluster = []
+        cluster.append(seg_line)
+        last = inset
+    if cluster:
+        yield cluster
+
+
 def _tag_page_numbers_by_position(
     seg_lines: List[_SegLine],
     page_meta_by_number: Mapping[int, LayoutPageMeta],
@@ -535,7 +557,7 @@ def _tag_page_numbers_by_position(
     happens to have matched it.  A cover page is left alone, which keeps a whole
     page to one label.
     """
-    by_spot: Dict[Tuple[float, float], List[_SegLine]] = {}
+    by_row: Dict[float, List[Tuple[float, _SegLine]]] = {}
     page_numbers: Set[int] = set()
     for seg_line in seg_lines:
         page_number = _get_page_number(seg_line)
@@ -546,18 +568,20 @@ def _tag_page_numbers_by_position(
         page_numbers.add(page_number)
         if not _is_valid_page_number_candidate(seg_line.text):
             continue
-        spot = (
-            round(inset, -_PAGE_NUMBER_POSITION_PRECISION),
-            round(y_ratio, _PAGE_NUMBER_POSITION_PRECISION),
-        )
-        by_spot.setdefault(spot, []).append(seg_line)
+        by_row.setdefault(
+            round(y_ratio, _PAGE_NUMBER_ROW_PRECISION), []
+        ).append((inset, seg_line))
     threshold = max(len(page_numbers) / 2, 1)
-    for spot_lines in by_spot.values():
-        if len({_get_page_number(sl) for sl in spot_lines}) <= threshold:
-            continue
-        for seg_line in spot_lines:
-            if seg_line.seg_label is None or seg_line.seg_label in _ARTICLE_CONTENT_LABELS:
-                seg_line.seg_label = SEG_PAGE
+    for placed in by_row.values():
+        for spot_lines in _iter_the_numbers_set_at_one_inset(placed):
+            if len({_get_page_number(sl) for sl in spot_lines}) <= threshold:
+                continue
+            for seg_line in spot_lines:
+                if (
+                    seg_line.seg_label is None
+                    or seg_line.seg_label in _ARTICLE_CONTENT_LABELS
+                ):
+                    seg_line.seg_label = SEG_PAGE
 
 
 def _how_many_pages_make_a_sequence(
@@ -2068,7 +2092,10 @@ def _claim_the_thanks_a_note_opens_the_article_with(
         if _get_page_number(block[0]) != opening_page:
             continue
         if any(
-            seg_line.seg_label in _TRAILING_MATTER_LABELS
+            (
+                seg_line.seg_label in _TRAILING_MATTER_LABELS
+                and seg_line.seg_label != SEG_FOOTNOTE
+            )
             or _is_grounded_in(seg_line, annotated, _DECLARED_REGION_FIELDS)
             for seg_line in block
         ):

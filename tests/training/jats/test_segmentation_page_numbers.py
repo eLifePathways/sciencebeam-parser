@@ -293,3 +293,35 @@ class TestANumberTheDepositCallsAnAffiliation:
         labels = derive_labels(doc, annotated)
         assert labels[id(folios[0])] != SEG_PAGE
         assert [labels[id(folio)] for folio in folios[1:]] == [SEG_PAGE] * 4
+
+
+class TestAPageNumberInAMirroredMargin:
+    """A journal whose verso margin is a little wider than its recto."""
+
+    def _make_doc(self):
+        numbers = [
+            make_line(
+                str(page_number), y=100.0, page_number=page_number,
+                x=45.0 if page_number % 2 else 545.0,
+            )
+            for page_number in (1, 2, 3, 4, 5)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[numbers[page_number - 1]]),
+                    LayoutBlock(lines=[make_line(
+                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
+                        y=400.0, page_number=page_number,
+                    )]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for page_number in (1, 2, 3, 4, 5)
+        ])
+        return doc, annotate(doc, {}), numbers
+
+    def test_the_two_margins_are_one_corner(self):
+        doc, annotated, numbers = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 5

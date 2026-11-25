@@ -261,7 +261,7 @@ class TestTheConflictDeclaredWithoutAHeading:
 class TestTheThanksTheOpeningPagePrints:
     """A journal that calls its thanks from the title and sets them at the foot."""
 
-    def _make_doc(self, opening: str):
+    def _make_doc(self, opening: str, deposited: bool = False):
         title = make_line('Herons', 'of', 'the', 'northern', 'marshes', '*', y=100.0)
         author = make_line('A', 'Nilsson', y=130.0)
         body = [
@@ -290,6 +290,9 @@ class TestTheThanksTheOpeningPagePrints:
         }
         for line in body:
             fields[order.index(line)] = JatsFieldNames.BODY_SECTION_PARAGRAPH
+        if deposited:
+            for line in thanks:
+                fields[order.index(line)] = JatsFieldNames.BACK_FOOTNOTE
         return doc, annotate(doc, fields), body, thanks
 
     def test_the_note_of_thanks_is_an_acknowledgement(self):
@@ -305,6 +308,14 @@ class TestTheThanksTheOpeningPagePrints:
         )
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in body] == [SEG_BODY] * 4
+
+    def test_the_thanks_the_deposit_carries_as_a_note_are_an_acknowledgement(self):
+        doc, annotated, _, thanks = self._make_doc(
+            '* We thank the wardens of the Fenwick reserve for their comments',
+            deposited=True,
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in thanks] == [SEG_ACKNOWLEDGEMENT] * 2
 
     def test_a_note_that_thanks_nobody_is_left_alone(self):
         doc, annotated, _, thanks = self._make_doc(
