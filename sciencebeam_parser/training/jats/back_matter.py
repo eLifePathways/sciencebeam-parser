@@ -129,6 +129,9 @@ _FN_KIND_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     # kind.  Only beside the authors, because a role is named in prose as well.
     ('contribution', ('contribution', 'contribuicao', 'contribuicoes',
                       'contribucion',
+                      # "Contributors" heads 19 contribution sections in
+                      # GROBID's corpus and nothing else.
+                      'contributor',
                       'colabora', 'authorship',
                       'author role', 'authors role', "author's role",
                       'roles and responsibilit', 'roles & responsibilit',

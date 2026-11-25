@@ -4,6 +4,8 @@ The submission history and the authors' biographies are set below the
 reference list, where the region above them reaches over anything no field
 carries.
 """
+from typing import Tuple
+
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
@@ -228,12 +230,16 @@ class TestTheCitationTheRendererComposes:
 class TestTheDeclarationsTheArticleClosesWith:
     """A journal that prints its declarations under the reference list."""
 
-    def _make_doc(self, names_authors_in_bold: bool = False):
+    def _make_doc(
+        self,
+        names_authors_in_bold: bool = False,
+        heading: Tuple[str, ...] = ('AUTHOR', 'CONTRIBUTIONS'),
+    ):
         references = [
             make_line('A', 'reference', f'listed{index}', y=200.0 + 20 * index)
             for index in range(6)
         ]
-        contribution = [make_line('AUTHOR', 'CONTRIBUTIONS', y=340.0, bold=True)]
+        contribution = [make_line(*heading, y=340.0, bold=True)]
         if names_authors_in_bold:
             contribution += [
                 make_line('Heron', 'A', 'and', 'Heron', 'B', ',', 'counted', 'the',
@@ -245,24 +251,33 @@ class TestTheDeclarationsTheArticleClosesWith:
                 make_line('Heron', 'A', 'counted', 'the', 'nests', ';', y=360.0),
                 make_line('Heron', 'B', 'wrote', 'the', 'paper', '.', y=380.0),
             ]
+        availability = [
+            make_line('DATA', 'AVAILABILITY', 'STATEMENT', 'OF', 'THIS', 'ARTICLE',
+                      'AND', 'ITS', 'SUPPORTING', 'FILES', y=400.0, bold=True),
+            make_line('The', 'counts', 'are', 'in', 'the', 'article', 'itself', '.',
+                      y=420.0),
+        ]
         conflict = [
-            make_line('CONFLICT', 'OF', 'INTEREST', y=400.0, bold=True),
-            make_line('The', 'authors', 'declare', 'none', '.', y=420.0),
+            make_line('CONFLICT', 'OF', 'INTEREST', y=440.0, bold=True),
+            make_line('The', 'authors', 'declare', 'none', '.', y=460.0),
         ]
         funding = [
-            make_line('FUNDING', y=440.0, bold=True),
+            make_line('FUNDING', y=480.0, bold=True),
             make_line('The', 'marsh', 'trust', 'paid', 'for', 'the', 'survey', '.',
-                      y=460.0),
+                      y=500.0),
         ]
         unnamed = [
-            make_line('Study', 'association', y=480.0, bold=True),
+            make_line('Study', 'association', y=520.0, bold=True),
             make_line('No', 'thesis', 'is', 'associated', 'with', 'this', 'work', '.',
-                      y=500.0),
+                      y=540.0),
         ]
         doc = LayoutDocument(pages=[
             LayoutPage(
                 blocks=[LayoutBlock(
-                    lines=references + contribution + conflict + funding + unnamed
+                    lines=(
+                        references + contribution + availability + conflict
+                        + funding + unnamed
+                    )
                 )],
                 meta=make_page_meta(1),
             ),
@@ -277,28 +292,40 @@ class TestTheDeclarationsTheArticleClosesWith:
             fields[lines.index(line)] = JatsFieldNames.BACK_FOOTNOTE
         return (
             doc, annotate(doc, fields),
-            references, contribution, conflict, funding, unnamed,
+            references, contribution, conflict, funding, availability, unnamed,
         )
 
     def test_each_heading_opens_the_declaration_it_names(self):
-        doc, annotated, _, contribution, conflict, funding, _ = self._make_doc()
+        doc, annotated, _, contribution, conflict, funding, _, _ = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in contribution] == [SEG_CONTRIBUTION] * 3
         assert [labels[id(line)] for line in conflict] == [SEG_CONFLICT] * 2
         assert [labels[id(line)] for line in funding] == [SEG_FUNDING] * 2
 
+    def test_a_heading_that_fills_its_measure_still_opens_its_declaration(self):
+        doc, annotated, _, _, _, _, availability, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in availability] == [SEG_AVAILABILITY] * 2
+
     def test_a_heading_that_names_nothing_opens_an_annex(self):
-        doc, annotated, _, _, _, _, unnamed = self._make_doc()
+        doc, annotated, _, _, _, _, _, unnamed = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in unnamed] == [SEG_ANNEX] * 2
 
     def test_the_list_above_them_is_left_alone(self):
-        doc, annotated, references, _, _, _, _ = self._make_doc()
+        doc, annotated, references, _, _, _, _, _ = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in references] == [SEG_REFERENCES] * 6
 
+    def test_a_statement_a_journal_heads_contributors_is_the_contributions(self):
+        doc, annotated, _, contribution, _, _, _, _ = self._make_doc(
+            heading=('CONTRIBUTORS',)
+        )
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in contribution] == [SEG_CONTRIBUTION] * 3
+
     def test_a_bold_line_the_statement_wraps_from_is_not_a_heading(self):
-        doc, annotated, _, contribution, _, _, _ = self._make_doc(
+        doc, annotated, _, contribution, _, _, _, _ = self._make_doc(
             names_authors_in_bold=True
         )
         labels = derive_labels(doc, annotated)

@@ -1796,13 +1796,7 @@ def _claim_the_declarations_the_article_closes_with(
         # Bold among bold says nothing, but the words still name what they
         # name: a journal setting its whole closing page in bold heads its
         # declarations in it too.
-        names_a_declaration = named is not None and (
-            set_apart
-            or (
-                _is_bold(seg_line)
-                and _is_set_on_a_line_of_its_own(seg_lines, index, measure_by_page)
-            )
-        )
+        names_a_declaration = named is not None and (set_apart or _is_bold(seg_line))
         if set_apart and _heads_the_authors_themselves(seg_lines, index, annotated):
             label = SEG_FRONT
         elif names_a_declaration:
