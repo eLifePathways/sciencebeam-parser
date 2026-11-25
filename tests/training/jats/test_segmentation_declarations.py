@@ -15,7 +15,9 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_BODY,
     SEG_CONFLICT,
     SEG_CONTRIBUTION,
+    SEG_FOOTNOTE,
     SEG_FRONT,
+    SEG_REVIEW,
 )
 from tests.training.jats.segmentation_fixtures import (
     annotate,
@@ -363,3 +365,137 @@ class TestTheAuthorsAClosingStatementRanOnOver:
         doc, annotated, thanks, _ = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(line)] for line in thanks] == [SEG_ACKNOWLEDGEMENT] * 2
+
+
+class TestThePeopleAJournalCreditsOnItsClosingPage:
+    """A journal naming its editors and its reviewers where the article ends."""
+
+    def _make_doc(self, on_the_opening_page: bool = False):
+        page = 1 if on_the_opening_page else 2
+        top = 100.0 if on_the_opening_page else 300.0
+        credited = [
+            make_line('EDITOR', '-', 'IN', '-', 'CHIEF', y=top, page_number=page),
+            make_line('Alida', 'Teal', '(', 'Fenwick', 'Institute', ')',
+                      y=top + 15, page_number=page),
+            make_line('GUEST', 'EDITORS', y=top + 30, page_number=page),
+            make_line('Peregrine', 'Snipe', '(', 'Marsh', 'Trust', ')',
+                      y=top + 45, page_number=page),
+        ]
+        reviewed = [
+            make_line('REVIEWERS', y=top + 60, page_number=page),
+            make_line('Wren', 'Pipit', '(', 'Fenwick', 'Institute', ')',
+                      y=top + 75, page_number=page),
+            make_line('PEER', 'REVIEW', 'REPORT', y=top + 90, page_number=page),
+            make_line('The', 'report', 'is', 'at', 'https://example.org/r/1',
+                      y=top + 105, page_number=page),
+        ]
+        body = [
+            make_line('The', 'colonies', f'grew{index}', y=500.0 + 13 * index)
+            for index in range(3)
+        ]
+        pages = [LayoutPage(blocks=[LayoutBlock(lines=body)], meta=make_page_meta(1))]
+        shown = [LayoutBlock(lines=[line]) for line in credited + reviewed]
+        if on_the_opening_page:
+            pages[0] = LayoutPage(blocks=shown + [LayoutBlock(lines=body)],
+                                  meta=make_page_meta(1))
+        else:
+            pages.append(LayoutPage(blocks=shown, meta=make_page_meta(2)))
+        doc = LayoutDocument(pages=pages)
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
+        }
+        for line in credited + reviewed:
+            fields[lines.index(line)] = JatsFieldNames.AUTHOR_NOTES
+        return doc, annotate(doc, fields), credited, reviewed
+
+    def test_the_editors_are_the_front_matter(self):
+        doc, annotated, credited, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in credited] == [SEG_FRONT] * 4
+
+    def test_the_reviewers_and_their_report_are_the_review(self):
+        doc, annotated, _, reviewed = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in reviewed] == [SEG_REVIEW] * 4
+
+    def test_a_box_the_opening_page_prints_is_left_to_the_front_matter(self):
+        doc, annotated, _, reviewed = self._make_doc(on_the_opening_page=True)
+        labels = derive_labels(doc, annotated)
+        assert SEG_REVIEW not in [labels[id(line)] for line in reviewed]
+
+
+class TestTheHeadingACreditBlockIsPrintedUnder:
+    """A journal heading the editors it names "Editorial responsibility"."""
+
+    def _make_doc(self, with_a_footer: bool = False):
+        heading = make_line('EDITORIAL', 'RESPONSIBILITY',
+                            y=300.0, page_number=2, bold=True)
+        credited = [
+            make_line('Deputy', 'Editor', ':', 'Peregrine', 'Snipe', '.',
+                      y=315.0, page_number=2),
+            make_line('Associate', 'Editor', ':', 'Alida', 'Teal', '.',
+                      y=330.0, page_number=2),
+        ]
+        feet = [
+            make_line('J.', 'Marsh', 'Birds,', 'v.', '12,', 'p.', '486-492',
+                      x=400.0, y=950.0, page_number=page_number, bold=True)
+            for page_number in (1, 2)
+        ]
+        titled = make_line('Herons', 'of', 'the', 'Fenwick', 'marshes',
+                           y=100.0, bold=True)
+        body = [
+            make_line('The', 'colonies', 'of', 'herons', f'grew{index}',
+                      y=500.0 + 13 * index)
+            for index in range(3)
+        ]
+        listed = [
+            make_line('1', '.', 'Teal', 'A', '.', 'Herons', 'of', 'the',
+                      'Fenwick', 'marshes', '.', f'{1990 + index}', '.',
+                      y=360.0 + 13 * index, page_number=2)
+            for index in range(3)
+        ]
+        above = feet[1:] if with_a_footer else [heading]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[titled]),
+                    LayoutBlock(lines=body),
+                    LayoutBlock(lines=[feet[0]]),
+                ],
+                meta=make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=(
+                    [LayoutBlock(lines=[line]) for line in above + credited]
+                    + [LayoutBlock(lines=listed)]
+                ),
+                meta=make_page_meta(2),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
+        }
+        fields[lines.index(titled)] = JatsFieldNames.TITLE
+        for line in listed:
+            fields[lines.index(line)] = JatsFieldNames.REFERENCE
+        for line in above + credited:
+            if line is not feet[1]:
+                fields[lines.index(line)] = JatsFieldNames.AUTHOR_NOTES
+        return doc, annotate(doc, fields), heading, credited, feet[1]
+
+    def test_the_editors_are_the_front_matter(self):
+        doc, annotated, _, credited, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in credited] == [SEG_FRONT] * 2
+
+    def test_the_heading_goes_with_the_editors_it_heads(self):
+        doc, annotated, heading, _, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert labels[id(heading)] == SEG_FRONT
+
+    def test_the_foot_the_page_prints_beside_them_is_not_their_heading(self):
+        doc, annotated, _, _, foot = self._make_doc(with_a_footer=True)
+        labels = derive_labels(doc, annotated)
+        assert labels[id(foot)] == SEG_FOOTNOTE

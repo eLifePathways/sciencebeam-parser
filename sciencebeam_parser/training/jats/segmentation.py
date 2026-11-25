@@ -1121,12 +1121,34 @@ _EDITOR_CREDIT_PATTERN = re.compile(
     # the publisher.
     r'editor[ao]?[\s\u2010-\u2015-]*respons[a\u00e1]ve[li]'
     r'|(?:handling|section|academic|associate|managing|guest|responsible'
-    r'|scientific|cient[i\u00ed]fic[oa])?[\s\u2010-\u2015-]*'
+    r'|deputy|scientific|cient[i\u00ed]fic[oa])?[\s\u2010-\u2015-]*'
     r'editor(?:es|s)?'
-    r'(?:[\s\u2010-\u2015-]*(?:chefe|cient[i\u00ed]fico|in[\s-]chief|associad[oa]))?'
-    r')\s*:',
+    r'(?:[\s\u2010-\u2015-]*'
+    r'(?:chefe|cient[i\u00ed]fico|in[\s\u2010-\u2015-]*chief|associad[oa]))?'
+    r')\s*(?::|$)',
     re.IGNORECASE,
 )
+
+
+# What a journal heads the people who reviewed the article, and the report
+# they wrote, where it prints them with the article.
+_REVIEW_CREDIT_PATTERN = re.compile(
+    r'^\s*(?:'
+    r'reviewers?|revisor(?:es)?|parecerista?s?|avaliador(?:es|as)?'
+    r'|peer[\s\u2010-\u2015-]*review(?:\s+(?:report|history|process))?'
+    r')\s*(?::|$)',
+    re.IGNORECASE,
+)
+
+# A credit names people and says where to read what they wrote; it does not
+# run on for pages.
+_CREDIT_RUN_MAX_LINES = 20
+
+_CREDIT_LABELS = ((_EDITOR_CREDIT_PATTERN, SEG_FRONT), (_REVIEW_CREDIT_PATTERN, SEG_REVIEW))
+
+# What the page sets a closing credit in until it names the next one -- or
+# nothing at all, a name the deposit does not carry being unclaimed.
+_CREDIT_CARRIES_ON = frozenset({SEG_ANNEX, SEG_FOOTNOTE})
 
 
 # What a journal declares about the publication rather than about the work:
@@ -1196,14 +1218,86 @@ def _claim_the_publishing_declarations_after_the_references(
             seg_line.seg_label = SEG_FRONT
 
 
-def _claim_the_editor_credited_after_the_references(seg_lines: List[_SegLine]) -> None:
-    """Take the line crediting the editor from the list it is printed under.
+def _claim_the_heading_a_credit_is_printed_under(
+    seg_lines: List[_SegLine],
+    index: int,
+    named: str,
+    text_size: Optional[float],
+    measure_by_page: Mapping[int, float],
+) -> None:
+    """Take the heading the page sets the first credit of a block under."""
+    above = _nearest_line_above_in_the_column(seg_lines, index)
+    if above is None:
+        return
+    label = seg_lines[above].seg_label
+    if label is not None and label not in _CREDIT_CARRIES_ON:
+        return
+    if not _is_set_as_a_heading(seg_lines, above, text_size, measure_by_page):
+        return
+    seg_lines[above].seg_label = named
 
-    GROBID's corpus holds such a line in `<front>` 83 times of 98, and 13 of
-    the 15 it does not are inside a `listBibl`, which is this same list
-    reaching over a line it has no entry for.
+
+def _claim_the_people_a_journal_credits(seg_lines: List[_SegLine]) -> None:
+    """Read the editors and the reviewers a journal credits after the article.
+
+    An editor is the article's own bibliographical information: GROBID's
+    corpus holds the line crediting one in `<front>` 120 times of 122, and
+    its header model carries `<editor>` to read it with.  Who reviewed the
+    article, and where the report they wrote can be read, is the review --
+    which is what the ORE profile already files a reviewer's name, their
+    affiliation and the report's identifier under.
+
+    Each heading holds until the page names the next one, and only once the
+    article has begun: a journal printing its whole editorial process on the
+    opening page is printing the front matter, which the opening page's own
+    reading takes.  Nothing already read as the front matter opens one, a
+    citation line carrying "peer review: 2 approved" being the front matter
+    saying how to cite the article.  Where the page heads the block rather
+    than the credit -- "Editorial responsibility" over the editors it names --
+    the heading goes with what it heads.
     """
-    _claim_the_block_printed_after_the_references(seg_lines, _EDITOR_CREDIT_PATTERN)
+    opened = min(
+        (
+            index for index, seg_line in enumerate(seg_lines)
+            if seg_line.seg_label in (SEG_BODY, SEG_REFERENCES)
+        ),
+        default=None,
+    )
+    if opened is None:
+        return
+    text_size = _get_prevailing_type_size(seg_lines)
+    measure_by_page = _get_measure_by_page(seg_lines)
+    taken: Optional[str] = None
+    running = 0
+    for index in range(opened, len(seg_lines)):
+        seg_line = seg_lines[index]
+        if seg_line.seg_label in _TRAILING_MATTER_LABELS and seg_line.seg_label != SEG_FOOTNOTE:
+            continue
+        named = next(
+            (
+                label for pattern, label in _CREDIT_LABELS
+                if seg_line.seg_label != SEG_FRONT and pattern.match(seg_line.text)
+            ),
+            None,
+        )
+        if named is not None:
+            if taken is None:
+                _claim_the_heading_a_credit_is_printed_under(
+                    seg_lines, index, named, text_size, measure_by_page
+                )
+            taken, running = named, 0
+        elif (
+            seg_line.seg_label is not None
+            and seg_line.seg_label not in _CREDIT_CARRIES_ON
+        ):
+            taken = None
+        if taken is None:
+            continue
+        running += 1
+        if running > _CREDIT_RUN_MAX_LINES:
+            taken = None
+            continue
+        seg_line.seg_label = taken
 
 
 # The body whose standards a journal publishes under, which it names at the
@@ -3049,6 +3143,34 @@ def _reads_as_a_heading(text: str, headings: FrozenSet[str]) -> bool:
         and not stripped[0].islower()
         and _normalised_heading(stripped) in headings
     )
+
+
+def _claim_the_note_the_closing_declarations_enclose(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Read a note printed among the closing declarations as a section of its own.
+
+    A journal setting "Study Association" between its funding and its ethics
+    statements is printing another declaration, not a note at the foot of the
+    page, and GROBID's guidelines put a section after the body that none of
+    the named statements covers in an annex.
+
+    A line on its own there is the heading of the declaration under it --
+    "ACKNOWLEDGEMENTS" over the thanks -- and goes with what it heads.
+    """
+    declared = set(_STATEMENT_LABELS) | {SEG_ANNEX}
+    running = _get_texts_printed_on_more_than_one_page(seg_lines)
+    for run in _iter_label_runs(seg_lines, SEG_FOOTNOTE):
+        if any(seg_lines[index].text in running for index in run):
+            continue
+        under = _enclosing_label(seg_lines, run[-1], 1)
+        if _enclosing_label(seg_lines, run[0], -1) not in declared:
+            continue
+        if under not in declared:
+            continue
+        taken = under if len(run) == 1 else SEG_ANNEX
+        for index in run:
+            seg_lines[index].seg_label = taken
 
 
 def _claim_the_list_a_reference_heading_opens(seg_lines: List[_SegLine]) -> None:
@@ -4971,6 +5093,7 @@ def _claim_the_regions_a_heading_names(
     _claim_statement_by_heading(seg_lines, annotated)
     _claim_the_list_a_reference_heading_opens(seg_lines)
     _claim_the_notes_a_section_gathers_after_the_body(seg_lines)
+    _claim_the_note_the_closing_declarations_enclose(seg_lines)
 
 
 def _settle_what_the_default_left(
@@ -5124,7 +5247,7 @@ class SegmentationLabelDeriver:
         _claim_the_citation_printed_after_the_references(seg_lines, annotated)
         # Beside the citation, and after the release for the same reason: the
         # deposit files the editor's name as a note on the authors.
-        _claim_the_editor_credited_after_the_references(seg_lines)
+        _claim_the_people_a_journal_credits(seg_lines)
         _claim_the_authors_a_closing_statement_ran_on_over(seg_lines, annotated)
         _claim_the_publishing_declarations_after_the_references(
             seg_lines, annotated
