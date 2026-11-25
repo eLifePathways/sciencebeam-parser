@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Iterable, Mapping, Optional, Set, Tuple, Type, Union
+from typing import Callable, Iterable, Mapping, Optional, Sequence, Tuple, Union
 
 from sciencebeam_parser.utils.misc import iter_ids
 from sciencebeam_parser.document.semantic_document import (
@@ -14,6 +14,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticIssue,
     SemanticJournal,
     SemanticLocation,
+    SemanticNote,
     SemanticPageRange,
     SemanticPublisher,
     SemanticRawAuthors,
@@ -67,15 +68,45 @@ SIMPLE_SEMANTIC_CONTENT_CLASS_BY_TAG: Mapping[str, T_SemanticContentFactory] = {
 }
 
 
-VALID_REFERENCE_TYPES: Set[Type[SemanticContentWrapper]] = {
-    SemanticTitle,
-    SemanticJournal,
-    SemanticBookTitle,
-    SemanticRawAuthors,
-    SemanticRawEditors,
-    SemanticExternalIdentifier,
-    SemanticExternalUrl
+def _is_doi(semantic_content: SemanticContentWrapper) -> bool:
+    return (
+        isinstance(semantic_content, SemanticExternalIdentifier)
+        and semantic_content.external_identifier_type == SemanticExternalIdentifierTypes.DOI
+    )
+
+
+def _is_collaboration(semantic_content: SemanticContentWrapper) -> bool:
+    return (
+        isinstance(semantic_content, SemanticNote)
+        and semantic_content.note_type == '<collaboration>'
+    )
+
+
+IS_REFERENCE_FIELD_BY_NAME: Mapping[str, Callable[[SemanticContentWrapper], bool]] = {
+    'title': lambda c: isinstance(c, SemanticTitle),
+    'journal': lambda c: isinstance(c, SemanticJournal),
+    'book_title': lambda c: isinstance(c, SemanticBookTitle),
+    'authors': lambda c: isinstance(c, SemanticRawAuthors),
+    'editors': lambda c: isinstance(c, SemanticRawEditors),
+    'collaboration': _is_collaboration,
+    'doi': _is_doi,
+    'identifier': lambda c: isinstance(c, SemanticExternalIdentifier),
+    'url': lambda c: isinstance(c, SemanticExternalUrl)
 }
+
+DEFAULT_REFERENCE_KEPT_BY_ANY_OF: Sequence[str] = (
+    'title', 'journal', 'book_title', 'authors', 'editors', 'identifier', 'url'
+)
+
+
+def validate_reference_field_names(field_names: Sequence[str]) -> Sequence[str]:
+    unknown = [name for name in field_names if name not in IS_REFERENCE_FIELD_BY_NAME]
+    if unknown:
+        raise ValueError(
+            f'unknown reference fields: {unknown!r},'
+            f' expected any of {list(IS_REFERENCE_FIELD_BY_NAME)}'
+        )
+    return field_names
 
 
 def parse_page_range(layout_block: LayoutBlock) -> SemanticPageRange:
@@ -166,11 +197,16 @@ def parse_date(layout_block: LayoutBlock) -> SemanticDate:
     )
 
 
-def is_reference_valid(ref: SemanticReference) -> bool:
-    for semantic_content in ref:
-        if type(semantic_content) in VALID_REFERENCE_TYPES:
-            return True
-    return False
+def is_reference_valid(
+    ref: SemanticReference,
+    kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF
+) -> bool:
+    is_field_list = [IS_REFERENCE_FIELD_BY_NAME[name] for name in kept_by_any_of]
+    return any(
+        is_field(semantic_content)
+        for semantic_content in ref
+        for is_field in is_field_list
+    )
 
 
 def get_invalid_reference(ref: SemanticReference) -> SemanticInvalidReference:
@@ -209,6 +245,7 @@ class CitationSemanticExtractor(SimpleModelSemanticExtractor):
         self,
         entity_tokens: Iterable[Tuple[str, LayoutBlock]],
         semantic_raw_reference: Optional[SemanticRawReference] = None,
+        reference_kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
         entity_tokens = list(entity_tokens)
@@ -235,7 +272,7 @@ class CitationSemanticExtractor(SimpleModelSemanticExtractor):
                 name, layout_block=layout_block
             )
             ref.add_content(semantic_content)
-        if ref is not None and not is_reference_valid(ref):
+        if ref is not None and not is_reference_valid(ref, reference_kept_by_any_of):
             yield get_invalid_reference(ref)
         elif ref is not None:
             yield ref

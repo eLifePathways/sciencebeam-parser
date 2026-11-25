@@ -2,7 +2,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, List
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -943,6 +943,42 @@ class TestFullTextProcessorAffiliation:
         assert [author.surname_text for author in authors] == ['Fernley']
         assert 'et al.' in ref.get_text()
         assert 'Bo Mossby' in ref.get_text()
+
+    @pytest.mark.parametrize(
+        'reference_kept_by_any_of,expected_type',
+        [(['title', 'url'], SemanticReference), (['title'], SemanticInvalidReference)]
+    )
+    def test_should_keep_reference_only_with_a_configured_field(
+        self,
+        fulltext_models_mock: MockFullTextModels,
+        reference_kept_by_any_of: List[str],
+        expected_type: type
+    ):
+        url_block = LayoutBlock.for_text('https://ferns.test/map')
+        fulltext_processor = FullTextProcessor(
+            fulltext_models_mock,
+            FullTextProcessorConfig(
+                extract_citation_fields=True,
+                reference_kept_by_any_of=reference_kept_by_any_of
+            )
+        )
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            url_block, '<references>'
+        )
+        fulltext_models_mock.reference_segmenter_model_mock.update_label_by_layout_block(
+            url_block, '<reference>'
+        )
+        fulltext_models_mock.citation_model_mock.update_label_by_layout_block(
+            url_block, '<web>'
+        )
+        semantic_document = fulltext_processor.get_semantic_document_for_layout_document(
+            layout_document=LayoutDocument(pages=[LayoutPage(blocks=[url_block])])
+        )
+        reference_list = list(semantic_document.back_section.iter_by_type(SemanticReferenceList))
+        assert [
+            type(ref) for ref in reference_list[0]
+            if isinstance(ref, (SemanticReference, SemanticInvalidReference))
+        ] == [expected_type]
 
     def test_should_extract_editor_names_from_references_fields(
         self, fulltext_models_mock: MockFullTextModels

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from sciencebeam_parser.document.layout_document import LayoutBlock
+from sciencebeam_parser.document.semantic_document import SemanticReference
 from sciencebeam_parser.models.citation.extract import (
     CitationSemanticExtractor,
-    VALID_REFERENCE_TYPES,
+    is_reference_valid,
 )
 from sciencebeam_parser.models.citation.labels import CITATION_LABELS
 
@@ -72,9 +73,9 @@ class TestReferencePresenceLabels:
         keeps_reference = frozenset(
             label
             for label in CITATION_LABELS
-            if type(  # pylint: disable=unidiomatic-typecheck
+            if is_reference_valid(SemanticReference([
                 extractor.get_semantic_content_for_entity_name(label, block)
-            ) in VALID_REFERENCE_TYPES
+            ]))
         )
         assert keeps_reference == REFERENCE_PRESENCE_LABELS
 

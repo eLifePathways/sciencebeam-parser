@@ -1,5 +1,5 @@
 import dataclasses
-from typing import NamedTuple, Set
+from typing import NamedTuple, Sequence, Set
 
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.document.layout_noise_filter import LayoutNoiseFilterConfig
@@ -11,6 +11,10 @@ from sciencebeam_parser.processors.document_page_image import (
 from sciencebeam_parser.models.header.extract import (
     DEFAULT_ABSTRACTS_MODE,
     DEFAULT_TITLES_MODE
+)
+from sciencebeam_parser.models.citation.extract import (
+    DEFAULT_REFERENCE_KEPT_BY_ANY_OF,
+    validate_reference_field_names
 )
 from sciencebeam_parser.processors.graphic_matching import (
     DEFAULT_MAX_ENCLOSED_TEXT_RATIO,
@@ -50,6 +54,7 @@ class FullTextProcessorConfig(NamedTuple):
     extract_citation_fields: bool = True
     extract_citation_authors: bool = True
     extract_citation_editors: bool = False
+    reference_kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF
     extract_figure_fields: bool = True
     extract_table_fields: bool = True
     merge_raw_authors: bool = False
@@ -73,6 +78,10 @@ class FullTextProcessorConfig(NamedTuple):
             name: props.pop(name, None)
             for name in ('noise_filter', 'graphic_regions')
         }
+        if 'reference_kept_by_any_of' in props:
+            props['reference_kept_by_any_of'] = tuple(validate_reference_field_names(
+                props['reference_kept_by_any_of']
+            ))
         config = FullTextProcessorConfig()._replace(**props)
         for name, name_props in nested_props.items():
             if not name_props:

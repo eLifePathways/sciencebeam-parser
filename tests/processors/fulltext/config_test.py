@@ -119,3 +119,15 @@ class TestNoiseFilterConfig:
             'processors': {'fulltext': {'merge_raw_authors': True}}
         }))
         assert config.noise_filter == LayoutNoiseFilterConfig()
+
+    def test_should_read_the_fields_that_keep_a_reference(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {'reference_kept_by_any_of': ['title', 'doi']}}
+        }))
+        assert config.reference_kept_by_any_of == ('title', 'doi')
+
+    def test_should_refuse_an_unknown_field_to_keep_a_reference(self):
+        with pytest.raises(ValueError, match='fern'):
+            FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+                'processors': {'fulltext': {'reference_kept_by_any_of': ['title', 'fern']}}
+            }))

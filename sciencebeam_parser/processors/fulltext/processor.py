@@ -648,7 +648,8 @@ class FullTextProcessor:
                 self.citation_model
                 .iter_semantic_content_for_labeled_layout_tokens(
                     labeled_layout_tokens,
-                    semantic_raw_reference=semantic_raw_reference
+                    semantic_raw_reference=semantic_raw_reference,
+                    reference_kept_by_any_of=self.config.reference_kept_by_any_of
                 )
             )
             ref: Optional[Union[SemanticReference, SemanticInvalidReference]] = None
