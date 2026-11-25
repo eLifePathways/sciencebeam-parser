@@ -561,6 +561,8 @@ one is present. A `profile:<name>` label picks the profile, and like
 `benchmark:jats` and any other label, adding it starts no run of its own: it
 applies to the next run. Each run sets a `Benchmark result` status on the PR,
 linking to the run, and posts a new comment that collapses the previous ones.
+A run started by hand on the PR's branch sets the same status, and leaves its
+report in the job summary instead of a comment.
 
 ## Scoring the JATS
 
