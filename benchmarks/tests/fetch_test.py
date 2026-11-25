@@ -242,6 +242,14 @@ class TestFetchStratified:
         assert len(records) == 3
         assert existing.read_text(encoding="utf-8") == "<kept/>"
 
+    def test_says_how_many_documents_were_already_on_disk(
+        self, repo: Path, caplog: pytest.LogCaptureFixture
+    ):
+        self._fetch(repo, 2)
+        caplog.set_level("INFO", logger="benchmarks.fetch")
+        self._fetch(repo, 3)
+        assert "2 of 3 document(s) already on disk, reading 1 from" in caplog.text
+
     def test_reads_only_the_columns_it_needs(self, repo: Path, monkeypatch):
         seen: List[Sequence[str]] = []
         original = pq.ParquetFile.read_row_group

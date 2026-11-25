@@ -192,6 +192,13 @@ def _select_recorded_ids(
     return result
 
 
+def _log_reads(corpus: str, read: int, total: int, describe: str) -> None:
+    LOGGER.info(
+        "Corpus %r: %d of %d document(s) already on disk, reading %d from %s",
+        corpus, total - read, total, read, describe,
+    )
+
+
 def _materialise(
     reader: RepoReader,
     source: CorpusSource,
@@ -216,6 +223,7 @@ def _materialise(
         if not all(path.exists() for path in paths.values())
     ]
 
+    _log_reads(source.corpus, len(missing), len(picked), source.describe())
     for raw_id, values in _iter_missing_rows(
         reader, source, missing, by_stratum, columns
     ):
@@ -345,6 +353,7 @@ def _materialise_released(  # pylint: disable=too-many-arguments,too-many-positi
         )
     ]
     columns = ["pdf", "xml"] if with_pdf else ["xml"]
+    _log_reads(corpus.corpus, len(stale), len(picked), corpus.describe())
     for repo in corpus.repos:
         wanted = [raw_id for raw_id in stale if repo_by_id[raw_id] == repo]
         if not wanted:
@@ -359,10 +368,6 @@ def _materialise_released(  # pylint: disable=too-many-arguments,too-many-positi
     if stale:
         (corpus_dir / RELEASE_CACHE_FILE).write_text(
             json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        LOGGER.info(
-            "Corpus %r: read %d document(s) from %s",
-            corpus.corpus, len(stale), corpus.describe(),
         )
     return [
         _released_record(
