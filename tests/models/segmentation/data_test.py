@@ -173,6 +173,22 @@ class TestSegmentationLineFeaturesProvider:
             },
         ]
 
+    def test_should_flag_http_in_the_first_token_of_a_line(
+        self,
+        features_provider: SegmentationLineFeaturesProvider
+    ):
+        layout_document = LayoutDocument(pages=[
+            LayoutPage(blocks=[LayoutBlock(lines=[
+                LayoutLine.for_text('<https://ferns.test/map> Fernley'),
+                LayoutLine.for_text('Mossby https://ferns.test/map'),
+                LayoutLine.for_text('HTTPS://FERNS.TEST')
+            ])])
+        ])
+        assert [
+            features.get_str_is_http()
+            for features in _iter_line_features(features_provider, layout_document)
+        ] == ['1', '0', '0']
+
     def test_should_provide_punctuation_profile(
         self,
         features_provider: SegmentationLineFeaturesProvider
