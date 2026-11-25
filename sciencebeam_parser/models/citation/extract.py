@@ -26,17 +26,15 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticVolume,
     T_SemanticContentFactory
 )
-from sciencebeam_parser.document.layout_document import LayoutBlock
+from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutLink
+from sciencebeam_parser.models.citation.doi import find_printed_doi
+from sciencebeam_parser.models.citation.links import set_reference_doi_from_links
 from sciencebeam_parser.models.citation.labels import IDENTIFIER_LABEL, NOTE_CITATION_LABELS
 from sciencebeam_parser.models.extract import SimpleModelSemanticExtractor
 
 
 LOGGER = logging.getLogger(__name__)
 
-
-# https://en.wikipedia.org/wiki/Digital_Object_Identifier
-# https://www.doi.org/doi_handbook/2_Numbering.html
-DOI_PATTERN = r'\b(10\.\d{4,}(?:\.\d{1,})*/.+)'
 
 # copied and adapted from:
 # https://github.com/kermitt2/grobid/blob/0.6.2/grobid-core/src/main/java/org/grobid/core/utilities/TextUtilities.java#L66
@@ -94,6 +92,19 @@ IS_REFERENCE_FIELD_BY_NAME: Mapping[str, Callable[[SemanticContentWrapper], bool
     'url': lambda c: isinstance(c, SemanticExternalUrl)
 }
 
+
+class FragmentLinkDoi:
+    """Where the DOI of a link goes when it is all that would keep a reference."""
+
+    PREVIOUS_REFERENCE = 'previous_reference'
+    OWN_REFERENCE = 'own_reference'
+
+
+FRAGMENT_LINK_DOI_VALUES = (FragmentLinkDoi.PREVIOUS_REFERENCE, FragmentLinkDoi.OWN_REFERENCE)
+
+DEFAULT_FRAGMENT_LINK_DOI = FragmentLinkDoi.PREVIOUS_REFERENCE
+
+
 DEFAULT_REFERENCE_KEPT_BY_ANY_OF: Sequence[str] = (
     'title', 'journal', 'book_title', 'authors', 'editors', 'identifier', 'url'
 )
@@ -127,11 +138,11 @@ def parse_page_range(layout_block: LayoutBlock) -> SemanticPageRange:
 
 def parse_web(layout_block: LayoutBlock) -> Union[SemanticExternalUrl, SemanticExternalIdentifier]:
     value = re.sub(r'\s', '', layout_block.text)
-    m = re.search(DOI_PATTERN, value)
-    if m:
+    doi = find_printed_doi(layout_block.text)
+    if doi:
         return SemanticExternalIdentifier(
             layout_block=layout_block,
-            value=m.group(1),
+            value=doi,
             external_identifier_type=SemanticExternalIdentifierTypes.DOI
         )
     return SemanticExternalUrl(
@@ -143,11 +154,10 @@ def parse_web(layout_block: LayoutBlock) -> Union[SemanticExternalUrl, SemanticE
 def get_detected_external_identifier_type_and_value_for_text(
     text: str
 ) -> Tuple[Optional[str], str]:
+    doi = find_printed_doi(text)
+    if doi:
+        return SemanticExternalIdentifierTypes.DOI, doi
     value = re.sub(r'\s', '', text)
-    m = re.search(DOI_PATTERN, value)
-    if m:
-        value = m.group(1)
-        return SemanticExternalIdentifierTypes.DOI, value
     m = re.search(PMCID_PATTERN, value)
     if m:
         value = 'PMC' + m.group(1)
@@ -195,6 +205,29 @@ def parse_date(layout_block: LayoutBlock) -> SemanticDate:
         layout_block=layout_block,
         year=year
     )
+
+
+def has_doi(ref: SemanticReference) -> bool:
+    return any(_is_doi(semantic_content) for semantic_content in ref)
+
+
+def is_reference_kept_by_a_doi(kept_by_any_of: Sequence[str]) -> bool:
+    return any(name in ('doi', 'identifier') for name in kept_by_any_of)
+
+
+def validate_fragment_link_doi(fragment_link_doi: str, kept_by_any_of: Sequence[str]) -> None:
+    if fragment_link_doi not in FRAGMENT_LINK_DOI_VALUES:
+        raise ValueError(
+            f'unknown fragment_link_doi: {fragment_link_doi!r},'
+            f' expected one of {list(FRAGMENT_LINK_DOI_VALUES)}'
+        )
+    if (
+        fragment_link_doi == FragmentLinkDoi.OWN_REFERENCE
+        and not is_reference_kept_by_a_doi(kept_by_any_of)
+    ):
+        raise ValueError(
+            'fragment_link_doi: own_reference needs doi or identifier in reference_kept_by_any_of'
+        )
 
 
 def is_reference_valid(
@@ -246,6 +279,8 @@ class CitationSemanticExtractor(SimpleModelSemanticExtractor):
         entity_tokens: Iterable[Tuple[str, LayoutBlock]],
         semantic_raw_reference: Optional[SemanticRawReference] = None,
         reference_kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF,
+        links: Sequence[LayoutLink] = (),
+        fragment_link_doi: str = DEFAULT_FRAGMENT_LINK_DOI,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
         entity_tokens = list(entity_tokens)
@@ -272,6 +307,14 @@ class CitationSemanticExtractor(SimpleModelSemanticExtractor):
                 name, layout_block=layout_block
             )
             ref.add_content(semantic_content)
+        if ref is not None and semantic_raw_reference is not None and (
+            is_reference_valid(ref, reference_kept_by_any_of)
+            or (
+                fragment_link_doi == FragmentLinkDoi.OWN_REFERENCE
+                and is_reference_kept_by_a_doi(reference_kept_by_any_of)
+            )
+        ):
+            set_reference_doi_from_links(ref, list(semantic_raw_reference.iter_tokens()), links)
         if ref is not None and not is_reference_valid(ref, reference_kept_by_any_of):
             yield get_invalid_reference(ref)
         elif ref is not None:
