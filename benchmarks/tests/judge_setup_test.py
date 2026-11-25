@@ -116,3 +116,49 @@ class TestOnlyTheArticleOwnMetadataIsRead:
         )
         assert values["abstract"] == ["the article's own abstract"]
         assert values["abstracts"] == ["the article's own abstract"]
+
+
+REFERENCES_JATS = b"""<article><back><ref-list>
+  <ref><element-citation publication-type="journal">
+    <article-title>Ferns of the north</article-title><source>Fern Journal</source>
+  </element-citation></ref>
+  <ref><element-citation publication-type="book">
+    <chapter-title>Mosses</chapter-title><source>Northern plants</source>
+  </element-citation></ref>
+  <ref><element-citation publication-type="book">
+    <source>A field guide to lichens</source>
+  </element-citation></ref>
+  <ref><element-citation publication-type="journal">
+    <source>Fern Journal</source>
+  </element-citation></ref>
+  <ref><mixed-citation>Fernley A. <source>Bracken counts</source>. 2001.</mixed-citation></ref>
+</ref-list></back></article>"""
+
+REFERENCES_TEI = b"""<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><back><listBibl>
+  <biblStruct><analytic><title level="a" type="main">Ferns of the north</title></analytic>
+    <monogr><title level="j">Fern Journal</title></monogr></biblStruct>
+  <biblStruct><analytic><title level="a" type="main">Mosses</title></analytic>
+    <monogr><title level="m">Northern plants</title></monogr></biblStruct>
+  <biblStruct><monogr><title level="m" type="main">A field guide to lichens</title></monogr>
+    </biblStruct>
+  <biblStruct><monogr><title level="j">Fern Journal</title></monogr></biblStruct>
+  <biblStruct><monogr><title level="m">Bracken counts</title></monogr></biblStruct>
+</listBibl></back></text></TEI>"""
+
+REFERENCE_TITLES = [
+    "Ferns of the north", "Mosses", "A field guide to lichens", "", "Bracken counts"
+]
+
+
+class TestReferenceTitle:
+    def test_should_read_the_cited_work_s_title_from_the_jats(self):
+        values = parse_xml(
+            BytesIO(REFERENCES_JATS), prepare_judge(), fields=["reference_title"]
+        )
+        assert values["reference_title"] == REFERENCE_TITLES
+
+    def test_should_read_the_cited_work_s_title_from_the_tei(self):
+        values = parse_xml(
+            BytesIO(REFERENCES_TEI), prepare_judge(), fields=["reference_title"]
+        )
+        assert values["reference_title"] == REFERENCE_TITLES
