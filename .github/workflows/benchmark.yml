@@ -177,7 +177,7 @@ jobs:
         run: |
           gh api "repos/${{ github.repository }}/statuses/${BENCHMARK_STATUS_SHA}" \
             -f state=pending -f context="Benchmark result" \
-            -f description="Running ${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}" \
+            -f description="${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}: running" \
             -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       # For an interim model: a PR points a profile at gs://, gets benchmarked, and
@@ -491,9 +491,9 @@ jobs:
             REPORT_WHERE="the job summary"
           fi
           if [ "$JOB_STATUS" = "success" ]; then
-            STATE=success DESCRIPTION="Done: ${BENCHMARK_PROFILE}, ${BENCHMARK_MODE} - report in ${REPORT_WHERE}"
+            STATE=success DESCRIPTION="${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}: done, report in ${REPORT_WHERE}"
           else
-            STATE=failure DESCRIPTION="Failed: ${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}"
+            STATE=failure DESCRIPTION="${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}: failed"
           fi
           gh api "repos/${{ github.repository }}/statuses/${BENCHMARK_STATUS_SHA}" \
             -f state="$STATE" -f context="Benchmark result" \
