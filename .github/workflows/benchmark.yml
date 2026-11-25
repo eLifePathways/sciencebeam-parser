@@ -24,17 +24,35 @@ on:
   pull_request:
     types: [labeled, synchronize]
 
+# Only a size label or `benchmark:plos` starts a PR run, so labels added
+# together start one run, and a modifier such as `profile:` or an unrelated
+# label leaves a run in progress alone. A PR run supersedes the PR's previous
+# one before any job starts; every other run is a group of its own here.
+concurrency:
+  group: >-
+    ${{
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'synchronize' ||
+       contains(fromJson('["benchmark:smoke","benchmark:small","benchmark:medium","benchmark:large","benchmark:full","benchmark:plos"]'), github.event.label.name)) &&
+      format('benchmark-{0}', github.ref) ||
+      format('benchmark-run-{0}', github.run_id)
+    }}
+  cancel-in-progress: true
+
 jobs:
   profiles:
     if: >-
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark:smoke') ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark:small') ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark:medium') ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark:large') ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark:full') ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark:plos')
+      (github.event.action == 'labeled' &&
+       contains(fromJson('["benchmark:smoke","benchmark:small","benchmark:medium","benchmark:large","benchmark:full","benchmark:plos"]'), github.event.label.name)) ||
+      (github.event.action == 'synchronize' && (
+        contains(github.event.pull_request.labels.*.name, 'benchmark:smoke') ||
+        contains(github.event.pull_request.labels.*.name, 'benchmark:small') ||
+        contains(github.event.pull_request.labels.*.name, 'benchmark:medium') ||
+        contains(github.event.pull_request.labels.*.name, 'benchmark:large') ||
+        contains(github.event.pull_request.labels.*.name, 'benchmark:full') ||
+        contains(github.event.pull_request.labels.*.name, 'benchmark:plos')))
     runs-on: ubuntu-latest
     permissions: {}
     outputs:
@@ -84,12 +102,9 @@ jobs:
     # Per profile, because two profiles write different paths in the predictions
     # store and so can run at once; not the mode or the corpus set, because those
     # share a path with every other run of the same profile and a concurrent push
-    # to one path cannot be rebased. A PR pushes nothing, so a newer run of it
-    # supersedes an older one whatever profile either names.
+    # to one path cannot be rebased.
     concurrency:
-      group: >-
-        benchmark-${{ github.ref }}-${{
-          github.event_name == 'pull_request' && 'pull-request' || matrix.profile }}
+      group: benchmark-${{ github.ref }}-${{ matrix.profile }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -98,9 +113,18 @@ jobs:
       contents: read
       packages: read
       pull-requests: write
+      statuses: write
 
     env:
       BENCHMARK_PROFILE: ${{ matrix.profile }}
+      # The commit a PR shows the `Benchmark result` status on: the PR's head, or
+      # the branch's head for a manual run, which is the PR's while it is current.
+      BENCHMARK_STATUS_SHA: >-
+        ${{
+          github.event_name == 'pull_request' && github.event.pull_request.head.sha ||
+          github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && github.sha ||
+          ''
+        }}
       BENCHMARK_FAILURE_IS_WARNING: ${{ matrix.profile != needs.profiles.outputs.required }}
       BENCHMARK_SPLIT: validation
       # A document the parser fails on writes no prediction, and scoring
@@ -141,6 +165,20 @@ jobs:
 
       - name: Name the profile in the job summary
         run: echo "## Profile \`${BENCHMARK_PROFILE}\`" >> $GITHUB_STEP_SUMMARY
+
+      # A PR's checks list shows only the newest run of a workflow, which is
+      # usually a skipped one from another label, and no manual run at all; a
+      # status stays visible.
+      - name: Show the run on the PR
+        if: env.BENCHMARK_STATUS_SHA != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${BENCHMARK_STATUS_SHA}" \
+            -f state=pending -f context="Benchmark result" \
+            -f description="${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}: running" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       # For an interim model: a PR points a profile at gs://, gets benchmarked, and
       # either gains a public path or never merges. Nothing shipped reaches a bucket,
@@ -438,3 +476,26 @@ jobs:
         run: |
           FAILED=$(echo "$STEPS_JSON" | jq -r '[to_entries[] | select(.value.outcome == "failure") | .key] | join(", ")')
           echo "::warning::Benchmark of profile ${BENCHMARK_PROFILE} failed at: ${FAILED}. Only a failure of the required profile fails the run."
+
+      # Not on cancel: a run is cancelled by the one superseding it, which has
+      # already set its own pending status.
+      - name: Show the outcome on the PR
+        if: ${{ !cancelled() && env.BENCHMARK_STATUS_SHA != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          REPORT_WHERE="a PR comment"
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            REPORT_WHERE="the job summary"
+          fi
+          if [ "$JOB_STATUS" = "success" ]; then
+            STATE=success DESCRIPTION="${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}: done, report in ${REPORT_WHERE}"
+          else
+            STATE=failure DESCRIPTION="${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}: failed"
+          fi
+          gh api "repos/${{ github.repository }}/statuses/${BENCHMARK_STATUS_SHA}" \
+            -f state="$STATE" -f context="Benchmark result" \
+            -f description="$DESCRIPTION" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
