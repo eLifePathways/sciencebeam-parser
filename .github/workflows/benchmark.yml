@@ -24,19 +24,8 @@ on:
   pull_request:
     types: [labeled, synchronize]
 
-# The profile, because two profiles write different paths in the predictions
-# store and so can run at once; not the mode or the corpus set, because those
-# share a path with every other run of the same profile and a concurrent push
-# to one path cannot be rebased. `inputs.profile` is empty for a push, for a PR
-# and for a dispatch left at its default, so the default below is repeated here
-# to keep those in one group with a dispatch that names it -- it must stay in
-# step with `Resolve benchmark profile`.
-concurrency:
-  group: benchmark-${{ github.ref }}-${{ inputs.profile || 'recommended' }}
-  cancel-in-progress: true
-
 jobs:
-  benchmark:
+  profiles:
     if: >-
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
@@ -47,6 +36,62 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'benchmark:full') ||
       contains(github.event.pull_request.labels.*.name, 'benchmark:plos')
     runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      profiles: ${{ steps.resolve.outputs.profiles }}
+      required: ${{ steps.resolve.outputs.required }}
+    steps:
+      - name: Resolve benchmark profiles
+        id: resolve
+        env:
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          DISPATCH_PROFILE: ${{ inputs.profile }}
+          IS_PUSH_TO_MAIN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          # The first is required; a failure of any other is a warning.
+          MAIN_PROFILES=(recommended grobid_crf)
+          if [ "$IS_PUSH_TO_MAIN" = "true" ]; then
+            PROFILES=("${MAIN_PROFILES[@]}")
+            PROFILE_SOURCE="push to main"
+          else
+            LABEL_PROFILE=$(echo "$PR_LABELS_JSON" | jq -r '.[]? | select(startswith("profile:")) | sub("^profile:"; "")' | head -n1)
+            PROFILES=("${LABEL_PROFILE:-${DISPATCH_PROFILE:-recommended}}")
+            if [ -n "$LABEL_PROFILE" ]; then
+              PROFILE_SOURCE="profile:$LABEL_PROFILE label"
+            elif [ -n "$DISPATCH_PROFILE" ]; then
+              PROFILE_SOURCE="workflow_dispatch input"
+            else
+              PROFILE_SOURCE="default"
+            fi
+          fi
+          for PROFILE in "${PROFILES[@]}"; do
+            if ! [[ "$PROFILE" =~ ^[A-Za-z0-9_]+$ ]]; then
+              echo "::error::Invalid profile '$PROFILE' (from $PROFILE_SOURCE) - only letters, digits and underscores are allowed"
+              exit 1
+            fi
+          done
+          echo "::notice::Benchmark profiles: ${PROFILES[*]} (from $PROFILE_SOURCE)"
+          echo "profiles=$(printf '%s\n' "${PROFILES[@]}" | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "required=${PROFILES[0]}" >> "$GITHUB_OUTPUT"
+
+  benchmark:
+    needs: profiles
+    name: benchmark (${{ matrix.profile }})
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.profiles.outputs.profiles) }}
+    # Per profile, because two profiles write different paths in the predictions
+    # store and so can run at once; not the mode or the corpus set, because those
+    # share a path with every other run of the same profile and a concurrent push
+    # to one path cannot be rebased. A PR pushes nothing, so a newer run of it
+    # supersedes an older one whatever profile either names.
+    concurrency:
+      group: >-
+        benchmark-${{ github.ref }}-${{
+          github.event_name == 'pull_request' && 'pull-request' || matrix.profile }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: benchmark
     permissions:
@@ -55,6 +100,8 @@ jobs:
       pull-requests: write
 
     env:
+      BENCHMARK_PROFILE: ${{ matrix.profile }}
+      BENCHMARK_FAILURE_IS_WARNING: ${{ matrix.profile != needs.profiles.outputs.required }}
       BENCHMARK_SPLIT: validation
       # A document the parser fails on writes no prediction, and scoring
       # iterates prediction files, so it leaves the denominator rather than
@@ -92,11 +139,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Name the profile in the job summary
+        run: echo "## Profile \`${BENCHMARK_PROFILE}\`" >> $GITHUB_STEP_SUMMARY
+
       # For an interim model: a PR points a profile at gs://, gets benchmarked, and
       # either gains a public path or never merges. Nothing shipped reaches a bucket,
       # which tests/models/llm/shipped_config_test.py asserts, so most runs skip this.
       - name: Write GCS model reader key
         id: gcp_auth
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         env:
           GCS_MODEL_READER_SA_KEY_B64: ${{ secrets.GCS_MODEL_READER_SA_KEY_B64 }}
         run: |
@@ -122,29 +173,10 @@ jobs:
           chmod 600 "$KEY_PATH"
           echo "key_path=$KEY_PATH" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve benchmark profile
-        env:
-          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
-          DISPATCH_PROFILE: ${{ inputs.profile }}
-        run: |
-          LABEL_PROFILE=$(echo "$PR_LABELS_JSON" | jq -r '.[]? | select(startswith("profile:")) | sub("^profile:"; "")' | head -n1)
-          PROFILE="${LABEL_PROFILE:-${DISPATCH_PROFILE:-recommended}}"
-          if [ -n "$LABEL_PROFILE" ]; then
-            PROFILE_SOURCE="profile:$LABEL_PROFILE label"
-          elif [ -n "$DISPATCH_PROFILE" ]; then
-            PROFILE_SOURCE="workflow_dispatch input"
-          else
-            PROFILE_SOURCE="default"
-          fi
-          if ! [[ "$PROFILE" =~ ^[A-Za-z0-9_]+$ ]]; then
-            echo "::error::Invalid profile '$PROFILE' (from $PROFILE_SOURCE) - only letters, digits and underscores are allowed"
-            exit 1
-          fi
-          echo "::notice::Benchmark profile: $PROFILE (from $PROFILE_SOURCE)"
-          echo "BENCHMARK_PROFILE=$PROFILE" >> "$GITHUB_ENV"
-
       - name: Set image tag
         id: image_tag
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         run: |
           SHORT_SHA=${GITHUB_SHA::8}
           TIMESTAMP=$(date --utc +%Y%m%d.%H%M)
@@ -160,13 +192,22 @@ jobs:
           fi
 
       - uses: astral-sh/setup-uv@v5
+        id: setup_uv
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         with:
           python-version: '3.11'
 
       - name: Install Python deps
+        id: install_deps
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         run: uv sync --frozen --group benchmark
 
       - name: Login to GHCR
+        id: ghcr_login
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -174,9 +215,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
+        id: buildx
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Build parser image
+        id: build_image
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -188,6 +235,9 @@ jobs:
             type=registry,ref=ghcr.io/elifepathways/sciencebeam-parser_unstable:buildcache-runtime
 
       - name: Checkout predictions repo
+        id: checkout_predictions
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         uses: actions/checkout@v5
         with:
           repository: elifepathways/sciencebeam-eval-predictions
@@ -199,6 +249,9 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Run baseline predictions
+        id: baseline_predictions
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -213,6 +266,9 @@ jobs:
             --baseline-only
 
       - name: Start sciencebeam-parser
+        id: start_parser
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         env:
           # An llm profile reads this; every other profile ignores it. Passed as a
           # bare `-e NAME` so the value never appears in a command line, and so an
@@ -236,6 +292,9 @@ jobs:
             "${GCP_ENV[@]}" "${PROFILE_ENV[@]}" ${{ steps.image_tag.outputs.value }}
 
       - name: Wait for parser
+        id: wait_for_parser
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         run: |
           for i in $(seq 1 60); do
             if curl -sf http://localhost:8080/; then
@@ -250,6 +309,9 @@ jobs:
           exit 1
 
       - name: Run benchmark
+        id: run_benchmark
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -294,11 +356,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: parser-log-${{ github.sha }}
+          name: parser-log-${{ github.sha }}-${{ matrix.profile }}
           path: parser.log
           retention-days: 30
 
       - name: Write job summary
+        id: job_summary
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         run: |
           REPORT=${{ env.BENCHMARK_RUN }}/report.md
           if [ -f ${{ env.BENCHMARK_RUN }}/comparison.md ]; then
@@ -307,7 +372,9 @@ jobs:
           cat "$REPORT" >> $GITHUB_STEP_SUMMARY
 
       - name: Post PR comment
-        if: github.event_name == 'pull_request'
+        id: pr_comment
+        if: ${{ github.event_name == 'pull_request' && !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: ${{ env.BENCHMARK_FAILURE_IS_WARNING == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -357,9 +424,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: benchmark-run-${{ github.sha }}
+          name: benchmark-run-${{ github.sha }}-${{ matrix.profile }}
           path: |
             ${{ env.BENCHMARK_RUN }}/*.md
             ${{ env.BENCHMARK_RUN }}/*.json
             ${{ env.BENCHMARK_RUN }}/*.jsonl
           retention-days: 30
+
+      - name: Report a failure as a warning
+        if: ${{ !cancelled() && env.BENCHMARK_FAILURE_IS_WARNING == 'true' && contains(steps.*.outcome, 'failure') }}
+        env:
+          STEPS_JSON: ${{ toJson(steps) }}
+        run: |
+          FAILED=$(echo "$STEPS_JSON" | jq -r '[to_entries[] | select(.value.outcome == "failure") | .key] | join(", ")')
+          echo "::warning::Benchmark of profile ${BENCHMARK_PROFILE} failed at: ${FAILED}. Only a failure of the required profile fails the run."
