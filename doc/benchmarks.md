@@ -559,8 +559,8 @@ In CI, label a PR `benchmark:smoke` (or `:small`, `:medium`, `:large`, `:full`,
 `:plos`). Adding one of these starts a run, and so does each new commit while
 one is present. A `profile:<name>` label picks the profile, and like
 `benchmark:jats` and any other label, adding it starts no run of its own: it
-applies to the next run. Each run posts a new comment and collapses the
-previous ones.
+applies to the next run. Each run sets a `Benchmark result` status on the PR,
+linking to the run, and posts a new comment that collapses the previous ones.
 
 ## Scoring the JATS
 

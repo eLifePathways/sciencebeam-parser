@@ -113,6 +113,7 @@ jobs:
       contents: read
       packages: read
       pull-requests: write
+      statuses: write
 
     env:
       BENCHMARK_PROFILE: ${{ matrix.profile }}
@@ -156,6 +157,19 @@ jobs:
 
       - name: Name the profile in the job summary
         run: echo "## Profile \`${BENCHMARK_PROFILE}\`" >> $GITHUB_STEP_SUMMARY
+
+      # A PR's checks list shows only the newest run of a workflow, which is
+      # usually a skipped one from another label; a status stays visible.
+      - name: Show the run on the PR
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
+            -f state=pending -f context="Benchmark result" \
+            -f description="Running ${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       # For an interim model: a PR points a profile at gs://, gets benchmarked, and
       # either gains a public path or never merges. Nothing shipped reaches a bucket,
@@ -453,3 +467,22 @@ jobs:
         run: |
           FAILED=$(echo "$STEPS_JSON" | jq -r '[to_entries[] | select(.value.outcome == "failure") | .key] | join(", ")')
           echo "::warning::Benchmark of profile ${BENCHMARK_PROFILE} failed at: ${FAILED}. Only a failure of the required profile fails the run."
+
+      # Not on cancel: a run is cancelled by the one superseding it, which has
+      # already set its own pending status.
+      - name: Show the outcome on the PR
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            STATE=success DESCRIPTION="Done: ${BENCHMARK_PROFILE}, ${BENCHMARK_MODE} - report in a PR comment"
+          else
+            STATE=failure DESCRIPTION="Failed: ${BENCHMARK_PROFILE}, ${BENCHMARK_MODE}"
+          fi
+          gh api "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
+            -f state="$STATE" -f context="Benchmark result" \
+            -f description="$DESCRIPTION" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
