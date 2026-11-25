@@ -130,6 +130,8 @@ processors:
       # can use and costs a CRF the documents its features shift on.
       action: 'drop'
     merge_raw_authors: false
+    # A reference with none of these is dropped.
+    reference_kept_by_any_of: [title, journal, book_title, authors, editors, identifier, url]
     use_cv_model: false
     cv_render_dpi: 100
     use_ocr_model: false
@@ -461,6 +463,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
   # `grobid_crf_0_9_0` with one setting changed, so that comparing either with it
   # measures `abstracts_mode` and nothing else. Their models and their noise filter are
   # restated rather than inherited: a profile that extends another may add only prose.
@@ -472,6 +475,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
         abstracts_mode: 'variants'
   grobid_crf_abstract_merged_by_language:
     label: 'GROBID CRF 0.9.0, abstracts merged by language'
@@ -481,6 +485,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
         abstracts_mode: 'merged_by_language'
   grobid_crf_cv:
     label: 'GROBID CRF 0.9.0, graphics located by the cv model'
@@ -490,6 +495,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
         use_cv_model: true
   wapiti_grobid_only:
     label: 'Wapiti reference models, GROBID data only'
@@ -654,6 +660,7 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
+        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
 
   # The names a deployment points at. Each tracks a profile declared above and
   # adds only its prose, so it resolves to exactly what it names and reports it.

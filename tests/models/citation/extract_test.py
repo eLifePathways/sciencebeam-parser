@@ -170,6 +170,9 @@ class TestParseDate:
         assert semantic_date.year == 1991
 
 
+GROBID_REFERENCE_FIELDS = ['title', 'journal', 'book_title', 'authors', 'collaboration', 'doi']
+
+
 class TestReferenceSegmenterSemanticExtractor:
     def test_should_extract_single_raw_reference(self):
         semantic_content_list = list(
@@ -279,3 +282,45 @@ class TestReferenceSegmenterSemanticExtractor:
         ref = semantic_content_list[0]
         assert isinstance(ref, SemanticInvalidReference)
         assert ref.get_text() == '7'
+
+    def test_should_accept_reference_with_only_a_url_by_default(self):
+        ref = next(iter(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<web>', LayoutBlock.for_text('https://ferns.test/map'))
+            ])
+        ))
+        assert isinstance(ref, SemanticReference)
+
+    def test_should_reject_reference_with_only_a_url_date_and_editor_among_grobid_fields(self):
+        ref = next(iter(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<editor>', LayoutBlock.for_text('Fernley A')),
+                ('<date>', LayoutBlock.for_text('2021')),
+                ('<web>', LayoutBlock.for_text('https://ferns.test/map'))
+            ], reference_kept_by_any_of=GROBID_REFERENCE_FIELDS)
+        ))
+        assert isinstance(ref, SemanticInvalidReference)
+
+    def test_should_reject_reference_with_only_a_pmid_among_grobid_fields(self):
+        ref = next(iter(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<pubnum>', LayoutBlock.for_text('PMID: 1234567'))
+            ], reference_kept_by_any_of=GROBID_REFERENCE_FIELDS)
+        ))
+        assert isinstance(ref, SemanticInvalidReference)
+
+    def test_should_accept_reference_with_only_a_doi_among_grobid_fields(self):
+        ref = next(iter(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<web>', LayoutBlock.for_text('https://doi.org/10.1234/ferns'))
+            ], reference_kept_by_any_of=GROBID_REFERENCE_FIELDS)
+        ))
+        assert isinstance(ref, SemanticReference)
+
+    def test_should_accept_reference_with_only_a_collaboration_among_grobid_fields(self):
+        ref = next(iter(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks([
+                ('<collaboration>', LayoutBlock.for_text('Mossby Fern Survey Group'))
+            ], reference_kept_by_any_of=GROBID_REFERENCE_FIELDS)
+        ))
+        assert isinstance(ref, SemanticReference)
