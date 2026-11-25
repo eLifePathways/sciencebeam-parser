@@ -1,0 +1,62 @@
+name: Measure Hub read
+
+on:
+  push:
+    branches: [measure-hub-read]
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: benchmark
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: uv sync --frozen --group benchmark
+
+      - name: Measure
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run python - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import os, tempfile, time
+          from huggingface_hub import HfFileSystem, hf_hub_download
+
+          FILE = "pdf-jats/validation/validation-00000.parquet"
+          REPOS = [
+              "elifepathways/sciencebeam-dataset-biorxiv",
+              "elifepathways/sciencebeam-dataset-ore",
+              "elifepathways/sciencebeam-dataset-scielo-preprints",
+          ]
+
+          def streamed(repo):
+              fs = HfFileSystem(skip_instance_cache=True)
+              with fs.open(f"datasets/{repo}/{FILE}", "rb", cache_type="none") as handle:
+                  return len(handle.read())
+
+          def whole_file(repo):
+              with tempfile.TemporaryDirectory() as cache_dir:
+                  path = hf_hub_download(repo, FILE, repo_type="dataset", cache_dir=cache_dir)
+                  return os.path.getsize(path)
+
+          print("| file | method | MB | seconds | MB/s |")
+          print("| --- | --- | --- | --- | --- |")
+          for attempt in range(3):
+              for repo in REPOS:
+                  methods = [("streamed", streamed), ("hf_hub_download", whole_file)]
+                  if attempt % 2:
+                      methods.reverse()
+                  for name, method in methods:
+                      started = time.monotonic()
+                      size = method(repo)
+                      seconds = time.monotonic() - started
+                      print(f"| {repo.rsplit('/', 1)[1]} | {name} | {size / 1e6:.0f}"
+                            f" | {seconds:.1f} | {size / 1e6 / seconds:.1f} |", flush=True)
+          EOF
