@@ -286,6 +286,53 @@ jobs:
           sparse-checkout: .gitignore
           sparse-checkout-cone-mode: false
 
+      # Encrypted, because a fork's PR may restore what `main` saved, and a fork's
+      # run is given no secrets. Saved from the medium sample, which every smaller
+      # mode is a subset of. The eval.yml hash names the dataset versions; the PLOS
+      # tag is pinned by name only. A digest of the passphrase starts a new entry
+      # when it changes, since an entry under an existing key is never replaced.
+      - name: Resolve the sample cache
+        id: sample_cache
+        env:
+          SAMPLE_CACHE_PASSPHRASE: ${{ secrets.BENCHMARK_SAMPLE_CACHE_PASSPHRASE }}
+        run: |
+          if [ -n "$SAMPLE_CACHE_PASSPHRASE" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::BENCHMARK_SAMPLE_CACHE_PASSPHRASE is unset, so the sample is fetched from the Hub without a cache"
+          fi
+          PASSPHRASE_DIGEST=$(printf '%s' "$SAMPLE_CACHE_PASSPHRASE" | sha256sum | cut -c1-12)
+          echo "key=benchmark-sample-${BENCHMARK_SPLIT}-medium-${{ hashFiles('benchmarks/eval.yml') }}-${PASSPHRASE_DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the sample cache
+        id: sample_cache_restore
+        if: steps.sample_cache.outputs.enabled == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .benchmark-sample-cache/sample.tar.gpg
+          key: ${{ steps.sample_cache.outputs.key }}
+
+      - name: Unpack the sample cache
+        if: steps.sample_cache_restore.outputs.cache-hit == 'true'
+        env:
+          SAMPLE_CACHE_PASSPHRASE: ${{ secrets.BENCHMARK_SAMPLE_CACHE_PASSPHRASE }}
+        run: |
+          ARCHIVE=.benchmark-sample-cache/sample.tar.gpg
+          UNPACKED="${RUNNER_TEMP}/benchmark-sample"
+          rm -rf "$UNPACKED" && mkdir -p "$UNPACKED"
+          if gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 3 --decrypt "$ARCHIVE" \
+              3< <(printf '%s' "$SAMPLE_CACHE_PASSPHRASE") \
+            | tar -x -C "$UNPACKED"; then
+            mkdir -p benchmarks/data
+            rm -rf "benchmarks/data/${BENCHMARK_SPLIT}"
+            mv "${UNPACKED}/${BENCHMARK_SPLIT}" "benchmarks/data/${BENCHMARK_SPLIT}"
+            echo "Restored $(find "benchmarks/data/${BENCHMARK_SPLIT}" -name '*.pdf' | wc -l) PDF(s) and" \
+              "$(find "benchmarks/data/${BENCHMARK_SPLIT}" -name '*.jats.xml' | wc -l) gold file(s) from the cache"
+          else
+            echo "::warning::The sample cache did not decrypt or unpack, so the sample is fetched from the Hub"
+          fi
+          rm -rf "$UNPACKED" "$ARCHIVE"
+
       - name: Run baseline predictions
         id: baseline_predictions
         if: ${{ !contains(steps.*.outcome, 'failure') }}
@@ -372,6 +419,40 @@ jobs:
             --report-location "in the [job summary](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
             ${{ env.BENCHMARK_CORPORA }} \
             "${PUSH_CURRENT_ARG[@]}"
+
+      # Only from `main`, so branches do not each hold a copy, and only after a
+      # complete fetch: an entry saved under this key is never topped up.
+      - name: Pack the sample cache
+        id: sample_cache_pack
+        if: >-
+          steps.sample_cache.outputs.enabled == 'true' &&
+          steps.sample_cache_restore.outputs.cache-hit != 'true' &&
+          steps.run_benchmark.outcome == 'success' &&
+          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          env.BENCHMARK_FAILURE_IS_WARNING != 'true' &&
+          env.BENCHMARK_MODE == 'medium'
+        env:
+          SAMPLE_CACHE_PASSPHRASE: ${{ secrets.BENCHMARK_SAMPLE_CACHE_PASSPHRASE }}
+        run: |
+          ARCHIVE=.benchmark-sample-cache/sample.tar.gpg
+          mkdir -p "$(dirname "$ARCHIVE")"
+          if tar -c -C benchmarks/data "$BENCHMARK_SPLIT" \
+            | gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 3 \
+                --symmetric --cipher-algo AES256 --compress-algo none -o "$ARCHIVE" \
+                3< <(printf '%s' "$SAMPLE_CACHE_PASSPHRASE"); then
+            echo "packed=true" >> "$GITHUB_OUTPUT"
+            echo "Packed $(du -h "$ARCHIVE" | cut -f1) for the sample cache"
+          else
+            echo "::warning::The sample could not be packed for the cache"
+            rm -f "$ARCHIVE"
+          fi
+
+      - name: Save the sample cache
+        if: steps.sample_cache_pack.outputs.packed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .benchmark-sample-cache/sample.tar.gpg
+          key: ${{ steps.sample_cache.outputs.key }}
 
       # The client only sees {"detail":"Internal Server Error"}, so without this a
       # 500 during the run is undiagnosable once the runner is gone. Bounded to

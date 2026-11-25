@@ -564,6 +564,12 @@ linking to the run, and posts a new comment that collapses the previous ones.
 A run started by hand on the PR's branch sets the same status, and leaves its
 report in the job summary instead of a comment.
 
+A merge to `main` keeps the medium `validation` sample, gold and PDFs, as a
+GitHub Actions cache entry, encrypted with the `BENCHMARK_SAMPLE_CACHE_PASSPHRASE`
+secret. Every run restores it before fetching, so only documents it lacks are
+read from the Hub; a change to `benchmarks/eval.yml` or to the secret starts a
+new entry. Without the secret, as in a fork's PR, a run fetches the whole sample.
+
 ## Scoring the JATS
 
 The parser is scored on its TEI by default. Adding `benchmark:jats` to a PR

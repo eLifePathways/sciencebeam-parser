@@ -204,6 +204,14 @@ class TestCache:
         assert len(fetch_data(_config(BOTH), "smoke", "validation", root / "out")) == 6
         assert (root / "out" / "validation" / "corpus" / RELEASE_CACHE_FILE).exists()
 
+    def test_says_how_many_documents_were_already_on_disk(
+        self, root: Path, caplog: pytest.LogCaptureFixture
+    ):
+        fetch_data(_config(BOTH), "smoke", "validation", root / "out")
+        caplog.set_level("INFO", logger="benchmarks.fetch")
+        fetch_data(_config(BOTH), "smoke", "validation", root / "out")
+        assert "6 of 6 document(s) already on disk, reading 0 from" in caplog.text
+
 
 class TestErrors:
     def test_a_moved_tag_fails(self, root: Path):
