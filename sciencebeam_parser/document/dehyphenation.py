@@ -87,6 +87,7 @@ def get_document_words(layout_document: LayoutDocument) -> DocumentWords:
         starts_with_continuation = (
             index > 0
             and broken_word_token_count_by_line[index - 1] > 0
+            and lines[index - 1][-1].line_meta.block_id == tokens[0].line_meta.block_id
             and tokens[0].text.islower()
         )
         unbroken_start = 1 if starts_with_continuation else 0

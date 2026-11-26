@@ -16,8 +16,15 @@ from sciencebeam_parser.document.layout_document import (
 )
 
 
-def _line(text: str, y: Optional[float] = None, font: Optional[LayoutFont] = None) -> LayoutLine:
-    line = LayoutLine.for_text(text, line_meta=LayoutLineMeta(line_id=id(text)))
+def _line(
+    text: str,
+    y: Optional[float] = None,
+    font: Optional[LayoutFont] = None,
+    block_id: int = -1
+) -> LayoutLine:
+    line = LayoutLine.for_text(
+        text, line_meta=LayoutLineMeta(line_id=id(text), block_id=block_id)
+    )
     return LayoutLine(tokens=[
         token._replace(
             coordinates=(
@@ -64,6 +71,13 @@ class TestGetDocumentWords:
         assert get_document_words(_document('the per-', 'Heading of colour')).words == {
             'the', 'heading', 'of', 'colour'
         }
+
+    def test_should_keep_the_first_word_of_the_next_block_after_a_broken_word(self):
+        document = LayoutDocument(pages=[LayoutPage(blocks=[
+            LayoutBlock(lines=[_line('the per-', block_id=1)]),
+            LayoutBlock(lines=[_line('cepção of colour', block_id=2)])
+        ])])
+        assert get_document_words(document).words == {'the', 'cepção', 'of', 'colour'}
 
     def test_should_collect_a_word_with_combining_accents_in_composed_form(self):
         assert get_document_words(_document('percepc\u0327a\u0303o')).words == {'percepção'}
