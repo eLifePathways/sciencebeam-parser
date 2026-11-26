@@ -5,13 +5,16 @@ from sciencebeam_parser.models.data import LabeledLayoutToken
 from sciencebeam_parser.models.reference_segmenter.model import iter_reference_entity_blocks
 
 
-def _get_entities(labeled_texts: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+def _get_entities(
+    labeled_texts: List[Tuple[str, str]],
+    **kwargs
+) -> List[Tuple[str, str]]:
     return [
         (tag, layout_block.text)
         for tag, layout_block in iter_reference_entity_blocks([
             LabeledLayoutToken(label, LayoutToken(text))
             for label, text in labeled_texts
-        ])
+        ], **kwargs)
     ]
 
 
@@ -27,6 +30,19 @@ class TestIterReferenceEntityBlocks:
         ]) == [
             ('<reference>', 'Fernley A. Mossby https://ferns.test'),
             ('<reference>', 'Bracken B.'),
+        ]
+
+    def test_should_leave_other_text_inside_a_reference_out_where_asked(self):
+        assert _get_entities([
+            ('B-<reference>', 'Fernley'),
+            ('I-<reference>', 'A.'),
+            ('O', 'Mossby'),
+            ('I-<reference>', 'https://ferns.test'),
+            ('B-<reference>', 'Bracken'),
+        ], keep_other_text_in_references=False) == [
+            ('<reference>', 'Fernley A. https://ferns.test'),
+            ('O', 'Mossby'),
+            ('<reference>', 'Bracken'),
         ]
 
     def test_should_start_a_reference_on_its_beginning_after_other_text(self):

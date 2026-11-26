@@ -497,6 +497,24 @@ profiles:
           kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
         front:
           select_abstracts: 'merged_by_language'
+  grobid_crf_as_grobid:
+    label: 'GROBID CRF 0.9.0, written closer to GROBID'
+    description: 'The default models, following GROBID 0.9.0''s rules for writing the title, abstract and references, for comparison with GROBID itself.'
+    sequence_models: grobid_crf_0_9_0
+    processors:
+      fulltext:
+        noise_filter:
+          enabled: false
+        front:
+          join_abstract_continuations: false
+          select_titles: 'first'
+          split_titles_by_language: false
+        references:
+          kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
+          keep_other_text: false
+          fragment_link_doi: 'own_reference'
+          select_titles: 'longest'
+          select_dois: 'first'
   grobid_crf_cv:
     label: 'GROBID CRF 0.9.0, graphics located by the cv model'
     description: 'The default models, with figures and tables located on the rendered page by the computer-vision model.'

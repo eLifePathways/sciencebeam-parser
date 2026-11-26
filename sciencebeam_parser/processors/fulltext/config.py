@@ -1,5 +1,5 @@
 import dataclasses
-from typing import NamedTuple, Sequence, Set
+from typing import Mapping, NamedTuple, Sequence, Set, Tuple
 
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.document.layout_noise_filter import LayoutNoiseFilterConfig
@@ -9,11 +9,18 @@ from sciencebeam_parser.processors.document_page_image import (
     DEFAULT_PDF_RENDER_DPI
 )
 from sciencebeam_parser.models.header.extract import (
-    DEFAULT_ABSTRACTS_MODE
+    ABSTRACTS_MODES,
+    DEFAULT_ABSTRACTS_MODE,
+    DEFAULT_TITLES_MODE,
+    TITLES_MODES
 )
 from sciencebeam_parser.models.citation.extract import (
     DEFAULT_FRAGMENT_LINK_DOI,
+    DEFAULT_REFERENCE_DOIS_MODE,
     DEFAULT_REFERENCE_KEPT_BY_ANY_OF,
+    DEFAULT_REFERENCE_TITLES_MODE,
+    REFERENCE_DOIS_MODES,
+    REFERENCE_TITLES_MODES,
     validate_fragment_link_doi,
     validate_reference_field_names
 )
@@ -63,6 +70,8 @@ class ExtractConfig:
 @dataclasses.dataclass(frozen=True)
 class FrontConfig:
     select_abstracts: str = DEFAULT_ABSTRACTS_MODE
+    join_abstract_continuations: bool = True
+    select_titles: str = DEFAULT_TITLES_MODE
     split_titles_by_language: bool = True
     merge_author_blocks: bool = False
     deduplicate_authors: bool = True
@@ -72,7 +81,18 @@ class FrontConfig:
 @dataclasses.dataclass(frozen=True)
 class ReferencesConfig:
     kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF
+    keep_other_text: bool = True
     fragment_link_doi: str = DEFAULT_FRAGMENT_LINK_DOI
+    select_titles: str = DEFAULT_REFERENCE_TITLES_MODE
+    select_dois: str = DEFAULT_REFERENCE_DOIS_MODE
+
+
+VALUES_BY_SETTING: Mapping[Tuple[str, str], Sequence[str]] = {
+    ('front', 'select_abstracts'): ABSTRACTS_MODES,
+    ('front', 'select_titles'): TITLES_MODES,
+    ('references', 'select_titles'): REFERENCE_TITLES_MODES,
+    ('references', 'select_dois'): REFERENCE_DOIS_MODES
+}
 
 
 class FullTextProcessorConfig(NamedTuple):
@@ -113,6 +133,12 @@ class FullTextProcessorConfig(NamedTuple):
         validate_fragment_link_doi(
             config.references.fragment_link_doi, config.references.kept_by_any_of
         )
+        for (scope, name), values in VALUES_BY_SETTING.items():
+            value = getattr(getattr(config, scope), name)
+            if value not in values:
+                raise ValueError(
+                    f'unknown {scope}.{name}: {value!r}, expected one of {list(values)}'
+                )
         return config
 
     def get_for_requested_field_names(

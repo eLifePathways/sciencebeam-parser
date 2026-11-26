@@ -14,7 +14,7 @@ The header model labels every region it reads as an abstract, and `front.select_
 
 The `recommended` and `recommended_cv` profiles ask for `variants`; every other shipped profile leaves it at `first`. A profile sets it under `processors.fulltext.front`.
 
-An abstract the page prints in two pieces — the second half carried over a page break — is one abstract in every mode. The second block is joined to the first where it opens mid-sentence under an abstract that ends unfinished, carries no heading of its own, and begins on the page the abstract ended on or the next.
+An abstract the page prints in two pieces — the second half carried over a page break — is one abstract in every mode. The second block is joined to the first where it opens mid-sentence under an abstract that ends unfinished, carries no heading of its own, and begins on the page the abstract ended on or the next. `front.join_abstract_continuations: false` turns this off, and `grobid_crf_as_grobid` sets it, following GROBID, which keeps the first block only.
 
 ## What each abstract declares
 

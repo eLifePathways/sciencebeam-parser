@@ -25,9 +25,12 @@ REFERENCE_LABEL = '<reference>'
 
 
 def iter_reference_entity_blocks(
-    labeled_layout_tokens: Iterable[LabeledLayoutToken]
+    labeled_layout_tokens: Iterable[LabeledLayoutToken],
+    keep_other_text_in_references: bool = True
 ) -> Iterable[Tuple[str, LayoutBlock]]:
-    """The entities, with a reference continued past other text inside it as one reference.
+    """The entities, with a reference continued past other text inside it.
+
+    Where asked to keep that other text, it is part of the reference; otherwise it follows it.
 
     As GROBID's ReferenceSegmenterParser, a reference starts only on a token that begins one.
     """
@@ -51,9 +54,10 @@ def iter_reference_entity_blocks(
         ]
         if tag == REFERENCE_LABEL:
             if reference_tokens is not None and not labels[start].startswith('B-'):
-                for _, other_block in other_blocks:
-                    reference_tokens.extend(other_block.iter_all_tokens())
-                other_blocks = []
+                if keep_other_text_in_references:
+                    for _, other_block in other_blocks:
+                        reference_tokens.extend(other_block.iter_all_tokens())
+                    other_blocks = []
                 reference_tokens.extend(tokens)
                 continue
             yield from flush()

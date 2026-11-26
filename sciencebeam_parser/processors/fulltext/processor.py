@@ -78,7 +78,10 @@ from sciencebeam_parser.models.affiliation_address.model import AffiliationAddre
 from sciencebeam_parser.models.fulltext.model import FullTextModel
 from sciencebeam_parser.models.figure.model import FigureModel
 from sciencebeam_parser.models.table.model import TableModel
-from sciencebeam_parser.models.reference_segmenter.model import ReferenceSegmenterModel
+from sciencebeam_parser.models.reference_segmenter.model import (
+    ReferenceSegmenterModel,
+    iter_reference_entity_blocks
+)
 from sciencebeam_parser.models.citation.model import CitationModel
 from sciencebeam_parser.models.citation.extract import (
     FragmentLinkDoi,
@@ -358,8 +361,10 @@ class FullTextProcessor:
         )
         self.header_model.update_semantic_document_with_entity_blocks(
             semantic_document, entity_blocks,
-            abstracts_mode=self.config.front.select_abstracts,
-            split_titles_by_language=self.config.front.split_titles_by_language
+            select_abstracts=self.config.front.select_abstracts,
+            select_titles=self.config.front.select_titles,
+            split_titles_by_language=self.config.front.split_titles_by_language,
+            join_abstract_continuations=self.config.front.join_abstract_continuations
         )
         if self.config.extract.front_authors:
             self._process_raw_authors(semantic_document.front)
@@ -628,7 +633,10 @@ class FullTextProcessor:
         LOGGER.debug('labeled_layout_tokens: %r', labeled_layout_tokens)
         semantic_content_iterable = (
             self.reference_segmenter_model
-            .iter_semantic_content_for_labeled_layout_tokens(labeled_layout_tokens)
+            .iter_semantic_content_for_entity_blocks(iter_reference_entity_blocks(
+                labeled_layout_tokens,
+                keep_other_text_in_references=self.config.references.keep_other_text
+            ))
         )
         reference_list = SemanticReferenceList(list(semantic_content_iterable))
         semantic_document.back_section.add_content(reference_list)
@@ -661,7 +669,9 @@ class FullTextProcessor:
                     semantic_raw_reference=semantic_raw_reference,
                     reference_kept_by_any_of=self.config.references.kept_by_any_of,
                     links=links,
-                    fragment_link_doi=self.config.references.fragment_link_doi
+                    fragment_link_doi=self.config.references.fragment_link_doi,
+                    select_titles=self.config.references.select_titles,
+                    select_dois=self.config.references.select_dois
                 )
             )
             ref: Optional[Union[SemanticReference, SemanticInvalidReference]] = None
