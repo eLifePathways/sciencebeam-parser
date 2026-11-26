@@ -4159,7 +4159,15 @@ class LayoutDocumentJatsAligner:
                     post_body_text_end[_WIDE_SEARCH_BUDGET_KEY] = (
                         post_body_text_end.get(_WIDE_SEARCH_BUDGET_KEY, 0) + 1
                     )
-            if fv.field_name in _ANCHOR_FIELDS:
+            # The value itself and not a fragment of it.  A sub-value is part of
+            # what its parent has already placed, and the shortest of them -- the
+            # word an abstract is headed with -- matches a word of the reference
+            # list as readily as the heading it was taken from, which would put
+            # the floor past the list the heading opens.  The reference floor
+            # keeps its sub-values: a year or an author of an entry is what says
+            # the list has been reached, and without them a year matched in the
+            # argument reads as a list beginning on the opening page.
+            if fv.sub_field_name is None and fv.field_name in _ANCHOR_FIELDS:
                 body_floor = max(body_floor, a_end)
             if fv.field_name in _FRONT_MATTER_END_FIELDS:
                 front_matter_end = max(front_matter_end, a_end)
@@ -4174,7 +4182,10 @@ class LayoutDocumentJatsAligner:
                 body_content_end = max(body_content_end, a_end)
             if fv.field_name in _AVAILABILITY_FIELDS:
                 availability_floor = max(availability_floor, a_start)
-            if fv.field_name in _REFERENCE_ANCHOR_FIELDS or fv.field_name in _REFERENCE_FIELDS:
+            if (
+                fv.field_name in _REFERENCE_ANCHOR_FIELDS
+                or fv.field_name in _REFERENCE_FIELDS
+            ):
                 reference_floor = max(reference_floor, a_end)
             if _is_reference_parent(fv):
                 reference_match_ranges.append((a_start, a_end))

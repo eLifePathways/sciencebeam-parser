@@ -512,6 +512,38 @@ class TestAuthorNotes:
             '. Deputy Editor: Grace Hopper',
         ]
 
+    def test_an_address_block_headed_authorship_is_an_author_note(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="current-aff"><p><bold>Authorship</bold>'
+            ' Ada Lovelace, Marsh Institute, 1 Reed Lane, Tubarao, Brazil.'
+            '</p></fn>'
+            '</author-notes></article-meta></front></article>'
+        )
+        assert not [
+            v for v in fvs if v.field_name == JatsFieldNames.CONTRIBUTION_NOTE
+        ]
+        assert [
+            v.text for v in fvs if v.field_name == JatsFieldNames.AUTHOR_NOTES
+        ] == ['Authorship Ada Lovelace, Marsh Institute, 1 Reed Lane, Tubarao, Brazil.']
+
+    def test_the_translation_declares_in_its_own_language(self):
+        fvs = _field_values_for(
+            '<article><front><article-meta><author-notes>'
+            '<fn fn-type="con"><p>Colaboradores A Garca escreveu o texto.</p></fn>'
+            '</author-notes></article-meta></front>'
+            '<sub-article article-type="translation"><front-stub><author-notes>'
+            '<fn fn-type="con"><p>Collaborations A Egret wrote the text.</p></fn>'
+            '</author-notes></front-stub></sub-article></article>'
+        )
+        assert [
+            v.text for v in fvs
+            if v.field_name == JatsFieldNames.CONTRIBUTION_NOTE
+        ] == [
+            'Colaboradores A Garca escreveu o texto.',
+            'Collaborations A Egret wrote the text.',
+        ]
+
 
 class TestFunding:
     def test_extracts_funding_statement(self):
@@ -1337,3 +1369,54 @@ class TestASubjectClassification:
         fields = self._fields_of('1 The classification used here: see Table 3.')
         assert fields[JatsFieldNames.BACK_FOOTNOTE]
         assert not fields[JatsFieldNames.SUBJECT_CLASSIFICATION]
+
+
+class TestTitlePageRepeatedInTheBody:
+    """A deposit that carries the title page inside `<body>` as well."""
+
+    @staticmethod
+    def _article(opening_paragraphs, title='Herons of the northern marshes'):
+        body = ''.join(f'<p>{text}</p>' for text in opening_paragraphs)
+        return (
+            '<article>'
+            '<front><article-meta><title-group>'
+            f'<article-title>{title}</article-title>'
+            '</title-group>'
+            '<aff>Varanger Institute of Marsh Ecology</aff>'
+            '<abstract><p>The heron count on the Varanger marshes was repeated '
+            'over four seasons. Numbers fell in every season but the last.</p>'
+            '</abstract>'
+            '</article-meta></front>'
+            f'<body>{body}<p>The marsh was walked on four mornings of each '
+            'season, and every bird standing in open water was counted.</p>'
+            '</body></article>'
+        )
+
+    def test_the_repeated_title_page_is_not_body(self):
+        values = _field_values_for(self._article([
+            'Original Article',
+            'Herons of the northern marshes',
+            'A Nilsson, B Olsen',
+            'Varanger Institute of Marsh Ecology, Varanger.',
+            'The heron count on the Varanger marshes was repeated over four '
+            'seasons.',
+        ]))
+        paragraphs = [
+            v.text for v in values
+            if v.field_name == JatsFieldNames.BODY_SECTION_PARAGRAPH
+        ]
+        assert paragraphs == [
+            'The marsh was walked on four mornings of each season, and every '
+            'bird standing in open water was counted.'
+        ]
+
+    def test_a_body_that_opens_with_its_own_words_keeps_them(self):
+        values = _field_values_for(self._article([
+            'Numbers fell in every season but the last, which is what this '
+            'paper sets out to explain.',
+        ]))
+        paragraphs = [
+            v.text for v in values
+            if v.field_name == JatsFieldNames.BODY_SECTION_PARAGRAPH
+        ]
+        assert len(paragraphs) == 2

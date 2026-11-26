@@ -4,7 +4,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from typing import (
-    Dict, FrozenSet, Iterator, List, Mapping, NamedTuple, Optional, Set, Tuple
+    Dict, FrozenSet, Iterator, List, Mapping, NamedTuple, Optional, Pattern,
+    Set, Tuple
 )
 
 from sciencebeam_parser.document.layout_document import (
@@ -133,12 +134,20 @@ def _is_valid_page_number_candidate(text: str) -> bool:
 # either as page furniture -- a bare "Table N" line sits in `<body>` 3 times and
 # in an annex 5, which is the region its table is in, and "Table N (continued)"
 # in `<body>` 66 times.
+_FLOAT_LABEL_PATTERN = (
+    r"(?:tab(?:le|\.|ela|la)?|fig(?:ure|\.|ura)?|quadro|gr[a\u00e1]fico)\s*\.?\s*\d+\s*\.?"
+)
+_FLOAT_CONTINUES_PATTERN = (
+    r"\(?\s*(?:continue[sd]?|continuation|continua(?:[c\u00e7][a\u00e3]o)?"
+    r"|continuaci[o\u00f3]n|cont'd|cont\.)\s*\)?\.?"
+)
+# Either on its own, or the label with the word after it, which is how a
+# journal in two languages carries a "Tabela 2" over: "Tabela 2. Continuation".
 _FLOAT_CARRY_OVER_PATTERN = re.compile(
     r"^\s*(?:"
-    r"(?:tab(?:le|\.|ela|la)?|fig(?:ure|\.|ura)?|quadro|gr[a\u00e1]fico)\s*\.?\s*\d+\s*\.?"
-    r"|\(?\s*(?:continued?|continua(?:[c\u00e7][a\u00e3]o)?"
-    r"|continuaci[o\u00f3]n|cont'd|cont\.)\s*\)?\.?"
-    r")\s*$",
+    + _FLOAT_LABEL_PATTERN + r"(?:\s*" + _FLOAT_CONTINUES_PATTERN + r")?"
+    + r"|" + _FLOAT_CONTINUES_PATTERN
+    + r")\s*$",
     re.IGNORECASE,
 )
 
@@ -385,7 +394,16 @@ def _tag_headnotes_by_text_repetition(
                 sl.seg_label = SEG_HEADNOTE
 
 
-_PAGE_NUMBER_POSITION_PRECISION = 2
+_PAGE_NUMBER_ROW_PRECISION = 2
+
+# How much the two outer margins of a journal may differ and still be the one
+# corner it sets its page number in.
+_PAGE_NUMBER_INSET_TOLERANCE = 25.0
+
+# How closely the inset a number is set at has to repeat for the number to be
+# the same number: to the nearest ten points, which is a margin rather than a
+# half of the measure.
+_PAGE_NUMBER_INSET_PRECISION = 1
 
 
 _RUNNING_HEAD_MAX_Y_RATIO = 0.5
@@ -411,6 +429,13 @@ def _tag_running_heads_by_position(
     It carries over a region the JATS vote has already named, because a running
     head of the authors' surnames is matched by the byline on every page it
     prints on: the guidelines ask for a running title not to be labelled at all.
+
+    A head of one word is taken on the row the document already runs a head
+    across, or in a block the head fills.  A word repeating says little on its
+    own -- "R" ends a line as readily as anything -- but a journal whose name is
+    its running head prints that name where it prints the authors' on the facing
+    page, and a title running across the head breaks onto a second line that is
+    one word long.
     """
     by_text: Dict[str, List[Tuple[_SegLine, int, float]]] = {}
     for seg_line in seg_lines:
@@ -421,18 +446,106 @@ def _tag_running_heads_by_position(
         if y_ratio > _RUNNING_HEAD_MAX_Y_RATIO:
             continue
         by_text.setdefault(seg_line.text, []).append((seg_line, page_number, y_ratio))
-    for text, occurrences in by_text.items():
+
+    def is_run_across_the_pages(
+        text: str, occurrences: List[Tuple[_SegLine, int, float]]
+    ) -> bool:
         pages = {page_number for _, page_number, _ in occurrences}
         if len(pages) < _RUNNING_HEAD_MIN_PAGES:
+            return False
+        if _carries_a_float_over_the_page(text) or re.match(r'^(\d|\s|\.)+$', text):
+            return False
+        spread = (
+            max(y for _, _, y in occurrences) - min(y for _, _, y in occurrences)
+        )
+        return spread <= _RUNNING_HEAD_Y_TOLERANCE
+
+    rows: List[float] = []
+    waiting: List[Tuple[str, List[Tuple[_SegLine, int, float]]]] = []
+    for text, occurrences in by_text.items():
+        if not is_run_across_the_pages(text, occurrences):
             continue
-        if not _is_valid_headnote_candidate(text, len(occurrences)):
+        if len(re.split(r'\s', text.strip())) < 2:
+            waiting.append((text, occurrences))
             continue
-        spread = max(y for _, _, y in occurrences) - min(y for _, _, y in occurrences)
-        if spread > _RUNNING_HEAD_Y_TOLERANCE:
-            continue
+        rows.append(occurrences[0][2])
         for seg_line, _, _ in occurrences:
             if seg_line.seg_label != SEG_COVER:
                 seg_line.seg_label = SEG_HEADNOTE
+    _take_the_head_of_one_word(seg_lines, waiting, rows)
+
+
+def _take_the_head_of_one_word(
+    seg_lines: List[_SegLine],
+    waiting: List[Tuple[str, List[Tuple[_SegLine, int, float]]]],
+    rows: List[float],
+) -> None:
+    """Take each one-word run the head's own row or block vouches for."""
+    by_block = _group_lines_by_block(seg_lines)
+    for _text, occurrences in waiting:
+        on_a_head_row = any(
+            abs(occurrences[0][2] - row) <= _RUNNING_HEAD_Y_TOLERANCE
+            for row in rows
+        )
+        for seg_line, _, _ in occurrences:
+            if seg_line.seg_label == SEG_COVER:
+                continue
+            beside_it = [
+                other for other in by_block.get(seg_line.block_index) or []
+                if other is not seg_line
+            ]
+            if on_a_head_row or (
+                beside_it
+                and all(other.seg_label == SEG_HEADNOTE for other in beside_it)
+            ):
+                seg_line.seg_label = SEG_HEADNOTE
+
+
+def _get_inset_from_the_nearer_edge(
+    seg_line: _SegLine,
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+) -> Optional[float]:
+    """How far a line stands from whichever side of its page it is nearer.
+
+    To the near edge of the line, not to where it starts: a verso and a recto
+    that set their number in the same corner set it the same distance from the
+    edge of the paper, and reading the right-hand one from where it starts
+    would make it that much further in than its mirror.
+    """
+    position = _get_line_position(seg_line)
+    page_number = _get_page_number(seg_line)
+    width = _get_line_width(seg_line)
+    if position is None or page_number is None or width is None:
+        return None
+    page_meta = page_meta_by_number.get(page_number)
+    coordinates = page_meta.coordinates if page_meta is not None else None
+    if coordinates is None or not coordinates.width:
+        return None
+    return min(position[0], coordinates.width - position[0] - width)
+
+
+def _iter_the_numbers_set_at_one_inset(
+    placed: List[Tuple[float, _SegLine]]
+) -> Iterator[List[_SegLine]]:
+    """The numbers a document sets the same distance from the edge of the page.
+
+    The corner is measured from where it opens, so that it stays a corner: a
+    row of figures set evenly across the measure is a step apart all the way,
+    and measured from its neighbour it would read as one spot the width of the
+    page.
+    """
+    cluster: List[_SegLine] = []
+    opened: Optional[float] = None
+    for inset, seg_line in sorted(placed, key=lambda item: item[0]):
+        if opened is not None and inset - opened > _PAGE_NUMBER_INSET_TOLERANCE:
+            yield cluster
+            cluster = []
+            opened = None
+        if opened is None:
+            opened = inset
+        cluster.append(seg_line)
+    if cluster:
+        yield cluster
 
 
 def _tag_page_numbers_by_position(
@@ -447,34 +560,143 @@ def _tag_page_numbers_by_position(
     own that reads as a number.  Two pages at least, since one page cannot show
     a position repeating, and a number in the middle of a table is not one.
 
+    The corner is the outer one, and which side of the page that is swaps
+    between a verso and a recto, so the spot is measured from whichever edge the
+    number is nearer: a journal that sets it left on one page and right on the
+    next sets it in one place, not two half-places that each miss the threshold.
+
     The spot carries over a region the JATS vote has already named: a number the
     page prints in its own corner is furniture wherever the article's text
     happens to have matched it.  A cover page is left alone, which keeps a whole
     page to one label.
     """
-    by_spot: Dict[Tuple[float, float], List[_SegLine]] = {}
+    by_row: Dict[float, List[Tuple[float, _SegLine]]] = {}
     page_numbers: Set[int] = set()
     for seg_line in seg_lines:
         page_number = _get_page_number(seg_line)
-        position = _get_line_position(seg_line)
+        inset = _get_inset_from_the_nearer_edge(seg_line, page_meta_by_number)
         y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
-        if page_number is None or position is None or y_ratio is None:
+        if page_number is None or inset is None or y_ratio is None:
             continue
         page_numbers.add(page_number)
         if not _is_valid_page_number_candidate(seg_line.text):
             continue
-        spot = (
-            round(position[0], -_PAGE_NUMBER_POSITION_PRECISION),
-            round(y_ratio, _PAGE_NUMBER_POSITION_PRECISION),
-        )
-        by_spot.setdefault(spot, []).append(seg_line)
+        by_row.setdefault(
+            round(y_ratio, _PAGE_NUMBER_ROW_PRECISION), []
+        ).append((inset, seg_line))
     threshold = max(len(page_numbers) / 2, 1)
-    for spot_lines in by_spot.values():
-        if len({_get_page_number(sl) for sl in spot_lines}) <= threshold:
+    for placed in by_row.values():
+        for spot_lines in _iter_the_numbers_set_at_one_inset(placed):
+            if len({_get_page_number(sl) for sl in spot_lines}) <= threshold:
+                continue
+            for seg_line in spot_lines:
+                if (
+                    seg_line.seg_label is None
+                    or seg_line.seg_label in _ARTICLE_CONTENT_LABELS
+                ):
+                    seg_line.seg_label = SEG_PAGE
+
+
+def _how_many_pages_make_a_sequence(
+    pages: List[int], page_numbers: Set[int]
+) -> float:
+    """How many pages a number has to be printed on to be counting them.
+
+    More than half of them, and three at least.  Half of the versos where the
+    run is set on versos alone: a journal prints its number in the outer corner
+    of a page it does not set symmetrically, and the two corners are then two
+    insets, each of which the page uses every other page.
+    """
+    parities = {page_number % 2 for page_number in pages}
+    of_the_same_parity = (
+        {
+            page_number for page_number in page_numbers
+            if page_number % 2 in parities
+        }
+        if len(parities) == 1 else page_numbers
+    )
+    return max(len(of_the_same_parity) / 2, 2)
+
+
+# What the deposit declares an affiliation by, marker and all.
+_AFFILIATION_FIELDS = frozenset({
+    JatsFieldNames.AUTHOR_AFF,
+    JatsFieldNames.CORRESP_AFF,
+})
+
+
+def _tag_page_numbers_counting_the_pages(
+    seg_lines: List[_SegLine],
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+    annotated: JatsAnnotatedLayoutDocument,
+) -> None:
+    """Take the number that counts the pages, wherever the page sets it.
+
+    A journal that prints its page number sideways up the margin sets it at one
+    inset on every page and at whatever height the column beside it leaves, so
+    the spot never repeats although the number does the one thing only a page
+    number does: advance by one with the page.  A number set inside the running
+    head is the same case, read as part of the head because that is where it is.
+
+    One inset, and one step held on more than half the pages, three of them at
+    least: two numbers one apart is a pair of table cells as readily as it is a
+    page count.  The inset is read closely, because a table of numbers set
+    across the measure shares a coarse one with the margin the page number is
+    in, and a page that prints two numbers a step apart at that inset is a page
+    whose table happens to count as its pages do -- which says nothing, so it
+    says nothing here either.
+
+    One size as well as one inset, because a journal numbers its pages in a
+    type of its own and the superscript marker beside an author's name is set
+    in the margin a verso's number uses, at half its size.
+
+    An affiliation is never the page's number.  A marker is a digit and the
+    deposit declares it as one, so a line the aligner grounds in an affiliation
+    reads as a page number only by having nothing else to read it as.
+
+    GROBID's corpus files no lone page marker as a headnote in its 931
+    documents, and 63 of them print one on the page the front matter is on, so
+    what the line already has gives way -- except on a cover page, which GROBID
+    asks for whole.
+    """
+    by_setting: Dict[Tuple[float, Optional[float]], List[Tuple[_SegLine, int, int]]] = {}
+    page_numbers: Set[int] = set()
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is None:
             continue
-        for seg_line in spot_lines:
-            if seg_line.seg_label is None or seg_line.seg_label in _ARTICLE_CONTENT_LABELS:
-                seg_line.seg_label = SEG_PAGE
+        page_numbers.add(page_number)
+        inset = _get_inset_from_the_nearer_edge(seg_line, page_meta_by_number)
+        printed = _parse_page_number(seg_line.text)
+        if inset is None or printed is None:
+            continue
+        if _is_grounded_in(seg_line, annotated, _AFFILIATION_FIELDS):
+            continue
+        by_setting.setdefault(
+            (
+                round(inset, -_PAGE_NUMBER_INSET_PRECISION),
+                _get_line_font_size(seg_line),
+            ),
+            [],
+        ).append((seg_line, page_number, printed))
+    for at_inset in by_setting.values():
+        by_step: Dict[int, Dict[int, List[_SegLine]]] = {}
+        for seg_line, page_number, printed in at_inset:
+            by_step.setdefault(printed - page_number, {}).setdefault(
+                page_number, []
+            ).append(seg_line)
+        for in_step in by_step.values():
+            counted = [
+                (page_number, lines[0])
+                for page_number, lines in in_step.items() if len(lines) == 1
+            ]
+            if len(counted) <= _how_many_pages_make_a_sequence(
+                [page_number for page_number, _ in counted], page_numbers
+            ):
+                continue
+            for _, seg_line in counted:
+                if seg_line.seg_label != SEG_COVER:
+                    seg_line.seg_label = SEG_PAGE
 
 
 _RUNNING_FOOT_MIN_Y_RATIO = 0.5
@@ -793,7 +1015,7 @@ _PUBLICATION_DATE_PATTERN = re.compile(
     r'(recebido|recebida|aprovado|aprovada|aceito|aceita|submetido|revisado|enviado'
     r'|apresentado|apresentada'
     r'|recibido|aceptado|presentado'
-    r'|received|accepted|submitted|posted|revised|published)\b'
+    r'|received|accepted|approved|submitted|posted|revised|published|preprint)\b'
     r'[^0-9]{0,30}' + _PRINTED_DATE_PATTERN + r'\s*\.?\s*(\([^)]*\))?\s*$',
     re.IGNORECASE,
 )
@@ -813,15 +1035,38 @@ def _tag_publication_dates(
     page around them reaches into.  They are part of the bibliographic record,
     which GROBID allows to be several areas in several places.  The whole line
     has to be the date: a sentence that mentions one is prose, and a line a
-    field does carry is where that field puts it.
+    field does carry is where that field puts it -- until the reference list,
+    past which a field carrying the line is the list reaching over a date it
+    has no entry for and reading it as an entry's pages.
     """
-    for seg_line in seg_lines:
+    first_reference = _get_first_reference_index(seg_lines)
+
+    def is_the_page_s_own(index: int, seg_line: _SegLine) -> bool:
         if seg_line.seg_label in _LABELS_A_DATE_DOES_NOT_TAKE:
-            continue
-        if _is_grounded(seg_line, annotated):
+            return False
+        return not _is_grounded(seg_line, annotated) or (
+            first_reference is not None and index > first_reference
+        )
+
+    for index, seg_line in enumerate(seg_lines):
+        if not is_the_page_s_own(index, seg_line):
             continue
         if _PUBLICATION_DATE_PATTERN.match(seg_line.text):
             seg_line.seg_label = SEG_FRONT
+    # The word and the date it introduces are one row of the page, which
+    # pdfalto hands over as two lines when it sets them apart.
+    by_block: Dict[int, List[Tuple[int, _SegLine]]] = {}
+    for index, seg_line in enumerate(seg_lines):
+        by_block.setdefault(seg_line.block_index, []).append((index, seg_line))
+    for block in by_block.values():
+        if len(block) < 2:
+            continue
+        if not all(is_the_page_s_own(index, seg_line) for index, seg_line in block):
+            continue
+        joined = ' '.join(seg_line.text for _, seg_line in block)
+        if _PUBLICATION_DATE_PATTERN.match(joined):
+            for _, seg_line in block:
+                seg_line.seg_label = SEG_FRONT
 
 
 # The sentence a journal grants its licence in, from the words it opens with.
@@ -830,6 +1075,9 @@ _LICENCE_NOTICE_PATTERN = re.compile(
     r'^\s*(?:open\s+access\s+)?'
     r'(?:this\s+(?:is\s+an?|article\s+is|work\s+is)'
     r'|est[ae]\s+(?:\u00e9|e)\s+um'
+    # "Este texto está licenciado com uma Licença Creative Commons": the
+    # sentence names what is licensed before it says so.
+    r'|est[ae]\s+\w+\s+est[a\u00e1]\s+licenciad[oa]'
     r'|est[ae]\s+art[\u00edi]culo)\b'
     r'[^.]{0,160}?'
     r'(?:creative\s+commons|open[\s-]access|acesso\s+aberto|cc[\s-]by)',
@@ -881,7 +1129,277 @@ def _claim_the_citation_printed_after_the_references(
             seg_line.seg_label = SEG_FRONT
 
 
-def _claim_the_licence_printed_after_the_references(seg_lines: List[_SegLine]) -> None:
+def _runs_to_the_end_of_its_block(
+    seg_lines: List[_SegLine], index: int, annotated: JatsAnnotatedLayoutDocument
+) -> bool:
+    """Whether what follows the line in its block is the journal's own too.
+
+    An entry of the list cites the body whose standards the journal publishes
+    under as readily as the journal names it, and the entry has the rest of
+    the list under it in the block the page sets them in.
+    """
+    block_index = seg_lines[index].block_index
+    return not any(
+        _is_grounded(seg_line, annotated)
+        for seg_line in seg_lines[index + 1:]
+        if seg_line.block_index == block_index
+    )
+
+
+def _claim_the_block_printed_after_the_references(
+    seg_lines: List[_SegLine],
+    pattern: Pattern[str],
+    annotated: JatsAnnotatedLayoutDocument,
+) -> None:
+    """Give the front matter each block past the list that the pattern opens."""
+    opened = _get_first_reference_index(seg_lines)
+    if opened is None:
+        return
+    for index in range(opened, len(seg_lines)):
+        if seg_lines[index].seg_label in _TRAILING_MATTER_LABELS:
+            continue
+        if not pattern.match(seg_lines[index].text):
+            continue
+        if not _runs_to_the_end_of_its_block(seg_lines, index, annotated):
+            continue
+        block_index = seg_lines[index].block_index
+        for seg_line in seg_lines[index:]:
+            if seg_line.block_index != block_index:
+                break
+            if seg_line.seg_label in _TRAILING_MATTER_LABELS:
+                continue
+            seg_line.seg_label = SEG_FRONT
+
+
+# What a journal credits the editor who handled the article on.  Never
+# "Editora", which is what a reference calls its publisher.
+_EDITOR_CREDIT_PATTERN = re.compile(
+    r'^\s*(?:'
+    # "Editora Responsável:", where the qualifier is what tells the editor from
+    # the publisher.
+    r'editor[ao]?[\s\u2010-\u2015-]*respons[a\u00e1]ve[li]'
+    r'|(?:handling|section|academic|associate|managing|guest|responsible'
+    r'|deputy|scientific|cient[i\u00ed]fic[oa])?[\s\u2010-\u2015-]*'
+    r'editor(?:es|s)?'
+    r'(?:[\s\u2010-\u2015-]*'
+    r'(?:chefe|cient[i\u00ed]fico|in[\s\u2010-\u2015-]*chief|associad[oa]))?'
+    r')\s*(?::|$)',
+    re.IGNORECASE,
+)
+
+
+# What a journal heads the people who reviewed the article, and the report
+# they wrote, where it prints them with the article.
+_REVIEW_CREDIT_PATTERN = re.compile(
+    r'^\s*(?:'
+    r'reviewers?|revisor(?:es)?|parecerista?s?|avaliador(?:es|as)?'
+    r'|peer[\s\u2010-\u2015-]*review(?:\s+(?:report|history|process))?'
+    r')\s*(?::|$)',
+    re.IGNORECASE,
+)
+
+# A credit names people and says where to read what they wrote; it does not
+# run on for pages.
+_CREDIT_RUN_MAX_LINES = 20
+
+_CREDIT_LABELS = ((_EDITOR_CREDIT_PATTERN, SEG_FRONT), (_REVIEW_CREDIT_PATTERN, SEG_REVIEW))
+
+# What the page sets a closing credit in until it names the next one -- or
+# nothing at all, a name the deposit does not carry being unclaimed.
+_CREDIT_CARRIES_ON = frozenset({SEG_ANNEX, SEG_FOOTNOTE})
+
+
+# What a journal declares about the publication rather than about the work:
+# who holds the copyright, how the article was reviewed, that it was checked
+# for plagiarism.  Each opens the block it heads.
+_PUBLISHING_DECLARATION_PATTERN = re.compile(
+    r'^\s*(?:'
+    r'copyrights?\b'
+    r'|direitos\s+autorais\b'
+    r'|derechos\s+de\s+autor\b'
+    r'|peer[\s-]review\s+(?:method|process|report|policy)\b'
+    r'|m[e\u00e9]todo\s+de\s+revis[a\u00e3]o\b'
+    r'|plagiarism\s+(?:check|screening|detection)\b'
+    r'|verifica[c\u00e7][a\u00e3]o\s+de\s+pl[a\u00e1]gio\b'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _claim_the_publishing_declarations_after_the_references(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take what a journal declares about the publication past its list.
+
+    Who holds the copyright, how the article was reviewed, that it was checked
+    for plagiarism: these are about the publication rather than about the work.
+    A deposit files them among the notes of the back matter, where nothing says
+    what they are but the heading the page prints them under, and GROBID labels
+    a line by where the page prints it rather than by where the deposit files
+    it: both documents of its corpus that head such a declaration past the last
+    reference hold it in `<front>`, one of them running on into the editors and
+    the public reviews, and the journal that prints these same three
+    declarations on its first page has them in `<front>` there.
+
+    The declaration's own prose goes with its heading, which is what sets this
+    apart from the licence and the editor's credit: a deposit carries these as
+    notes, so the lines are labelled as notes, and a block is taken whole
+    except for a running foot printed across it -- which no field grounds.
+
+    A heading and not a sentence that opens with the word.  A reviewer writing
+    about what copyright protects breaks the sentence over a line that begins
+    "copyright protection in USA does not apply", and the report it is part of
+    is the reviewer's rather than the journal's.
+    """
+    opened = _get_first_reference_index(seg_lines)
+    if opened is None:
+        return
+    measure_by_page = _get_measure_by_page(seg_lines)
+    for index in range(opened, len(seg_lines)):
+        if seg_lines[index].seg_label in _TRAILING_MATTER_LABELS and not (
+            _is_grounded_in(seg_lines[index], annotated, _DEPOSITED_NOTE_FIELDS)
+        ):
+            continue
+        if seg_lines[index].seg_label == SEG_REVIEW:
+            continue
+        if len(seg_lines[index].text.strip()) > _STATEMENT_HEADING_MAX_LENGTH:
+            continue
+        if not _PUBLISHING_DECLARATION_PATTERN.match(seg_lines[index].text):
+            continue
+        if not _is_set_on_a_line_of_its_own(seg_lines, index, measure_by_page):
+            continue
+        block_index = seg_lines[index].block_index
+        for seg_line in seg_lines[index:]:
+            if seg_line.block_index != block_index:
+                break
+            if seg_line.seg_label in _TRAILING_MATTER_LABELS and not (
+                _is_grounded_in(seg_line, annotated, _DEPOSITED_NOTE_FIELDS)
+            ):
+                continue
+            seg_line.seg_label = SEG_FRONT
+
+
+def _claim_the_heading_a_credit_is_printed_under(
+    seg_lines: List[_SegLine],
+    index: int,
+    named: str,
+    text_size: Optional[float],
+    measure_by_page: Mapping[int, float],
+) -> None:
+    """Take the heading the page sets the first credit of a block under."""
+    above = _nearest_line_above_in_the_column(seg_lines, index)
+    if above is None:
+        return
+    label = seg_lines[above].seg_label
+    if label is not None and label not in _CREDIT_CARRIES_ON:
+        return
+    if not _is_set_as_a_heading(seg_lines, above, text_size, measure_by_page):
+        return
+    seg_lines[above].seg_label = named
+
+
+def _claim_the_people_a_journal_credits(seg_lines: List[_SegLine]) -> None:
+    """Read the editors and the reviewers a journal credits after the article.
+
+    An editor is the article's own bibliographical information: GROBID's
+    corpus holds the line crediting one in `<front>` 120 times of 122, and
+    its header model carries `<editor>` to read it with.  Who reviewed the
+    article, and where the report they wrote can be read, is the review --
+    which is what the ORE profile already files a reviewer's name, their
+    affiliation and the report's identifier under.
+
+    Each heading holds until the page names the next one, and only once the
+    article has begun: a journal printing its whole editorial process on the
+    opening page is printing the front matter, which the opening page's own
+    reading takes.  Nothing already read as the front matter opens one, a
+    citation line carrying "peer review: 2 approved" being the front matter
+    saying how to cite the article.  Where the page heads the block rather
+    than the credit -- "Editorial responsibility" over the editors it names --
+    the heading goes with what it heads.
+    """
+    opened = min(
+        (
+            index for index, seg_line in enumerate(seg_lines)
+            if seg_line.seg_label in (SEG_BODY, SEG_REFERENCES)
+        ),
+        default=None,
+    )
+    if opened is None:
+        return
+    text_size = _get_prevailing_type_size(seg_lines)
+    measure_by_page = _get_measure_by_page(seg_lines)
+    taken: Optional[str] = None
+    running = 0
+    for index in range(opened, len(seg_lines)):
+        seg_line = seg_lines[index]
+        if seg_line.seg_label in _TRAILING_MATTER_LABELS and seg_line.seg_label != SEG_FOOTNOTE:
+            continue
+        named = next(
+            (
+                label for pattern, label in _CREDIT_LABELS
+                if seg_line.seg_label != SEG_FRONT and pattern.match(seg_line.text)
+            ),
+            None,
+        )
+        if named is not None:
+            if taken is None:
+                _claim_the_heading_a_credit_is_printed_under(
+                    seg_lines, index, named, text_size, measure_by_page
+                )
+            taken, running = named, 0
+        elif (
+            seg_line.seg_label is not None
+            and seg_line.seg_label not in _CREDIT_CARRIES_ON
+        ):
+            taken = None
+        if taken is None:
+            continue
+        running += 1
+        if running > _CREDIT_RUN_MAX_LINES:
+            taken = None
+            continue
+        seg_line.seg_label = taken
+
+
+# The body whose standards a journal publishes under, which it names at the
+# foot of its last page.  Wherever in the line it falls, because the sentence
+# names the journal first and a journal's name is as long as it is.
+_PUBLISHING_STANDARDS_PATTERN = re.compile(
+    r'^.*?\b(?:'
+    r'committee\s+on\s+publication\s+ethics'
+    r'|comit[e\u00ea]\s+de\s+[e\u00e9]tica\s+(?:em|de)\s+publica'
+    r'|\(\s*cope\s*\)'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _claim_the_standards_the_journal_publishes_under(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take the line naming the body whose standards the journal follows.
+
+    A journal closes its last page on what it belongs to, set below the
+    article in the type its feet are set in, where no field of the deposit
+    reaches it and the region above it does.  It is the journal speaking about
+    the publication, as the licence and the copyright declaration are.
+    """
+    _claim_the_block_printed_after_the_references(
+        seg_lines, _PUBLISHING_STANDARDS_PATTERN, annotated
+    )
+
+
+def _claim_what_the_journal_says_past_the_references(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """The journal's own lines, printed where the article has ended."""
+    _claim_the_licence_printed_after_the_references(seg_lines, annotated)
+    _claim_the_standards_the_journal_publishes_under(seg_lines, annotated)
+
+
+def _claim_the_licence_printed_after_the_references(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
     """Take a licence notice printed past the reference list.
 
     A journal grants its licence at the foot of the last page, and the
@@ -895,15 +1413,448 @@ def _claim_the_licence_printed_after_the_references(seg_lines: List[_SegLine]) -
     the list is set in two columns down, it arrives in the middle of the list
     and S0102-76382018000400391 has it matched as an entry's article title.
     No article is titled this.
+
+    The notice is as long as the block the page sets it in, the sentence
+    running on over two or three lines of which only the first says what it is.
     """
-    opened = _get_first_reference_index(seg_lines)
-    if opened is None:
-        return
-    for seg_line in seg_lines[opened:]:
-        if seg_line.seg_label in _TRAILING_MATTER_LABELS:
+    _claim_the_block_printed_after_the_references(
+        seg_lines, _LICENCE_NOTICE_PATTERN, annotated
+    )
+
+
+# What the deposit files a note of the article's under.
+_DEPOSITED_NOTE_FIELDS = frozenset({JatsFieldNames.BACK_FOOTNOTE})
+
+
+def _opens_what_is_under_it(seg_lines: List[_SegLine], index: int) -> bool:
+    """Whether the line below opens a sentence of its own.
+
+    A heading does not wrap, where a statement that names its authors in bold
+    runs on into the line under it.
+    """
+    below = next(
+        (seg_line for seg_line in seg_lines[index + 1:] if seg_line.text.strip()),
+        None,
+    )
+    return below is not None and not below.text.strip()[0].islower()
+
+
+# A heading does not fill the measure: of the headings these journals print
+# the widest runs to three quarters of it, where a line of the statement under
+# one runs to the whole of it.
+_HEADING_MAX_MEASURE_RATIO = 0.8
+
+# The width to read as the measure, which is the widest line but for the few a
+# table or a figure runs across the page.
+_MEASURE_QUANTILE = 0.9
+
+
+def _get_line_width(seg_line: _SegLine) -> Optional[float]:
+    """How far across the page the line runs."""
+    boxes = [
+        token.coordinates for token in seg_line.layout_line.tokens
+        if token.coordinates
+    ]
+    if not boxes:
+        return None
+    return max(box.x + box.width for box in boxes) - min(box.x for box in boxes)
+
+
+def _get_measure_by_page(seg_lines: List[_SegLine]) -> Dict[int, float]:
+    """The width each page sets its text to."""
+    widths: Dict[int, List[float]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        width = _get_line_width(seg_line)
+        if page_number is not None and width:
+            widths.setdefault(page_number, []).append(width)
+    measures = {}
+    for page_number, page_widths in widths.items():
+        ordered = sorted(page_widths)
+        at = min(int(len(ordered) * _MEASURE_QUANTILE), len(ordered) - 1)
+        measures[page_number] = ordered[at]
+    return measures
+
+
+def _is_set_on_a_line_of_its_own(
+    seg_lines: List[_SegLine],
+    index: int,
+    measure_by_page: Mapping[int, float],
+) -> bool:
+    """Whether the page gives the line to itself, short of the measure."""
+    seg_line = seg_lines[index]
+    if len(seg_line.text.strip()) > _STATEMENT_HEADING_MAX_LENGTH:
+        return False
+    page_number = _get_page_number(seg_line)
+    width = _get_line_width(seg_line)
+    measure = measure_by_page.get(page_number) if page_number is not None else None
+    if width and measure and width > measure * _HEADING_MAX_MEASURE_RATIO:
+        return False
+    return _opens_what_is_under_it(seg_lines, index)
+
+
+# As far either way as a heading and the lines it heads: enough to tell
+# whether the page sets this line apart or sets everything the same.
+_NEIGHBOURING_LINES = 3
+
+
+def _is_bold_among_lighter_lines(seg_lines: List[_SegLine], index: int) -> bool:
+    """Whether bold tells the line from the lines the page sets around it.
+
+    A journal that sets a whole page in bold says nothing by the weight of
+    the line that heads it.
+    """
+    if not _is_bold(seg_lines[index]):
+        return False
+    page_number = _get_page_number(seg_lines[index])
+    neighbours = [
+        seg_line for seg_line in (
+            seg_lines[max(0, index - _NEIGHBOURING_LINES):index]
+            + seg_lines[index + 1:index + 1 + _NEIGHBOURING_LINES]
+        )
+        if seg_line.text.strip()
+        and seg_line.seg_label not in _FURNITURE_LABELS
+        and _get_page_number(seg_line) == page_number
+    ]
+    return not all(_is_bold(seg_line) for seg_line in neighbours)
+
+
+def _is_set_as_a_heading(
+    seg_lines: List[_SegLine],
+    index: int,
+    text_size: Optional[float],
+    measure_by_page: Mapping[int, float],
+) -> bool:
+    """Whether the page sets the line as a heading over the text under it."""
+    size = _get_line_font_size(seg_lines[index])
+    stands_out = _is_bold_among_lighter_lines(seg_lines, index) or (
+        size is not None and text_size is not None and size > text_size
+    )
+    return stands_out and _is_set_on_a_line_of_its_own(
+        seg_lines, index, measure_by_page
+    )
+
+
+def _is_printed_before(
+    one: Tuple[float, float], other: Tuple[float, float]
+) -> bool:
+    """Whether the page sets one before the other, reading its columns in turn."""
+    if abs(one[0] - other[0]) > _SAME_COLUMN_MAX_X_GAP:
+        return one[0] < other[0]
+    return one[1] < other[1]
+
+
+def _claim_the_column_the_reference_list_runs_into(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Take the column the list carries on in, handed over before the one it opens in.
+
+    A journal sets its reference list across the foot of a two-column page and
+    on into the column beside it, and pdfalto hands that column over before the
+    one the list opens in: the entries arrive ahead of the heading above them
+    and read as the body they were printed under.
+
+    Having arrived early is the whole of the claim: a line the page prints after
+    the list and hands over after it as well is whatever follows the list -- an
+    appendix, the authors' biographies, the licence -- and keeps what it has.
+    Only a block printed after the list that arrived before it was misplaced.
+
+    The whole block, and most of it unclaimed.  A row of a table reaches from
+    the first column of the page to past the list beside it, so its last cell
+    alone is printed after the list although the row is not; and a block the
+    article's own text fills is the article's, whatever is left over in it.
+    """
+    opens_by_page: Dict[int, Tuple[Tuple[float, float], int]] = {}
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label != SEG_REFERENCES:
             continue
-        if _LICENCE_NOTICE_PATTERN.match(seg_line.text):
-            seg_line.seg_label = SEG_FRONT
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        opens = opens_by_page.get(page_number)
+        if opens is None or _is_printed_before(position, opens[0]):
+            opens_by_page[page_number] = (position, index)
+    blocks: Dict[int, List[Tuple[int, _SegLine]]] = {}
+    for index, seg_line in enumerate(seg_lines):
+        blocks.setdefault(seg_line.block_index, []).append((index, seg_line))
+    for block in blocks.values():
+        if len(block) < _MIN_LINES_TO_PLACE_A_BLOCK:
+            continue
+        unclaimed = [
+            seg_line for _, seg_line in block if seg_line.seg_label is None
+        ]
+        if len(unclaimed) * 2 <= len(block):
+            continue
+        page_numbers = [_get_page_number(seg_line) for _, seg_line in block]
+        positions = [_get_line_position(seg_line) for _, seg_line in block]
+        if (
+            len(set(page_numbers)) != 1
+            or page_numbers[0] is None
+            or any(position is None for position in positions)
+        ):
+            continue
+        opens = opens_by_page.get(page_numbers[0])
+        if opens is None or max(index for index, _ in block) > opens[1]:
+            continue
+        if not all(
+            _is_printed_before(opens[0], position)
+            for position in positions if position is not None
+        ):
+            continue
+        for seg_line in unclaimed:
+            seg_line.seg_label = SEG_REFERENCES
+
+
+def _claim_the_annex_and_its_heading(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """The sections appended to the article, each with the heading it opens with."""
+    _claim_annex_region(seg_lines)
+    _claim_the_heading_an_annex_opens_with(seg_lines, annotated)
+
+
+def _claim_the_heading_an_annex_opens_with(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take the printed heading the appended section is introduced by.
+
+    GROBID's corpus opens a `<div type="annex">` with the heading the page sets
+    over it -- "Abbreviations", "Additional files", "Reporting summary" -- and
+    the JATS carries a title for few of them, so the heading is left reading as
+    the column it is printed under.  Where the page puts it is what says it
+    belongs: in the same column, directly above the region's highest line, and
+    set as a heading rather than as more of the text.
+
+    Only a heading no field carries.  An appendix that restates a sentence of
+    the argument wins that line, and the heading the page sets above it is then
+    the body's own -- which the deposit says, by carrying it.
+    """
+    highest_by_page = _get_highest_line_by_page(seg_lines, SEG_ANNEX)
+    if not highest_by_page:
+        return
+    text_size = _get_prevailing_type_size(seg_lines)
+    measure_by_page = _get_measure_by_page(seg_lines)
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label not in (None, SEG_BODY):
+            continue
+        if _is_grounded(seg_line, annotated):
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        highest = highest_by_page.get(page_number)
+        if highest is None:
+            continue
+        if not 0 < highest[1] - position[1] <= _HEADING_ABOVE_MAX_GAP:
+            continue
+        if abs(position[0] - highest[0]) > _SAME_COLUMN_MAX_X_GAP:
+            continue
+        if not _is_set_as_a_heading(seg_lines, index, text_size, measure_by_page):
+            continue
+        seg_line.seg_label = SEG_ANNEX
+
+
+# What names a person of the paper rather than anything written about the
+# work: the identifier that is theirs and nobody else's.  An affiliation is
+# not one -- a reference list names universities, and one entry in four
+# matches as an affiliation where the deposit carries no list to align.
+_AUTHOR_MATTER_FIELDS = frozenset({JatsFieldNames.ORCID})
+
+# What the deposit calls a statement about the work.  A contribution statement
+# names each author, so the block under its heading carries the people too, and
+# what the deposit says it is settles it before anything the page shows.
+_DECLARED_NOTE_FIELDS = frozenset({
+    JatsFieldNames.CONFLICT_NOTE,
+    JatsFieldNames.CONTRIBUTION_NOTE,
+    JatsFieldNames.FUNDING,
+})
+
+# Far enough to reach the identifier under the first name and address.
+_AUTHORS_BLOCK_LOOKAHEAD = 8
+
+
+def _heads_the_authors_themselves(
+    seg_lines: List[_SegLine], index: int, annotated: JatsAnnotatedLayoutDocument
+) -> bool:
+    """Whether the heading names the paper's people rather than a declaration.
+
+    One journal heads the block of author addresses it closes on "Authorship",
+    which by its wording alone reads as a statement of who contributed what.
+    An ORCID under it settles it: a statement of contributions carries none,
+    and GROBID's corpus holds the addresses a journal of the same publisher
+    closes on in `<front>`, heading and all, with the contributions following
+    under their own label.
+    """
+    for seg_line in seg_lines[index + 1:index + 1 + _AUTHORS_BLOCK_LOOKAHEAD]:
+        if _is_grounded_in(seg_line, annotated, _DECLARED_NOTE_FIELDS):
+            return False
+        if _is_grounded_in(seg_line, annotated, _AUTHOR_MATTER_FIELDS):
+            return True
+    return False
+
+
+def _claim_the_declarations_the_closing_pages_name(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Every declaration the pages the article closes on name, headed or not."""
+    _claim_the_declarations_the_article_closes_with(seg_lines, annotated)
+    _claim_the_conflict_declared_without_a_heading(seg_lines, annotated)
+
+
+def _the_page_the_declarations_open_on(
+    seg_lines: List[_SegLine], first_reference: int
+) -> Optional[int]:
+    """The page the article's text has ended by, where its declarations begin.
+
+    Usually the page the reference list opens on.  A journal that prints the
+    contributions before the list ends its text a page earlier, and what
+    fills the page between is the declarations.
+    """
+    closing_page = _get_page_number(seg_lines[first_reference])
+    last_body = next(
+        (
+            index for index in range(first_reference - 1, -1, -1)
+            if seg_lines[index].seg_label == SEG_BODY
+        ),
+        None,
+    )
+    if closing_page is None or last_body is None:
+        return closing_page
+    body_page = _get_page_number(seg_lines[last_body])
+    return closing_page if body_page is None else min(closing_page, body_page + 1)
+
+
+# A conflict declared in a sentence, where the page gives it no heading of
+# its own and the deposit files it among the notes on the authors.
+_NO_CONFLICT_PATTERN = re.compile(
+    r'(?:reports?|declares?|states?|have|has)\s+(?:that\s+)?(?:they\s+)?'
+    r'(?:have\s+)?no\s+[^.]{0,60}?'
+    r'(?:conflict|competing\s+interest|proprietary|financial\s+interest)'
+    r'|n[a\u00e3]o\s+h[a\u00e1]\s+conflito\s+de\s+interesse'
+    r'|declaram?\s+n[a\u00e3]o\s+haver\s+conflito'
+    r'|n[a\u00e3]o\s+existe[m]?\s+conflitos?\s+de\s+interesse'
+    r'|no\s+existe[n]?\s+conflictos?\s+de\s+inter[e\u00e9]s',
+    re.IGNORECASE,
+)
+
+
+def _claim_the_conflict_declared_without_a_heading(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take a block that declares a conflict the page heads with nothing.
+
+    A journal closes on the sentence alone, where the deposit files it among
+    the notes on the authors and the region the page opened above it reaches
+    over it.  GROBID's corpus holds such a sentence in `<div type="conflict">`
+    152 times of 171.
+    """
+    first_reference = _get_first_reference_index(seg_lines)
+    if first_reference is None:
+        return
+    opening_page = _the_page_the_declarations_open_on(seg_lines, first_reference)
+    if opening_page is None:
+        return
+    for block in _group_lines_by_block(seg_lines).values():
+        page_number = _get_page_number(block[0])
+        if page_number is None or page_number < opening_page:
+            continue
+        if any(
+            seg_line.seg_label in _TRAILING_MATTER_LABELS
+            or _is_grounded_in(seg_line, annotated, _DECLARED_REGION_FIELDS)
+            for seg_line in block
+        ):
+            continue
+        if not _NO_CONFLICT_PATTERN.search(
+            ' '.join(seg_line.text for seg_line in block)
+        ):
+            continue
+        for seg_line in block:
+            seg_line.seg_label = SEG_CONFLICT
+        for seg_line in _the_lines_the_sentence_runs_on_into(seg_lines, block):
+            seg_line.seg_label = SEG_CONFLICT
+
+
+def _the_lines_the_sentence_runs_on_into(
+    seg_lines: List[_SegLine], block: List[_SegLine]
+) -> Iterator[_SegLine]:
+    """The lines after the block that finish the sentence it opens.
+
+    The page breaks a sentence over two blocks as readily as over two lines.
+    """
+    position = {id(seg_line): index for index, seg_line in enumerate(seg_lines)}
+    for seg_line in seg_lines[position[id(block[-1])] + 1:]:
+        text = seg_line.text.strip()
+        if not text or seg_line.seg_label in _TRAILING_MATTER_LABELS:
+            return
+        if not text[0].islower():
+            return
+        yield seg_line
+
+
+def _claim_the_declarations_the_article_closes_with(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Open each declaration the pages the article closes on name.
+
+    GROBID's corpus gives a section opening with one of these headings the
+    declaration it names: contribution 148 times out of 148, conflict 123 of
+    137, funding 113 of 168, and never the list it is printed among.  What the
+    deposit filed the statement under does not decide it -- a journal files all
+    four as back footnotes, and a region reaches over the ones it carries
+    nothing for at all.
+
+    A heading that names no declaration opens an annex, which is where GROBID
+    files an unnamed one.  The run stops at the reference list, and at a line
+    the deposit files under a region of its own: what the page says is read
+    over what the regions made of it, never over what the deposit declares --
+    an availability statement with sections of its own is one statement.
+    """
+    first_reference = _get_first_reference_index(seg_lines)
+    if first_reference is None:
+        return
+    closing_page = _the_page_the_declarations_open_on(seg_lines, first_reference)
+    if closing_page is None:
+        return
+    text_size = _get_prevailing_type_size(seg_lines)
+    measure_by_page = _get_measure_by_page(seg_lines)
+    label: Optional[str] = None
+    for index, seg_line in enumerate(seg_lines):
+        page_number = _get_page_number(seg_line)
+        if page_number is None or page_number < closing_page:
+            continue
+        if (
+            _is_grounded_in(seg_line, annotated, _DECLARED_REGION_FIELDS)
+            or seg_line.seg_label in {SEG_REVIEW, SEG_COVER}
+        ):
+            label = None
+            continue
+        named = _declaration_named_by(seg_line.text)
+        set_apart = _is_set_as_a_heading(
+            seg_lines, index, text_size, measure_by_page
+        )
+        # Bold among bold says nothing, but the words still name what they
+        # name: a journal setting its whole closing page in bold heads its
+        # declarations in it too.
+        names_a_declaration = named is not None and (set_apart or _is_bold(seg_line))
+        if set_apart and _heads_the_authors_themselves(seg_lines, index, annotated):
+            label = SEG_FRONT
+        elif names_a_declaration:
+            label = named
+        elif set_apart and label != SEG_FRONT:
+            # The authors' block runs on under a name of its own; a
+            # declaration's does not, and an unnamed heading opens the annex
+            # GROBID files an unnamed statement under.
+            label = SEG_ANNEX if label else None
+        if label is None:
+            continue
+        if (
+            seg_line.seg_label in _FURNITURE_LABELS
+            and not _is_grounded(seg_line, annotated)
+        ):
+            continue
+        seg_line.seg_label = label
 
 
 _SAME_ROW_Y_TOLERANCE = 3.0
@@ -1100,7 +2051,177 @@ def _release_references_inside_body(seg_lines: List[_SegLine]) -> None:
                 seg_lines[index].seg_label = None
 
 
-def _release_body_inside_the_references(seg_lines: List[_SegLine]) -> None:
+_IMPRINT_BLOCK_MAX_LINES = 8
+
+
+def _claim_the_rest_of_the_block_the_front_matter_fills(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Give the front matter the rest of the small block it is printed in.
+
+    A journal sets the article's imprint in one block at the foot of its first
+    page: the doi, who to write to, the dates it was received and accepted,
+    and what paid for it.  The page sets them as one thing, and most of them
+    are matched to the front matter, so the two that are not -- a doi no field
+    carries, and a funding statement the deposit files as a declaration -- are
+    left reading as the column above them.
+
+    Only a block short enough to be an imprint, and only over what the regions
+    have not claimed: a column where the front matter runs into the body is
+    long, and says nothing about the lines it ends with.
+
+    And no later than the page the article's text begins on.  The editors a
+    journal credits on its closing page are front matter too, and the
+    declaration the page prints beside them is not theirs.
+    """
+    first_body_page = next(
+        (
+            page_number for page_number in (
+                _get_page_number(seg_line) for seg_line in seg_lines
+                if seg_line.seg_label == SEG_BODY
+            )
+            if page_number is not None
+        ),
+        None,
+    )
+    taken = {None, SEG_BODY} | set(_STATEMENT_LABELS)
+    by_block: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        by_block.setdefault(seg_line.block_index, []).append(seg_line)
+    for block in by_block.values():
+        if len(block) > _IMPRINT_BLOCK_MAX_LINES:
+            continue
+        page_number = _get_page_number(block[0])
+        if first_body_page is not None and (
+            page_number is None or page_number > first_body_page
+        ):
+            continue
+        front = [sl for sl in block if sl.seg_label == SEG_FRONT]
+        if len(front) * 2 <= len(block):
+            continue
+        for seg_line in block:
+            if seg_line.seg_label in taken:
+                seg_line.seg_label = SEG_FRONT
+
+
+def _the_page_the_article_opens_on(seg_lines: List[_SegLine]) -> Optional[int]:
+    """The first page the front matter is printed on."""
+    front_pages = [
+        page_number
+        for page_number in (
+            _get_page_number(seg_line) for seg_line in seg_lines
+            if seg_line.seg_label == SEG_FRONT
+        )
+        if page_number is not None
+    ]
+    return min(front_pages) if front_pages else None
+
+
+# The thanks a journal prints as a note on the page it opens the article on,
+# called by a marker standing in the title or beside an author's name.
+_NOTED_THANKS_PATTERN = re.compile(
+    r'^\s*[\*\u2020\u2021\u00a7\u00b6\d]+[\.\)]?\s+'
+    r'(?:(?:nossos|nossas|os\s+autores|as\s+autoras)\s+)?'
+    r'(?:agradec|agradez'
+    r'|(?:the\s+authors?|we)\s+(?:would\s+like\s+to\s+)?(?:thank|acknowledge)'
+    r'|acknowledg)',
+    re.IGNORECASE,
+)
+
+
+def _claim_the_thanks_a_note_opens_the_article_with(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Take a note of thanks the opening page prints under no heading of its own.
+
+    GROBID's corpus reads a block of thanks by what it says rather than by
+    where it is printed -- `<div type="acknowledgement">` 553 times against
+    one footnote -- and in the two documents where the block is a note called
+    from the opening page it is an acknowledgement there as well.
+    """
+    opening_page = _the_page_the_article_opens_on(seg_lines)
+    if opening_page is None:
+        return
+    for block in _group_lines_by_block(seg_lines).values():
+        if _get_page_number(block[0]) != opening_page:
+            continue
+        if any(
+            (
+                seg_line.seg_label in _TRAILING_MATTER_LABELS
+                and seg_line.seg_label != SEG_FOOTNOTE
+            )
+            or _is_grounded_in(seg_line, annotated, _DECLARED_REGION_FIELDS)
+            for seg_line in block
+        ):
+            continue
+        if not _NOTED_THANKS_PATTERN.match(block[0].text):
+            continue
+        for seg_line in block:
+            seg_line.seg_label = SEG_ACKNOWLEDGEMENT
+        for seg_line in _the_lines_the_sentence_runs_on_into(seg_lines, block):
+            seg_line.seg_label = SEG_ACKNOWLEDGEMENT
+
+
+# What a foot names the maker of the file by, rather than the article.
+_FILE_MAKER_PATTERN = re.compile(
+    r'^\s*(?:powered\s+by|downloaded\s+from|generated\s+by)\b',
+    re.IGNORECASE,
+)
+
+
+def _claim_the_notes_the_opening_page_prints_around_the_article(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Give the front matter the notes set around the page the article opens on.
+
+    What a journal sets in the margins and at the foot of that page is mostly
+    about the article rather than about the page: the licence it is published
+    under, how to cite it, the journal and issue it appears in, where the study
+    was carried out.  GROBID's corpus takes the running foot into `<front>`
+    where the opening page prints it 262 times of 280, and keeps it a footnote
+    on the pages after.
+
+    The page the article opens on and no other.  Front matter printed further
+    in -- a box of amendments beside the second column, a panel of reviewers --
+    says nothing about the notes at the foot of the page it shares, which are
+    the article's own.
+
+    The stamp a file carries is not one of them.  Where GROBID's corpus leaves
+    a foot of the opening page outside `<front>`, what it leaves is the server
+    the file came from rather than anything the article is published as.
+    """
+    opening_page = _the_page_the_article_opens_on(seg_lines)
+    if opening_page is None:
+        return
+    for seg_line in seg_lines:
+        if seg_line.seg_label != SEG_FOOTNOTE:
+            continue
+        if _get_page_number(seg_line) != opening_page:
+            continue
+        if _FILE_MAKER_PATTERN.search(seg_line.text):
+            continue
+        seg_line.seg_label = SEG_FRONT
+
+
+def _claim_the_opening_page_notes(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    _claim_the_thanks_a_note_opens_the_article_with(seg_lines, annotated)
+    _claim_the_notes_the_opening_page_prints_around_the_article(seg_lines)
+
+
+# What the deposit names a float by, caption and all.
+_FLOAT_CAPTION_FIELDS = frozenset({
+    JatsFieldNames.BODY_FIGURE,
+    JatsFieldNames.BODY_TABLE,
+    JatsFieldNames.FLOAT_FIGURE,
+    JatsFieldNames.FLOAT_TABLE,
+})
+
+
+def _release_body_inside_the_references(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
     """Take back the section heading that matched an entry of the reference list.
 
     A deposit declares the article's body once for every language it carries,
@@ -1119,6 +2240,11 @@ def _release_body_inside_the_references(seg_lines: List[_SegLine]) -> None:
     them as it carries languages and the list is long enough to hold several:
     asked one at a time, each has another of them on one side and the list on
     the other, and neither is enclosed.
+
+    A float's caption is not one of these.  A journal that prints a flowchart
+    past its reference list has the page hand the caption over after both
+    columns of the list, and the deposit names it a figure rather than a
+    section: it matched what it says it is.
     """
     runs = list(_iter_label_runs(seg_lines, SEG_BODY))
     index = 0
@@ -1131,6 +2257,11 @@ def _release_body_inside_the_references(seg_lines: List[_SegLine]) -> None:
             group.append(runs[index + len(group)])
         index += len(group)
         if sum(len(run) for run in group) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if any(
+            _is_grounded_in(seg_lines[position], annotated, _FLOAT_CAPTION_FIELDS)
+            for run in group for position in run
+        ):
             continue
         if (
             _enclosing_label(seg_lines, group[0][0], -1)
@@ -1150,8 +2281,56 @@ def _release_body_inside_front(seg_lines: List[_SegLine]) -> None:
     on, so it gives those lines to the body section that repeats them.  The
     front matter is one run, so a short stretch of body inside it is that
     mistake rather than the article beginning and then stopping again.
+
+    Only where the page sets the stretch as part of what surrounds it.  A
+    structured abstract's sub-heading is set in the abstract's own column at
+    its pitch; the heading the article opens under is set in a column of its
+    own, and reads as front matter only because the page hands the imprint
+    block over before the column beside it.
     """
     for run in _iter_label_runs(seg_lines, SEG_BODY):
+        if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if not _continues_the_lines_around_it(seg_lines, run):
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_FRONT
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = SEG_FRONT
+
+
+def _release_references_inside_the_annex(seg_lines: List[_SegLine]) -> None:
+    """Take back the appendix cell that matched an entry of the reference list.
+
+    An appendix tabulating what each study found names its authors in a cell of
+    its own -- "Chen e / colaboradores / (2016)" -- and a word that every entry
+    of the list carries is enough for one of them to win it.  The list is one
+    region under the article, and the appendix is one region after it.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_REFERENCES):
+        if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_ANNEX
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = SEG_ANNEX
+
+
+def _release_references_inside_front(seg_lines: List[_SegLine]) -> None:
+    """Take back the affiliation line that matched an entry of the reference list.
+
+    An affiliation names a university and a city, and so does half the list, so
+    a column of them set down the margin of the opening page has a line or two
+    the aligner reads as an entry.  The list is one region under the article,
+    and the front matter is one region above it.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_REFERENCES):
         if len(run) > _MAROONED_RUN_MAX_LINES:
             continue
         if (
@@ -1161,6 +2340,52 @@ def _release_body_inside_front(seg_lines: List[_SegLine]) -> None:
         ):
             for index in run:
                 seg_lines[index].seg_label = SEG_FRONT
+
+
+def _release_front_inside_the_review(seg_lines: List[_SegLine]) -> None:
+    """Take back the date a reviewer's report is headed with.
+
+    A report prints the day it was written over it -- "Author Response 13 Mar
+    2023" -- and the article's own history carries a date the aligner can read
+    that as.  The reports are one region at the end of the document, so a short
+    stretch of front matter inside them is that match rather than the paper's
+    front matter printed among the reviews.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_FRONT):
+        if len(run) > _MAROONED_RUN_MAX_LINES:
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_REVIEW
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = SEG_REVIEW
+
+
+def _release_front_inside_body(seg_lines: List[_SegLine]) -> None:
+    """Take back the summary line that matched the abstract the deposit declares.
+
+    A journal that prints a summary in another language at the end of the
+    article sets the words the deposit carries as its abstract, and the aligner
+    places the part of it that it can: half a block becomes front matter while
+    the rest of the same block, which the deposit words differently, stays body.
+
+    Only where the page sets the run as part of the text around it -- the same
+    column, at the pitch of the lines above and below.  A note the front matter
+    prints at the foot of a column stands apart from the argument beside it, and
+    there the front matter is what it is, wherever it prints.
+    """
+    for run in _iter_label_runs(seg_lines, SEG_FRONT):
+        if not _continues_the_lines_around_it(seg_lines, run):
+            continue
+        if (
+            _enclosing_label(seg_lines, run[0], -1)
+            == SEG_BODY
+            == _enclosing_label(seg_lines, run[-1], 1)
+        ):
+            for index in run:
+                seg_lines[index].seg_label = None
 
 
 def _iter_statement_blocks(seg_lines: List[_SegLine]) -> Iterator[List[int]]:
@@ -1246,6 +2471,21 @@ def _continues_the_lines_around_it(seg_lines: List[_SegLine], run: List[int]) ->
     )
 
 
+def _completes_the_paragraph_above(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the run reads as the rest of the paragraph set above it."""
+    return run[0] > 0 and _follows_on_from(seg_lines[run[0]], seg_lines[run[0] - 1])
+
+
+def _is_set_inside_a_paragraph(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the page sets the run between two lines of one block of type."""
+    return (
+        _completes_the_paragraph_above(seg_lines, run)
+        and seg_lines[run[0]].block_index == seg_lines[run[0] - 1].block_index
+        and run[-1] + 1 < len(seg_lines)
+        and seg_lines[run[-1] + 1].block_index == seg_lines[run[-1]].block_index
+    )
+
+
 def _release_annex_inside_body(seg_lines: List[_SegLine]) -> None:
     """Take back a body line that matched the appendix restating it.
 
@@ -1265,19 +2505,117 @@ def _release_annex_inside_body(seg_lines: List[_SegLine]) -> None:
     statement the methods set out in full takes six lines -- so the length a
     marooned reference is held to is not the length to hold this to.  The
     paragraph test is what decides either way.
+
+    The paragraph above is the whole of that test.  What comes after the run
+    says nothing: the sentence it finishes is as often the last of the body,
+    with the reference list under it or the page ending beneath it, as one in
+    the middle.
+
+    An appended section is headed, which a sentence carried on from the line
+    above is not, so a run the page heads -- at its first line, or in the line
+    standing over it -- is the section it says it is, however closely it
+    follows the text.
     """
+    text_size = _get_prevailing_type_size(seg_lines)
+    measure_by_page = _get_measure_by_page(seg_lines)
     for run in _iter_label_runs(seg_lines, SEG_ANNEX):
         if len(run) > _RESTATED_DECLARATION_MAX_LINES:
             continue
-        if not _continues_the_lines_around_it(seg_lines, run):
+        if not _completes_the_paragraph_above(seg_lines, run):
             continue
-        if (
-            _enclosing_label(seg_lines, run[0], -1)
-            == SEG_BODY
-            == _enclosing_label(seg_lines, run[-1], 1)
+        if any(
+            _is_set_as_a_heading(seg_lines, index, text_size, measure_by_page)
+            for index in (run[0] - 1, run[0])
         ):
+            continue
+        if _enclosing_label(seg_lines, run[0], -1) == SEG_BODY:
             for index in run:
                 seg_lines[index].seg_label = None
+
+
+def _release_statements_inside_body(seg_lines: List[_SegLine]) -> None:
+    """Take back a body line that matched the declaration restating it.
+
+    A contribution statement says what each author did in the words the
+    methods use, so a sentence of the argument occurs in both and the
+    declaration match wins the line.  One such line in the middle of a
+    paragraph carries the front matter over the heading the body opens with.
+
+    In the middle of one and nowhere else: a declaration the page prints under
+    the body is a region of its own, opening where the paragraph above it has
+    ended, and the lines of that paragraph are what tell them apart.
+    """
+    for label in _STATEMENT_LABELS:
+        for run in _iter_label_runs(seg_lines, label):
+            if len(run) > _RESTATED_DECLARATION_MAX_LINES:
+                continue
+            if not _is_set_inside_a_paragraph(seg_lines, run):
+                continue
+            if _enclosing_label(seg_lines, run[0], -1) != SEG_BODY:
+                continue
+            for index in run:
+                seg_lines[index].seg_label = None
+
+
+_ENCLOSED_BODY_MAX_LINES = 2
+
+
+def _is_set_mid_sentence(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the page wraps one sentence from above the run to below it."""
+    opens = seg_lines[run[0]].text.strip()
+    carries_on = seg_lines[run[-1] + 1].text.strip()
+    return bool(opens and carries_on) and opens[0].islower() and carries_on[0].islower()
+
+
+def _release_the_body_a_sentence_wraps_over(seg_lines: List[_SegLine]) -> None:
+    """Give back a body line the page sets in the middle of another region's sentence."""
+    for run in _iter_label_runs(seg_lines, SEG_BODY):
+        if len(run) > _ENCLOSED_BODY_MAX_LINES:
+            continue
+        if not _continues_the_lines_around_it(seg_lines, run):
+            continue
+        if not _is_set_mid_sentence(seg_lines, run):
+            continue
+        around = _enclosing_label(seg_lines, run[0], -1)
+        if around is None or around == SEG_BODY:
+            continue
+        if around != _enclosing_label(seg_lines, run[-1], 1):
+            continue
+        for index in run:
+            seg_lines[index].seg_label = around
+
+
+def _without_the_numbers(text: str) -> str:
+    """What the line says apart from the numbers that change with the page."""
+    return re.sub(r'[\d\W_]+', ' ', text).strip()
+
+
+def _says_something_without_its_numbers(text: str) -> bool:
+    """Whether what is left of the line once its numbers are gone is still words.
+
+    "15-58, 2005." is nothing but its numbers, and the end of a reference entry
+    rather than anything a page runs across its foot.  "et al. 9" leaves two
+    abbreviations behind, which is a column of a table citing its sources and
+    not a foot either: a journal running one carries its own name across it, so
+    one of the words has to be a word.
+    """
+    words = re.findall(r'[^\W\d_]{2,}', _without_the_numbers(text))
+    return len(words) >= 2 and max(len(word) for word in words) >= 4
+
+
+def _is_on_the_row_it_runs_across(
+    seg_line: _SegLine,
+    page_meta_by_number: Mapping[int, LayoutPageMeta],
+    rows: List[float],
+    tolerance: float = _RUNNING_HEAD_Y_TOLERANCE,
+) -> bool:
+    """Whether the page sets the line where it already runs this furniture."""
+    if not rows:
+        return True
+    y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+    if y_ratio is None:
+        return True
+    return any(abs(y_ratio - row) <= tolerance for row in rows)
 
 
 def _reclaim_repeated_headnotes(
@@ -1300,23 +2638,56 @@ def _reclaim_repeated_headnotes(
 
     A cover page keeps everything it has: GROBID asks for the whole of one under
     the one label, and the banner across the top of it is the publisher's too.
+
+    What the line says apart from its numbers, because a journal prints the
+    article's page range in the head of the page it opens on and the volume
+    alone thereafter.
+
+    And on the row the head runs across.  A journal whose running head is the
+    article's short title prints that title twice on its opening page -- once
+    across the head and once as the title -- and both are in the zone.  The
+    row is what tells them apart: the head keeps to one, and the title does
+    not.
+
+    A line that reads as a page marker keeps what it has.  Read without its
+    numbers it is nothing but the word between them, which repeats on every page
+    the number prints on.  The head a page range matched is not one of those,
+    and is what this takes back.
     """
     pages_by_text: Dict[str, Set[int]] = {}
+    rows_by_text: Dict[str, List[float]] = {}
     for seg_line in seg_lines:
         page_number = _get_page_number(seg_line)
         if page_number is None:
             continue
+        if not _says_something_without_its_numbers(seg_line.text):
+            continue
         if seg_line.seg_label == SEG_HEADNOTE or _is_in_header_zone(
             seg_line, page_meta_by_number, config
         ):
-            pages_by_text.setdefault(seg_line.text, set()).add(page_number)
+            read = _without_the_numbers(seg_line.text)
+            pages_by_text.setdefault(read, set()).add(page_number)
+            y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+            if seg_line.seg_label == SEG_HEADNOTE and y_ratio is not None:
+                rows_by_text.setdefault(read, []).append(y_ratio)
     for seg_line in seg_lines:
         if seg_line.seg_label in (SEG_HEADNOTE, SEG_COVER, None):
             continue
-        count = len(pages_by_text.get(seg_line.text, ()))
+        if seg_line.seg_label == SEG_PAGE and _is_valid_page_number_candidate(
+            seg_line.text
+        ):
+            continue
+        if not _says_something_without_its_numbers(seg_line.text):
+            continue
+        count = len(pages_by_text.get(_without_the_numbers(seg_line.text), ()))
         if count < 2 or not _is_valid_headnote_candidate(seg_line.text, count, min_count=2):
             continue
         if not _is_in_header_zone(seg_line, page_meta_by_number, config):
+            continue
+        if not _is_on_the_row_it_runs_across(
+            seg_line, page_meta_by_number,
+            rows_by_text.get(_without_the_numbers(seg_line.text)) or [],
+        ):
             continue
         seg_line.seg_label = SEG_HEADNOTE
 
@@ -1331,18 +2702,40 @@ def _reclaim_repeated_running_feet(
     along every foot, page range and all, so the `<page>` vote takes the line on
     the page the article opens and the front merge takes it on the next.  It is
     the same furniture on every page it prints on.
+
+    Read without its numbers, as the headnote reclaim reads a head: a foot that
+    sets the page number beside the journal's name prints different text on
+    every page and the same foot.  Only where that leaves words behind, because
+    the end of a reference entry is a page range and a year and nothing else.
     """
-    foot_counts: Counter = Counter(
-        sl.text for sl in seg_lines if sl.seg_label == SEG_FOOTNOTE
-    )
+    foot_counts: Counter = Counter()
+    rows_by_text: Dict[str, List[float]] = {}
+    for seg_line in seg_lines:
+        if seg_line.seg_label != SEG_FOOTNOTE:
+            continue
+        if not _says_something_without_its_numbers(seg_line.text):
+            continue
+        read = _without_the_numbers(seg_line.text)
+        foot_counts[read] += 1
+        y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
+        if y_ratio is not None:
+            rows_by_text.setdefault(read, []).append(y_ratio)
     for seg_line in seg_lines:
         if seg_line.seg_label in (SEG_FOOTNOTE, SEG_COVER, None):
             continue
-        count = foot_counts.get(seg_line.text, 0)
+        if not _says_something_without_its_numbers(seg_line.text):
+            continue
+        read = _without_the_numbers(seg_line.text)
+        count = foot_counts.get(read, 0)
         if count < 2 or not _is_valid_headnote_candidate(seg_line.text, count, min_count=2):
             continue
         y_ratio = _get_line_y_ratio(seg_line, page_meta_by_number)
         if y_ratio is None or y_ratio < _RUNNING_FOOT_MIN_Y_RATIO:
+            continue
+        if not _is_on_the_row_it_runs_across(
+            seg_line, page_meta_by_number, rows_by_text.get(read) or [],
+            tolerance=_RUNNING_FOOT_Y_TOLERANCE,
+        ):
             continue
         seg_line.seg_label = SEG_FOOTNOTE
 
@@ -1538,6 +2931,26 @@ _REFERENCE_HEADINGS = frozenset(heading.replace(' ', '') for heading in (
     'literatur', 'literaturverzeichnis',
 ))
 
+# What a journal calls the notes it gathers at the end of the article.
+_NOTE_HEADINGS = frozenset(heading.replace(' ', '') for heading in (
+    'note', 'notes', 'endnotes', 'end notes',
+    'nota', 'notas', 'notas finais', 'notas de rodape', 'notas de rodapé',
+    'notes de fin', 'anmerkungen',
+))
+
+# What a journal calls the section an article opens its argument with.
+_BODY_OPENING_HEADINGS = frozenset(heading.replace(' ', '') for heading in (
+    'introduction', 'introducao', 'introdução',
+    'introduccion', 'introducción', 'introduzione',
+    'einleitung', 'einfuhrung', 'einführung',
+))
+
+# What a journal heads an abstract with, in the languages these print in.
+_ABSTRACT_HEADINGS = frozenset(heading.replace(' ', '') for heading in (
+    'abstract', 'summary', 'resumo', 'resumen', 'resume', 'résumé',
+    'riassunto', 'zusammenfassung',
+))
+
 _HEADING_NOISE_PATTERN = re.compile(r'[^a-z\u00c0-\u024f ]+')
 
 
@@ -1643,6 +3056,27 @@ def _claim_repeated_front_field(
             position += 1
 
 
+def _settle_the_line_left_alone_between_two_regions(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Give a line standing alone between two lines of one region to that region.
+
+    Only a line the default left as the body: nothing grounds it and nothing
+    read it, where the lines either side agree on what the page is printing.
+    """
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label != SEG_BODY:
+            continue
+        if _is_grounded(seg_line, annotated):
+            continue
+        around = _enclosing_label(seg_lines, index, -1)
+        if around is None or around == seg_line.seg_label:
+            continue
+        if around != _enclosing_label(seg_lines, index, 1):
+            continue
+        seg_line.seg_label = around
+
+
 def _release_front_alone_at_the_page_top(seg_lines: List[_SegLine]) -> None:
     """End the front matter where the page the body starts on begins.
 
@@ -1721,6 +3155,24 @@ def _claim_region_heading(
 _HEADING_ABOVE_MAX_GAP = 60.0
 
 
+def _get_highest_line_by_page(
+    seg_lines: List[_SegLine], label: str
+) -> Dict[int, Tuple[float, float]]:
+    """Where the region's topmost line sits on each page it is printed on."""
+    highest_by_page: Dict[int, Tuple[float, float]] = {}
+    for seg_line in seg_lines:
+        if seg_line.seg_label != label:
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        highest = highest_by_page.get(page_number)
+        if highest is None or position[1] < highest[1]:
+            highest_by_page[page_number] = position
+    return highest_by_page
+
+
 def _claim_region_heading_by_position(
     seg_lines: List[_SegLine],
     label: str,
@@ -1739,17 +3191,7 @@ def _claim_region_heading_by_position(
     # page: the aligner places a reference list as many runs with gaps between
     # them, and the line the heading stands over is the highest of them rather
     # than the first in reading order.
-    highest_by_page: Dict[int, Tuple[float, float]] = {}
-    for seg_line in seg_lines:
-        if seg_line.seg_label != label:
-            continue
-        page_number = _get_page_number(seg_line)
-        position = _get_line_position(seg_line)
-        if page_number is None or position is None:
-            continue
-        highest = highest_by_page.get(page_number)
-        if highest is None or position[1] < highest[1]:
-            highest_by_page[page_number] = position
+    highest_by_page = _get_highest_line_by_page(seg_lines, label)
 
     for seg_line in seg_lines:
         if seg_line.seg_label is not None:
@@ -1770,12 +3212,189 @@ def _claim_region_heading_by_position(
         seg_line.seg_label = label
 
 
+def _claim_the_notes_a_section_gathers_after_the_body(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Read the notes an article gathers under a heading of its own as a section.
+
+    `<note place="footnote">` is what a page sets in its footer and the
+    numbered notes under it.  Notes an article collects after the conclusion,
+    under "NOTAS" or "Notes", are additional information printed after the
+    body, which GROBID's guidelines put in an annex and which its corpus
+    labels an annex or an endnote, never a footnote.
+
+    The running foot keeps crossing such a section, and it is a foot still.
+    """
+    body_start = next(
+        (
+            index for index, seg_line in enumerate(seg_lines)
+            if seg_line.seg_label == SEG_BODY
+        ),
+        None,
+    )
+    if body_start is None:
+        return
+    running = _get_running_texts(seg_lines)
+    for index in range(body_start, len(seg_lines)):
+        if seg_lines[index].seg_label not in (None, SEG_FOOTNOTE):
+            continue
+        if not _reads_as_a_heading(seg_lines[index].text, _NOTE_HEADINGS):
+            continue
+        gathered = [index]
+        for position in range(index + 1, len(seg_lines)):
+            label = seg_lines[position].seg_label
+            if label in (SEG_HEADNOTE, SEG_PAGE):
+                continue
+            if seg_lines[position].text in running:
+                continue
+            if label != SEG_FOOTNOTE:
+                break
+            gathered.append(position)
+        if len(gathered) == 1:
+            continue
+        for position in gathered:
+            seg_lines[position].seg_label = SEG_ANNEX
+
+
+def _reads_as_a_heading(text: str, headings: FrozenSet[str]) -> bool:
+    """Whether the line names a region rather than ending a sentence in it.
+
+    "...por su contribucion con algunas referencias bibliograficas" wraps onto
+    a line that says nothing but the name of the list.  A heading is set with
+    a capital, and the tail of a sentence is not.
+    """
+    stripped = text.strip()
+    return (
+        bool(stripped)
+        and not stripped[0].islower()
+        and _normalised_heading(stripped) in headings
+    )
+
+
+def _claim_the_note_the_closing_declarations_enclose(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Read a note printed among the closing declarations as a section of its own.
+
+    A journal setting "Study Association" between its funding and its ethics
+    statements is printing another declaration, not a note at the foot of the
+    page, and GROBID's guidelines put a section after the body that none of
+    the named statements covers in an annex.
+
+    A line on its own there is the heading of the declaration under it --
+    "ACKNOWLEDGEMENTS" over the thanks -- and goes with what it heads.
+    """
+    declared = set(_STATEMENT_LABELS) | {SEG_ANNEX}
+    running = _get_texts_printed_on_more_than_one_page(seg_lines)
+    for run in _iter_label_runs(seg_lines, SEG_FOOTNOTE):
+        if any(seg_lines[index].text in running for index in run):
+            continue
+        under = _enclosing_label(seg_lines, run[-1], 1)
+        if _enclosing_label(seg_lines, run[0], -1) not in declared:
+            continue
+        if under not in declared:
+            continue
+        taken = under if len(run) == 1 else SEG_ANNEX
+        for index in run:
+            seg_lines[index].seg_label = taken
+
+
+def _claim_the_list_a_reference_heading_opens(seg_lines: List[_SegLine]) -> None:
+    """Give the reference list the lines another region took from under its heading.
+
+    Where the aligner places almost none of the entries, the list is a page of
+    lines nothing claims and whichever region is running when the page begins
+    takes it.  The heading the page prints over the list says where the list
+    starts, and the first entry the aligner did place says that the stretch
+    between them is the list rather than more of the region above it.
+    """
+    for index, seg_line in enumerate(seg_lines):
+        taken = seg_line.seg_label
+        if taken is None or taken in _FURNITURE_LABELS or taken == SEG_REFERENCES:
+            continue
+        if not _reads_as_a_heading(seg_line.text, _REFERENCE_HEADINGS):
+            continue
+        swallowed = [index]
+        following: Optional[str] = None
+        for position in range(index + 1, len(seg_lines)):
+            label = seg_lines[position].seg_label
+            if label in _FURNITURE_LABELS:
+                continue
+            if label != taken:
+                following = label
+                break
+            swallowed.append(position)
+        if following != SEG_REFERENCES:
+            continue
+        for position in swallowed:
+            seg_lines[position].seg_label = SEG_REFERENCES
+
+
+def _claim_the_heading_the_body_opens_with(seg_lines: List[_SegLine]) -> None:
+    """Open the body at the heading the page prints over the first section.
+
+    Where no field grounds the opening paragraphs, one false match among them
+    is enough for the front run to grow over the argument, and the heading is
+    what says it may not.
+    """
+    for seg_line in seg_lines:
+        if seg_line.seg_label == SEG_BODY:
+            return
+        if seg_line.seg_label is not None:
+            continue
+        if _normalised_heading(seg_line.text) in _BODY_OPENING_HEADINGS:
+            seg_line.seg_label = SEG_BODY
+            return
+
+
+_ABSTRACT_HEADING_BLOCK_MAX_LINES = 3
+
+
+def _claim_the_block_an_abstract_is_headed_by(seg_lines: List[_SegLine]) -> None:
+    """Give the front matter the heading a trailing abstract is printed under.
+
+    A journal closing on its abstracts in the other languages heads each one
+    and sets the title in that language beside the heading, and the aligner
+    has nothing left to match either on: it places the title where the article
+    opens, and a reference entry takes the second printing instead.
+    """
+    blocks: Dict[int, List[int]] = {}
+    for index, seg_line in enumerate(seg_lines):
+        blocks.setdefault(seg_line.block_index, []).append(index)
+    for block in blocks.values():
+        if len(block) > _ABSTRACT_HEADING_BLOCK_MAX_LINES:
+            continue
+        if not any(
+            _normalised_heading(seg_lines[index].text) in _ABSTRACT_HEADINGS
+            for index in block
+        ):
+            continue
+        if _enclosing_label(seg_lines, block[-1], 1) != SEG_FRONT:
+            continue
+        for index in block:
+            if seg_lines[index].seg_label not in _TRAILING_MATTER_LABELS:
+                seg_lines[index].seg_label = SEG_FRONT
+
+
 # The page sets a statement's heading in bold where the JATS carries no title
 # for it, which is most of the time.
 _STATEMENT_LABELS = (
     SEG_CONFLICT, SEG_CONTRIBUTION, SEG_FUNDING, SEG_AVAILABILITY,
     SEG_ACKNOWLEDGEMENT,
 )
+
+# What the deposit names a region of its own with -- the reference list among
+# them, which is the one thing on these pages that is nobody's declaration.
+# The two notes a deposit declares a statement as belong here as well, though
+# they are filed with the front matter: the deposit has already said what the
+# line is.
+_DECLARED_REGION_FIELDS = frozenset(
+    field for field, label in SEGMENTATION_LABEL_BY_FIELD.items()
+    if label in _STATEMENT_LABELS + (SEG_ANNEX, SEG_REFERENCES)
+) | {
+    JatsFieldNames.CONFLICT_NOTE,
+    JatsFieldNames.CONTRIBUTION_NOTE,
+}
 
 _STATEMENT_HEADING_MAX_LENGTH = 80
 
@@ -1956,6 +3575,19 @@ def _get_column_index(x: float, edges: List[float]) -> int:
     return index
 
 
+def _get_texts_printed_on_more_than_one_page(
+    seg_lines: List[_SegLine]
+) -> Set[str]:
+    """The lines the document prints on more than one of its pages."""
+    pages_by_text: Dict[str, Set[int]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is None or not seg_line.text.strip():
+            continue
+        pages_by_text.setdefault(seg_line.text, set()).add(page_number)
+    return {text for text, pages in pages_by_text.items() if len(pages) > 1}
+
+
 def _extend_region_to_page_end(
     seg_lines: List[_SegLine],
     label: str,
@@ -1980,10 +3612,20 @@ def _extend_region_to_page_end(
     the DOI closing a reference -- is the same column still.  A running foot is
     stepped over rather than taken, the same way the gap merge steps over a
     running head.  Per run, because an article that records what changed since
-    its previous version carries front matter on a later page too.
+    its previous version carries front matter on a later page too, and not out
+    of a run that is page furniture itself.
     """
     running = _get_running_texts(seg_lines)
+    repeated = _get_texts_printed_on_more_than_one_page(seg_lines)
     for run in _iter_label_runs(seg_lines, label):
+        # Not out of the furniture.  A running head carrying the authors'
+        # surnames is matched by the byline on every page it prints on, so it
+        # is a region of one line at the top of a page the region has nothing
+        # else on, and the rest of that page is what follows it.  More than one
+        # page rather than most of them, because a journal that runs the head
+        # across its versos alone prints it on half of them.
+        if all(seg_lines[index].text in repeated for index in run):
+            continue
         page_number = _get_page_number(seg_lines[run[-1]])
         edge_position = _get_line_position(seg_lines[run[-1]])
         column_edges = (
@@ -2087,11 +3729,15 @@ def _find_missing_page_numbers(
 
 # Front matter a paper may print after its reference list.  A correspondence
 # block names who to write to, which a preprint server sets at the end, and an
-# author note carries the rest.
+# author note carries the rest.  A journal in several languages closes with
+# the abstract in each of them, a page of front matter at a time, and when it
+# was submitted and accepted is printed under the last of them.
 _LATE_FRONT_FIELDS = frozenset({
+    JatsFieldNames.ABSTRACT,
     JatsFieldNames.AUTHOR_NOTES,
     JatsFieldNames.CORRESPONDENCE,
     JatsFieldNames.SUBJECT_CLASSIFICATION,
+    JatsFieldNames.HISTORY_DATE,
 })
 
 
@@ -2104,6 +3750,16 @@ def _is_grounded_in(
         annotated.get_token_field(token) in fields
         for token in seg_line.layout_line.tokens
     )
+
+
+def _group_lines_by_block(
+    seg_lines: List[_SegLine]
+) -> Dict[int, List[_SegLine]]:
+    """The lines of each block the page sets, in the order it hands them over."""
+    by_block: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        by_block.setdefault(seg_line.block_index, []).append(seg_line)
+    return by_block
 
 
 def _clear_front_beyond_threshold(
@@ -2129,9 +3785,28 @@ def _clear_front_beyond_threshold(
     references, and that block is the front matter wherever it is set -- unlike
     the licence sentence, which is a field that matched somewhere it does not
     belong.  The field the line is grounded in is what tells them apart.
+
+    A declaration kept with the author notes is left for the pass that reads
+    where the page sets it: cleared here, it has nothing left to say it is one,
+    and a journal that prints its conflict statement under the article reads as
+    the argument carrying on.
+
+    The list that bounds the front matter is a block of its own.  An affiliation
+    column set down the margin of the opening page names a university and a
+    city, as half the list does, so a line or two of it reads as an entry --
+    and the page hands that column over before the title, which would put the
+    whole of the front matter past its own boundary.
     """
+    front_blocks = {
+        block_index
+        for block_index, block in _group_lines_by_block(seg_lines).items()
+        if sum(sl.seg_label == SEG_FRONT for sl in block) * 2 > len(block)
+    }
     first_reference = next(
-        (index for index, sl in enumerate(seg_lines) if sl.seg_label == SEG_REFERENCES),
+        (
+            index for index, sl in enumerate(seg_lines)
+            if sl.seg_label == SEG_REFERENCES and sl.block_index not in front_blocks
+        ),
         None,
     )
     if first_reference is None and not max_block_start_line_index:
@@ -2148,8 +3823,33 @@ def _clear_front_beyond_threshold(
             block_start_idx >= first_reference if first_reference is not None
             else block_start_idx > max_block_start_line_index
         )
-        if beyond and not _is_grounded_in(sl, annotated, _LATE_FRONT_FIELDS):
+        if beyond and not _is_grounded_in(sl, annotated, _KEPT_PAST_THE_FRONT_MATTER):
             sl.seg_label = None
+
+
+_NOTE_BLOCK_MIN_LINES = 3
+
+
+def _claim_the_note_a_block_of_notes_opens_with(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Keep the line a block of notes opens with in the block.
+
+    A note opens on the words the paragraph it annotates uses, so the aligner
+    can match its first line to the argument as well as to the note, and the
+    vote then splits that line off the block the page sets it in.  What the
+    rest of the block is settles it.
+    """
+    by_block: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        by_block.setdefault(seg_line.block_index, []).append(seg_line)
+    for block in by_block.values():
+        if len(block) < _NOTE_BLOCK_MIN_LINES or block[0].seg_label == SEG_FOOTNOTE:
+            continue
+        if not all(seg_line.seg_label == SEG_FOOTNOTE for seg_line in block[1:]):
+            continue
+        if _is_grounded_in(block[0], annotated, _DEPOSITED_NOTE_FIELDS):
+            block[0].seg_label = SEG_FOOTNOTE
 
 
 def _bridge_footnote_block(seg_lines: List[_SegLine]) -> None:
@@ -2280,6 +3980,226 @@ def _iter_page_foot_blocks(
         yield [sl for sl in page_lines if sl.block_index == last]
 
 
+def _shares_a_row_with_a_note(
+    page_lines: List[_SegLine], seg_line: _SegLine
+) -> bool:
+    """Whether a note of the page opens beside this line, on its row.
+
+    Beside it, not merely level with it: the other column of a two-column
+    page is on the same rows throughout and says nothing about this one.
+    """
+    position = _get_line_position(seg_line)
+    if position is None:
+        return False
+    tolerance = max(
+        _SAME_ROW_Y_TOLERANCE, _get_line_font_size(seg_line) or 0
+    )
+    for other in page_lines:
+        if other is seg_line or other.seg_label != SEG_FOOTNOTE:
+            continue
+        other_position = _get_line_position(other)
+        if other_position is None:
+            continue
+        if abs(other_position[0] - position[0]) > _SAME_COLUMN_MAX_X_GAP:
+            continue
+        if abs(other_position[1] - position[1]) <= tolerance:
+            return True
+    return False
+
+
+def _nearest_line_in_the_column(
+    page_lines: List[_SegLine], seg_line: _SegLine, upwards: bool
+) -> Optional[_SegLine]:
+    """The line the page sets nearest to this one in the same column."""
+    position = _get_line_position(seg_line)
+    if position is None:
+        return None
+    candidates = []
+    for other in page_lines:
+        if other is seg_line or other.seg_label in {SEG_HEADNOTE, SEG_PAGE}:
+            continue
+        other_position = _get_line_position(other)
+        if other_position is None:
+            continue
+        if abs(other_position[0] - position[0]) > _SAME_COLUMN_MAX_X_GAP:
+            continue
+        if (other_position[1] < position[1]) != upwards:
+            continue
+        candidates.append((
+            round(abs(other_position[0] - position[0]) / _COLUMN_EDGE_TOLERANCE),
+            -other_position[1] if upwards else other_position[1],
+            other,
+        ))
+    return min(candidates, key=lambda entry: entry[:2])[2] if candidates else None
+
+
+def _the_labels_the_column_sets_around_it(
+    page_lines: List[_SegLine], seg_line: _SegLine
+) -> Optional[Tuple[Optional[str], Optional[str]]]:
+    """The labels of the lines the page sets directly above and below it.
+
+    The column is read from how far across the page a line starts: a note
+    run down the margin beside a column is level with its lines but not in
+    it, and the line above a margin note is the note's own -- which is why
+    the notes count here where the page number and the running head do not.
+    """
+    above = _nearest_line_in_the_column(page_lines, seg_line, upwards=True)
+    below = _nearest_line_in_the_column(page_lines, seg_line, upwards=False)
+    if above is None or below is None:
+        return None
+    return above.seg_label, below.seg_label
+
+
+def _release_the_note_the_page_prints_among_its_text(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Let go a note the page prints between two lines of its text.
+
+    A figure's source line and the note that gives the same address are the
+    same words, so the deposit's note can match the line under a caption
+    instead of the note at the foot.  A page sets its notes at the foot: a
+    line it sets with the body above it and the body below is the body's.
+    """
+    by_page: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None:
+            by_page.setdefault(page_number, []).append(seg_line)
+    for page_lines in by_page.values():
+        for seg_line in page_lines:
+            if seg_line.seg_label != SEG_FOOTNOTE:
+                continue
+            around = _the_labels_the_column_sets_around_it(page_lines, seg_line)
+            if around == (SEG_BODY, SEG_BODY):
+                seg_line.seg_label = SEG_BODY
+
+
+# A note is set appreciably smaller than the text around it; a quotation set
+# in from the margins is barely smaller at all.
+_NOTE_TYPE_SIZE_RATIO = 0.9
+
+# How far a page sets a quotation in from the column it sets its text to.
+_QUOTATION_INDENT = 20.0
+
+
+def _is_set_in_the_type_of_the_text(
+    seg_line: _SegLine, page_lines: List[_SegLine]
+) -> bool:
+    """Whether the page sets the line in the type it sets its text in."""
+    text_size = _get_prevailing_type_size(page_lines)
+    size = _get_line_font_size(seg_line)
+    return (
+        text_size is not None
+        and size is not None
+        and size >= text_size * _NOTE_TYPE_SIZE_RATIO
+    )
+
+
+def _is_set_in_from(seg_line: _SegLine, neighbour: _SegLine) -> bool:
+    """Whether the page sets the line in from the one above it."""
+    position = _get_line_position(seg_line)
+    neighbour_position = _get_line_position(neighbour)
+    return (
+        position is not None
+        and neighbour_position is not None
+        and position[0] - neighbour_position[0] >= _QUOTATION_INDENT
+    )
+
+
+def _release_the_quotation_a_page_sets_among_its_text(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Let go the block a page quotes in the type it sets its text in.
+
+    A deposit files the author's translation of a quotation as a note, and
+    the note says what the quotation says, so the match lands on the block
+    the page sets among its text rather than on anything at its foot.  What
+    a page sets at its foot is set appreciably smaller than the text, and
+    starts at the margin; a quotation is set in from it and barely smaller
+    at all.
+    """
+    running = _get_texts_printed_on_more_than_one_page(seg_lines)
+    pages = _get_seg_lines_by_page_number(seg_lines)
+    blocks: Dict[int, List[int]] = {}
+    for index, seg_line in enumerate(seg_lines):
+        blocks.setdefault(seg_line.block_index, []).append(index)
+    for block in blocks.values():
+        quoted = seg_lines[block[0]]
+        if any(
+            seg_lines[index].seg_label != SEG_FOOTNOTE
+            or seg_lines[index].text in running
+            for index in block
+        ):
+            continue
+        page_lines = pages.get(_get_page_number(quoted) or -1, [])
+        if not _is_set_in_the_type_of_the_text(quoted, page_lines):
+            continue
+        beside = (
+            _nearest_line_in_the_column(page_lines, quoted, upwards=True),
+            _nearest_line_in_the_column(
+                page_lines, seg_lines[block[-1]], upwards=False
+            ),
+        )
+        if not any(
+            neighbour is not None
+            and neighbour.seg_label == SEG_BODY
+            and _is_set_in_from(quoted, neighbour)
+            for neighbour in beside
+        ):
+            continue
+        for index in block:
+            seg_lines[index].seg_label = SEG_BODY
+
+
+def _claim_the_lines_the_page_sets_among_its_notes(
+    seg_lines: List[_SegLine]
+) -> None:
+    """Take a line the page sets among the notes at its foot.
+
+    The deposit matches a note's text to the body as readily as to the note:
+    a figure's source line and the note that gives the same address are the
+    same words.  The marker that opens a note is matched by nothing at all,
+    and is set in a type nothing else on the page is set in.  Either way the
+    page has already said what the line is: set smaller than it sets its text,
+    in the block its notes are set in or on the row one of them opens.
+    """
+    by_page: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None:
+            by_page.setdefault(page_number, []).append(seg_line)
+    for page_lines in by_page.values():
+        page_size = _get_prevailing_type_size(page_lines)
+        notes_by_block: Counter = Counter()
+        lines_by_block: Counter = Counter()
+        for seg_line in page_lines:
+            lines_by_block[seg_line.block_index] += 1
+            if seg_line.seg_label == SEG_FOOTNOTE:
+                notes_by_block[seg_line.block_index] += 1
+        for seg_line in page_lines:
+            # A cover page is the repository's own, and what it sets at the
+            # foot of it is the cover's however small the type.
+            if seg_line.seg_label in _TRAILING_MATTER_LABELS:
+                continue
+            size = _get_line_font_size(seg_line)
+            if size is None or page_size is None or size >= page_size:
+                continue
+            among_notes = (
+                notes_by_block[seg_line.block_index] * 2
+                > lines_by_block[seg_line.block_index]
+            )
+            if among_notes or _shares_a_row_with_a_note(page_lines, seg_line):
+                seg_line.seg_label = SEG_FOOTNOTE
+
+
+def _settle_the_notes_a_page_sets_at_its_foot(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """The notes a page sets below its text, and what it sets among them."""
+    _claim_the_notes_a_page_sets_below_its_text(seg_lines, annotated)
+    _claim_the_lines_the_page_sets_among_its_notes(seg_lines)
+
+
 def _claim_the_notes_a_page_sets_below_its_text(
     seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
 ) -> None:
@@ -2362,7 +4282,59 @@ def _nearest_line_above_in_the_column(
     return nearest
 
 
-def _release_margin_lines_continuing_a_column(seg_lines: List[_SegLine]) -> None:
+def _release_margin_lines_the_page_prints_beside(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """A line the footer zone holds is not a foot where the page is still printing.
+
+    The zone is a band across the foot of the page, and a chart whose last rows
+    reach into it sets cells on both sides of the threshold: one column's
+    citation crosses it while the column beside it, a line higher, does not.
+    What the page says is that the row is still the chart's -- it prints the
+    chart's own legend on it.
+
+    A running foot has nothing beside it but the page number, which is
+    furniture and says nothing.  Released rather than relabelled, as the column
+    rule releases, because the chart around it may not be labelled yet either.
+    """
+    rows_by_page: Dict[int, List[float]] = {}
+    for seg_line in seg_lines:
+        # What the page is still printing, whether or not a region has claimed
+        # it yet: the cell beside this one is as unlabelled as this one is.
+        if seg_line.seg_label not in (None, SEG_BODY) or not seg_line.text.strip():
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        rows_by_page.setdefault(page_number, []).append(position[1])
+    running = _get_running_texts(seg_lines)
+    for seg_line in seg_lines:
+        if seg_line.seg_label != SEG_FOOTNOTE or seg_line.text in running:
+            continue
+        if _is_grounded_in(seg_line, annotated, _DEPOSITED_NOTE_FIELDS):
+            continue
+        # A line of one word says nothing by sharing a row: a document sets a
+        # lone "R" at the end of a column as readily as anywhere.
+        if len(seg_line.text.split()) < 2:
+            continue
+        page_number = _get_page_number(seg_line)
+        position = _get_line_position(seg_line)
+        if page_number is None or position is None:
+            continue
+        # The row is as deep as the type the cell is set in: a chart staggers
+        # the lines of a row rather than setting them to one baseline.
+        tolerance = max(_SAME_ROW_Y_TOLERANCE, _get_line_font_size(seg_line) or 0)
+        if any(
+            abs(row - position[1]) <= tolerance
+            for row in rows_by_page.get(page_number, ())
+        ):
+            seg_line.seg_label = None
+
+
+def _release_margin_lines_continuing_a_column(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
     """A margin line the column above runs straight into is not a running foot.
 
     A publisher who sets the affiliations down the side of the title page runs
@@ -2382,13 +4354,18 @@ def _release_margin_lines_continuing_a_column(seg_lines: List[_SegLine]) -> None
     column: a translator's note comes one line's leading under the paragraph it
     annotates, and the type is the only thing that separates them.  Only where
     the line carries enough to be a note -- the marker above an affiliation is
-    a superscript, smaller than everything, and says nothing by being so.
+    a superscript, smaller than everything, and says nothing by being so.  And
+    a line the deposit carries as a note of the article's is one wherever the
+    page sets it, which is what a journal that runs its notes down the outer
+    margin needs: the column beside them is not the column above them.
     """
     running = _get_running_texts(seg_lines)
     released: Set[int] = set()
     for index in range(1, len(seg_lines)):
         seg_line = seg_lines[index]
         if seg_line.seg_label != SEG_FOOTNOTE or seg_line.text in running:
+            continue
+        if _is_grounded_in(seg_line, annotated, _DEPOSITED_NOTE_FIELDS):
             continue
         if (
             seg_lines[index - 1].seg_label in _FURNITURE_LABELS
@@ -2628,6 +4605,58 @@ def _blocks_in_the_order_the_page_sets_them(
 _MIN_LINES_TO_PLACE_A_BLOCK = 2
 
 
+def _the_right_edge_of_the_text(page_lines: List[_SegLine]) -> Optional[float]:
+    """How far across the page its text runs, the furniture aside."""
+    ends = [
+        position[0] + (_get_line_width(seg_line) or 0)
+        for seg_line in page_lines
+        if seg_line.seg_label not in _FURNITURE_LABELS
+        for position in [_get_line_position(seg_line)]
+        if position is not None
+    ]
+    return max(ends) if ends else None
+
+
+def _tag_the_tab_the_pages_print_up_their_edge(seg_lines: List[_SegLine]) -> None:
+    """Take the standing tab a journal prints up the edge of every page.
+
+    It names the kind of article rather than anything in it, and is set
+    beside the text instead of above or below, so the zones that find a
+    running head and a running foot both reach over it.  Left on one page and
+    right on the next, clear of the columns either way.  GROBID's corpus
+    holds a word of this kind, repeated through a document, in
+    `<note place="headnote">` 190 times of 241.
+    """
+    running_texts = _get_running_texts(seg_lines)
+    if not running_texts:
+        return
+    by_page: Dict[int, List[_SegLine]] = {}
+    for seg_line in seg_lines:
+        page_number = _get_page_number(seg_line)
+        if page_number is not None:
+            by_page.setdefault(page_number, []).append(seg_line)
+    for page_number, page_lines in by_page.items():
+        edges = _get_page_column_edges(seg_lines, page_number)
+        if not edges:
+            continue
+        for seg_line in page_lines:
+            if seg_line.text not in running_texts:
+                continue
+            # A cover page is the repository's own, margins and all.
+            if seg_line.seg_label in _TRAILING_MATTER_LABELS:
+                continue
+            position = _get_line_position(seg_line)
+            if position is None:
+                continue
+            right = _the_right_edge_of_the_text(
+                [other for other in page_lines if other is not seg_line]
+            )
+            if position[0] < edges[0] - _COLUMN_EDGE_TOLERANCE or (
+                right is not None and position[0] > right
+            ):
+                seg_line.seg_label = SEG_HEADNOTE
+
+
 def _lies_in_a_margin(band: Tuple[float, float], height: Optional[float]) -> bool:
     """Whether the page sets the block above or below everything it prints.
 
@@ -2822,17 +4851,31 @@ _BACK_LABEL_BY_FRONT_FIELD = {
     JatsFieldNames.AUTHOR_NOTES: SEG_ANNEX,
 }
 
+# Front matter the reference list is no boundary for: what the page prints at
+# the end and the deposit means to be there, and a declaration the deposit files
+# among the author notes, whose own region `_release_front_after_the_body` names
+# from where it is printed.  A funding field is not one of them: matched past the
+# list it is a reviewer's sentence rather than the article's own statement, which
+# the JATS would carry as a funding section.
+_KEPT_PAST_THE_FRONT_MATTER = _LATE_FRONT_FIELDS | frozenset({
+    JatsFieldNames.CONTRIBUTION_NOTE,
+    JatsFieldNames.CONFLICT_NOTE,
+})
+
 # `ARTICLE_NOTES` is not among them.  A revised preprint prints the box saying
 # what changed after its body, and `_claim_amendments_box` has already decided
 # that the box is the publisher's front matter.
 
 # The front matter a paper does print after its body: a preprint server sets the
-# correspondence block at the end, and it is the front matter wherever it is set.
+# correspondence block at the end, and a journal prints when it received and
+# accepted the article under the last thing it prints.  Either is the front
+# matter wherever it is set.
 _FRONT_AFTER_THE_BODY_FIELDS = frozenset({
     JatsFieldNames.CORRESPONDENCE,
     JatsFieldNames.CORRESP_AFF,
     JatsFieldNames.CORRESP_ADDRESS,
     JatsFieldNames.CORRESP_PHONE,
+    JatsFieldNames.HISTORY_DATE,
 })
 
 
@@ -2848,6 +4891,78 @@ def _names_another_declaration(text: str, label: str) -> bool:
     """Whether the line heads a declaration other than the one running on."""
     named = _declaration_named_by(text)
     return named is not None and named != label
+
+
+# A line the page rules between two things, printed in nothing but the marks a
+# rule is made of.
+_RULE_OF_PUNCTUATION = re.compile(
+    r'^[_\-\u2010-\u2015\u2500-\u257f.*\u00b7\u2022\s]{8,}$'
+)
+
+
+def _claim_the_rule_a_region_opens_under(seg_lines: List[_SegLine]) -> None:
+    """Give a rule of punctuation to the region it introduces.
+
+    A journal rules a line between its reference list and the address to write
+    to, and the list reaches over the rule.  GROBID's corpus writes such a rule
+    in the region around it 490 times and in a `listBibl` none at all, so where
+    the regions either side differ it goes with the one below -- which is what
+    a rule is printed for.  Twelve of them open the front matter a page closes
+    with, and the 442 set in the body have the body under them as well as over.
+    """
+    for index, seg_line in enumerate(seg_lines):
+        if seg_line.seg_label in _FURNITURE_LABELS or seg_line.seg_label == SEG_COVER:
+            continue
+        if not _RULE_OF_PUNCTUATION.match(seg_line.text.strip()):
+            continue
+        under_it = _enclosing_label(seg_lines, index, 1)
+        if under_it is not None:
+            seg_line.seg_label = under_it
+
+
+def _is_a_printed_date(seg_lines: List[_SegLine], run: List[int]) -> bool:
+    """Whether the run is nothing but a date the article was received on.
+
+    Line by line and read together, because the word and the date it
+    introduces are one row of the page that pdfalto hands over as two lines
+    when the journal sets them apart.
+    """
+    if any(_PUBLICATION_DATE_PATTERN.match(seg_lines[index].text) for index in run):
+        return True
+    return bool(
+        _PUBLICATION_DATE_PATTERN.match(
+            ' '.join(seg_lines[index].text for index in run)
+        )
+    )
+
+
+def _get_the_lines_naming_the_authors(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> Set[int]:
+    """The front lines that name the paper's people rather than its declarations.
+
+    A journal closing on its author addresses files them among the author
+    notes, which is where a declaration is filed too.  An ORCID among the
+    lines tells the people from the statement, and the run
+    is read in the stretches between the lines the deposit calls a statement:
+    the addresses and the contributions are printed one after the other.
+    """
+    naming: Set[int] = set()
+    for run in _iter_label_runs(seg_lines, SEG_FRONT):
+        stretch: List[int] = []
+        for index in [*run, None]:
+            if index is not None and not _is_grounded_in(
+                seg_lines[index], annotated, _DECLARED_NOTE_FIELDS
+            ):
+                stretch.append(index)
+                continue
+            if any(
+                _is_grounded_in(seg_lines[at], annotated, _AUTHOR_MATTER_FIELDS)
+                for at in stretch
+            ):
+                naming.update(stretch)
+            stretch = []
+    return naming
 
 
 def _release_front_after_the_body(
@@ -2866,6 +4981,11 @@ def _release_front_after_the_body(
     caption.  By the run rather than the line, because a correspondence block
     printed after the declarations opens with a heading of its own that nothing
     grounds, and what keeps the block is what keeps its heading.
+
+    A line that is nothing but the date the article was received is kept too.
+    No field carries the dates a journal prints at the end, so the pass that
+    reads them has only the line to go on, and letting the run go takes that
+    reading back.
     """
     body_start = next(
         (
@@ -2883,8 +5003,9 @@ def _release_front_after_the_body(
             for token in seg_line.layout_line.tokens
         }
 
-    for seg_line in seg_lines[body_start:]:
-        if seg_line.seg_label != SEG_FRONT:
+    naming_the_authors = _get_the_lines_naming_the_authors(seg_lines, annotated)
+    for index, seg_line in enumerate(seg_lines[body_start:], start=body_start):
+        if seg_line.seg_label != SEG_FRONT or index in naming_the_authors:
             continue
         label = next(
             (
@@ -2897,12 +5018,14 @@ def _release_front_after_the_body(
             seg_line.seg_label = label
     back_labels = set(_BACK_LABEL_BY_FRONT_FIELD.values()) | {SEG_CONTRIBUTION}
     for run in list(_iter_label_runs(seg_lines, SEG_FRONT)):
-        if run[0] < body_start:
+        if run[0] < body_start or run[0] in naming_the_authors:
             continue
         if any(
             fields_of(seg_lines[index]) & _FRONT_AFTER_THE_BODY_FIELDS
             for index in run
         ):
+            continue
+        if _is_a_printed_date(seg_lines, run):
             continue
         above = _enclosing_label(seg_lines, run[0], -1)
         if above not in back_labels:
@@ -3004,16 +5127,109 @@ def _tag_the_margins_and_the_headings(
         seg_lines, config.front_max_start_line_index, annotated
     )
     _find_missing_page_numbers(seg_lines, page_meta_by_number, config)
+    _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
     _tag_headnotes_by_text_repetition(
         seg_lines, config.page_header_max_first_line_index
     )
-    _tag_running_feet_by_repetition(seg_lines, page_meta_by_number)
+    _tag_the_tab_the_pages_print_up_their_edge(seg_lines)
     _tag_page_numbers_by_position(seg_lines, page_meta_by_number)
+    _tag_page_numbers_counting_the_pages(
+        seg_lines, page_meta_by_number, annotated
+    )
     _release_furniture_inside_references(seg_lines)
     _claim_region_heading(seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS, annotated)
     _claim_region_heading_by_position(seg_lines, SEG_REFERENCES, _REFERENCE_HEADINGS)
+    _claim_region_heading(seg_lines, SEG_FOOTNOTE, _NOTE_HEADINGS, annotated)
+    _claim_the_block_an_abstract_is_headed_by(seg_lines)
+    _claim_the_heading_the_body_opens_with(seg_lines)
     _claim_statement_heading(seg_lines, annotated)
     _claim_statement_by_heading(seg_lines, annotated)
+
+
+def _release_the_regions_a_false_match_won(seg_lines: List[_SegLine]) -> None:
+    """Take back each short run a value matched where the page sets another region.
+
+    Every one of them is the same mistake: a deposit carries the same words in
+    two places, the aligner can only place them in one, and the region they end
+    up in is a few lines inside a region that runs either side of them.
+    """
+    _release_references_inside_availability(seg_lines)
+    _release_references_inside_body(seg_lines)
+    _release_references_inside_front(seg_lines)
+    _release_references_inside_the_annex(seg_lines)
+    _release_body_inside_front(seg_lines)
+    _release_front_inside_body(seg_lines)
+    _release_front_inside_the_review(seg_lines)
+    _release_annex_inside_body(seg_lines)
+    _release_statements_inside_body(seg_lines)
+
+
+# What a journal prints when it names its authors: the name, where they work,
+# how to reach them and the number that identifies them.
+_AUTHOR_BLOCK_FIELDS = frozenset({
+    JatsFieldNames.AUTHOR,
+    JatsFieldNames.AUTHOR_AFF,
+    JatsFieldNames.EMAIL,
+    JatsFieldNames.ORCID,
+})
+
+
+def _claim_the_authors_a_closing_statement_ran_on_over(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Give the front matter the authors a closing statement ran on over.
+
+    A journal that thanks its helpers and then names its authors prints the
+    two one after the other, and the statement's region carries the names
+    away with it.  An ORCID is what says a stretch is the authors' own: a
+    name and an affiliation are matched inside a statement about the work as
+    readily as beside it.
+    """
+    for label in _STATEMENT_LABELS:
+        for run in _iter_label_runs(seg_lines, label):
+            stretch: List[int] = []
+            for index in [*run, None]:
+                if index is not None and (
+                    not _is_grounded(seg_lines[index], annotated)
+                    or _is_grounded_in(
+                        seg_lines[index], annotated, _AUTHOR_BLOCK_FIELDS
+                    )
+                ):
+                    stretch.append(index)
+                    continue
+                if any(
+                    _is_grounded_in(seg_lines[at], annotated, _AUTHOR_MATTER_FIELDS)
+                    for at in stretch
+                ):
+                    for at in stretch:
+                        seg_lines[at].seg_label = SEG_FRONT
+                stretch = []
+
+
+def _release_what_the_page_sets_among_its_text(seg_lines: List[_SegLine]) -> None:
+    """The notes and the quotations a match placed in the body's own column."""
+    _release_the_note_the_page_prints_among_its_text(seg_lines)
+    _release_the_quotation_a_page_sets_among_its_text(seg_lines)
+
+
+def _claim_the_regions_a_heading_names(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """What the page says each region is, read over the regions as they stand."""
+    _claim_statement_by_heading(seg_lines, annotated)
+    _claim_the_list_a_reference_heading_opens(seg_lines)
+    _claim_the_notes_a_section_gathers_after_the_body(seg_lines)
+    _claim_the_note_the_closing_declarations_enclose(seg_lines)
+
+
+def _settle_what_the_default_left(
+    seg_lines: List[_SegLine], annotated: JatsAnnotatedLayoutDocument
+) -> None:
+    """Read the lines no field grounds again, now every region has its label."""
+    _release_trailing_heading(seg_lines, SEG_REFERENCES)
+    _release_front_alone_at_the_page_top(seg_lines)
+    _release_the_body_a_sentence_wraps_over(seg_lines)
+    _settle_the_line_left_alone_between_two_regions(seg_lines, annotated)
 
 
 def _take_back_the_page_furniture(
@@ -3074,11 +5290,13 @@ class SegmentationLabelDeriver:
         # front run in two, and the merge then has no run to carry across the
         # page break to the front matter printed after it.
         _release_statements_inside_front(seg_lines)
-        _release_body_inside_the_references(seg_lines)
-        _release_margin_lines_continuing_a_column(seg_lines)
+        _release_body_inside_the_references(seg_lines, annotated)
+        _release_margin_lines_continuing_a_column(seg_lines, annotated)
+        _release_margin_lines_the_page_prints_beside(seg_lines, annotated)
+        _claim_the_note_a_block_of_notes_opens_with(seg_lines, annotated)
         # After the release, which reads a note set at the foot of a page as the
         # column above it carrying on and lets it go.
-        _claim_the_notes_a_page_sets_below_its_text(seg_lines, annotated)
+        _settle_the_notes_a_page_sets_at_its_foot(seg_lines, annotated)
         _merge_gap_lines(
             seg_lines,
             enabled_labels={
@@ -3101,10 +5319,7 @@ class SegmentationLabelDeriver:
         )
 
         _claim_repeated_front_field(seg_lines, annotated)
-        _release_references_inside_availability(seg_lines)
-        _release_references_inside_body(seg_lines)
-        _release_body_inside_front(seg_lines)
-        _release_annex_inside_body(seg_lines)
+        _release_the_regions_a_false_match_won(seg_lines)
 
         for page_end_label in (SEG_REFERENCES, SEG_AVAILABILITY):
             _extend_region_to_page_end(
@@ -3128,10 +5343,20 @@ class SegmentationLabelDeriver:
             seg_lines, page_meta_by_number, self.config, annotated
         )
 
+        # After the furniture has been taken back: a running foot still read
+        # as the body is a line of text under a note, and the note then looks
+        # like one the page prints among its text.
+        _release_what_the_page_sets_among_its_text(seg_lines)
         _claim_amendments_box(seg_lines)
-        _claim_annex_region(seg_lines)
+        _claim_the_annex_and_its_heading(seg_lines, annotated)
+        # After the appended sections have been claimed, which is what a
+        # mathematical appendix set beside the list is.
+        _claim_the_column_the_reference_list_runs_into(seg_lines)
+        # Before the three passes below, each of which claims one thing the
+        # page prints among the declarations and says what that one thing is.
+        _claim_the_declarations_the_closing_pages_name(seg_lines, annotated)
         _tag_publication_dates(seg_lines, annotated)
-        _claim_the_licence_printed_after_the_references(seg_lines)
+        _claim_what_the_journal_says_past_the_references(seg_lines, annotated)
         _claim_lines_sharing_a_row(seg_lines, page_meta_by_number)
 
         _claim_the_banner_above_the_front_matter(
@@ -3143,20 +5368,35 @@ class SegmentationLabelDeriver:
         _release_front_after_the_body(seg_lines, annotated)
         # Again, because the run of declarations an article closes with is only
         # a run of declarations once the pass above has released it.
-        _claim_statement_by_heading(seg_lines, annotated)
+        _claim_the_regions_a_heading_names(seg_lines, annotated)
         # After the release above, which reads the citation as front matter
         # printed past the body and lets it go.
         _claim_the_citation_printed_after_the_references(seg_lines, annotated)
+        # Beside the citation, and after the release for the same reason: the
+        # deposit files the editor's name as a note on the authors.
+        _claim_the_people_a_journal_credits(seg_lines)
+        _claim_the_authors_a_closing_statement_ran_on_over(seg_lines, annotated)
+        _claim_the_publishing_declarations_after_the_references(
+            seg_lines, annotated
+        )
+        # And after it too, which is what decides where a declaration printed
+        # in the imprint block belongs.
+        _claim_the_rest_of_the_block_the_front_matter_fills(seg_lines)
+        # Last of them, because the region a rule introduces is the region
+        # these have finished deciding.
+        _claim_the_rule_a_region_opens_under(seg_lines)
+        # Last of the front-matter passes, because the pages it reads are the
+        # pages the run ends up on.
+        _claim_the_opening_page_notes(seg_lines, annotated)
 
         # ── Default remaining untagged lines → body ──
         for sl in seg_lines:
             if sl.seg_label is None:
                 sl.seg_label = SEG_BODY
 
-        # Last, because it reads the label of what follows the region, and what
-        # follows is only settled once the default has been applied.
-        _release_trailing_heading(seg_lines, SEG_REFERENCES)
-        _release_front_alone_at_the_page_top(seg_lines)
+        # Last, because they read the label of what surrounds a line, and what
+        # surrounds it is only settled once the default has been applied.
+        _settle_what_the_default_left(seg_lines, annotated)
 
         # Build id(LayoutLine) → label mapping — safe because layout_document holds strong refs
         result: Dict[int, str] = {}
