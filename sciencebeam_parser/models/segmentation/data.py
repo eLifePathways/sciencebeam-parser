@@ -13,6 +13,8 @@ from sciencebeam_parser.document.page_main_area import calculate_page_main_areas
 from sciencebeam_parser.utils.bounding_box import BoundingBox
 from sciencebeam_parser.utils.tokenizer import get_tokenized_tokens
 from sciencebeam_parser.models.data import (
+    DEFAULT_FEATURE_FLAVOUR,
+    FEATURE_FLAVOUR_GROBID,
     ContextAwareLayoutTokenFeatures,
     DocumentFeaturesContext,
     FeatureDef,
@@ -20,7 +22,8 @@ from sciencebeam_parser.models.data import (
     LayoutModelData,
     feature_linear_scaling_int,
     _LINESCALE,
-    get_str_bool_feature_value
+    get_str_bool_feature_value,
+    validate_feature_flavour
 )
 
 
@@ -48,9 +51,16 @@ VECTOR_GRAPHIC_TYPE = 'svg'
 def _is_graphic_connected_to_block(
     graphic: LayoutGraphic,
     block_y: float,
-    block_height: float
+    block_height: float,
+    include_empty_graphics: bool = False
 ) -> bool:
-    if not graphic.coordinates:
+    """Whether the graphic is within GROBID's MIN_DISTANCE of the block's top or bottom.
+
+    GROBID counts a graphic pdfalto gives no size, at the page's top-left corner, too.
+    """
+    if graphic.coordinates is None or (
+        not graphic.coordinates and not include_empty_graphics
+    ):
         return False
     gc = graphic.coordinates
     return (
@@ -224,10 +234,12 @@ class SegmentationLineFeaturesProvider:
     def __init__(
         self,
         document_features_context: DocumentFeaturesContext,
-        use_first_token_of_block: bool
+        use_first_token_of_block: bool,
+        feature_flavour: str = DEFAULT_FEATURE_FLAVOUR
     ):
         self.document_features_context = document_features_context
         self.use_first_token_of_block = use_first_token_of_block
+        self.feature_flavour = validate_feature_flavour(feature_flavour)
 
     def iter_line_features(  # pylint: disable=too-many-locals,too-many-statements
         self,
@@ -239,9 +251,17 @@ class SegmentationLineFeaturesProvider:
         previous_token: Optional[LayoutToken] = None
         # Matches GROBID: documentLenghtChar initialised to -1, then += block.getTokens().size()
         # for each block. block.getTokens().size() ≈ count_block_tokens_like_grobid.
+        is_grobid_flavour = self.feature_flavour == FEATURE_FLAVOUR_GROBID
+        page_end_token_count = 1 if is_grobid_flavour else 0
         segmentation_line_features.document_token_count = -1 + sum(
             count_block_tokens_like_grobid(block.lines)
             for block in layout_document.iter_all_blocks()
+        ) + (
+            sum(
+                page_end_token_count + page.meta.empty_block_count
+                for page in layout_document.pages if page.blocks
+            )
+            if is_grobid_flavour else 0
         )
         pattern_candididate_block_iterable = (
             block
@@ -268,6 +288,7 @@ class SegmentationLineFeaturesProvider:
         LOGGER.debug('pattern_counter: %s', pattern_counter)
         seen_repetitive_patterns: Set[str] = set()
         document_token_index = 0
+        empty_blocks_before_page = 0
         page_main_areas = calculate_page_main_areas(layout_document)
         for page in layout_document.pages:
             blocks = page.blocks
@@ -278,7 +299,7 @@ class SegmentationLineFeaturesProvider:
             segmentation_line_features.page_token_count = sum(
                 count_block_tokens_like_grobid(block.lines)
                 for block in blocks
-            )
+            ) + (page.meta.empty_block_count if is_grobid_flavour else 0)
             page_token_index = 0
             for block_index, block in enumerate(blocks):
                 block_coords_list = block.get_merged_coordinates_list()
@@ -291,7 +312,10 @@ class SegmentationLineFeaturesProvider:
                 is_vector_around = False
                 is_bitmap_around = False
                 for graphic in page.graphics:
-                    if _is_graphic_connected_to_block(graphic, block_y, block_height):
+                    if _is_graphic_connected_to_block(
+                        graphic, block_y, block_height,
+                        include_empty_graphics=is_grobid_flavour
+                    ):
                         if graphic.graphic_type == VECTOR_GRAPHIC_TYPE:
                             is_vector_around = True
                         else:
@@ -299,10 +323,19 @@ class SegmentationLineFeaturesProvider:
                 segmentation_line_features.is_vector_around = is_vector_around
                 segmentation_line_features.is_bitmap_around = is_bitmap_around
                 segmentation_line_features.page_block_index = block_index
-                segmentation_line_features.page_token_index = page_token_index
+                preceding_empty_block_count = (
+                    block.lines[0].tokens[0].line_meta.preceding_empty_block_count
+                    if is_grobid_flavour else 0
+                )
+                segmentation_line_features.page_token_index = page_token_index + (
+                    preceding_empty_block_count - empty_blocks_before_page
+                    if is_grobid_flavour else 0
+                )
                 # Matches GROBID: nn is set once per block (before the line loop) so all lines
                 # in a block share the same relativeDocumentPosition.
-                segmentation_line_features.document_token_index = document_token_index
+                segmentation_line_features.document_token_index = (
+                    document_token_index + preceding_empty_block_count
+                )
                 block_lines = block.lines
                 segmentation_line_features.block_lines = block_lines
                 block_line_texts = [line.text for line in block_lines]
@@ -346,17 +379,23 @@ class SegmentationLineFeaturesProvider:
                     yield segmentation_line_features
                     previous_token = token
                 document_token_index += count_block_tokens_like_grobid(block_lines)
+                if block_index == len(blocks) - 1:
+                    # GROBID ends a page with a line break it adds to the page's last block
+                    document_token_index += page_end_token_count
                 page_token_index += count_block_tokens_like_grobid(block_lines)
+            empty_blocks_before_page += page.meta.empty_block_count
 
 
 class SegmentationDataGenerator(ModelDataGenerator):
     def __init__(
         self,
         document_features_context: DocumentFeaturesContext,
-        use_first_token_of_block: bool
+        use_first_token_of_block: bool,
+        feature_flavour: str = DEFAULT_FEATURE_FLAVOUR
     ):
         self.document_features_context = document_features_context
         self.use_first_token_of_block = use_first_token_of_block
+        self.feature_flavour = validate_feature_flavour(feature_flavour)
         self._feature_defs: List[FeatureDef[SegmentationLineFeatures]] = [
             FeatureDef('token_text', lambda f: f.token_text),
             FeatureDef('second_token_text', lambda f: f.second_token_text or f.token_text),
@@ -409,7 +448,8 @@ class SegmentationDataGenerator(ModelDataGenerator):
     ) -> Iterator[LayoutModelData]:
         features_provider = SegmentationLineFeaturesProvider(
             document_features_context=self.document_features_context,
-            use_first_token_of_block=self.use_first_token_of_block
+            use_first_token_of_block=self.use_first_token_of_block,
+            feature_flavour=self.feature_flavour
         )
         for features in features_provider.iter_line_features(layout_document):
             yield LayoutModelData(
