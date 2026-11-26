@@ -85,8 +85,11 @@ from sciencebeam_parser.training.quality.counting import (
     get_canonical_model_name,
     is_model_counted_by_label
 )
-from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
-from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.training.generation_profile import (
+    DEFAULT_GENERATION_PROFILE,
+    get_generation_config,
+    get_generation_model_config
+)
 from sciencebeam_parser.app.parser import ScienceBeamParser
 
 
@@ -220,6 +223,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help=(
             'Where to write what this run read and what it did with it'
             ' (default: the delft output path with ".run.json" appended).'
+        )
+    )
+    parser.add_argument(
+        '--profile',
+        type=str,
+        default=None,
+        metavar='PROFILE',
+        help=(
+            'The configuration profile whose models decide the generated features,'
+            f' as in generate_data (default: {DEFAULT_GENERATION_PROFILE}, not the'
+            ' profile the service serves).'
         )
     )
     parser.add_argument(
@@ -756,7 +770,8 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
     max_unreviewed_ratio: Optional[float] = None,
     source_name: Optional[str] = None,
     source_revision: Optional[str] = None,
-    run_record_path: Optional[str] = None
+    run_record_path: Optional[str] = None,
+    profile: Optional[str] = None
 ):
     training_tei_parser = get_training_tei_parser_for_model_name(
         model_name,
@@ -854,7 +869,8 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
             assembled_records=assembled_records,
             source_name=source_name,
             source_revision=source_revision,
-            include_extra_columns=include_extra_columns
+            include_extra_columns=include_extra_columns,
+            profile=profile
         )
     )
     assembly_record_path = quality_output_path or delft_output_path + '.quality.jsonl'
@@ -879,8 +895,11 @@ def generate_delft_training_data(  # pylint: disable=too-many-locals
 
 def run(args: argparse.Namespace):
     LOGGER.info('args: %r', args)
-    config = AppConfig.load_yaml(
-        DEFAULT_CONFIG_FILE
+    config = get_generation_config(args.profile)
+    profile = config.get_active_profile_name()
+    LOGGER.info(
+        'generation profile: %s, %s: %r',
+        profile, args.model_name, get_generation_model_config(config, args.model_name)
     )
     sciencebeam_parser = ScienceBeamParser.from_config(config)
     generate_delft_training_data(
@@ -899,7 +918,8 @@ def run(args: argparse.Namespace):
         max_unreviewed_ratio=args.max_unreviewed_ratio,
         source_name=args.source_name,
         source_revision=args.source_revision,
-        run_record_path=args.run_record_path
+        run_record_path=args.run_record_path,
+        profile=profile
     )
 
 

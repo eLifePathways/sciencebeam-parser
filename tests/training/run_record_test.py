@@ -33,6 +33,9 @@ class TestGetRunRecordPathForDelftOutputPath:
 
 
 class TestGetRunRecord:
+    def test_should_name_the_profile_it_generated_under(self):
+        assert _run_record([], profile='grobid_crf')['profile'] == 'grobid_crf'
+
     def test_should_name_the_source_and_its_revision(self):
         run_record = _run_record(
             [], source_name='grobid', source_revision='0.9.0 (b2251cb54)'
