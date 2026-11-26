@@ -52,6 +52,7 @@ from sciencebeam_parser.processors.fulltext.processor import (
     FullTextProcessorConfig,
     FullTextProcessorDocumentContext
 )
+from sciencebeam_parser.processors.fulltext.config import FrontConfig, ReferencesConfig
 from sciencebeam_parser.processors.fulltext.reference_links import (
     give_fragment_link_dois_to_previous_references
 )
@@ -263,7 +264,7 @@ class TestFullTextProcessor:
         ])
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
-            config=FullTextProcessorConfig(merge_raw_authors=True)
+            config=FullTextProcessorConfig(front=FrontConfig(merge_author_blocks=True))
         )
         header_block = authors_block
 
@@ -453,7 +454,7 @@ class TestFullTextProcessor:
         ])])
         semantic_document = FullTextProcessor(
             fulltext_models_mock,
-            config=FullTextProcessorConfig(deduplicate_raw_authors=False)
+            config=FullTextProcessorConfig(front=FrontConfig(deduplicate_authors=False))
         ).get_semantic_document_for_layout_document(layout_document=layout_document)
         authors = semantic_document.front.authors
         assert len(authors) == 2
@@ -487,7 +488,7 @@ class TestFullTextProcessor:
         ])])
         semantic_document = FullTextProcessor(
             fulltext_models_mock,
-            config=FullTextProcessorConfig(merge_raw_authors=True)
+            config=FullTextProcessorConfig(front=FrontConfig(merge_author_blocks=True))
         ).get_semantic_document_for_layout_document(layout_document=layout_document)
         authors = semantic_document.front.authors
         assert len(authors) == 1
@@ -810,8 +811,10 @@ class TestFullTextProcessorAffiliation:
             fulltext_models_mock,
             FullTextProcessorConfig(
                 extract_citation_fields=True,
-                reference_kept_by_any_of=reference_kept_by_any_of,
-                fragment_link_doi=fragment_link_doi
+                references=ReferencesConfig(
+                    kept_by_any_of=reference_kept_by_any_of,
+                    fragment_link_doi=fragment_link_doi
+                )
             )
         )
         fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
@@ -1015,7 +1018,7 @@ class TestFullTextProcessorAffiliation:
             fulltext_models_mock,
             FullTextProcessorConfig(
                 extract_citation_fields=True,
-                reference_kept_by_any_of=reference_kept_by_any_of
+                references=ReferencesConfig(kept_by_any_of=reference_kept_by_any_of)
             )
         )
         fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
@@ -1521,7 +1524,9 @@ class TestFullTextProcessorFragmentLinkDoiConfig:
         with pytest.raises(ValueError, match='own-reference'):
             FullTextProcessor(
                 MockFullTextModels(),
-                FullTextProcessorConfig(fragment_link_doi='own-reference')
+                FullTextProcessorConfig(
+                    references=ReferencesConfig(fragment_link_doi='own-reference')
+                )
             )
 
 

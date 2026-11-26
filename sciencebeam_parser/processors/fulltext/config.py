@@ -9,8 +9,7 @@ from sciencebeam_parser.processors.document_page_image import (
     DEFAULT_PDF_RENDER_DPI
 )
 from sciencebeam_parser.models.header.extract import (
-    DEFAULT_ABSTRACTS_MODE,
-    DEFAULT_TITLES_MODE
+    DEFAULT_ABSTRACTS_MODE
 )
 from sciencebeam_parser.models.citation.extract import (
     DEFAULT_FRAGMENT_LINK_DOI,
@@ -43,10 +42,24 @@ FRONT_FIELDS = {
 }
 
 
+@dataclasses.dataclass(frozen=True)
+class FrontConfig:
+    select_abstracts: str = DEFAULT_ABSTRACTS_MODE
+    split_titles_by_language: bool = True
+    merge_author_blocks: bool = False
+    deduplicate_authors: bool = True
+    deduplicate_authors_by_initials: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
+class ReferencesConfig:
+    kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF
+    fragment_link_doi: str = DEFAULT_FRAGMENT_LINK_DOI
+
+
 class FullTextProcessorConfig(NamedTuple):
     extract_front: bool = True
-    abstracts_mode: str = DEFAULT_ABSTRACTS_MODE
-    titles_mode: str = DEFAULT_TITLES_MODE
+    front: FrontConfig = FrontConfig()
     extract_authors: bool = True
     extract_affiliations: bool = True
     extract_body_sections: bool = True
@@ -56,13 +69,9 @@ class FullTextProcessorConfig(NamedTuple):
     extract_citation_fields: bool = True
     extract_citation_authors: bool = True
     extract_citation_editors: bool = False
-    reference_kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF
-    fragment_link_doi: str = DEFAULT_FRAGMENT_LINK_DOI
+    references: ReferencesConfig = ReferencesConfig()
     extract_figure_fields: bool = True
     extract_table_fields: bool = True
-    merge_raw_authors: bool = False
-    deduplicate_raw_authors: bool = True
-    deduplicate_raw_authors_use_initial_fallback: bool = True
     extract_graphic_bounding_boxes: bool = True
     extract_graphic_assets: bool = False
     use_cv_model: bool = False
@@ -79,20 +88,26 @@ class FullTextProcessorConfig(NamedTuple):
         props = dict(app_config.get('processors', {}).get('fulltext', {}))
         nested_props = {
             name: props.pop(name, None)
-            for name in ('noise_filter', 'graphic_regions')
+            for name in ('front', 'references', 'noise_filter', 'graphic_regions')
         }
-        if 'reference_kept_by_any_of' in props:
-            props['reference_kept_by_any_of'] = tuple(validate_reference_field_names(
-                props['reference_kept_by_any_of']
-            ))
+        references_props = nested_props['references']
+        if references_props and 'kept_by_any_of' in references_props:
+            nested_props['references'] = {
+                **references_props,
+                'kept_by_any_of': tuple(validate_reference_field_names(
+                    references_props['kept_by_any_of']
+                ))
+            }
         config = FullTextProcessorConfig()._replace(**props)
-        validate_fragment_link_doi(config.fragment_link_doi, config.reference_kept_by_any_of)
         for name, name_props in nested_props.items():
             if not name_props:
                 continue
             config = config._replace(**{  # pylint: disable=no-member
                 name: dataclasses.replace(getattr(config, name), **name_props)
             })
+        validate_fragment_link_doi(
+            config.references.fragment_link_doi, config.references.kept_by_any_of
+        )
         return config
 
     def get_for_requested_field_names(

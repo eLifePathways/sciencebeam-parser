@@ -107,11 +107,13 @@ lookup:
       - https://raw.githubusercontent.com/kermitt2/grobid/0.9.0/grobid-home/lexicon/organisations/inspire_collaborations.txt
 processors:
   fulltext:
-    # Which abstracts reach the output where the header model labels more than one
-    # region as the abstract. `first` keeps the first and leaves the rest as notes.
-    # `variants` emits the others as further abstracts too, each declaring the language
-    # of its own text. `merged_by_language` joins those sharing a language into one.
-    abstracts_mode: 'first'
+    front:
+      # Which abstracts reach the output where the header model labels more than one
+      # region as the abstract. `first` keeps the first and leaves the rest as notes.
+      # `variants` emits the others as further abstracts too, each declaring the language
+      # of its own text. `merged_by_language` joins those sharing a language into one.
+      select_abstracts: 'first'
+      merge_author_blocks: false
     noise_filter:
       enabled: true
       repetition_fraction: 0.5
@@ -129,12 +131,12 @@ processors:
       # document whole and overrules the label it gives them, which is all an LLM
       # can use and costs a CRF the documents its features shift on.
       action: 'drop'
-    merge_raw_authors: false
-    # A reference with none of these is dropped.
-    reference_kept_by_any_of: [title, journal, book_title, authors, editors, identifier, url]
-    # Where a link's DOI goes when it is all a reference has.
-    # previous_reference or own_reference
-    fragment_link_doi: 'previous_reference'
+    references:
+      # A reference with none of these is dropped.
+      kept_by_any_of: [title, journal, book_title, authors, editors, identifier, url]
+      # Where a link's DOI goes when it is all a reference has.
+      # previous_reference or own_reference
+      fragment_link_doi: 'previous_reference'
     use_cv_model: false
     cv_render_dpi: 100
     use_ocr_model: false
@@ -466,9 +468,10 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
+        references:
+          kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
   # `grobid_crf_0_9_0` with one setting changed, so that comparing either with it
-  # measures `abstracts_mode` and nothing else. Their models and their noise filter are
+  # measures `front.select_abstracts` and nothing else. Their models and their noise filter are
   # restated rather than inherited: a profile that extends another may add only prose.
   grobid_crf_abstract_variants:
     label: 'GROBID CRF 0.9.0, abstracts as variants'
@@ -478,8 +481,10 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
-        abstracts_mode: 'variants'
+        references:
+          kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
+        front:
+          select_abstracts: 'variants'
   grobid_crf_abstract_merged_by_language:
     label: 'GROBID CRF 0.9.0, abstracts merged by language'
     description: 'The default models, merging the abstracts the header model labels into one per language.'
@@ -488,8 +493,10 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
-        abstracts_mode: 'merged_by_language'
+        references:
+          kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
+        front:
+          select_abstracts: 'merged_by_language'
   grobid_crf_cv:
     label: 'GROBID CRF 0.9.0, graphics located by the cv model'
     description: 'The default models, with figures and tables located on the rendered page by the computer-vision model.'
@@ -498,7 +505,8 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
+        references:
+          kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
         use_cv_model: true
   wapiti_grobid_only:
     label: 'Wapiti reference models, GROBID data only'
@@ -596,7 +604,8 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-        abstracts_mode: 'variants'
+        front:
+          select_abstracts: 'variants'
   delft_all_scielo_preprints_ore_cv:
     label: 'DeLFT retrained models, SciELO preprints and ORE, graphics located by the cv model'
     description: 'The retrained DeLFT models, with figures and tables located on the rendered page by the computer-vision model.'
@@ -605,7 +614,8 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-        abstracts_mode: 'variants'
+        front:
+          select_abstracts: 'variants'
         use_cv_model: true
   llm_reference_segmenter:
     label: 'LLM reference segmenter'
@@ -663,7 +673,8 @@ profiles:
       fulltext:
         noise_filter:
           enabled: false
-        reference_kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
+        references:
+          kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
 
   # The names a deployment points at. Each tracks a profile declared above and
   # adds only its prose, so it resolves to exactly what it names and reports it.
