@@ -138,10 +138,17 @@ class TestDehyphenateByDocument:
             _block('the per-', 'cepc\u0327a\u0303o of colour'), 'percepção'
         ) == 'the percepc\u0327a\u0303o of colour'
 
-    def test_should_remove_a_soft_hyphen_where_the_document_says_nothing(self):
+    def test_should_leave_a_soft_hyphen_where_the_document_says_nothing(self):
         assert _by_document(
-            _block('the per\u00ad', 'cepção of colour')
-        ) == 'the percepção of colour'
+            _block('the SARS\u00ad', 'CoV-2 virus')
+        ) == 'the SARS\u00ad CoV-2 virus'
+
+    def test_should_not_touch_a_superscript_hyphen(self):
+        block = LayoutBlock(lines=[
+            _line('the Cl-', y=0, font=LayoutFont(font_id='sup', is_superscript=True)),
+            _line('ions in water', y=10)
+        ])
+        assert _by_document(block, 'Cl-ions') == 'the Cl- ions in water'
 
     def test_should_join_across_an_empty_line(self):
         block = _block('the per-', 'cepção of colour')

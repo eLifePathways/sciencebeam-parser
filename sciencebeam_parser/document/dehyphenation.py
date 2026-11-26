@@ -49,6 +49,14 @@ def _get_word_key(text: str) -> str:
     return unicodedata.normalize('NFC', text).lower()
 
 
+def _is_hyphen_on_the_line(token: LayoutToken) -> bool:
+    return (
+        token.text == HYPHEN
+        and not token.font.is_subscript
+        and not token.font.is_superscript
+    )
+
+
 def _get_broken_word_prefix(tokens: Sequence[LayoutToken]) -> Optional[str]:
     """The word part before a hyphen ending the line, if the line ends in one."""
     if not tokens:
@@ -57,7 +65,7 @@ def _get_broken_word_prefix(tokens: Sequence[LayoutToken]) -> Optional[str]:
     if last.text.endswith(SOFT_HYPHEN) and _is_word_part(last.text[:-1]):
         return last.text[:-1]
     if (
-        last.text == HYPHEN
+        _is_hyphen_on_the_line(last)
         and len(tokens) >= 2
         and not tokens[-2].whitespace
         and _is_word_part(tokens[-2].text)
@@ -155,8 +163,6 @@ def _dehyphenate_by_document(
         remove_hyphen = _should_remove_hyphen_by_document(
             prefix, next_tokens[0].text, document_words
         )
-        if remove_hyphen is None and tokens[-1].text.endswith(SOFT_HYPHEN):
-            remove_hyphen = True
         if remove_hyphen is not None:
             lines[index] = _with_line_end_joined(tokens, remove_hyphen=remove_hyphen)
     return LayoutBlock(lines=[LayoutLine(tokens=tokens) for tokens in lines])
@@ -199,7 +205,7 @@ def _dehyphenate_as_grobid(layout_block: LayoutBlock) -> LayoutBlock:
     ]
     output: List[Tuple[int, LayoutToken]] = []
     for index, (line_index, token) in enumerate(indexed_tokens):
-        if token.text != HYPHEN or token.font.is_subscript or token.font.is_superscript:
+        if not _is_hyphen_on_the_line(token):
             output.append((line_index, token))
             continue
         if _requires_grobid_dehyphenation(indexed_tokens, index):
