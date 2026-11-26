@@ -3,6 +3,7 @@ from typing import Iterable, List, Optional, Tuple
 
 from sciencebeam_parser.document.layout_document import LayoutBlock, LayoutToken
 from sciencebeam_parser.models.data import (
+    DEFAULT_FEATURE_FLAVOUR,
     DocumentFeaturesContext,
     LabeledLayoutToken
 )
@@ -77,7 +78,8 @@ class ReferenceSegmenterModel(Model):
         document_features_context: DocumentFeaturesContext
     ) -> ReferenceSegmenterDataGenerator:
         return ReferenceSegmenterDataGenerator(
-            document_features_context=document_features_context
+            document_features_context=document_features_context,
+            feature_flavour=self.model_config.get('feature_flavour', DEFAULT_FEATURE_FLAVOUR)
         )
 
     def iter_entity_layout_blocks_for_labeled_layout_tokens(

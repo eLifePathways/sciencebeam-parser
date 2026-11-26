@@ -1,8 +1,16 @@
 from typing import List, Tuple
 
 from sciencebeam_parser.document.layout_document import LayoutToken
-from sciencebeam_parser.models.data import LabeledLayoutToken
-from sciencebeam_parser.models.reference_segmenter.model import iter_reference_entity_blocks
+from sciencebeam_parser.models.data import (
+    DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM,
+    LabeledLayoutToken
+)
+from sciencebeam_parser.models.reference_segmenter.model import (
+    ReferenceSegmenterModel,
+    iter_reference_entity_blocks
+)
 
 
 def _get_entities(
@@ -70,3 +78,20 @@ class TestIterReferenceEntityBlocks:
             ('<label>', '2'),
             ('<reference>', 'Bracken'),
         ]
+
+
+class TestReferenceSegmenterModelFeatureFlavour:
+    def test_should_give_grobid_features_unless_configured_otherwise(self):
+        model = ReferenceSegmenterModel(None)
+        assert model.get_data_generator(
+            DEFAULT_DOCUMENT_FEATURES_CONTEXT
+        ).feature_flavour == FEATURE_FLAVOUR_GROBID
+
+    def test_should_give_the_features_the_config_names(self):
+        model = ReferenceSegmenterModel(
+            None,
+            model_config={'feature_flavour': FEATURE_FLAVOUR_SCIENCEBEAM}
+        )
+        assert model.get_data_generator(
+            DEFAULT_DOCUMENT_FEATURES_CONTEXT
+        ).feature_flavour == FEATURE_FLAVOUR_SCIENCEBEAM

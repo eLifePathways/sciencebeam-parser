@@ -7,6 +7,8 @@ from sciencebeam_parser.document.layout_document import (
 )
 from sciencebeam_parser.lookup import SimpleTextLookUp
 from sciencebeam_parser.models.data import (
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM,
     AppFeaturesContext,
     DEFAULT_DOCUMENT_FEATURES_CONTEXT,
     DocumentFeaturesContext
@@ -21,12 +23,20 @@ def _make_features_context_with_names(first_names):
     )
 
 
-def _get_feature(token_text: str, feature_name: str, line_tokens=None) -> str:
+def _get_feature(
+    token_text: str,
+    feature_name: str,
+    line_tokens=None,
+    feature_flavour: str = FEATURE_FLAVOUR_GROBID,
+    preceding_lines=()
+) -> str:
     if line_tokens is None:
         line_tokens = [LayoutToken(token_text)]
     line = LayoutLine(line_tokens)
-    doc = LayoutDocument.for_blocks([LayoutBlock(lines=[line])])
-    gen = ReferenceSegmenterDataGenerator(DEFAULT_DOCUMENT_FEATURES_CONTEXT)
+    doc = LayoutDocument.for_blocks([LayoutBlock(lines=list(preceding_lines) + [line])])
+    gen = ReferenceSegmenterDataGenerator(
+        DEFAULT_DOCUMENT_FEATURES_CONTEXT, feature_flavour=feature_flavour
+    )
     data_list = list(gen.iter_model_data_for_layout_document(doc))
     # find the entry for the requested token
     for item in data_list:
@@ -66,6 +76,19 @@ class TestBlockStatus:
     def test_single_token_single_line_block_gives_blockstart(self):
         feature = _get_feature('word', 'block_status')
         assert feature == 'BLOCKSTART'
+
+    def test_single_token_last_line_ends_the_block_as_grobid(self):
+        assert _get_feature(
+            'Yes', 'block_status',
+            preceding_lines=[LayoutLine([LayoutToken('Ferns', whitespace=' '), LayoutToken('?')])]
+        ) == 'BLOCKEND'
+
+    def test_single_token_last_line_is_in_the_block_on_sciencebeam_features(self):
+        assert _get_feature(
+            'Yes', 'block_status',
+            preceding_lines=[LayoutLine([LayoutToken('Ferns', whitespace=' '), LayoutToken('?')])],
+            feature_flavour=FEATURE_FLAVOUR_SCIENCEBEAM
+        ) == 'BLOCKIN'
 
 
 class TestPunctuationProfile:
@@ -132,15 +155,30 @@ class TestIsHttp:
     def test_word_gives_0(self):
         assert _get_feature('word', 'is_http') == '0'
 
+    def test_url_in_angle_brackets_gives_1_as_grobid(self):
+        assert _get_feature('<https://ferns.test', 'is_http') == '1'
+
+    def test_url_in_angle_brackets_gives_0_on_sciencebeam_features(self):
+        assert _get_feature(
+            '<https://ferns.test', 'is_http', feature_flavour=FEATURE_FLAVOUR_SCIENCEBEAM
+        ) == '0'
+
 
 class TestIsFirstName:
+    def test_never_set_as_grobid(self):
+        ctx = _make_features_context_with_names({'AL'})
+        doc = LayoutDocument.for_blocks([LayoutBlock(lines=[LayoutLine([LayoutToken('AL')])])])
+        gen = ReferenceSegmenterDataGenerator(ctx)
+        item = next(gen.iter_model_data_for_layout_document(doc))
+        assert item.data_line.split()[gen.feature_names.index('is_first_name')] == '0'
+
     def test_all_caps_name_gives_1_when_in_lookup(self):
         # GROBID's first-name list uses all-uppercase entries; only all-uppercase tokens match
         ctx = _make_features_context_with_names({'AL'})
         tokens = [LayoutToken('AL')]
         line = LayoutLine(tokens)
         doc = LayoutDocument.for_blocks([LayoutBlock(lines=[line])])
-        gen = ReferenceSegmenterDataGenerator(ctx)
+        gen = ReferenceSegmenterDataGenerator(ctx, feature_flavour=FEATURE_FLAVOUR_SCIENCEBEAM)
         item = next(gen.iter_model_data_for_layout_document(doc))
         idx = gen.feature_names.index('is_first_name')
         assert item.data_line.split()[idx] == '1'
@@ -151,7 +189,7 @@ class TestIsFirstName:
         tokens = [LayoutToken('al')]
         line = LayoutLine(tokens)
         doc = LayoutDocument.for_blocks([LayoutBlock(lines=[line])])
-        gen = ReferenceSegmenterDataGenerator(ctx)
+        gen = ReferenceSegmenterDataGenerator(ctx, feature_flavour=FEATURE_FLAVOUR_SCIENCEBEAM)
         item = next(gen.iter_model_data_for_layout_document(doc))
         idx = gen.feature_names.index('is_first_name')
         assert item.data_line.split()[idx] == '0'
@@ -162,7 +200,7 @@ class TestIsFirstName:
         tokens = [LayoutToken('Marine')]
         line = LayoutLine(tokens)
         doc = LayoutDocument.for_blocks([LayoutBlock(lines=[line])])
-        gen = ReferenceSegmenterDataGenerator(ctx)
+        gen = ReferenceSegmenterDataGenerator(ctx, feature_flavour=FEATURE_FLAVOUR_SCIENCEBEAM)
         item = next(gen.iter_model_data_for_layout_document(doc))
         idx = gen.feature_names.index('is_first_name')
         assert item.data_line.split()[idx] == '0'

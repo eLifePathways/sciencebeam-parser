@@ -89,7 +89,7 @@ HUB_PROFILE = 'delft_hub'
 HUB_PROFILE_BASE = 'grobid_crf_0_9_0'
 
 # The models whose features `feature_flavour` selects, and where the ones GROBID trained live
-FEATURE_FLAVOUR_MODEL_NAMES = ('header', 'citation')
+FEATURE_FLAVOUR_MODEL_NAMES = ('header', 'reference_segmenter', 'citation')
 GROBID_TRAINED_PATH_PREFIXES = (
     'https://github.com/kermitt2/grobid/',
     'hf://sciencialab/'
@@ -431,8 +431,17 @@ class TestShippedDelftHubProfile:
         assert not wrongly_served
 
 
-def _get_trained_feature_flavour(model_path: str) -> str:
-    if model_path.startswith(GROBID_TRAINED_PATH_PREFIXES):
+# Trained here on GROBID's corpus alone, whose reference-segmenter input is GROBID's own
+GROBID_FEATURES_TRAINED_HERE = (
+    ('reference_segmenter', '_grobid_090_grobid_only'),
+)
+
+
+def _get_trained_feature_flavour(model_name: str, model_path: str) -> str:
+    if model_path.startswith(GROBID_TRAINED_PATH_PREFIXES) or any(
+        model_name == name and model_path.endswith(suffix)
+        for name, suffix in GROBID_FEATURES_TRAINED_HERE
+    ):
         return FEATURE_FLAVOUR_GROBID
     return FEATURE_FLAVOUR_SCIENCEBEAM
 
@@ -445,6 +454,8 @@ class TestShippedFeatureFlavours:
             for model_name, entry in get_resolved_models(profile_name).items()
             if model_name in FEATURE_FLAVOUR_MODEL_NAMES
             and get_engine_name_for_config(entry) != EngineNames.LLM
-            and entry.get('feature_flavour') != _get_trained_feature_flavour(entry['path'])
+            and entry.get('feature_flavour') != _get_trained_feature_flavour(
+                model_name, entry['path']
+            )
         }
         assert not wrong_flavours
