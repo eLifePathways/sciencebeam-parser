@@ -67,7 +67,7 @@ jobs:
           IS_PUSH_TO_MAIN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           # The first is required; a failure of any other is a warning.
-          MAIN_PROFILES=(recommended grobid_crf)
+          MAIN_PROFILES=(recommended grobid_crf grobid_crf_as_grobid)
           if [ "$IS_PUSH_TO_MAIN" = "true" ]; then
             PROFILES=("${MAIN_PROFILES[@]}")
             PROFILE_SOURCE="push to main"
