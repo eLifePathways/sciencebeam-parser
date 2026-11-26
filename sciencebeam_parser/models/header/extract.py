@@ -16,6 +16,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticRawAuthors,
     T_SemanticContentFactory
 )
+from sciencebeam_parser.document.dehyphenation import T_DehyphenateBlock, keep_layout_block
 from sciencebeam_parser.document.layout_document import (
     EMPTY_BLOCK,
     LayoutBlock,
@@ -452,7 +453,8 @@ def _get_semantic_titles(
     title_blocks: Sequence[Tuple[LayoutBlock, str]],
     select_titles: str,
     split_titles_by_language: bool,
-    document_languages: AbstractSet[str]
+    document_languages: AbstractSet[str],
+    dehyphenate_block: T_DehyphenateBlock = keep_layout_block
 ) -> List[SemanticTitle]:
     """The titles to yield, named among the languages the document carries elsewhere.
 
@@ -472,7 +474,7 @@ def _get_semantic_titles(
             parts = list(iter_titles_split_by_language(layout_block, document_languages))
         for index, (title_block, language) in enumerate(parts):
             semantic_titles.append(SemanticTitle(
-                layout_block=title_block,
+                layout_block=dehyphenate_block(title_block),
                 trailing_text=trailing if index == len(parts) - 1 else '',
                 language=language
             ))
@@ -490,6 +492,7 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         select_titles: str = DEFAULT_TITLES_MODE,
         split_titles_by_language: bool = True,
         join_abstract_continuations: bool = True,
+        dehyphenate_block: T_DehyphenateBlock = keep_layout_block,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
         entity_tokens = (
@@ -529,7 +532,7 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                     and is_abstract_variant(abstract_layout_block, primary_abstract_block)
                 ):
                     semantic_abstract = SemanticAbstract(
-                        layout_block=abstract_layout_block,
+                        layout_block=dehyphenate_block(abstract_layout_block),
                         language=abstract_language,
                         heading_block=get_abstract_heading_block(
                             previous_label, previous_block
@@ -566,7 +569,8 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
             yield aff_address
         yield from iter_titles_printed_once(
             _get_semantic_titles(
-                title_blocks, select_titles, split_titles_by_language, document_languages
+                title_blocks, select_titles, split_titles_by_language, document_languages,
+                dehyphenate_block
             )
         )
         yield from merge_abstracts_by_language(semantic_abstracts)

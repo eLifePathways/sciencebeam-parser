@@ -176,7 +176,8 @@ class TestAsGrobidProfile:
                 as_grobid_config.front,
                 join_abstract_continuations=base_config.front.join_abstract_continuations,
                 select_titles=base_config.front.select_titles,
-                split_titles_by_language=base_config.front.split_titles_by_language
+                split_titles_by_language=base_config.front.split_titles_by_language,
+                dehyphenate=base_config.front.dehyphenate
             ),
             references=dataclasses.replace(
                 as_grobid_config.references,

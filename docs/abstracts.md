@@ -16,6 +16,18 @@ The `recommended` and `recommended_cv` profiles ask for `variants`; every other 
 
 An abstract the page prints in two pieces — the second half carried over a page break — is one abstract in every mode. The second block is joined to the first where it opens mid-sentence under an abstract that ends unfinished, carries no heading of its own, and begins on the page the abstract ended on or the next. `front.join_abstract_continuations: false` turns this off, and `grobid_crf_as_grobid` sets it, following GROBID, which keeps the first block only.
 
+## A word broken at a line end
+
+`front.dehyphenate` decides how the title and abstract write a word the page broke at a line end with a hyphen:
+
+| value | "per-" / "cepção" | "alkali-" / "activated" | "SARS-" / "CoV-2" |
+| --- | --- | --- | --- |
+| `off` | per- cepção | alkali- activated | SARS- CoV-2 |
+| `grobid` | percepção | alkaliactivated | SARS-CoV-2 |
+| `by_document` | percepção where the document sets "percepção" elsewhere, otherwise per- cepção | alkali-activated where the document sets "alkali-activated" elsewhere, otherwise alkali- activated | SARS-CoV-2 where the document sets "SARS-CoV" elsewhere, otherwise SARS- CoV-2 |
+
+`by_document` acts only where the same document sets the word inside a line: it keeps the hyphen and removes the space where the document sets the hyphenated word, and otherwise removes the hyphen where it sets the joined word and the continuation is lower case, or both parts are in capitals. Where the document sets neither, the word is written as `off` writes it. `grobid` follows GROBID 0.9.0: it removes a hyphen before any lower-case word lower on the page, keeps any other `-` and removes the line break after it, and leaves a sub- or superscript hyphen or a soft hyphen as the page sets it, so a word broken across a column or page keeps its hyphen; as GROBID judges by position on the page, a hyphen before a word set slightly lower on the same line can be removed too, and a dash set apart from the words at a line end joins them, as GROBID does. `by_document` leaves a hyphen inside a line as it is. `by_document` is the default; `grobid_crf_as_grobid` sets `grobid`.
+
 ## What each abstract declares
 
 Each abstract carries the language of its own text in `xml:lang`, in every mode, where the text is long enough and consistent enough to name one. A document whose abstracts are in Portuguese and English therefore says which is which, in the TEI and in the JATS.

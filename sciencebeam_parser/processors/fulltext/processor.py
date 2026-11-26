@@ -56,6 +56,7 @@ from sciencebeam_parser.document.semantic_document import (
     T_SemanticRawNameList
 )
 from sciencebeam_parser.document.tei_document import TeiDocument, get_tei_for_semantic_document
+from sciencebeam_parser.document.dehyphenation import get_dehyphenate_block
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
@@ -263,7 +264,8 @@ class FullTextProcessor:
         if self.config.extract.front:
             self._process_header_layout_document(
                 header_layout_document=header_layout_document,
-                semantic_document=document
+                semantic_document=document,
+                layout_document=layout_document
             )
 
         if self.config.extract.body_sections:
@@ -346,7 +348,8 @@ class FullTextProcessor:
     def _process_header_layout_document(
         self,
         header_layout_document: LayoutDocument,
-        semantic_document: SemanticDocument
+        semantic_document: SemanticDocument,
+        layout_document: LayoutDocument
     ):
         LOGGER.debug('header_layout_document: %s', header_layout_document)
         if not header_layout_document.pages:
@@ -364,7 +367,8 @@ class FullTextProcessor:
             select_abstracts=self.config.front.select_abstracts,
             select_titles=self.config.front.select_titles,
             split_titles_by_language=self.config.front.split_titles_by_language,
-            join_abstract_continuations=self.config.front.join_abstract_continuations
+            join_abstract_continuations=self.config.front.join_abstract_continuations,
+            dehyphenate_block=get_dehyphenate_block(layout_document, self.config.front.dehyphenate)
         )
         if self.config.extract.front_authors:
             self._process_raw_authors(semantic_document.front)

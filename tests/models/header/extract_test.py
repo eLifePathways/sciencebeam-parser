@@ -10,12 +10,18 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticRawAffiliationAddress,
     SemanticTitle
 )
+from sciencebeam_parser.document.dehyphenation import (
+    DehyphenateMode,
+    get_dehyphenate_block
+)
 from sciencebeam_parser.document.layout_document import (
     LOGGER,
     LayoutBlock,
+    LayoutDocument,
     LayoutFont,
     LayoutLine,
     LayoutLineMeta,
+    LayoutPage,
     LayoutPageCoordinates,
     LayoutToken,
     join_layout_tokens
@@ -400,6 +406,64 @@ class TestHeaderSemanticExtractorAbstractHeading:
             ('<title>', LayoutBlock.for_text(TITLE_1)),
             ('<abstract>', LayoutBlock.for_text(ABSTRACT_1))
         ]) == [None]
+
+
+def _get_titles(entity_tokens, **kwargs) -> List[str]:
+    front = SemanticFront(list(
+        HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+            entity_tokens, **kwargs
+        )
+    ))
+    return [title.get_text() for title in front.iter_by_type(SemanticTitle)]
+
+
+def _get_lines_block(*lines: str) -> LayoutBlock:
+    return LayoutBlock(lines=[
+        LayoutLine.for_text(text, line_meta=LayoutLineMeta(line_id=index))
+        for index, text in enumerate(lines)
+    ])
+
+
+def _get_page_line_block(text: str, page_number: int) -> LayoutBlock:
+    return LayoutBlock(lines=[LayoutLine(tokens=[
+        token._replace(line_meta=LayoutLineMeta(line_id=page_number))
+        for token in _get_abstract_block(text, page_number).iter_all_tokens()
+    ])])
+
+
+DEHYPHENATE_WHERE_THE_DOCUMENT_SETS_PERCEPCAO = get_dehyphenate_block(
+    LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock.for_text('percepção')])]),
+    DehyphenateMode.BY_DOCUMENT
+)
+
+
+class TestHeaderSemanticExtractorDehyphenate:
+    def test_should_write_a_broken_word_as_on_the_page_without_a_dehyphenate_block(self):
+        assert _get_titles([
+            ('<title>', _get_lines_block('A study of per-', 'cepção'))
+        ]) == ['A study of per- cepção']
+
+    def test_should_join_a_broken_word_in_the_title(self):
+        assert _get_titles([
+            ('<title>', _get_lines_block('A study of per-', 'cepção'))
+        ], dehyphenate_block=DEHYPHENATE_WHERE_THE_DOCUMENT_SETS_PERCEPCAO) == [
+            'A study of percepção'
+        ]
+
+    def test_should_join_a_broken_word_in_the_abstract(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_lines_block('Their per-', 'cepção differs.'))
+        ], dehyphenate_block=DEHYPHENATE_WHERE_THE_DOCUMENT_SETS_PERCEPCAO) == [
+            'Their percepção differs.'
+        ]
+
+    def test_should_join_a_word_broken_across_the_page_an_abstract_continues_on(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_page_line_block('The abstract begins with a per-', 1)),
+            ('<abstract>', _get_page_line_block('cepção and continues here.', 2))
+        ], dehyphenate_block=DEHYPHENATE_WHERE_THE_DOCUMENT_SETS_PERCEPCAO) == [
+            'The abstract begins with a percepção and continues here.'
+        ]
 
 
 class TestHeaderSemanticExtractorContinuedAbstract:

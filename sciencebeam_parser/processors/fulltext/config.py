@@ -2,6 +2,11 @@ import dataclasses
 from typing import Mapping, NamedTuple, Sequence, Set, Tuple
 
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.document.dehyphenation import (
+    DEFAULT_DEHYPHENATE_MODE,
+    DEHYPHENATE_MODES,
+    DehyphenateMode
+)
 from sciencebeam_parser.document.layout_noise_filter import LayoutNoiseFilterConfig
 from sciencebeam_parser.processors.graphic_regions import GraphicRegionConfig
 
@@ -73,6 +78,7 @@ class FrontConfig:
     join_abstract_continuations: bool = True
     select_titles: str = DEFAULT_TITLES_MODE
     split_titles_by_language: bool = True
+    dehyphenate: str = DEFAULT_DEHYPHENATE_MODE
     merge_author_blocks: bool = False
     deduplicate_authors: bool = True
     deduplicate_authors_by_initials: bool = True
@@ -90,6 +96,7 @@ class ReferencesConfig:
 VALUES_BY_SETTING: Mapping[Tuple[str, str], Sequence[str]] = {
     ('front', 'select_abstracts'): ABSTRACTS_MODES,
     ('front', 'select_titles'): TITLES_MODES,
+    ('front', 'dehyphenate'): DEHYPHENATE_MODES,
     ('references', 'select_titles'): REFERENCE_TITLES_MODES,
     ('references', 'select_dois'): REFERENCE_DOIS_MODES
 }
@@ -130,14 +137,23 @@ class FullTextProcessorConfig(NamedTuple):
             config = config._replace(**{  # pylint: disable=no-member
                 name: dataclasses.replace(getattr(config, name), **name_props)
             })
+        if config.front.dehyphenate is False:  # YAML reads a bare `off` as false
+            config = config._replace(front=dataclasses.replace(
+                config.front, dehyphenate=DehyphenateMode.OFF
+            ))
         validate_fragment_link_doi(
             config.references.fragment_link_doi, config.references.kept_by_any_of
         )
         for (scope, name), values in VALUES_BY_SETTING.items():
             value = getattr(getattr(config, scope), name)
             if value not in values:
+                quoting_hint = (
+                    ' (YAML reads a bare word such as on or yes as a boolean; quote it)'
+                    if isinstance(value, bool) else ''
+                )
                 raise ValueError(
                     f'unknown {scope}.{name}: {value!r}, expected one of {list(values)}'
+                    + quoting_hint
                 )
         return config
 
