@@ -508,13 +508,13 @@ comparison report, a block counts how often the credited one was a translation,
 per corpus: a run that reads the translation of every multilingual paper scores
 like one that reads the article's own, and that block is where it shows.
 
-`abstract_language` scores the declaration rather than the text, and is empty
-unless the run's profile sets `front.select_abstracts` to `variants` or
-`merged_by_language`: `recommended` does, and every other shipped profile does
-not. The `grobid_crf_abstract_variants` and
+`abstract_language` scores the declaration rather than the text. Every profile
+declares the language of each abstract it emits, where the text names one, so
+under `front.select_abstracts: first` it scores the first abstract alone. The
+`grobid_crf_abstract_variants` and
 `grobid_crf_abstract_merged_by_language` profiles are `grobid_crf_0_9_0` with
-that one setting changed, so a run against either and a run against it differ in
-nothing else. The two sides are paired
+`front.select_abstracts` changed, so a run against either and a run against it
+differ in nothing else. The two sides are paired
 by the abstract's text, since neither the order nor the count can be relied on,
 and a gold abstract declaring no language is left out of the
 comparison rather than counted as a miss: `biorxiv`, `ore` and `pkp` declare

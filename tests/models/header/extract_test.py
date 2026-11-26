@@ -621,9 +621,9 @@ class TestHeaderSemanticExtractor:
             for abstract in abstracts
         ] == [LONG_ABSTRACT_1]
 
-    def test_should_not_declare_a_language_by_default(self):
+    def test_should_declare_the_language_of_the_first_abstract_by_default(self):
         abstracts = self._abstracts([ENGLISH_ABSTRACT_1])
-        assert [abstract.language for abstract in abstracts] == [None]
+        assert [abstract.language for abstract in abstracts] == ['en']
 
     def test_should_add_additional_abstract_as_further_abstract(self):
         abstracts = self._abstracts(
