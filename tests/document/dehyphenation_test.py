@@ -118,6 +118,11 @@ class TestDehyphenateByDocument:
             _block('the COVID-', '19 wave'), 'during COVID-19'
         ) == 'the COVID-19 wave'
 
+    def test_should_keep_the_hyphen_after_a_digit_the_document_sets_before_it(self):
+        assert _by_document(
+            _block('a 3-', 'dimensional model'), 'the 3-dimensional structure'
+        ) == 'a 3-dimensional model'
+
     def test_should_not_remove_the_hyphen_before_a_capital(self):
         assert _by_document(
             _block('the SARS-', 'CoV-2 virus'), 'SARSCoV'

@@ -41,6 +41,10 @@ def _is_word(text: str) -> bool:
     return unicodedata.normalize('NFC', text).isalpha()
 
 
+def _is_word_part(text: str) -> bool:
+    return unicodedata.normalize('NFC', text).isalnum()
+
+
 def _get_word_key(text: str) -> str:
     return unicodedata.normalize('NFC', text).lower()
 
@@ -50,13 +54,13 @@ def _get_broken_word_prefix(tokens: Sequence[LayoutToken]) -> Optional[str]:
     if not tokens:
         return None
     last = tokens[-1]
-    if last.text.endswith(SOFT_HYPHEN) and _is_word(last.text[:-1]):
+    if last.text.endswith(SOFT_HYPHEN) and _is_word_part(last.text[:-1]):
         return last.text[:-1]
     if (
         last.text == HYPHEN
         and len(tokens) >= 2
         and not tokens[-2].whitespace
-        and _is_word(tokens[-2].text)
+        and _is_word_part(tokens[-2].text)
     ):
         return tokens[-2].text
     return None
@@ -69,8 +73,8 @@ def _get_hyphenated_words_in_line(tokens: Sequence[LayoutToken]) -> List[str]:
         if hyphen.text == HYPHEN
         and not before.whitespace
         and not hyphen.whitespace
-        and _is_word(before.text)
-        and unicodedata.normalize('NFC', after.text).isalnum()
+        and _is_word_part(before.text)
+        and _is_word_part(after.text)
     ]
 
 
