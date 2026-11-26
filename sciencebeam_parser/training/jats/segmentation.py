@@ -1248,6 +1248,7 @@ def _claim_the_publishing_declarations_after_the_references(
     opened = _get_first_reference_index(seg_lines)
     if opened is None:
         return
+    measure_by_page = _get_measure_by_page(seg_lines)
     for index in range(opened, len(seg_lines)):
         if seg_lines[index].seg_label in _TRAILING_MATTER_LABELS and not (
             _is_grounded_in(seg_lines[index], annotated, _DEPOSITED_NOTE_FIELDS)
@@ -1258,6 +1259,8 @@ def _claim_the_publishing_declarations_after_the_references(
         if len(seg_lines[index].text.strip()) > _STATEMENT_HEADING_MAX_LENGTH:
             continue
         if not _PUBLISHING_DECLARATION_PATTERN.match(seg_lines[index].text):
+            continue
+        if not _is_set_on_a_line_of_its_own(seg_lines, index, measure_by_page):
             continue
         block_index = seg_lines[index].block_index
         for seg_line in seg_lines[index:]:
@@ -1745,11 +1748,11 @@ def _claim_the_conflict_declared_without_a_heading(
     if first_reference is None:
         return
     opening_page = _the_page_the_declarations_open_on(seg_lines, first_reference)
+    if opening_page is None:
+        return
     for block in _group_lines_by_block(seg_lines).values():
         page_number = _get_page_number(block[0])
-        if page_number is None or (
-            opening_page is not None and page_number < opening_page
-        ):
+        if page_number is None or page_number < opening_page:
             continue
         if any(
             seg_line.seg_label in _TRAILING_MATTER_LABELS
@@ -1806,14 +1809,14 @@ def _claim_the_declarations_the_article_closes_with(
     if first_reference is None:
         return
     closing_page = _the_page_the_declarations_open_on(seg_lines, first_reference)
+    if closing_page is None:
+        return
     text_size = _get_prevailing_type_size(seg_lines)
     measure_by_page = _get_measure_by_page(seg_lines)
     label: Optional[str] = None
     for index, seg_line in enumerate(seg_lines):
         page_number = _get_page_number(seg_line)
-        if page_number is None or (
-            closing_page is not None and page_number < closing_page
-        ):
+        if page_number is None or page_number < closing_page:
             continue
         if (
             _is_grounded_in(seg_line, annotated, _DECLARED_REGION_FIELDS)

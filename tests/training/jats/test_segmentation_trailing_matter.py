@@ -779,16 +779,20 @@ class TestWhatAJournalDeclaresAboutThePublication:
     """A journal closes with who holds the copyright and how the article was
     reviewed, and the deposit files each among the notes of the back matter."""
 
-    def _make_doc(self, heading: str):
+    def _make_doc(self, heading: str, runs_on: bool = False):
         references = [
             make_line('Egret', 'A.', f'Wading{index}', 'in', 'the', 'reeds.',
                       y=100.0 + 14 * index)
             for index in range(5)
         ]
+        under = (
+            ('elsewhere', ',', 'where', 'the', 'reviewer', 'read', 'it', '.')
+            if runs_on else
+            ('The', 'journal', 'checks', 'every', 'article', 'it', 'takes.')
+        )
         declaration = [
             make_line(*heading.split(' '), y=200.0),
-            make_line('The', 'journal', 'checks', 'every', 'article', 'it',
-                      'takes.', y=214.0),
+            make_line(*under, y=214.0),
         ]
         foot = make_line('Journal', 'of', 'Marsh', 'Birds,', 'v.', '12,', '2024',
                          y=228.0)
@@ -805,6 +809,13 @@ class TestWhatAJournalDeclaresAboutThePublication:
         doc, annotated, declaration = self._make_doc(
             'Copyright protection in the USA does not apply to this work, which'
             ' may be protected elsewhere.'
+        )
+        labels = derive_labels(doc, annotated)
+        assert labels[id(declaration[0])] != SEG_FRONT
+
+    def test_a_short_line_the_sentence_runs_on_from_is_not_a_heading(self):
+        doc, annotated, declaration = self._make_doc(
+            'Copyright protection in the USA does not apply', runs_on=True
         )
         labels = derive_labels(doc, annotated)
         assert labels[id(declaration[0])] != SEG_FRONT
