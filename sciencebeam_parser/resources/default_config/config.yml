@@ -721,7 +721,7 @@ render_timeout: 120
 max_upload_bytes: 67108864
 
 # Which origins a browser page may call the API from, matched exactly, or `*`
-# for every origin. Empty permits none. See doc/cors.md.
+# for every origin. Empty permits none. See docs/cors.md.
 cors:
   allowed_origins: []
 
