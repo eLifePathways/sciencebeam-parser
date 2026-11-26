@@ -396,10 +396,8 @@ def _tag_headnotes_by_text_repetition(
 
 _PAGE_NUMBER_ROW_PRECISION = 2
 
-# How wide a corner is.  The inset is read from where the line starts, so a
-# number set against the right edge reads wider than its mirror by its own
-# width, and a journal whose margins differ a little sets one spot rather than
-# two half-spots.
+# How much the two outer margins of a journal may differ and still be the one
+# corner it sets its page number in.
 _PAGE_NUMBER_INSET_TOLERANCE = 25.0
 
 # How closely the inset a number is set at has to repeat for the number to be
@@ -507,16 +505,23 @@ def _get_inset_from_the_nearer_edge(
     seg_line: _SegLine,
     page_meta_by_number: Mapping[int, LayoutPageMeta],
 ) -> Optional[float]:
-    """How far a line starts from whichever side of its page it is nearer."""
+    """How far a line stands from whichever side of its page it is nearer.
+
+    To the near edge of the line, not to where it starts: a verso and a recto
+    that set their number in the same corner set it the same distance from the
+    edge of the paper, and reading the right-hand one from where it starts
+    would make it that much further in than its mirror.
+    """
     position = _get_line_position(seg_line)
     page_number = _get_page_number(seg_line)
-    if position is None or page_number is None:
+    width = _get_line_width(seg_line)
+    if position is None or page_number is None or width is None:
         return None
     page_meta = page_meta_by_number.get(page_number)
     coordinates = page_meta.coordinates if page_meta is not None else None
     if coordinates is None or not coordinates.width:
         return None
-    return min(position[0], coordinates.width - position[0])
+    return min(position[0], coordinates.width - position[0] - width)
 
 
 def _iter_the_numbers_set_at_one_inset(
@@ -524,9 +529,10 @@ def _iter_the_numbers_set_at_one_inset(
 ) -> Iterator[List[_SegLine]]:
     """The numbers a document sets the same distance from the edge of the page.
 
-    Each spot is as wide as a corner, measured from where it opens: a row of
-    numbers set evenly across the measure is a step apart all the way, and
-    measured from its neighbour it would read as one spot the width of the page.
+    The corner is measured from where it opens, so that it stays a corner: a
+    row of figures set evenly across the measure is a step apart all the way,
+    and measured from its neighbour it would read as one spot the width of the
+    page.
     """
     cluster: List[_SegLine] = []
     opened: Optional[float] = None
