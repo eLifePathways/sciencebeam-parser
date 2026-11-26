@@ -9,7 +9,7 @@ The header model labels every region it reads as an abstract, and `front.select_
 | value | what it emits |
 | --- | --- |
 | `first` | the first abstract, with the rest left as notes |
-| `variants` | every abstract that is at least 0.15 of the first one's length, each declaring its own language |
+| `variants` | every abstract that is at least 0.15 of the first one's length |
 | `merged_by_language` | the same, with abstracts sharing a language joined into one |
 
 The `recommended` and `recommended_cv` profiles ask for `variants`; every other shipped profile leaves it at `first`. A profile sets it under `processors.fulltext.front`.
@@ -18,7 +18,7 @@ An abstract the page prints in two pieces — the second half carried over a pag
 
 ## What each abstract declares
 
-Each abstract carries the language of its own text in `xml:lang`, under `variants` and above, where the text is long enough and consistent enough to name one. A document whose abstracts are in Portuguese and English therefore says which is which, in the TEI and in the JATS.
+Each abstract carries the language of its own text in `xml:lang`, in every mode, where the text is long enough and consistent enough to name one. A document whose abstracts are in Portuguese and English therefore says which is which, in the TEI and in the JATS.
 
 ## The heading printed above an abstract
 

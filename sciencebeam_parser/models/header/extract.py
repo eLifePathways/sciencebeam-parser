@@ -105,18 +105,6 @@ def _get_token_count(layout_block: LayoutBlock) -> int:
     return sum(1 for _ in layout_block.iter_all_tokens())
 
 
-def get_semantic_abstract_for_layout_block(
-    layout_block: LayoutBlock,
-    with_language: bool = True,
-    heading_block: Optional[LayoutBlock] = None
-) -> SemanticAbstract:
-    return SemanticAbstract(
-        layout_block=layout_block,
-        language=detect_language(str(LayoutTokensText(layout_block))) if with_language else None,
-        heading_block=heading_block
-    )
-
-
 TITLE_SAME_TEXT_PATTERN = re.compile(r'[^0-9a-z\u00c0-\u024f]+')
 
 
@@ -540,9 +528,9 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
                     carry_variants
                     and is_abstract_variant(abstract_layout_block, primary_abstract_block)
                 ):
-                    semantic_abstract = get_semantic_abstract_for_layout_block(
-                        abstract_layout_block,
-                        with_language=carry_variants,
+                    semantic_abstract = SemanticAbstract(
+                        layout_block=abstract_layout_block,
+                        language=abstract_language,
                         heading_block=get_abstract_heading_block(
                             previous_label, previous_block
                         )
