@@ -298,9 +298,9 @@ dev-script-end-to-end-tests:
 
 dev-build-python-readme:
 	$(PYTHON) scripts/dev/update_readme.py \
-		--source=./doc/python_library.md \
-		--target=./doc/generated_python_library.md \
-		--source-base-path=doc \
+		--source=./docs/python_library.md \
+		--target=./docs/generated_python_library.md \
+		--source-base-path=docs \
 		--link-prefix=https://github.com/eLifePathways/sciencebeam-parser/blob/main
 
 

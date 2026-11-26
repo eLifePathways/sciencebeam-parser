@@ -233,7 +233,7 @@ def estimated_cost_components(
         )
     spent, charged_documents = usage.get("cost_credits"), usage.get("n_with_usage")
     if spent is not None and charged_documents:
-        # OpenRouter credits are dollars; `doc/llm_engine.md` says the number is the
+        # OpenRouter credits are dollars; `docs/llm_engine.md` says the number is the
         # provider's own, so whatever it discounted is already in it.
         parts[COST_COMPONENTS[1]] = spent / charged_documents * 1000
     return parts
@@ -255,7 +255,7 @@ def _estimated_cost_per_doc(
         parts.append(cpu_seconds / cpu_documents * cpu_usd_per_hour / 3600)
     spent, charged_documents = usage.get("cost_credits"), usage.get("n_with_usage")
     if spent is not None and charged_documents:
-        # OpenRouter credits are dollars; `doc/llm_engine.md` says the number is the
+        # OpenRouter credits are dollars; `docs/llm_engine.md` says the number is the
         # provider's own, so whatever it discounted is already in it.
         parts.append(spent / charged_documents)
     return sum(parts) if parts else None

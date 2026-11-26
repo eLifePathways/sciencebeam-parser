@@ -81,7 +81,7 @@ COPY tests ./tests
 COPY test-data ./test-data
 COPY benchmarks ./benchmarks
 COPY scripts/dev ./scripts/dev
-COPY doc ./doc
+COPY docs ./docs
 COPY .flake8 .pylintrc README.md ./
 
 # temporary workaround for tesserocr https://github.com/sirfz/tesserocr/issues/165
@@ -95,9 +95,9 @@ ARG python_package_version
 RUN echo "Setting version to: $python_package_version" && \
     if [ -n "$python_package_version" ]; then uv version "$python_package_version"; fi
 RUN python scripts/dev/update_readme.py \
-    --source=./doc/python_library.md \
-    --target=./doc/generated_python_library.md \
-    --source-base-path=doc \
+    --source=./docs/python_library.md \
+    --target=./docs/generated_python_library.md \
+    --source-base-path=docs \
     --link-prefix=https://github.com/elifesciences/sciencebeam-parser/blob/main
 RUN ls -lR sciencebeam_parser/resources &&\
     uv build --verbose && \

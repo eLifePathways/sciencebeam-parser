@@ -206,7 +206,7 @@ fields:
   - reference_doi
 
 scoring:
-  # What each scoring type and field means is in doc/benchmarks.md.
+  # What each scoring type and field means is in docs/benchmarks.md.
   default_methods:
     - levenshtein
     - edit_sim

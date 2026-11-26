@@ -30,7 +30,7 @@ class TestGetMarkdownWithResolvedLinks:
     def test_should_return_unchanged_markdown_without_links(self):
         assert get_markdown_with_resolved_links(
             '# Header 1',
-            source_base_path='doc',
+            source_base_path='docs',
             link_prefix=LINK_PREFIX_1
         ) == '# Header 1'
 
@@ -44,13 +44,13 @@ class TestGetMarkdownWithResolvedLinks:
     def test_should_return_change_relative_link_with_source_base_path(self):
         assert get_markdown_with_resolved_links(
             '# Header 1\n[link](other.md)',
-            source_base_path='doc',
+            source_base_path='docs',
             link_prefix=LINK_PREFIX_1
-        ) == f'# Header 1\n[link]({LINK_PREFIX_1}/doc/other.md)'
+        ) == f'# Header 1\n[link]({LINK_PREFIX_1}/docs/other.md)'
 
     def test_should_return_change_relative_link_path_outside_source_base_path(self):
         assert get_markdown_with_resolved_links(
             '# Header 1\n[link](../src/file.xyz)',
-            source_base_path='doc',
+            source_base_path='docs',
             link_prefix=LINK_PREFIX_1
         ) == f'# Header 1\n[link]({LINK_PREFIX_1}/src/file.xyz)'

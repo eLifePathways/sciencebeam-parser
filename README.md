@@ -53,9 +53,9 @@ For example `SCIENCEBEAM_PARSER__LOGGING__HANDLERS__LOG_FILE__LEVEL` would overr
 Generally, resources and models are loaded on demand, depending on the `preload_on_startup` configuration option (`SCIENCEBEAM_PARSER__PRELOAD_ON_STARTUP` environment variable).
 Models will be loaded "eagerly" at startup, by setting the configuration option to `true`.
 
-Which models are used is decided by the `profile`, and a request may name another one — see [Profiles](doc/profiles.md).
+Which models are used is decided by the `profile`, and a request may name another one — see [Profiles](docs/profiles.md).
 
-No browser page on another origin may call the API as shipped; a deployment names the origins it answers — see [Cross-origin requests](doc/cors.md).
+No browser page on another origin may call the API as shipped; a deployment names the origins it answers — see [Cross-origin requests](docs/cors.md).
 
 #### Sequence models from the Hugging Face Hub
 
@@ -386,9 +386,9 @@ Non-release builds are available with the `_unstable` image suffix, e.g. `ghcr.i
 ## See also
 
 * [Architecture](ARCHITECTURE.md)
-* [Python API](doc/python_library.md)
-* [Profiles](doc/profiles.md)
-* [Training](doc/training.md)
-* [Abstracts](doc/abstracts.md)
-* [Benchmarks](doc/benchmarks.md)
-* [LLM engine](doc/llm_engine.md)
+* [Python API](docs/python_library.md)
+* [Profiles](docs/profiles.md)
+* [Training](docs/training.md)
+* [Abstracts](docs/abstracts.md)
+* [Benchmarks](docs/benchmarks.md)
+* [LLM engine](docs/llm_engine.md)

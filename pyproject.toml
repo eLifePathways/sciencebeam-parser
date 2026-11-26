@@ -2,7 +2,7 @@
 name = "sciencebeam-parser"
 version = "0.0.0"
 description = "ScienceBeam Parser, parse scientific documents."
-readme = "doc/generated_python_library.md"
+readme = "docs/generated_python_library.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.124.0",
