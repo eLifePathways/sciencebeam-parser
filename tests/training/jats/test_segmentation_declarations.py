@@ -16,6 +16,7 @@ from sciencebeam_parser.training.jats.segmentation import (
     SEG_CONFLICT,
     SEG_CONTRIBUTION,
     SEG_FOOTNOTE,
+    SEG_FUNDING,
     SEG_FRONT,
     SEG_REFERENCES,
     SEG_REVIEW,
@@ -534,3 +535,54 @@ class TestTheHeadingACreditBlockIsPrintedUnder:
         doc, annotated, _, _, foot = self._make_doc(with_a_footer=True)
         labels = derive_labels(doc, annotated)
         assert labels[id(foot)] == SEG_FOOTNOTE
+
+
+class TestTheBlockAClosingCreditSharesWithADeclaration:
+    """A journal that sets its editor and what funded the work in one block."""
+
+    def _make_doc(self):
+        body = [
+            make_line('The', 'herons', f'waded{index}', y=40.0 + 10 * index)
+            for index in range(4)
+        ]
+        references = [
+            make_line('A', 'reference', f'listed{index}', y=100.0 + 20 * index)
+            for index in range(4)
+        ]
+        credited = [
+            make_line('EDITOR', '-', 'IN', '-', 'CHIEF', y=300.0, page_number=2),
+            make_line('Alida', 'Teal', '(', 'Fenwick', 'Institute', ')',
+                      y=315.0, page_number=2),
+        ]
+        funding = make_line('The', 'marsh', 'trust', 'paid', 'for', 'the', 'survey',
+                            '.', y=330.0, page_number=2)
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=body + references)],
+                meta=make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[LayoutBlock(lines=credited + [funding])],
+                meta=make_page_meta(2),
+            ),
+        ])
+        lines = list(doc.iter_all_lines())
+        fields = {
+            lines.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH for line in body
+        }
+        for line in references:
+            fields[lines.index(line)] = JatsFieldNames.REFERENCE
+        for line in credited:
+            fields[lines.index(line)] = JatsFieldNames.AUTHOR_NOTES
+        fields[lines.index(funding)] = JatsFieldNames.FUNDING_SECTION_PARAGRAPH
+        return doc, annotate(doc, fields), credited, funding
+
+    def test_the_editor_is_the_front_matter(self):
+        doc, annotated, credited, _ = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in credited] == [SEG_FRONT] * 2
+
+    def test_what_funded_the_work_is_left_where_the_deposit_files_it(self):
+        doc, annotated, _, funding = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert labels[id(funding)] == SEG_FUNDING

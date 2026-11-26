@@ -325,3 +325,39 @@ class TestAPageNumberInAMirroredMargin:
         doc, annotated, numbers = self._make_doc()
         labels = derive_labels(doc, annotated)
         assert [labels[id(number)] for number in numbers] == [SEG_PAGE] * 5
+
+
+class TestNumbersSetAtADriftingInset:
+    """A column of figures a chart steps a little further in on every spread."""
+
+    # A step short enough that each figure is within a corner's width of the
+    # one before it, while the first and the last are the measure apart.
+    _SET = (
+        (1, 20.0, '31'), (2, 20.0, '52'), (3, 44.0, '18'), (4, 44.0, '47'),
+        (5, 68.0, '63'), (6, 68.0, '25'), (7, 92.0, '59'), (8, 92.0, '14'),
+    )
+
+    def _make_doc(self):
+        numbers = [
+            make_line(figure, y=100.0, x=inset, page_number=page_number)
+            for page_number, inset, figure in self._SET
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=[number]),
+                    LayoutBlock(lines=[make_line(
+                        'Herons', 'wade', f'on{page_number}', 'the', 'marsh',
+                        y=400.0, page_number=page_number,
+                    )]),
+                ],
+                meta=make_page_meta(page_number),
+            )
+            for (page_number, _inset, _figure), number in zip(self._SET, numbers)
+        ])
+        return doc, annotate(doc, {}), numbers
+
+    def test_no_corner_runs_across_the_page(self):
+        doc, annotated, numbers = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert SEG_PAGE not in [labels[id(number)] for number in numbers]

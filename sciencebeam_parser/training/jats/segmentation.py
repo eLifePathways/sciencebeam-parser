@@ -396,10 +396,10 @@ def _tag_headnotes_by_text_repetition(
 
 _PAGE_NUMBER_ROW_PRECISION = 2
 
-# Two numbers are in the same corner where their insets differ by less than a
-# margin.  The inset is read from where the line starts, so a number set against
-# the right edge reads wider than its mirror by its own width, and a journal
-# whose margins differ a little sets one spot rather than two half-spots.
+# How wide a corner is.  The inset is read from where the line starts, so a
+# number set against the right edge reads wider than its mirror by its own
+# width, and a journal whose margins differ a little sets one spot rather than
+# two half-spots.
 _PAGE_NUMBER_INSET_TOLERANCE = 25.0
 
 # How closely the inset a number is set at has to repeat for the number to be
@@ -522,15 +522,22 @@ def _get_inset_from_the_nearer_edge(
 def _iter_the_numbers_set_at_one_inset(
     placed: List[Tuple[float, _SegLine]]
 ) -> Iterator[List[_SegLine]]:
-    """The numbers a document sets the same distance from the edge of the page."""
+    """The numbers a document sets the same distance from the edge of the page.
+
+    Each spot is as wide as a corner, measured from where it opens: a row of
+    numbers set evenly across the measure is a step apart all the way, and
+    measured from its neighbour it would read as one spot the width of the page.
+    """
     cluster: List[_SegLine] = []
-    last: Optional[float] = None
+    opened: Optional[float] = None
     for inset, seg_line in sorted(placed, key=lambda item: item[0]):
-        if last is not None and inset - last > _PAGE_NUMBER_INSET_TOLERANCE:
+        if opened is not None and inset - opened > _PAGE_NUMBER_INSET_TOLERANCE:
             yield cluster
             cluster = []
+            opened = None
+        if opened is None:
+            opened = inset
         cluster.append(seg_line)
-        last = inset
     if cluster:
         yield cluster
 
@@ -2053,13 +2060,32 @@ def _claim_the_rest_of_the_block_the_front_matter_fills(
     Only a block short enough to be an imprint, and only over what the regions
     have not claimed: a column where the front matter runs into the body is
     long, and says nothing about the lines it ends with.
+
+    And no later than the page the article's text begins on.  The editors a
+    journal credits on its closing page are front matter too, and the
+    declaration the page prints beside them is not theirs.
     """
+    first_body_page = next(
+        (
+            page_number for page_number in (
+                _get_page_number(seg_line) for seg_line in seg_lines
+                if seg_line.seg_label == SEG_BODY
+            )
+            if page_number is not None
+        ),
+        None,
+    )
     taken = {None, SEG_BODY} | set(_STATEMENT_LABELS)
     by_block: Dict[int, List[_SegLine]] = {}
     for seg_line in seg_lines:
         by_block.setdefault(seg_line.block_index, []).append(seg_line)
     for block in by_block.values():
         if len(block) > _IMPRINT_BLOCK_MAX_LINES:
+            continue
+        page_number = _get_page_number(block[0])
+        if first_body_page is not None and (
+            page_number is None or page_number > first_body_page
+        ):
             continue
         front = [sl for sl in block if sl.seg_label == SEG_FRONT]
         if len(front) * 2 <= len(block):
