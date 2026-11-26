@@ -1,5 +1,6 @@
 import functools
 import itertools
+import unicodedata
 from typing import AbstractSet, Callable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from sciencebeam_parser.document.layout_document import (
@@ -37,7 +38,11 @@ EMPTY_DOCUMENT_WORDS = DocumentWords(words=frozenset(), hyphenated_words=frozens
 
 
 def _is_word(text: str) -> bool:
-    return text.isalpha()
+    return unicodedata.normalize('NFC', text).isalpha()
+
+
+def _get_word_key(text: str) -> str:
+    return unicodedata.normalize('NFC', text).lower()
 
 
 def _get_broken_word_prefix(tokens: Sequence[LayoutToken]) -> Optional[str]:
@@ -59,13 +64,13 @@ def _get_broken_word_prefix(tokens: Sequence[LayoutToken]) -> Optional[str]:
 
 def _get_hyphenated_words_in_line(tokens: Sequence[LayoutToken]) -> List[str]:
     return [
-        f'{before.text}-{after.text}'.lower()
+        _get_word_key(f'{before.text}-{after.text}')
         for before, hyphen, after in zip(tokens, tokens[1:], tokens[2:])
         if hyphen.text == HYPHEN
         and not before.whitespace
         and not hyphen.whitespace
         and _is_word(before.text)
-        and after.text.isalnum()
+        and unicodedata.normalize('NFC', after.text).isalnum()
     ]
 
 
@@ -79,10 +84,15 @@ def get_document_words(layout_document: LayoutDocument) -> DocumentWords:
         for tokens in lines
     ]
     for index, tokens in enumerate(lines):
-        unbroken_start = 1 if index > 0 and broken_word_token_count_by_line[index - 1] else 0
+        starts_with_continuation = (
+            index > 0
+            and broken_word_token_count_by_line[index - 1] > 0
+            and tokens[0].text.islower()
+        )
+        unbroken_start = 1 if starts_with_continuation else 0
         unbroken_end = len(tokens) - broken_word_token_count_by_line[index]
         words.update(
-            token.text.lower()
+            _get_word_key(token.text)
             for token in tokens[unbroken_start:unbroken_end]
             if _is_word(token.text)
         )
@@ -94,8 +104,11 @@ def _with_line_end_joined(tokens: List[LayoutToken], remove_hyphen: bool) -> Lis
     last = tokens[-1]
     if last.text == HYPHEN and remove_hyphen:
         return tokens[:-2] + [tokens[-2]._replace(whitespace='')]
-    if last.text.endswith(SOFT_HYPHEN) and remove_hyphen:
-        return tokens[:-1] + [last._replace(text=last.text[:-1], whitespace='')]
+    if last.text.endswith(SOFT_HYPHEN):
+        prefix = last.text[:-1]
+        return tokens[:-1] + [last._replace(
+            text=prefix if remove_hyphen else prefix + HYPHEN, whitespace=''
+        )]
     return tokens[:-1] + [last._replace(whitespace='')]
 
 
@@ -105,12 +118,12 @@ def _should_remove_hyphen_by_document(
     document_words: DocumentWords
 ) -> Optional[bool]:
     """True or False where the document sets the joined or the hyphenated word, else None."""
-    if f'{prefix}-{continuation}'.lower() in document_words.hyphenated_words:
+    if _get_word_key(f'{prefix}-{continuation}') in document_words.hyphenated_words:
         return False
     if (
         _is_word(continuation)
         and continuation.islower()
-        and (prefix + continuation).lower() in document_words.words
+        and _get_word_key(prefix + continuation) in document_words.words
     ):
         return True
     return None

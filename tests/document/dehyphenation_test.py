@@ -60,6 +60,14 @@ class TestGetDocumentWords:
             'the', 'of', 'colour'
         }
 
+    def test_should_keep_a_capitalised_first_word_of_the_line_after_a_broken_word(self):
+        assert get_document_words(_document('the per-', 'Heading of colour')).words == {
+            'the', 'heading', 'of', 'colour'
+        }
+
+    def test_should_collect_a_word_with_combining_accents_in_composed_form(self):
+        assert get_document_words(_document('percepc\u0327a\u0303o')).words == {'percepção'}
+
     def test_should_collect_hyphenated_words_set_inside_a_line(self):
         assert get_document_words(
             _document('an alkali-activated binder', 'a binder - activated', 'the COVID-19 wave')
@@ -112,6 +120,16 @@ class TestDehyphenateByDocument:
         assert _by_document(
             _block('the per\u00ad', 'cepção of colour'), 'percepção'
         ) == 'the percepção of colour'
+
+    def test_should_remove_the_hyphen_before_a_continuation_with_combining_accents(self):
+        assert _by_document(
+            _block('the per-', 'cepc\u0327a\u0303o of colour'), 'percepção'
+        ) == 'the percepc\u0327a\u0303o of colour'
+
+    def test_should_write_a_kept_soft_hyphen_as_a_hyphen(self):
+        assert _by_document(
+            _block('an alkali\u00ad', 'activated binder'), 'alkali-activated'
+        ) == 'an alkali-activated binder'
 
     def test_should_join_the_first_line_of_the_next_block(self):
         block = LayoutBlock.merge_blocks([_block('the per-'), _block('cepção of colour')])
