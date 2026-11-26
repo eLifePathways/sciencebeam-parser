@@ -16,15 +16,8 @@ from sciencebeam_parser.document.layout_document import (
 )
 
 
-def _line(
-    text: str,
-    y: Optional[float] = None,
-    font: Optional[LayoutFont] = None,
-    block_id: int = -1
-) -> LayoutLine:
-    line = LayoutLine.for_text(
-        text, line_meta=LayoutLineMeta(line_id=id(text), block_id=block_id)
-    )
+def _line(text: str, y: Optional[float] = None, font: Optional[LayoutFont] = None) -> LayoutLine:
+    line = LayoutLine.for_text(text, line_meta=LayoutLineMeta(line_id=id(text)))
     return LayoutLine(tokens=[
         token._replace(
             coordinates=(
@@ -74,8 +67,8 @@ class TestGetDocumentWords:
 
     def test_should_keep_the_first_word_of_the_next_block_after_a_broken_word(self):
         document = LayoutDocument(pages=[LayoutPage(blocks=[
-            LayoutBlock(lines=[_line('the per-', block_id=1)]),
-            LayoutBlock(lines=[_line('cepção of colour', block_id=2)])
+            LayoutBlock(lines=[_line('the per-')]),
+            LayoutBlock(lines=[_line('cepção of colour')])
         ])])
         assert get_document_words(document).words == {'the', 'cepção', 'of', 'colour'}
 
@@ -189,6 +182,9 @@ class TestDehyphenateAsGrobid:
             _line('cepção of colour', y=10)
         ])
         assert _as_grobid(block) == 'the per- cepção of colour'
+
+    def test_should_join_across_a_dash_set_apart_from_the_words_as_grobid_does(self):
+        assert _as_grobid(_block('the results -', 'which differ')) == 'the resultswhich differ'
 
     def test_should_not_remove_a_soft_hyphen(self):
         assert _as_grobid(

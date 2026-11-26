@@ -98,6 +98,12 @@ class TestFullTextProcessorConfig:
         }))
         assert config.front.dehyphenate == 'off'
 
+    def test_should_say_to_quote_a_bare_yaml_word_read_as_true(self):
+        with pytest.raises(ValueError, match='quote it'):
+            FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+                'processors': {'fulltext': {'front': yaml.safe_load('dehyphenate: on')}}
+            }))
+
     @pytest.mark.parametrize('scope,name', [
         ('front', 'select_abstracts'),
         ('front', 'select_titles'),

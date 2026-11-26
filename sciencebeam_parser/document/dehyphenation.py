@@ -1,7 +1,7 @@
 import functools
 import itertools
 import unicodedata
-from typing import AbstractSet, Callable, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import AbstractSet, Callable, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
 from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
@@ -74,10 +74,9 @@ def _get_hyphenated_words_in_line(tokens: Sequence[LayoutToken]) -> List[str]:
     ]
 
 
-def get_document_words(layout_document: LayoutDocument) -> DocumentWords:
-    lines = [line.tokens for line in layout_document.iter_all_lines() if line.tokens]
-    words: Set[str] = set()
-    hyphenated_words: Set[str] = set()
+def _iter_unbroken_words_in_block(layout_block: LayoutBlock) -> Iterable[str]:
+    """The words of a block, leaving out the parts of a word broken at a line end."""
+    lines = [line.tokens for line in layout_block.lines if line.tokens]
     broken_word_token_count_by_line = [
         (1 if tokens[-1].text.endswith(SOFT_HYPHEN) else 2)
         if _get_broken_word_prefix(tokens) is not None else 0
@@ -87,18 +86,28 @@ def get_document_words(layout_document: LayoutDocument) -> DocumentWords:
         starts_with_continuation = (
             index > 0
             and broken_word_token_count_by_line[index - 1] > 0
-            and lines[index - 1][-1].line_meta.block_id == tokens[0].line_meta.block_id
             and tokens[0].text.islower()
         )
         unbroken_start = 1 if starts_with_continuation else 0
         unbroken_end = len(tokens) - broken_word_token_count_by_line[index]
-        words.update(
-            _get_word_key(token.text)
-            for token in tokens[unbroken_start:unbroken_end]
-            if _is_word(token.text)
+        for token in tokens[unbroken_start:unbroken_end]:
+            if _is_word(token.text):
+                yield _get_word_key(token.text)
+
+
+def get_document_words(layout_document: LayoutDocument) -> DocumentWords:
+    blocks = list(layout_document.iter_all_blocks())
+    return DocumentWords(
+        words=frozenset(
+            word for block in blocks for word in _iter_unbroken_words_in_block(block)
+        ),
+        hyphenated_words=frozenset(
+            word
+            for block in blocks
+            for line in block.lines
+            for word in _get_hyphenated_words_in_line(line.tokens)
         )
-        hyphenated_words.update(_get_hyphenated_words_in_line(tokens))
-    return DocumentWords(words=frozenset(words), hyphenated_words=frozenset(hyphenated_words))
+    )
 
 
 def _with_line_end_joined(tokens: List[LayoutToken], remove_hyphen: bool) -> List[LayoutToken]:

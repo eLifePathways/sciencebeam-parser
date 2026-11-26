@@ -147,8 +147,13 @@ class FullTextProcessorConfig(NamedTuple):
         for (scope, name), values in VALUES_BY_SETTING.items():
             value = getattr(getattr(config, scope), name)
             if value not in values:
+                quoting_hint = (
+                    ' (YAML reads a bare word such as on or yes as a boolean; quote it)'
+                    if isinstance(value, bool) else ''
+                )
                 raise ValueError(
                     f'unknown {scope}.{name}: {value!r}, expected one of {list(values)}'
+                    + quoting_hint
                 )
         return config
 
