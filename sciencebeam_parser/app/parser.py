@@ -1,7 +1,7 @@
 import logging
 import os
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
@@ -180,7 +180,7 @@ def create_asset_zip_for_semantic_document(
         )
         for semantic_graphic in semantic_graphic_list:
             assert semantic_graphic.relative_path, \
-                "graphic relative_path missing, ensure extract_graphic_assets was enabled"
+                "graphic relative_path missing, ensure extract.graphic_assets was enabled"
             layout_graphic = semantic_graphic.layout_graphic
             assert layout_graphic
             assert layout_graphic.local_file_path
@@ -514,15 +514,15 @@ class ScienceBeamParserSessionParsedLayoutDocument(_ScienceBeamParserSessionDeri
             return self.pdf_path
         fulltext_processor_config = self.session.fulltext_processor_config
         if response_media_type in ASSET_ZIP_MEDIA_TYPES:
-            fulltext_processor_config = (
-                fulltext_processor_config
-                ._replace(
-                    extract_graphic_assets=True,
-                    extract_graphic_bounding_boxes=True
+            fulltext_processor_config = fulltext_processor_config._replace(
+                extract=dataclass_replace(
+                    fulltext_processor_config.extract,
+                    graphic_assets=True,
+                    graphics=True
                 )
             )
-            assert fulltext_processor_config.extract_graphic_assets, \
-                "extract_graphic_assets required for asset zip"
+            assert fulltext_processor_config.extract.graphic_assets, \
+                "extract.graphic_assets required for asset zip"
         return (
             self.get_parsed_semantic_document(
                 fulltext_processor_config

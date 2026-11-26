@@ -257,44 +257,44 @@ class FullTextProcessor:
             '<header>'
         ).remove_empty_blocks()
         document = SemanticDocument()
-        if self.config.extract_front:
+        if self.config.extract.front:
             self._process_header_layout_document(
                 header_layout_document=header_layout_document,
                 semantic_document=document
             )
 
-        if self.config.extract_body_sections:
+        if self.config.extract.body_sections:
             self._update_semantic_section_using_segmentation_result_and_fulltext_model(
                 document.body_section,
                 segmentation_label_result,
                 '<body>',
                 SemanticSectionTypes.OTHER
             )
-        if self.config.extract_acknowledgements:
+        if self.config.extract.acknowledgements:
             self._update_semantic_section_using_segmentation_result_and_fulltext_model(
                 document.back_section,
                 segmentation_label_result,
                 '<acknowledgement>',
                 SemanticSectionTypes.ACKNOWLEDGEMENT
             )
-        if self.config.extract_back_sections:
+        if self.config.extract.back_sections:
             self._update_semantic_section_using_segmentation_result_and_fulltext_model(
                 document.back_section,
                 segmentation_label_result,
                 '<annex>',
                 SemanticSectionTypes.OTHER
             )
-        if self.config.extract_references:
+        if self.config.extract.references:
             self._extract_raw_references_from_segmentation(
                 semantic_document=document,
                 segmentation_label_result=segmentation_label_result
             )
-        if self.config.extract_citation_fields:
+        if self.config.extract.reference_fields:
             self._extract_reference_fields_from_raw_references(
                 semantic_document=document,
                 links=list(layout_document.iter_all_links())
             )
-            if self.config.extract_citation_authors or self.config.extract_citation_editors:
+            if self.config.extract.reference_authors or self.config.extract.reference_editors:
                 self._extract_reference_name_lists_from_raw_references(
                     semantic_document=document
                 )
@@ -311,7 +311,7 @@ class FullTextProcessor:
                     )
                 )
             ]))
-        if self.config.extract_figure_fields:
+        if self.config.extract.figure_fields:
             self._extract_figure_fields_from_raw_figures(semantic_document=document)
             figures = list(document.iter_by_type_recursively(SemanticFigure))
             figure_citations = list(document.iter_by_type_recursively(SemanticFigureCitation))
@@ -319,7 +319,7 @@ class FullTextProcessor:
             self._assign_target_content_ids(figure_citations, SimpleContentIdMatcher(
                 self._get_semantic_content_text_by_content_id(figures, SemanticLabel)
             ))
-        if self.config.extract_table_fields:
+        if self.config.extract.table_fields:
             self._extract_table_fields_from_raw_tables(semantic_document=document)
             tables = list(document.iter_by_type_recursively(SemanticTable))
             table_citations = list(document.iter_by_type_recursively(SemanticTableCitation))
@@ -332,7 +332,7 @@ class FullTextProcessor:
                 layout_block=nb.block,
                 note_type=nb.note_type
             ))
-        if self.config.extract_graphic_bounding_boxes:
+        if self.config.extract.graphics:
             self._process_graphics(
                 document=document,
                 layout_document=layout_document,
@@ -361,9 +361,9 @@ class FullTextProcessor:
             abstracts_mode=self.config.front.select_abstracts,
             split_titles_by_language=self.config.front.split_titles_by_language
         )
-        if self.config.extract_authors:
+        if self.config.extract.front_authors:
             self._process_raw_authors(semantic_document.front)
-        if self.config.extract_affiliations:
+        if self.config.extract.front_affiliations:
             self._process_raw_affiliations(semantic_document)
 
     def _preprocess_layout_graphics(
@@ -387,7 +387,7 @@ class FullTextProcessor:
         semantic_graphics = list(
             document_graphic_provider.iter_semantic_graphic_for_layout_document(
                 layout_document,
-                extract_graphic_assets=self.config.extract_graphic_assets
+                extract_graphic_assets=self.config.extract.graphic_assets
             )
         )
         if not semantic_graphics:
@@ -414,7 +414,7 @@ class FullTextProcessor:
             layout_document,
             config=self.config.graphic_regions,
             temp_dir=context.temp_dir,
-            require_file=self.config.extract_graphic_assets,
+            require_file=self.config.extract.graphic_assets,
             pdf_path=context.pdf_path,
             render_worker_pool=context.render_worker_pool
         )
@@ -433,7 +433,7 @@ class FullTextProcessor:
                     )
                 ).iter_semantic_graphic_for_layout_document(
                     layout_document,
-                    extract_graphic_assets=self.config.extract_graphic_assets
+                    extract_graphic_assets=self.config.extract.graphic_assets
                 )
             ),
             candidate_semantic_content_list=candidate_semantic_content_list,
@@ -788,14 +788,14 @@ class FullTextProcessor:
             for reference_list in reference_lists
             for ref in reference_list.iter_by_type(SemanticReference)
         ]
-        if self.config.extract_citation_authors:
+        if self.config.extract.reference_authors:
             raw_authors_by_reference = [
                 list(ref.iter_by_type(SemanticRawAuthors))
                 for ref in ref_list
             ]
         else:
             raw_authors_by_reference = []
-        if self.config.extract_citation_editors:
+        if self.config.extract.reference_editors:
             raw_editors_by_reference = [
                 list(ref.iter_by_type(SemanticRawEditors))
                 for ref in ref_list
@@ -829,14 +829,14 @@ class FullTextProcessor:
         for reference_list in reference_lists:
             for semantic_content in reference_list:
                 if isinstance(semantic_content, SemanticReference):
-                    if self.config.extract_citation_authors:
+                    if self.config.extract.reference_authors:
                         semantic_content.flat_map_inplace_by_type(
                             SemanticRawAuthors,
                             lambda raw_author: content_list_by_raw_author_id[
                                 id(raw_author)
                             ]
                         )
-                    if self.config.extract_citation_editors:
+                    if self.config.extract.reference_editors:
                         semantic_content.flat_map_inplace_by_type(
                             SemanticRawEditors,
                             lambda raw_editor: content_list_by_raw_editor_id[
