@@ -33,6 +33,7 @@ def get_run_record(
     source_name: Optional[str] = None,
     source_revision: Optional[str] = None,
     include_extra_columns: bool = False,
+    profile: Optional[str] = None,
 ) -> Dict[str, Any]:
     refused: List[Dict[str, Any]] = [
         {
@@ -63,6 +64,7 @@ def get_run_record(
             'raw_source_path': raw_source_path,
         },
         'include_extra_columns': include_extra_columns,
+        'profile': profile,
         'documents': {
             'read': len(assembled_records),
             'refused': len(refused),

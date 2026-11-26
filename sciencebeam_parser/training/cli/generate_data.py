@@ -62,8 +62,12 @@ from sciencebeam_parser.models.training_data import (
     TeiTrainingDataGenerator
 )
 from sciencebeam_parser.processors.fulltext.models import FullTextModels
-from sciencebeam_parser.resources.default_config import DEFAULT_CONFIG_FILE
 from sciencebeam_parser.config.config import AppConfig
+from sciencebeam_parser.training.generation_profile import (
+    DEFAULT_GENERATION_PROFILE,
+    get_generation_config,
+    get_generation_model_config
+)
 from sciencebeam_parser.app.parser import ScienceBeamParser
 from sciencebeam_parser.utils.media_types import MediaTypes
 from sciencebeam_parser.training.jats.aligner import extend_partial_reference_matches
@@ -208,8 +212,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         metavar='PROFILE',
         help=(
             'Resolve this configuration profile before generating, as the parser'
-            ' resolves it at serving. Without it the base configuration is used,'
-            ' which is not the same thing as the default profile.'
+            f' resolves it at serving (default: {DEFAULT_GENERATION_PROFILE}, not the'
+            ' profile the service serves).'
         )
     )
     parser.add_argument(
@@ -2008,29 +2012,6 @@ class _Progress:
 _worker_sciencebeam_parser: Optional[ScienceBeamParser] = None
 
 
-# What a run generates under when it names nothing. Stated here rather than
-# taken from the shipped `profile:`, which says what the service serves: a
-# corpus pre-annotated by the models trained on it is a different experiment
-# from one pre-annotated by GROBID, and which of the two a run wants is not
-# answered by what a deployment happens to serve.
-DEFAULT_GENERATION_PROFILE = 'grobid_crf'
-
-
-def get_generation_config(profile_name: Optional[str]) -> AppConfig:
-    """The configuration a run generates under.
-
-    Choosing a profile means setting the one the parser will resolve, not merging
-    its overlay in here: `ScienceBeamParser` builds its models through a
-    `ProfileRegistry` that resolves the *default* profile against the
-    configuration it was handed, so a `models:` written here is resolved over and
-    has no effect.
-    """
-    config = AppConfig.load_yaml(DEFAULT_CONFIG_FILE)
-    name = profile_name or DEFAULT_GENERATION_PROFILE
-    config.resolve_profile(name)  # reject an unknown name here, not in a worker
-    return AppConfig({**config.props, 'profile': name})
-
-
 def log_generation_config(
     config: AppConfig,
     enabled_models: Optional[frozenset]
@@ -2046,11 +2027,8 @@ def log_generation_config(
     ran.
     """
     LOGGER.info('generation profile: %s', config.get_active_profile_name())
-    model_config_by_name = config.resolve_profile().props.get('models', {})
     for model_name in get_enabled_model_names(enabled_models):
-        LOGGER.info(
-            '  %s: %r', model_name, model_config_by_name.get(model_name.replace('-', '_'), {})
-        )
+        LOGGER.info('  %s: %r', model_name, get_generation_model_config(config, model_name))
 
 
 def _worker_init(profile_name: Optional[str] = None) -> None:

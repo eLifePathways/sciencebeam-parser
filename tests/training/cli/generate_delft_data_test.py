@@ -34,6 +34,7 @@ from sciencebeam_parser.training.cli.generate_delft_data import (
     translate_tags_IOB_to_grobid
 )
 from sciencebeam_parser.training.quality.gate import CorpusRefusedError
+from sciencebeam_parser.training.generation_profile import DEFAULT_GENERATION_PROFILE
 from sciencebeam_parser.training.grobid_column_layout import (
     get_grobid_column_layout_for_model_name
 )
@@ -808,6 +809,43 @@ class TestMain:
         LOGGER.debug('texts: %r', texts)
         assert len(texts) == 1
         assert list(texts[0]) == tokens
+
+
+def _get_generation_config_for_args(
+    sciencebeam_parser_class_mock: MagicMock, *args: str
+):
+    with patch.object(
+        generate_delft_data_module, 'generate_delft_training_data'
+    ) as generate_mock:
+        main([
+            '--model-name=citation',
+            '--tei-source-path=corpus/*.tei.xml',
+            '--delft-output-path=output.data'
+        ] + list(args))
+    config = sciencebeam_parser_class_mock.from_config.call_args[0][0]
+    return config, generate_mock.call_args.kwargs['profile']
+
+
+class TestGenerationProfile:
+    def test_should_generate_citation_features_as_grobid_by_default(
+        self, sciencebeam_parser_class_mock: MagicMock
+    ):
+        config, profile = _get_generation_config_for_args(sciencebeam_parser_class_mock)
+        assert profile == DEFAULT_GENERATION_PROFILE
+        assert config.resolve_profile().props['models']['citation'][
+            'feature_flavour'
+        ] == 'grobid'
+
+    def test_should_generate_under_the_profile_asked_for(
+        self, sciencebeam_parser_class_mock: MagicMock
+    ):
+        config, profile = _get_generation_config_for_args(
+            sciencebeam_parser_class_mock, '--profile=recommended'
+        )
+        assert profile == 'recommended'
+        assert config.resolve_profile().props['models']['citation'][
+            'feature_flavour'
+        ] == 'sciencebeam'
 
 
 @log_on_exception
