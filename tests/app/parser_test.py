@@ -433,7 +433,7 @@ class TestScienceBeamParser:
                 assert image_data == IMAGE_DATA_1
             full_text_processor_kwargs = full_text_processor_class_mock.call_args[1]
             full_text_processor_config = full_text_processor_kwargs['config']
-            assert full_text_processor_config.extract_graphic_assets is True
+            assert full_text_processor_config.extract.graphic_assets is True
 
         def test_should_not_convert_pdf_to_jats_zip(  # pylint: disable=too-many-locals
             self,
@@ -483,7 +483,7 @@ class TestScienceBeamParser:
                 assert image_data == IMAGE_DATA_1
             full_text_processor_kwargs = full_text_processor_class_mock.call_args[1]
             full_text_processor_config = full_text_processor_kwargs['config']
-            assert full_text_processor_config.extract_graphic_assets is True
+            assert full_text_processor_config.extract.graphic_assets is True
 
 
 ATTRIBUTION_1 = DocumentAttribution(

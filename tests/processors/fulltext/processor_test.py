@@ -52,7 +52,11 @@ from sciencebeam_parser.processors.fulltext.processor import (
     FullTextProcessorConfig,
     FullTextProcessorDocumentContext
 )
-from sciencebeam_parser.processors.fulltext.config import FrontConfig, ReferencesConfig
+from sciencebeam_parser.processors.fulltext.config import (
+    ExtractConfig,
+    FrontConfig,
+    ReferencesConfig
+)
 from sciencebeam_parser.processors.fulltext.reference_links import (
     give_fragment_link_dois_to_previous_references
 )
@@ -648,7 +652,7 @@ class TestFullTextProcessorAffiliation:
         ref_block = LayoutBlock.merge_blocks([label_block, ref_text_block])
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
-            FullTextProcessorConfig(extract_citation_fields=False)
+            FullTextProcessorConfig(extract=ExtractConfig(reference_fields=False))
         )
 
         segmentation_model_mock = fulltext_models_mock.segmentation_model_mock
@@ -697,7 +701,7 @@ class TestFullTextProcessorAffiliation:
         ref_block = LayoutBlock.merge_blocks([label_block, ref_text_block])
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
-            FullTextProcessorConfig(extract_citation_fields=True)
+            FullTextProcessorConfig(extract=ExtractConfig(reference_fields=True))
         )
 
         segmentation_model_mock = fulltext_models_mock.segmentation_model_mock
@@ -762,7 +766,7 @@ class TestFullTextProcessorAffiliation:
         ref_block = LayoutBlock.merge_blocks([label_block, ref_title_block])
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
-            FullTextProcessorConfig(extract_citation_fields=True)
+            FullTextProcessorConfig(extract=ExtractConfig(reference_fields=True))
         )
         fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
             ref_block, '<references>'
@@ -810,7 +814,7 @@ class TestFullTextProcessorAffiliation:
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
             FullTextProcessorConfig(
-                extract_citation_fields=True,
+                extract=ExtractConfig(reference_fields=True),
                 references=ReferencesConfig(
                     kept_by_any_of=reference_kept_by_any_of,
                     fragment_link_doi=fragment_link_doi
@@ -852,7 +856,7 @@ class TestFullTextProcessorAffiliation:
         ref_block = ref_text_block
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
-            FullTextProcessorConfig(extract_citation_fields=True)
+            FullTextProcessorConfig(extract=ExtractConfig(reference_fields=True))
         )
 
         segmentation_model_mock = fulltext_models_mock.segmentation_model_mock
@@ -912,7 +916,7 @@ class TestFullTextProcessorAffiliation:
         ref_block = LayoutBlock.merge_blocks([ref_text_block])
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
-            FullTextProcessorConfig(extract_citation_fields=True)
+            FullTextProcessorConfig(extract=ExtractConfig(reference_fields=True))
         )
 
         segmentation_model_mock = fulltext_models_mock.segmentation_model_mock
@@ -973,7 +977,7 @@ class TestFullTextProcessorAffiliation:
         ref_block = LayoutBlock.merge_blocks([ref_text_block])
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
-            FullTextProcessorConfig(extract_citation_fields=True)
+            FullTextProcessorConfig(extract=ExtractConfig(reference_fields=True))
         )
         fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
             ref_block, '<references>'
@@ -1017,7 +1021,7 @@ class TestFullTextProcessorAffiliation:
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
             FullTextProcessorConfig(
-                extract_citation_fields=True,
+                extract=ExtractConfig(reference_fields=True),
                 references=ReferencesConfig(kept_by_any_of=reference_kept_by_any_of)
             )
         )
@@ -1055,9 +1059,11 @@ class TestFullTextProcessorAffiliation:
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
             FullTextProcessorConfig(
-                extract_citation_fields=True,
-                extract_citation_authors=False,
-                extract_citation_editors=True
+                extract=ExtractConfig(
+                    reference_fields=True,
+                    reference_authors=False,
+                    reference_editors=True
+                )
             )
         )
 
@@ -1131,9 +1137,11 @@ class TestFullTextProcessorAffiliation:
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
             FullTextProcessorConfig(
-                extract_figure_fields=True,
-                extract_graphic_bounding_boxes=True,
-                extract_graphic_assets=True
+                extract=ExtractConfig(
+                    figure_fields=True,
+                    graphics=True,
+                    graphic_assets=True
+                )
             )
         )
 
@@ -1228,10 +1236,12 @@ class TestFullTextProcessorAffiliation:
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
             FullTextProcessorConfig(
-                use_cv_model=True,
-                extract_figure_fields=True,
-                extract_graphic_bounding_boxes=True,
-                extract_graphic_assets=True
+                extract=ExtractConfig(
+                    figure_fields=True,
+                    graphics=True,
+                    graphic_assets=True
+                ),
+                use_cv_model=True
             )
         )
         processor_document_context = FullTextProcessorDocumentContext(
@@ -1303,7 +1313,7 @@ class TestFullTextProcessorAffiliation:
         fulltext_block = LayoutBlock.merge_blocks([citation_block, figure_block])
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
-            FullTextProcessorConfig(extract_table_fields=True)
+            FullTextProcessorConfig(extract=ExtractConfig(table_fields=True))
         )
 
         segmentation_model_mock = fulltext_models_mock.segmentation_model_mock
@@ -1373,9 +1383,11 @@ class TestFullTextProcessorAffiliation:
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
             FullTextProcessorConfig(
-                extract_figure_fields=True,
-                extract_graphic_bounding_boxes=True,
-                extract_graphic_assets=True
+                extract=ExtractConfig(
+                    figure_fields=True,
+                    graphics=True,
+                    graphic_assets=True
+                )
             )
         )
         segmentation_model_mock = fulltext_models_mock.segmentation_model_mock
@@ -1444,10 +1456,12 @@ class TestFullTextProcessorAffiliation:
         fulltext_processor = FullTextProcessor(
             fulltext_models_mock,
             FullTextProcessorConfig(
-                use_cv_model=True,
-                extract_figure_fields=True,
-                extract_graphic_bounding_boxes=True,
-                extract_graphic_assets=True
+                extract=ExtractConfig(
+                    figure_fields=True,
+                    graphics=True,
+                    graphic_assets=True
+                ),
+                use_cv_model=True
             )
         )
         processor_document_context = FullTextProcessorDocumentContext(

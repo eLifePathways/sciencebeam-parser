@@ -6,6 +6,7 @@ from sciencebeam_parser.document.layout_noise_filter import (
     LayoutNoiseFilterConfig,
 )
 from sciencebeam_parser.processors.fulltext.config import (
+    ExtractConfig,
     FrontConfig,
     FullTextProcessorConfig,
     RequestFieldNames
@@ -13,15 +14,17 @@ from sciencebeam_parser.processors.fulltext.config import (
 
 
 EXTRACT_ALL_FULLTEXT_CONFIG = FullTextProcessorConfig(
-    extract_body_sections=True,
-    extract_acknowledgements=True,
-    extract_back_sections=True,
-    extract_references=True,
-    extract_citation_fields=True,
-    extract_citation_authors=True,
-    extract_citation_editors=False,
-    extract_figure_fields=True,
-    extract_table_fields=True
+    extract=ExtractConfig(
+        body_sections=True,
+        acknowledgements=True,
+        back_sections=True,
+        references=True,
+        reference_fields=True,
+        reference_authors=True,
+        reference_editors=False,
+        figure_fields=True,
+        table_fields=True
+    )
 )
 
 
@@ -51,25 +54,25 @@ class TestFullTextProcessorConfig:
             RequestFieldNames.AUTHORS,
             RequestFieldNames.AFFILIATIONS
         })
-        assert config.extract_front
-        assert config.extract_authors
-        assert config.extract_affiliations
-        assert not config.extract_body_sections
-        assert not config.extract_acknowledgements
-        assert not config.extract_back_sections
-        assert not config.extract_references
+        assert config.extract.front
+        assert config.extract.front_authors
+        assert config.extract.front_affiliations
+        assert not config.extract.body_sections
+        assert not config.extract.acknowledgements
+        assert not config.extract.back_sections
+        assert not config.extract.references
 
     def test_should_configure_extract_references(self):
         config = EXTRACT_ALL_FULLTEXT_CONFIG.get_for_requested_field_names({
             RequestFieldNames.REFERENCES
         })
-        assert not config.extract_front
-        assert not config.extract_authors
-        assert not config.extract_affiliations
-        assert not config.extract_body_sections
-        assert not config.extract_acknowledgements
-        assert not config.extract_back_sections
-        assert config.extract_references
+        assert not config.extract.front
+        assert not config.extract.front_authors
+        assert not config.extract.front_affiliations
+        assert not config.extract.body_sections
+        assert not config.extract.acknowledgements
+        assert not config.extract.back_sections
+        assert config.extract.references
 
     def test_should_treat_unknown_field_names_as_no_change(self):
         config = EXTRACT_ALL_FULLTEXT_CONFIG.get_for_requested_field_names({
@@ -79,14 +82,28 @@ class TestFullTextProcessorConfig:
 
     def test_should_configure_only_header_extraction_using_get_for_header_document(self):
         config = EXTRACT_ALL_FULLTEXT_CONFIG.get_for_header_document()
-        assert config.extract_front
-        assert config.extract_authors
-        assert config.extract_affiliations
-        assert not config.extract_body_sections
-        assert not config.extract_acknowledgements
-        assert not config.extract_back_sections
-        assert not config.extract_references
-        assert not config.extract_graphic_bounding_boxes
+        assert config.extract.front
+        assert config.extract.front_authors
+        assert config.extract.front_affiliations
+        assert not config.extract.body_sections
+        assert not config.extract.acknowledgements
+        assert not config.extract.back_sections
+        assert not config.extract.references
+        assert not config.extract.graphics
+
+
+class TestExtractConfig:
+    def test_should_read_what_is_extracted(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {'extract': {'reference_editors': True}}}
+        }))
+        assert config.extract == ExtractConfig(reference_editors=True)
+
+    def test_should_refuse_a_flag_outside_the_extract_scope(self):
+        with pytest.raises(ValueError, match='extract_citation_editors'):
+            FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+                'processors': {'fulltext': {'extract_citation_editors': True}}
+            }))
 
 
 class TestNoiseFilterConfig:

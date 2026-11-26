@@ -43,6 +43,24 @@ FRONT_FIELDS = {
 
 
 @dataclasses.dataclass(frozen=True)
+class ExtractConfig:
+    front: bool = True
+    front_authors: bool = True
+    front_affiliations: bool = True
+    body_sections: bool = True
+    acknowledgements: bool = True
+    back_sections: bool = True
+    references: bool = True
+    reference_fields: bool = True
+    reference_authors: bool = True
+    reference_editors: bool = False
+    figure_fields: bool = True
+    table_fields: bool = True
+    graphics: bool = True
+    graphic_assets: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
 class FrontConfig:
     select_abstracts: str = DEFAULT_ABSTRACTS_MODE
     split_titles_by_language: bool = True
@@ -58,22 +76,9 @@ class ReferencesConfig:
 
 
 class FullTextProcessorConfig(NamedTuple):
-    extract_front: bool = True
+    extract: ExtractConfig = ExtractConfig()
     front: FrontConfig = FrontConfig()
-    extract_authors: bool = True
-    extract_affiliations: bool = True
-    extract_body_sections: bool = True
-    extract_acknowledgements: bool = True
-    extract_back_sections: bool = True
-    extract_references: bool = True
-    extract_citation_fields: bool = True
-    extract_citation_authors: bool = True
-    extract_citation_editors: bool = False
     references: ReferencesConfig = ReferencesConfig()
-    extract_figure_fields: bool = True
-    extract_table_fields: bool = True
-    extract_graphic_bounding_boxes: bool = True
-    extract_graphic_assets: bool = False
     use_cv_model: bool = False
     cv_render_dpi: float = DEFAULT_PDF_RENDER_DPI
     use_ocr_model: bool = False
@@ -88,7 +93,7 @@ class FullTextProcessorConfig(NamedTuple):
         props = dict(app_config.get('processors', {}).get('fulltext', {}))
         nested_props = {
             name: props.pop(name, None)
-            for name in ('front', 'references', 'noise_filter', 'graphic_regions')
+            for name in ('extract', 'front', 'references', 'noise_filter', 'graphic_regions')
         }
         references_props = nested_props['references']
         if references_props and 'kept_by_any_of' in references_props:
@@ -119,20 +124,17 @@ class FullTextProcessorConfig(NamedTuple):
         remaining_field_names = request_field_names - FRONT_FIELDS - {RequestFieldNames.REFERENCES}
         if remaining_field_names:
             return self
-        extract_front = bool(FRONT_FIELDS & request_field_names)
-        extract_authors = RequestFieldNames.AUTHORS in request_field_names
-        extract_affiliations = RequestFieldNames.AFFILIATIONS in request_field_names
-        extract_references = RequestFieldNames.REFERENCES in request_field_names
-        return self._replace(  # pylint: disable=no-member
-            extract_front=extract_front,
-            extract_authors=extract_authors,
-            extract_affiliations=extract_affiliations,
-            extract_body_sections=False,
-            extract_acknowledgements=False,
-            extract_back_sections=False,
-            extract_references=extract_references,
-            extract_graphic_bounding_boxes=False
-        )
+        return self._replace(extract=dataclasses.replace(  # pylint: disable=no-member
+            self.extract,
+            front=bool(FRONT_FIELDS & request_field_names),
+            front_authors=RequestFieldNames.AUTHORS in request_field_names,
+            front_affiliations=RequestFieldNames.AFFILIATIONS in request_field_names,
+            body_sections=False,
+            acknowledgements=False,
+            back_sections=False,
+            references=RequestFieldNames.REFERENCES in request_field_names,
+            graphics=False
+        ))
 
     def get_for_header_document(self) -> 'FullTextProcessorConfig':
         return self.get_for_requested_field_names(FRONT_FIELDS)
