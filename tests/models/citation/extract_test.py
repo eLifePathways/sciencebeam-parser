@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Tuple
 
 import pytest
 
@@ -20,6 +20,7 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticJournal,
     SemanticLabel,
     SemanticLocation,
+    SemanticNote,
     SemanticPageRange,
     SemanticPublisher,
     SemanticRawAuthors,
@@ -32,6 +33,8 @@ from sciencebeam_parser.document.semantic_document import (
 )
 from sciencebeam_parser.models.citation.extract import (
     CitationSemanticExtractor,
+    ReferenceDoisMode,
+    ReferenceTitlesMode,
     parse_page_range,
     parse_web,
     parse_pubnum,
@@ -380,3 +383,61 @@ class TestReferenceSegmenterSemanticExtractor:
             ], reference_kept_by_any_of=GROBID_REFERENCE_FIELDS)
         ))
         assert isinstance(ref, SemanticReference)
+
+
+def _get_reference(entity_texts: List[Tuple[str, str]], **kwargs) -> SemanticReference:
+    ref = next(iter(CitationSemanticExtractor().iter_semantic_content_for_entity_blocks(
+        [(name, LayoutBlock.for_text(text)) for name, text in entity_texts],
+        **kwargs
+    )))
+    assert isinstance(ref, SemanticReference)
+    return ref
+
+
+def _get_doi_values(ref: SemanticReference) -> List[str]:
+    return [str(identifier.value) for identifier in ref.iter_by_type(SemanticExternalIdentifier)]
+
+
+class TestCitationSemanticExtractorTitlesAndDois:
+    TWO_TITLES = [
+        ('<title>', 'Ferns of the north'),
+        ('<title>', 'The Journal of Fernley')
+    ]
+    TWO_DOIS = [
+        ('<title>', 'Ferns of the north'),
+        ('<pubnum>', 'doi: 10.1234/fern'),
+        ('<pubnum>', 'doi: 10.5678/moss')
+    ]
+
+    def test_should_keep_every_title_by_default(self):
+        ref = _get_reference(self.TWO_TITLES)
+        assert [title.get_text() for title in ref.iter_by_type(SemanticTitle)] == [
+            'Ferns of the north', 'The Journal of Fernley'
+        ]
+
+    def test_should_keep_the_longest_title_and_note_the_others(self):
+        ref = _get_reference(self.TWO_TITLES, select_titles=ReferenceTitlesMode.LONGEST)
+        assert [title.get_text() for title in ref.iter_by_type(SemanticTitle)] == [
+            'The Journal of Fernley'
+        ]
+        assert [note.get_text() for note in ref.iter_by_type(SemanticNote)] == [
+            'Ferns of the north'
+        ]
+
+    def test_should_keep_the_first_of_titles_of_equal_length(self):
+        ref = _get_reference([
+            ('<title>', 'Ferns'), ('<title>', 'Mossy')
+        ], select_titles=ReferenceTitlesMode.LONGEST)
+        assert [title.get_text() for title in ref.iter_by_type(SemanticTitle)] == ['Ferns']
+
+    def test_should_keep_every_doi_by_default(self):
+        assert _get_doi_values(_get_reference(self.TWO_DOIS)) == [
+            '10.1234/fern', '10.5678/moss'
+        ]
+
+    def test_should_keep_the_first_doi_and_note_the_others(self):
+        ref = _get_reference(self.TWO_DOIS, select_dois=ReferenceDoisMode.FIRST)
+        assert _get_doi_values(ref) == ['10.1234/fern']
+        assert [note.get_text() for note in ref.iter_by_type(SemanticNote)] == [
+            'doi: 10.5678/moss'
+        ]

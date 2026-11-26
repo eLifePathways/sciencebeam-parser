@@ -91,6 +91,18 @@ class TestFullTextProcessorConfig:
         assert not config.extract.references
         assert not config.extract.graphics
 
+    @pytest.mark.parametrize('scope,name', [
+        ('front', 'select_abstracts'),
+        ('front', 'select_titles'),
+        ('references', 'select_titles'),
+        ('references', 'select_dois')
+    ])
+    def test_should_refuse_an_unknown_choice(self, scope: str, name: str):
+        with pytest.raises(ValueError, match=f'{scope}.{name}.*fern'):
+            FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+                'processors': {'fulltext': {scope: {name: 'fern'}}}
+            }))
+
 
 class TestExtractConfig:
     def test_should_read_what_is_extracted(self):

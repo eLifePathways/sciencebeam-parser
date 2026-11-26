@@ -105,6 +105,30 @@ FRAGMENT_LINK_DOI_VALUES = (FragmentLinkDoi.PREVIOUS_REFERENCE, FragmentLinkDoi.
 DEFAULT_FRAGMENT_LINK_DOI = FragmentLinkDoi.PREVIOUS_REFERENCE
 
 
+class ReferenceTitlesMode:
+    """Which of a reference's titles it keeps as titles."""
+
+    ALL = 'all'
+    LONGEST = 'longest'
+
+
+REFERENCE_TITLES_MODES = (ReferenceTitlesMode.ALL, ReferenceTitlesMode.LONGEST)
+
+DEFAULT_REFERENCE_TITLES_MODE = ReferenceTitlesMode.ALL
+
+
+class ReferenceDoisMode:
+    """Which of a reference's DOIs it keeps as DOIs."""
+
+    ALL = 'all'
+    FIRST = 'first'
+
+
+REFERENCE_DOIS_MODES = (ReferenceDoisMode.ALL, ReferenceDoisMode.FIRST)
+
+DEFAULT_REFERENCE_DOIS_MODE = ReferenceDoisMode.ALL
+
+
 DEFAULT_REFERENCE_KEPT_BY_ANY_OF: Sequence[str] = (
     'title', 'journal', 'book_title', 'authors', 'editors', 'identifier', 'url'
 )
@@ -230,6 +254,34 @@ def validate_fragment_link_doi(fragment_link_doi: str, kept_by_any_of: Sequence[
         )
 
 
+def _as_note(semantic_content: SemanticContentWrapper, note_type: str) -> SemanticNote:
+    return SemanticNote(
+        layout_block=LayoutBlock.merge_blocks(list(semantic_content.iter_blocks())),
+        note_type=note_type
+    )
+
+
+def keep_the_longest_title(ref: SemanticReference) -> None:
+    """Keep the longest title, the first of equals, and turn the others into notes."""
+    titles = list(ref.iter_by_type(SemanticTitle))
+    if len(titles) < 2:
+        return
+    longest = max(titles, key=lambda title: len(title.get_text()))
+    ref.mixed_content = [
+        _as_note(c, 'title') if isinstance(c, SemanticTitle) and c is not longest else c
+        for c in ref.mixed_content
+    ]
+
+
+def keep_the_first_doi(ref: SemanticReference) -> None:
+    """Keep the first DOI and turn the others into notes."""
+    dois = [c for c in ref.mixed_content if _is_doi(c)]
+    ref.mixed_content = [
+        _as_note(c, 'doi') if _is_doi(c) and c is not dois[0] else c
+        for c in ref.mixed_content
+    ]
+
+
 def is_reference_valid(
     ref: SemanticReference,
     kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF
@@ -281,6 +333,8 @@ class CitationSemanticExtractor(SimpleModelSemanticExtractor):
         reference_kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF,
         links: Sequence[LayoutLink] = (),
         fragment_link_doi: str = DEFAULT_FRAGMENT_LINK_DOI,
+        select_titles: str = DEFAULT_REFERENCE_TITLES_MODE,
+        select_dois: str = DEFAULT_REFERENCE_DOIS_MODE,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
         entity_tokens = list(entity_tokens)
@@ -315,6 +369,10 @@ class CitationSemanticExtractor(SimpleModelSemanticExtractor):
             )
         ):
             set_reference_doi_from_links(ref, list(semantic_raw_reference.iter_tokens()), links)
+        if ref is not None and select_titles == ReferenceTitlesMode.LONGEST:
+            keep_the_longest_title(ref)
+        if ref is not None and select_dois == ReferenceDoisMode.FIRST:
+            keep_the_first_doi(ref)
         if ref is not None and not is_reference_valid(ref, reference_kept_by_any_of):
             yield get_invalid_reference(ref)
         elif ref is not None:

@@ -1,5 +1,7 @@
 from typing import List
 
+import pytest
+
 from sciencebeam_parser.document.semantic_document import (
     SemanticAbstract,
     SemanticFront,
@@ -22,6 +24,7 @@ from sciencebeam_parser.document.layout_document import (
 from sciencebeam_parser.models.header.extract import (
     AbstractsMode,
     HeaderSemanticExtractor,
+    TitlesMode,
     _split_trailing_title_punct,
     get_cleaned_abstract_text,
     get_cleaned_abstract_layout_block,
@@ -376,7 +379,7 @@ class TestHeaderSemanticExtractorAbstractHeading:
                 'The results show that the words of a language are used in the'
                 ' way that the people who speak it expect them to be.'
             ))
-        ], abstracts_mode=AbstractsMode.MERGED_BY_LANGUAGE) == ['Abstract']
+        ], select_abstracts=AbstractsMode.MERGED_BY_LANGUAGE) == ['Abstract']
 
     def test_should_carry_no_heading_where_the_line_above_carries_no_letter(self):
         assert self._get_headings([
@@ -410,8 +413,16 @@ class TestHeaderSemanticExtractorContinuedAbstract:
         assert _get_abstracts([
             ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
             ('<abstract>', _get_abstract_block('continues on the next page.', 2))
-        ], abstracts_mode=AbstractsMode.FIRST) == [
+        ], select_abstracts=AbstractsMode.FIRST) == [
             'The abstract begins here and continues on the next page.'
+        ]
+
+    def test_should_keep_only_the_first_block_where_continuations_are_not_joined(self):
+        assert _get_abstracts([
+            ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
+            ('<abstract>', _get_abstract_block('continues on the next page.', 2))
+        ], select_abstracts=AbstractsMode.FIRST, join_abstract_continuations=False) == [
+            'The abstract begins here and'
         ]
 
     def test_should_keep_a_block_with_a_heading_above_it_apart(self):
@@ -421,7 +432,7 @@ class TestHeaderSemanticExtractorContinuedAbstract:
             ('<abstract>', _get_abstract_block(
                 'this summary says the same thing in fewer words.', 2
             ))
-        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+        ], select_abstracts=AbstractsMode.VARIANTS) == [
             'The abstract begins here and',
             'this summary says the same thing in fewer words.'
         ]
@@ -432,7 +443,7 @@ class TestHeaderSemanticExtractorContinuedAbstract:
             ('<abstract>', _get_abstract_block(
                 'bioetica, aspectos legales y politicos del asunto.', 2
             ))
-        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+        ], select_abstracts=AbstractsMode.VARIANTS) == [
             'The abstract begins and ends here.',
             'bioetica, aspectos legales y politicos del asunto.'
         ]
@@ -441,7 +452,7 @@ class TestHeaderSemanticExtractorContinuedAbstract:
         assert _get_abstracts([
             ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
             ('<abstract>', _get_abstract_block('O resumo comeca aqui tambem.', 2))
-        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+        ], select_abstracts=AbstractsMode.VARIANTS) == [
             'The abstract begins here and', 'O resumo comeca aqui tambem.'
         ]
 
@@ -449,7 +460,7 @@ class TestHeaderSemanticExtractorContinuedAbstract:
         assert _get_abstracts([
             ('<abstract>', _get_abstract_block('The abstract begins here and', 1)),
             ('<abstract>', _get_abstract_block('continues much later on.', 5))
-        ], abstracts_mode=AbstractsMode.VARIANTS) == [
+        ], select_abstracts=AbstractsMode.VARIANTS) == [
             'The abstract begins here and', 'continues much later on.'
         ]
 
@@ -475,6 +486,31 @@ class TestHeaderSemanticExtractorTitles:
         )
         front = SemanticFront(semantic_content_list)
         assert len(list(front.iter_by_type(SemanticTitle))) == 1
+
+    @pytest.mark.parametrize('split_titles_by_language,expected_titles', [
+        (False, [f'{ENGLISH_TITLE_1} {PORTUGUESE_TITLE_1}']),
+        (True, [ENGLISH_TITLE_1, PORTUGUESE_TITLE_1])
+    ])
+    def test_should_keep_only_the_first_title_block_where_asked(
+        self, split_titles_by_language: bool, expected_titles: List[str]
+    ):
+        semantic_content_list = list(
+            HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                [
+                    ('<title>', _get_title_block(
+                        (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1, 2)
+                    )),
+                    ('<abstract>', LayoutBlock.for_text(ABSTRACT_1)),
+                    ('<title>', LayoutBlock.for_text(TITLE_1))
+                ],
+                select_titles=TitlesMode.FIRST,
+                split_titles_by_language=split_titles_by_language
+            )
+        )
+        front = SemanticFront(semantic_content_list)
+        assert [
+            title.get_text() for title in front.iter_by_type(SemanticTitle)
+        ] == expected_titles
 
     def test_should_split_a_title_labelled_in_two_languages(self):
         semantic_content_list = list(
@@ -568,8 +604,8 @@ class TestHeaderSemanticExtractor:
             title.get_text() for title in front.iter_by_type(SemanticTitle)
         ] == [TITLE_1, 'other']
 
-    def _abstracts(self, texts, abstracts_mode=None):
-        kwargs = {} if abstracts_mode is None else {'abstracts_mode': abstracts_mode}
+    def _abstracts(self, texts, select_abstracts=None):
+        kwargs = {} if select_abstracts is None else {'select_abstracts': select_abstracts}
         front = SemanticFront(list(
             HeaderSemanticExtractor().iter_semantic_content_for_entity_blocks(
                 [('<abstract>', LayoutBlock.for_text(text)) for text in texts],

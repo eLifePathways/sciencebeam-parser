@@ -164,6 +164,33 @@ class TestAbstractsModeProfiles:
         } == set(ABSTRACTS_MODES) - {base_front.select_abstracts}
 
 
+AS_GROBID_PROFILE = 'grobid_crf_as_grobid'
+
+
+class TestAsGrobidProfile:
+    def test_should_differ_from_its_base_profile_in_how_it_writes_output_only(self):
+        base_config = get_fulltext_processor_config(SHARED_BASE_PROFILE)
+        as_grobid_config = get_fulltext_processor_config(AS_GROBID_PROFILE)
+        assert as_grobid_config._replace(  # pylint: disable=protected-access
+            front=dataclasses.replace(
+                as_grobid_config.front,
+                join_abstract_continuations=base_config.front.join_abstract_continuations,
+                select_titles=base_config.front.select_titles,
+                split_titles_by_language=base_config.front.split_titles_by_language
+            ),
+            references=dataclasses.replace(
+                as_grobid_config.references,
+                keep_other_text=base_config.references.keep_other_text,
+                fragment_link_doi=base_config.references.fragment_link_doi,
+                select_titles=base_config.references.select_titles,
+                select_dois=base_config.references.select_dois
+            )
+        ) == base_config
+
+    def test_should_serve_the_models_its_base_profile_serves(self):
+        assert get_resolved_models(AS_GROBID_PROFILE) == get_resolved_models(SHARED_BASE_PROFILE)
+
+
 CV_PROFILE_PAIRS = [
     ('grobid_crf_cv', 'grobid_crf_0_9_0'),
     ('delft_all_scielo_preprints_ore_cv', 'delft_all_scielo_preprints_ore')

@@ -89,6 +89,18 @@ ABSTRACTS_MODES = (AbstractsMode.FIRST, AbstractsMode.VARIANTS, AbstractsMode.ME
 DEFAULT_ABSTRACTS_MODE = AbstractsMode.FIRST
 
 
+class TitlesMode:
+    """Which labelled titles reach the output."""
+
+    FIRST = 'first'
+    ALL = 'all'
+
+
+TITLES_MODES = (TitlesMode.FIRST, TitlesMode.ALL)
+
+DEFAULT_TITLES_MODE = TitlesMode.ALL
+
+
 def _get_token_count(layout_block: LayoutBlock) -> int:
     return sum(1 for _ in layout_block.iter_all_tokens())
 
@@ -450,6 +462,7 @@ def get_cleaned_abstract_layout_block(
 
 def _get_semantic_titles(
     title_blocks: Sequence[Tuple[LayoutBlock, str]],
+    select_titles: str,
     split_titles_by_language: bool,
     document_languages: AbstractSet[str]
 ) -> List[SemanticTitle]:
@@ -459,6 +472,8 @@ def _get_semantic_titles(
     the document is written in and a title is too short to say so on its own.
     """
     semantic_titles: List[SemanticTitle] = []
+    if select_titles == TitlesMode.FIRST:
+        title_blocks = title_blocks[:1]
     for layout_block, trailing in title_blocks:
         if not split_titles_by_language:
             parts = [(
@@ -483,14 +498,19 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
     def iter_semantic_content_for_entity_blocks(  # noqa pylint: disable=too-many-branches,too-many-locals
         self,
         entity_tokens: Iterable[Tuple[str, LayoutBlock]],
-        abstracts_mode: str = DEFAULT_ABSTRACTS_MODE,
+        select_abstracts: str = DEFAULT_ABSTRACTS_MODE,
+        select_titles: str = DEFAULT_TITLES_MODE,
         split_titles_by_language: bool = True,
+        join_abstract_continuations: bool = True,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
-        entity_tokens = join_continued_abstracts(list(entity_tokens))
+        entity_tokens = (
+            join_continued_abstracts(list(entity_tokens)) if join_abstract_continuations
+            else list(entity_tokens)
+        )
         LOGGER.debug('entity_tokens: %s', entity_tokens)
-        carry_variants = abstracts_mode != AbstractsMode.FIRST
-        merge_by_language = abstracts_mode == AbstractsMode.MERGED_BY_LANGUAGE
+        carry_variants = select_abstracts != AbstractsMode.FIRST
+        merge_by_language = select_abstracts == AbstractsMode.MERGED_BY_LANGUAGE
         primary_abstract_block: Optional[LayoutBlock] = None
         title_blocks: List[Tuple[LayoutBlock, str]] = []
         document_languages: Set[str] = set()
@@ -557,6 +577,8 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         if aff_address is not None:
             yield aff_address
         yield from iter_titles_printed_once(
-            _get_semantic_titles(title_blocks, split_titles_by_language, document_languages)
+            _get_semantic_titles(
+                title_blocks, select_titles, split_titles_by_language, document_languages
+            )
         )
         yield from merge_abstracts_by_language(semantic_abstracts)
