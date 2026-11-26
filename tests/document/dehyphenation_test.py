@@ -133,6 +133,16 @@ class TestDehyphenateByDocument:
             _block('the per-', 'cepc\u0327a\u0303o of colour'), 'percepção'
         ) == 'the percepc\u0327a\u0303o of colour'
 
+    def test_should_remove_a_soft_hyphen_where_the_document_says_nothing(self):
+        assert _by_document(
+            _block('the per\u00ad', 'cepção of colour')
+        ) == 'the percepção of colour'
+
+    def test_should_join_across_an_empty_line(self):
+        block = _block('the per-', 'cepção of colour')
+        block = LayoutBlock(lines=[block.lines[0], LayoutLine(tokens=[]), block.lines[1]])
+        assert _by_document(block, 'percepção') == 'the percepção of colour'
+
     def test_should_write_a_kept_soft_hyphen_as_a_hyphen(self):
         assert _by_document(
             _block('an alkali\u00ad', 'activated binder'), 'alkali-activated'

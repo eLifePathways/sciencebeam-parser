@@ -143,14 +143,16 @@ def _dehyphenate_by_document(
     layout_block: LayoutBlock,
     document_words: DocumentWords
 ) -> LayoutBlock:
-    lines = [list(line.tokens) for line in layout_block.lines]
+    lines = [list(line.tokens) for line in layout_block.lines if line.tokens]
     for index, (tokens, next_tokens) in enumerate(zip(lines, lines[1:])):
         prefix = _get_broken_word_prefix(tokens)
-        if prefix is None or not next_tokens:
+        if prefix is None:
             continue
         remove_hyphen = _should_remove_hyphen_by_document(
             prefix, next_tokens[0].text, document_words
         )
+        if remove_hyphen is None and tokens[-1].text.endswith(SOFT_HYPHEN):
+            remove_hyphen = True
         if remove_hyphen is not None:
             lines[index] = _with_line_end_joined(tokens, remove_hyphen=remove_hyphen)
     return LayoutBlock(lines=[LayoutLine(tokens=tokens) for tokens in lines])

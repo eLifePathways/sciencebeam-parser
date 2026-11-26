@@ -438,7 +438,7 @@ DEHYPHENATE_WHERE_THE_DOCUMENT_SETS_PERCEPCAO = get_dehyphenate_block(
 
 
 class TestHeaderSemanticExtractorDehyphenate:
-    def test_should_write_a_broken_word_as_on_the_page_by_default(self):
+    def test_should_write_a_broken_word_as_on_the_page_without_a_dehyphenate_block(self):
         assert _get_titles([
             ('<title>', _get_lines_block('A study of per-', 'cepção'))
         ]) == ['A study of per- cepção']
