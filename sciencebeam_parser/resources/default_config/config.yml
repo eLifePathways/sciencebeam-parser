@@ -114,7 +114,7 @@ processors:
       # of its own text. `merged_by_language` joins those sharing a language into one.
       select_abstracts: 'first'
       # How the title and abstract write a word broken at a line end: 'off', 'grobid' or 'by_document'.
-      dehyphenate: 'off'
+      dehyphenate: 'by_document'
       merge_author_blocks: false
     noise_filter:
       enabled: true
@@ -474,8 +474,6 @@ profiles:
     sequence_models: grobid_crf_0_9_0
     processors:
       fulltext:
-        front:
-          dehyphenate: 'by_document'
         noise_filter:
           enabled: false
         references:
@@ -494,7 +492,6 @@ profiles:
         references:
           kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
         front:
-          dehyphenate: 'by_document'
           select_abstracts: 'variants'
   grobid_crf_abstract_merged_by_language:
     label: 'GROBID CRF 0.9.0, abstracts merged by language'
@@ -507,7 +504,6 @@ profiles:
         references:
           kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
         front:
-          dehyphenate: 'by_document'
           select_abstracts: 'merged_by_language'
   grobid_crf_as_grobid:
     label: 'GROBID CRF 0.9.0, written closer to GROBID'
@@ -534,8 +530,6 @@ profiles:
     sequence_models: grobid_crf_0_9_0
     processors:
       fulltext:
-        front:
-          dehyphenate: 'by_document'
         noise_filter:
           enabled: false
         references:
@@ -638,7 +632,6 @@ profiles:
         noise_filter:
           enabled: false
         front:
-          dehyphenate: 'by_document'
           select_abstracts: 'variants'
   delft_all_scielo_preprints_ore_cv:
     label: 'DeLFT retrained models, SciELO preprints and ORE, graphics located by the cv model'
@@ -649,7 +642,6 @@ profiles:
         noise_filter:
           enabled: false
         front:
-          dehyphenate: 'by_document'
           select_abstracts: 'variants'
         use_cv_model: true
   llm_reference_segmenter:

@@ -20,7 +20,7 @@ class DehyphenateMode:
 
 DEHYPHENATE_MODES = (DehyphenateMode.OFF, DehyphenateMode.GROBID, DehyphenateMode.BY_DOCUMENT)
 
-DEFAULT_DEHYPHENATE_MODE = DehyphenateMode.OFF
+DEFAULT_DEHYPHENATE_MODE = DehyphenateMode.BY_DOCUMENT
 
 HYPHEN = '-'
 SOFT_HYPHEN = '\u00ad'
