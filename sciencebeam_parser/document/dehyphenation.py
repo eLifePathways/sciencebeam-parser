@@ -65,7 +65,7 @@ def _get_hyphenated_words_in_line(tokens: Sequence[LayoutToken]) -> List[str]:
         and not before.whitespace
         and not hyphen.whitespace
         and _is_word(before.text)
-        and _is_word(after.text)
+        and after.text.isalnum()
     ]
 
 
@@ -99,17 +99,21 @@ def _with_line_end_joined(tokens: List[LayoutToken], remove_hyphen: bool) -> Lis
     return tokens[:-1] + [last._replace(whitespace='')]
 
 
-def _is_hyphen_of_the_line_break(
+def _should_remove_hyphen_by_document(
     prefix: str,
     continuation: str,
     document_words: DocumentWords
-) -> bool:
-    return (
+) -> Optional[bool]:
+    """True or False where the document sets the joined or the hyphenated word, else None."""
+    if f'{prefix}-{continuation}'.lower() in document_words.hyphenated_words:
+        return False
+    if (
         _is_word(continuation)
         and continuation.islower()
         and (prefix + continuation).lower() in document_words.words
-        and f'{prefix}-{continuation}'.lower() not in document_words.hyphenated_words
-    )
+    ):
+        return True
+    return None
 
 
 def _dehyphenate_by_document(
@@ -119,14 +123,13 @@ def _dehyphenate_by_document(
     lines = [list(line.tokens) for line in layout_block.lines]
     for index, (tokens, next_tokens) in enumerate(zip(lines, lines[1:])):
         prefix = _get_broken_word_prefix(tokens)
-        if prefix is None or not next_tokens or not next_tokens[0].text[:1].isalnum():
+        if prefix is None or not next_tokens:
             continue
-        lines[index] = _with_line_end_joined(
-            tokens,
-            remove_hyphen=_is_hyphen_of_the_line_break(
-                prefix, next_tokens[0].text, document_words
-            )
+        remove_hyphen = _should_remove_hyphen_by_document(
+            prefix, next_tokens[0].text, document_words
         )
+        if remove_hyphen is not None:
+            lines[index] = _with_line_end_joined(tokens, remove_hyphen=remove_hyphen)
     return LayoutBlock(lines=[LayoutLine(tokens=tokens) for tokens in lines])
 
 

@@ -62,8 +62,8 @@ class TestGetDocumentWords:
 
     def test_should_collect_hyphenated_words_set_inside_a_line(self):
         assert get_document_words(
-            _document('an alkali-activated binder', 'a binder - activated')
-        ).hyphenated_words == {'alkali-activated'}
+            _document('an alkali-activated binder', 'a binder - activated', 'the COVID-19 wave')
+        ).hyphenated_words == {'alkali-activated', 'covid-19'}
 
 
 class TestDehyphenateOff:
@@ -78,23 +78,35 @@ class TestDehyphenateByDocument:
             _block('the per-', 'cepção of colour'), 'their percepção differs'
         ) == 'the percepção of colour'
 
-    def test_should_keep_the_hyphen_where_the_document_says_nothing(self):
+    def test_should_leave_the_hyphen_and_the_space_where_the_document_says_nothing(self):
         assert _by_document(
             _block('the per-', 'cepção of colour')
-        ) == 'the per-cepção of colour'
+        ) == 'the per- cepção of colour'
+
+    def test_should_leave_a_suspended_hyphen_where_the_document_says_nothing(self):
+        assert _by_document(
+            _block('low-', 'and high-income')
+        ) == 'low- and high-income'
 
     def test_should_keep_the_hyphen_where_the_document_sets_the_hyphenated_word(self):
         assert _by_document(
             _block('an alkali-', 'activated binder'), 'alkaliactivated', 'alkali-activated'
         ) == 'an alkali-activated binder'
 
-    def test_should_keep_the_hyphen_before_a_capital(self):
+    def test_should_keep_the_hyphen_before_a_capital_the_document_sets_after_it(self):
         assert _by_document(
-            _block('the SARS-', 'CoV-2 virus'), 'SARSCoV'
+            _block('the SARS-', 'CoV-2 virus'), 'the SARS-CoV-2 genome'
         ) == 'the SARS-CoV-2 virus'
 
-    def test_should_keep_the_hyphen_before_a_digit(self):
-        assert _by_document(_block('the COVID-', '19 wave')) == 'the COVID-19 wave'
+    def test_should_keep_the_hyphen_before_a_digit_the_document_sets_after_it(self):
+        assert _by_document(
+            _block('the COVID-', '19 wave'), 'during COVID-19'
+        ) == 'the COVID-19 wave'
+
+    def test_should_not_remove_the_hyphen_before_a_capital(self):
+        assert _by_document(
+            _block('the SARS-', 'CoV-2 virus'), 'SARSCoV'
+        ) == 'the SARS- CoV-2 virus'
 
     def test_should_remove_a_soft_hyphen_where_the_document_sets_the_joined_word(self):
         assert _by_document(

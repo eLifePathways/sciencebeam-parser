@@ -24,9 +24,9 @@ An abstract the page prints in two pieces — the second half carried over a pag
 | --- | --- | --- | --- |
 | `off` | per- cepção | alkali- activated | SARS- CoV-2 |
 | `grobid` | percepção | alkaliactivated | SARS-CoV-2 |
-| `by_document` | percepção where the document sets "percepção" elsewhere, otherwise per-cepção | alkali-activated, unless the document sets "alkaliactivated" and never "alkali-activated" | SARS-CoV-2 |
+| `by_document` | percepção where the document sets "percepção" elsewhere, otherwise per- cepção | alkali-activated where the document sets "alkali-activated" elsewhere, otherwise alkali- activated | SARS-CoV-2 where the document sets "SARS-CoV" elsewhere, otherwise SARS- CoV-2 |
 
-`by_document` removes a hyphen only where the same document sets the joined word inside a line and never the hyphenated one, and only before a lower-case word; everywhere else it keeps the hyphen and joins the two parts. `grobid` follows GROBID 0.9.0: it removes a hyphen before any lower-case word lower on the page, so a word broken across a column or page keeps its hyphen. A hyphen inside a line is left as it is. Every shipped profile leaves it `off`, except `grobid_crf_as_grobid`, which sets `grobid`.
+`by_document` acts only where the same document sets the word inside a line: it keeps the hyphen and removes the space where the document sets the hyphenated word, and otherwise removes the hyphen where it sets the joined word and the continuation is lower case. Where the document sets neither, the word is written as `off` writes it. `grobid` follows GROBID 0.9.0: it removes a hyphen before any lower-case word lower on the page, keeps any other hyphen and removes the line break after it, so a word broken across a column or page keeps its hyphen. A hyphen inside a line is left as it is. Every shipped profile leaves it `off`, except `grobid_crf_as_grobid`, which sets `grobid`.
 
 ## What each abstract declares
 
