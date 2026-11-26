@@ -142,9 +142,12 @@ def _should_remove_hyphen_by_document(
     """True or False where the document sets the joined or the hyphenated word, else None."""
     if _get_word_key(f'{prefix}-{continuation}') in document_words.hyphenated_words:
         return False
+    is_in_the_case_of_a_word = continuation.islower() or (
+        prefix.isupper() and continuation.isupper()
+    )
     if (
         _is_word(continuation)
-        and continuation.islower()
+        and is_in_the_case_of_a_word
         and _get_word_key(prefix + continuation) in document_words.words
     ):
         return True

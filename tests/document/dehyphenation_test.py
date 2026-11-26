@@ -123,6 +123,11 @@ class TestDehyphenateByDocument:
             _block('a 3-', 'dimensional model'), 'the 3-dimensional structure'
         ) == 'a 3-dimensional model'
 
+    def test_should_remove_the_hyphen_in_a_word_set_in_capitals(self):
+        assert _by_document(
+            _block('A STUDY OF PER-', 'CEPÇÃO'), 'their percepção differs'
+        ) == 'A STUDY OF PERCEPÇÃO'
+
     def test_should_not_remove_the_hyphen_before_a_capital(self):
         assert _by_document(
             _block('the SARS-', 'CoV-2 virus'), 'SARSCoV'
