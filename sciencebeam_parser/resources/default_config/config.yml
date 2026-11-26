@@ -113,6 +113,8 @@ processors:
       # `variants` emits the others as further abstracts too, each declaring the language
       # of its own text. `merged_by_language` joins those sharing a language into one.
       select_abstracts: 'first'
+      # How the title and abstract write a word broken at a line end: 'off', 'grobid' or 'by_document'.
+      dehyphenate: 'off'
       merge_author_blocks: false
     noise_filter:
       enabled: true
@@ -515,6 +517,7 @@ profiles:
           join_abstract_continuations: false
           select_titles: 'first'
           split_titles_by_language: false
+          dehyphenate: 'grobid'
         references:
           kept_by_any_of: [title, journal, book_title, authors, collaboration, doi]
           keep_other_text: false

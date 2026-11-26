@@ -16,6 +16,18 @@ The `recommended` and `recommended_cv` profiles ask for `variants`; every other 
 
 An abstract the page prints in two pieces — the second half carried over a page break — is one abstract in every mode. The second block is joined to the first where it opens mid-sentence under an abstract that ends unfinished, carries no heading of its own, and begins on the page the abstract ended on or the next. `front.join_abstract_continuations: false` turns this off, and `grobid_crf_as_grobid` sets it, following GROBID, which keeps the first block only.
 
+## A word broken at a line end
+
+`front.dehyphenate` decides how the title and abstract write a word the page broke at a line end with a hyphen:
+
+| value | "per-" / "cepção" | "alkali-" / "activated" | "SARS-" / "CoV-2" |
+| --- | --- | --- | --- |
+| `off` | per- cepção | alkali- activated | SARS- CoV-2 |
+| `grobid` | percepção | alkaliactivated | SARS-CoV-2 |
+| `by_document` | percepção where the document sets "percepção" elsewhere, otherwise per-cepção | alkali-activated, unless the document sets "alkaliactivated" and never "alkali-activated" | SARS-CoV-2 |
+
+`by_document` removes a hyphen only where the same document sets the joined word inside a line and never the hyphenated one, and only before a lower-case word; everywhere else it keeps the hyphen and joins the two parts. `grobid` follows GROBID 0.9.0: it removes a hyphen before any lower-case word lower on the page, so a word broken across a column or page keeps its hyphen. A hyphen inside a line is left as it is. Every shipped profile leaves it `off`, except `grobid_crf_as_grobid`, which sets `grobid`.
+
 ## What each abstract declares
 
 Each abstract carries the language of its own text in `xml:lang`, in every mode, where the text is long enough and consistent enough to name one. A document whose abstracts are in Portuguese and English therefore says which is which, in the TEI and in the JATS.

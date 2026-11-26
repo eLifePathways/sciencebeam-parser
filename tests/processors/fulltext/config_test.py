@@ -1,4 +1,5 @@
 import pytest
+import yaml
 
 from sciencebeam_parser.config.config import AppConfig
 from sciencebeam_parser.document.layout_noise_filter import (
@@ -91,9 +92,16 @@ class TestFullTextProcessorConfig:
         assert not config.extract.references
         assert not config.extract.graphics
 
+    def test_should_read_a_bare_yaml_off_as_dehyphenate_off(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {'front': yaml.safe_load('dehyphenate: off')}}
+        }))
+        assert config.front.dehyphenate == 'off'
+
     @pytest.mark.parametrize('scope,name', [
         ('front', 'select_abstracts'),
         ('front', 'select_titles'),
+        ('front', 'dehyphenate'),
         ('references', 'select_titles'),
         ('references', 'select_dois')
     ])
