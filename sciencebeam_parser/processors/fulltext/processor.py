@@ -170,7 +170,9 @@ class FullTextProcessor:
         self.app_features_context = app_features_context
         if not config:
             config = FullTextProcessorConfig()
-        validate_fragment_link_doi(config.fragment_link_doi, config.reference_kept_by_any_of)
+        validate_fragment_link_doi(
+            config.references.fragment_link_doi, config.references.kept_by_any_of
+        )
         self.config = config
 
     @property
@@ -356,8 +358,8 @@ class FullTextProcessor:
         )
         self.header_model.update_semantic_document_with_entity_blocks(
             semantic_document, entity_blocks,
-            abstracts_mode=self.config.abstracts_mode,
-            titles_mode=self.config.titles_mode
+            abstracts_mode=self.config.front.select_abstracts,
+            split_titles_by_language=self.config.front.split_titles_by_language
         )
         if self.config.extract_authors:
             self._process_raw_authors(semantic_document.front)
@@ -534,7 +536,7 @@ class FullTextProcessor:
                 continue
             result_content.append(semantic_content)
         if raw_authors:
-            if self.config.merge_raw_authors:
+            if self.config.front.merge_author_blocks:
                 raw_authors_layout_documents = [
                     LayoutDocument.for_blocks([
                         block
@@ -561,11 +563,11 @@ class FullTextProcessor:
                 for parsed in parsed_per_block
                 for semantic_content in parsed
             ]
-            if self.config.deduplicate_raw_authors:
+            if self.config.front.deduplicate_authors:
                 parsed_authors = get_deduplicated_authors(
                     parsed_authors,
                     allow_abbreviated_names=(
-                        self.config.deduplicate_raw_authors_use_initial_fallback
+                        self.config.front.deduplicate_authors_by_initials
                     )
                 )
             result_content.extend(parsed_authors)
@@ -657,9 +659,9 @@ class FullTextProcessor:
                 .iter_semantic_content_for_labeled_layout_tokens(
                     labeled_layout_tokens,
                     semantic_raw_reference=semantic_raw_reference,
-                    reference_kept_by_any_of=self.config.reference_kept_by_any_of,
+                    reference_kept_by_any_of=self.config.references.kept_by_any_of,
                     links=links,
-                    fragment_link_doi=self.config.fragment_link_doi
+                    fragment_link_doi=self.config.references.fragment_link_doi
                 )
             )
             ref: Optional[Union[SemanticReference, SemanticInvalidReference]] = None
@@ -700,7 +702,7 @@ class FullTextProcessor:
             semantic_reference_by_semantic_raw_reference_id.keys()
         )
         for reference_list in reference_lists:
-            if self.config.fragment_link_doi != FragmentLinkDoi.OWN_REFERENCE:
+            if self.config.references.fragment_link_doi != FragmentLinkDoi.OWN_REFERENCE:
                 give_fragment_link_dois_to_previous_references(
                     [
                         (semantic_content, semantic_reference_by_semantic_raw_reference_id[

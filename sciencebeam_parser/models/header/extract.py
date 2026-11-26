@@ -89,18 +89,6 @@ ABSTRACTS_MODES = (AbstractsMode.FIRST, AbstractsMode.VARIANTS, AbstractsMode.ME
 DEFAULT_ABSTRACTS_MODE = AbstractsMode.FIRST
 
 
-class TitlesMode:
-    """What becomes of a title the model labelled as one."""
-
-    AS_LABELLED = 'as_labelled'
-    SPLIT_BY_LANGUAGE = 'split_by_language'
-
-
-TITLES_MODES = (TitlesMode.AS_LABELLED, TitlesMode.SPLIT_BY_LANGUAGE)
-
-DEFAULT_TITLES_MODE = TitlesMode.SPLIT_BY_LANGUAGE
-
-
 def _get_token_count(layout_block: LayoutBlock) -> int:
     return sum(1 for _ in layout_block.iter_all_tokens())
 
@@ -462,7 +450,7 @@ def get_cleaned_abstract_layout_block(
 
 def _get_semantic_titles(
     title_blocks: Sequence[Tuple[LayoutBlock, str]],
-    titles_mode: str,
+    split_titles_by_language: bool,
     document_languages: AbstractSet[str]
 ) -> List[SemanticTitle]:
     """The titles to yield, named among the languages the document carries elsewhere.
@@ -472,7 +460,7 @@ def _get_semantic_titles(
     """
     semantic_titles: List[SemanticTitle] = []
     for layout_block, trailing in title_blocks:
-        if titles_mode == TitlesMode.AS_LABELLED:
+        if not split_titles_by_language:
             parts = [(
                 layout_block,
                 _get_language(layout_block.lines, document_languages)
@@ -496,7 +484,7 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         self,
         entity_tokens: Iterable[Tuple[str, LayoutBlock]],
         abstracts_mode: str = DEFAULT_ABSTRACTS_MODE,
-        titles_mode: str = DEFAULT_TITLES_MODE,
+        split_titles_by_language: bool = True,
         **kwargs
     ) -> Iterable[SemanticContentWrapper]:
         entity_tokens = join_continued_abstracts(list(entity_tokens))
@@ -569,6 +557,6 @@ class HeaderSemanticExtractor(SimpleModelSemanticExtractor):
         if aff_address is not None:
             yield aff_address
         yield from iter_titles_printed_once(
-            _get_semantic_titles(title_blocks, titles_mode, document_languages)
+            _get_semantic_titles(title_blocks, split_titles_by_language, document_languages)
         )
         yield from merge_abstracts_by_language(semantic_abstracts)

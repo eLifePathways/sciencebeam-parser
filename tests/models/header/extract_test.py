@@ -21,7 +21,6 @@ from sciencebeam_parser.document.layout_document import (
 
 from sciencebeam_parser.models.header.extract import (
     AbstractsMode,
-    TitlesMode,
     HeaderSemanticExtractor,
     _split_trailing_title_punct,
     get_cleaned_abstract_text,
@@ -471,7 +470,7 @@ class TestHeaderSemanticExtractorTitles:
                 [('<title>', _get_title_block(
                     (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1, 2)
                 ))],
-                titles_mode=TitlesMode.AS_LABELLED
+                split_titles_by_language=False
             )
         )
         front = SemanticFront(semantic_content_list)
@@ -483,7 +482,7 @@ class TestHeaderSemanticExtractorTitles:
                 [('<title>', _get_title_block(
                     (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1, 2)
                 ))],
-                titles_mode=TitlesMode.SPLIT_BY_LANGUAGE
+                split_titles_by_language=True
             )
         )
         front = SemanticFront(semantic_content_list)
@@ -499,7 +498,7 @@ class TestHeaderSemanticExtractorTitles:
                 [('<title>', _get_title_block(
                     (ENGLISH_TITLE_1, 1), (PORTUGUESE_TITLE_1 + ' .', 2)
                 ))],
-                titles_mode=TitlesMode.SPLIT_BY_LANGUAGE
+                split_titles_by_language=True
             )
         )
         front = SemanticFront(semantic_content_list)

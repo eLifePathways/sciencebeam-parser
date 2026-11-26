@@ -226,7 +226,7 @@ def validate_fragment_link_doi(fragment_link_doi: str, kept_by_any_of: Sequence[
         and not is_reference_kept_by_a_doi(kept_by_any_of)
     ):
         raise ValueError(
-            'fragment_link_doi: own_reference needs doi or identifier in reference_kept_by_any_of'
+            'fragment_link_doi: own_reference needs doi or identifier in references.kept_by_any_of'
         )
 
 

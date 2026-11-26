@@ -358,7 +358,7 @@ class NameHeaderModelRouterFactory(SegmentedModelRouterFactory):
         profile_bundle: ProfileBundle
     ) -> Iterable[LayoutDocument]:
         header_model = profile_bundle.fulltext_models.header_model
-        merge_raw_authors = profile_bundle.fulltext_processor_config.merge_raw_authors
+        merge_author_blocks = profile_bundle.fulltext_processor_config.front.merge_author_blocks
         header_layout_document = self.filter_layout_document_by_segmentation_label(
             layout_document, '<header>', profile_bundle
         )
@@ -375,8 +375,8 @@ class NameHeaderModelRouterFactory(SegmentedModelRouterFactory):
             )).iter_by_type(SemanticRawAuthors)
         )
         LOGGER.info('semantic_raw_authors_list count: %d', len(semantic_raw_authors_list))
-        LOGGER.info('merge_raw_authors: %s', merge_raw_authors)
-        if merge_raw_authors:
+        LOGGER.info('merge_author_blocks: %s', merge_author_blocks)
+        if merge_author_blocks:
             return [
                 LayoutDocument.for_blocks([
                     block

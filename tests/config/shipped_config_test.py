@@ -1,4 +1,5 @@
 import copy
+import dataclasses
 from functools import cache
 import os
 from pathlib import Path
@@ -136,14 +137,16 @@ class TestAbstractsModeProfiles:
     """Each exists to be compared with `grobid_crf_0_9_0`, so one setting may differ."""
 
     @pytest.mark.parametrize('profile_name', ABSTRACTS_MODE_PROFILES)
-    def test_should_differ_from_its_base_profile_in_abstracts_mode_only(
+    def test_should_differ_from_its_base_profile_in_front_abstracts_only(
         self, profile_name: str
     ):
         base_config = get_fulltext_processor_config(ABSTRACTS_MODE_BASE_PROFILE)
         variant_config = get_fulltext_processor_config(profile_name)
-        assert variant_config.abstracts_mode != base_config.abstracts_mode
+        assert variant_config.front.select_abstracts != base_config.front.select_abstracts
         assert variant_config._replace(  # pylint: disable=protected-access
-            abstracts_mode=base_config.abstracts_mode
+            front=dataclasses.replace(
+                variant_config.front, select_abstracts=base_config.front.select_abstracts
+            )
         ) == base_config
 
     @pytest.mark.parametrize('profile_name', ABSTRACTS_MODE_PROFILES)
@@ -154,11 +157,11 @@ class TestAbstractsModeProfiles:
         )
 
     def test_should_cover_every_mode_other_than_its_base(self):
-        base_mode = get_fulltext_processor_config(ABSTRACTS_MODE_BASE_PROFILE).abstracts_mode
+        base_front = get_fulltext_processor_config(ABSTRACTS_MODE_BASE_PROFILE).front
         assert {
-            get_fulltext_processor_config(name).abstracts_mode
+            get_fulltext_processor_config(name).front.select_abstracts
             for name in ABSTRACTS_MODE_PROFILES
-        } == set(ABSTRACTS_MODES) - {base_mode}
+        } == set(ABSTRACTS_MODES) - {base_front.select_abstracts}
 
 
 CV_PROFILE_PAIRS = [

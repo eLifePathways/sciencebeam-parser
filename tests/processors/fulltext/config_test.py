@@ -6,6 +6,7 @@ from sciencebeam_parser.document.layout_noise_filter import (
     LayoutNoiseFilterConfig,
 )
 from sciencebeam_parser.processors.fulltext.config import (
+    FrontConfig,
     FullTextProcessorConfig,
     RequestFieldNames
 )
@@ -26,8 +27,8 @@ EXTRACT_ALL_FULLTEXT_CONFIG = FullTextProcessorConfig(
 
 class TestFullTextProcessorConfig:
     @pytest.mark.parametrize("field_name,value", [
-        ("merge_raw_authors", False),
-        ("merge_raw_authors", True)
+        ("use_cv_model", False),
+        ("use_cv_model", True)
     ])
     def test_should_override_default_from_app_config(self, field_name: str, value: bool):
         config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
@@ -107,48 +108,64 @@ class TestNoiseFilterConfig:
     def test_should_keep_the_other_fulltext_settings(self):
         config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
             'processors': {'fulltext': {
-                'merge_raw_authors': True,
+                'use_cv_model': True,
                 'noise_filter': {'enabled': True},
             }}
         }))
-        assert config.merge_raw_authors is True
+        assert config.use_cv_model is True
         assert config.noise_filter.enabled is True
 
     def test_should_leave_the_default_when_no_noise_filter_is_given(self):
         config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
-            'processors': {'fulltext': {'merge_raw_authors': True}}
+            'processors': {'fulltext': {'use_cv_model': True}}
         }))
         assert config.noise_filter == LayoutNoiseFilterConfig()
 
+
+class TestFrontConfig:
+    def test_should_read_how_the_front_is_written(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {'front': {'select_abstracts': 'variants'}}}
+        }))
+        assert config.front == FrontConfig(select_abstracts='variants')
+
+    def test_should_refuse_a_setting_outside_its_scope(self):
+        with pytest.raises(ValueError, match='abstracts_mode'):
+            FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+                'processors': {'fulltext': {'abstracts_mode': 'variants'}}
+            }))
+
+
+class TestReferencesConfig:
     def test_should_read_the_fields_that_keep_a_reference(self):
         config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
-            'processors': {'fulltext': {'reference_kept_by_any_of': ['title', 'doi']}}
+            'processors': {'fulltext': {'references': {'kept_by_any_of': ['title', 'doi']}}}
         }))
-        assert config.reference_kept_by_any_of == ('title', 'doi')
+        assert config.references.kept_by_any_of == ('title', 'doi')
 
     def test_should_refuse_an_unknown_field_to_keep_a_reference(self):
         with pytest.raises(ValueError, match='fern'):
             FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
-                'processors': {'fulltext': {'reference_kept_by_any_of': ['title', 'fern']}}
+                'processors': {'fulltext': {'references': {'kept_by_any_of': ['title', 'fern']}}}
             }))
 
     def test_should_read_where_a_link_doi_of_a_fragment_goes(self):
         config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
-            'processors': {'fulltext': {'fragment_link_doi': 'own_reference'}}
+            'processors': {'fulltext': {'references': {'fragment_link_doi': 'own_reference'}}}
         }))
-        assert config.fragment_link_doi == 'own_reference'
+        assert config.references.fragment_link_doi == 'own_reference'
 
     def test_should_refuse_an_unknown_place_for_a_link_doi_of_a_fragment(self):
         with pytest.raises(ValueError, match='fern'):
             FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
-                'processors': {'fulltext': {'fragment_link_doi': 'fern'}}
+                'processors': {'fulltext': {'references': {'fragment_link_doi': 'fern'}}}
             }))
 
     def test_should_refuse_own_reference_where_a_doi_keeps_no_reference(self):
         with pytest.raises(ValueError, match='own_reference'):
             FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
-                'processors': {'fulltext': {
+                'processors': {'fulltext': {'references': {
                     'fragment_link_doi': 'own_reference',
-                    'reference_kept_by_any_of': ['title']
-                }}
+                    'kept_by_any_of': ['title']
+                }}}
             }))

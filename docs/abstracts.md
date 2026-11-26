@@ -4,15 +4,15 @@ What the parser emits where a document carries more than one abstract, and what 
 
 ## How many abstracts reach the output
 
-The header model labels every region it reads as an abstract, and `abstracts_mode` decides which of them the output carries:
+The header model labels every region it reads as an abstract, and `front.select_abstracts` decides which of them the output carries:
 
-| mode | what it emits |
+| value | what it emits |
 | --- | --- |
 | `first` | the first abstract, with the rest left as notes |
 | `variants` | every abstract that is at least 0.15 of the first one's length, each declaring its own language |
 | `merged_by_language` | the same, with abstracts sharing a language joined into one |
 
-The `recommended` and `recommended_cv` profiles ask for `variants`; every other shipped profile leaves it at `first`. A profile sets it under `processors.fulltext`.
+The `recommended` and `recommended_cv` profiles ask for `variants`; every other shipped profile leaves it at `first`. A profile sets it under `processors.fulltext.front`.
 
 An abstract the page prints in two pieces — the second half carried over a page break — is one abstract in every mode. The second block is joined to the first where it opens mid-sentence under an abstract that ends unfinished, carries no heading of its own, and begins on the page the abstract ended on or the next.
 
