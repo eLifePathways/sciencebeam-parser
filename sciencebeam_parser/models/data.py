@@ -378,6 +378,20 @@ def get_block_status_with_blockstart_for_single_token(
     )
 
 
+def get_grobid_reference_segmenter_block_status(
+    line_index: int,
+    line_count: int,
+    token_index: int,
+    token_count: int
+) -> str:
+    """As GROBID's ReferenceSegmenterParser: a block's last token ends it, alone on its line too."""
+    if line_index == 0 and token_index == 0:
+        return 'BLOCKSTART'
+    if line_index == line_count - 1 and token_index == token_count - 1:
+        return 'BLOCKEND'
+    return 'BLOCKIN'
+
+
 # Which conventions a model's features were trained with: sciencebeam's own, or
 # those of GROBID's Java feature code, for a model GROBID trained.
 FEATURE_FLAVOUR_SCIENCEBEAM = 'sciencebeam'
@@ -772,6 +786,14 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
             line_status=self.get_line_status_with_linestart_for_single_token()
         )
 
+    def get_grobid_reference_segmenter_block_status(self) -> str:
+        return get_grobid_reference_segmenter_block_status(
+            line_index=self.line_index,
+            line_count=self.line_count,
+            token_index=self.token_index,
+            token_count=self.token_count
+        )
+
     def get_grobid_header_line_status(self) -> str:
         return get_grobid_header_line_status(
             line_index=self.line_index,
@@ -976,6 +998,10 @@ class ContextAwareLayoutTokenFeatures(  # pylint: disable=too-many-public-method
 
     def get_str_is_known_identifier(self) -> str:
         return '1' if self.is_identifier else '0'
+
+    def get_str_contains_http(self) -> str:
+        """Whether the token contains "http", as GROBID's FeatureFactory.http pattern finds it."""
+        return get_str_bool_feature_value('http' in self.token_text)
 
     def get_str_is_http_token_based(self) -> str:
         return get_str_bool_feature_value(
