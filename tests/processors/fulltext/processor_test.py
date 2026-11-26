@@ -24,9 +24,11 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticCountry,
     SemanticEditor,
     SemanticExternalIdentifier,
+    SemanticExternalIdentifierTypes,
     SemanticFigure,
     SemanticFigureCitation,
     SemanticGraphic,
+    SemanticHeading,
     SemanticInstitution,
     SemanticInvalidReference,
     SemanticLabel,
@@ -43,11 +45,15 @@ from sciencebeam_parser.document.semantic_document import (
     SemanticTitle,
     iter_by_semantic_type_recursively
 )
+from sciencebeam_parser.models.citation.extract import DEFAULT_REFERENCE_KEPT_BY_ANY_OF
 from sciencebeam_parser.processors.fulltext import processor as processor_module
 from sciencebeam_parser.processors.fulltext.processor import (
     FullTextProcessor,
     FullTextProcessorConfig,
     FullTextProcessorDocumentContext
+)
+from sciencebeam_parser.processors.fulltext.reference_links import (
+    give_fragment_link_dois_to_previous_references
 )
 from tests.processors.fulltext.model_mocks import MockFullTextModels
 from tests.test_utils import log_on_exception
@@ -782,6 +788,56 @@ class TestFullTextProcessorAffiliation:
             identifier.value for identifier in ref.iter_by_type(SemanticExternalIdentifier)
         ] == ['10.12345/fern.2001']
 
+    @pytest.mark.parametrize('fragment_link_doi,reference_kept_by_any_of,expected_dois', [
+        ('previous_reference', ['title', 'doi'], [['10.12345/fern.2001']]),
+        ('previous_reference', list(DEFAULT_REFERENCE_KEPT_BY_ANY_OF), [['10.12345/fern.2001']]),
+        ('own_reference', ['title', 'doi'], [[], ['10.12345/fern.2001']])
+    ])
+    def test_should_place_the_doi_of_a_link_that_is_all_a_reference_has(
+        self,
+        fulltext_models_mock: MockFullTextModels,
+        fragment_link_doi: str,
+        reference_kept_by_any_of: List[str],
+        expected_dois: List[List[str]]
+    ):
+        label_block = LayoutBlock.for_text('1')
+        ref_title_block = _get_layout_block_for_text(
+            'Ferns of the north', COORDINATES_1._replace(y=400)
+        )
+        fragment_block = _get_layout_block_for_text('Publisher Full Text', COORDINATES_1)
+        ref_block = LayoutBlock.merge_blocks([label_block, ref_title_block, fragment_block])
+        fulltext_processor = FullTextProcessor(
+            fulltext_models_mock,
+            FullTextProcessorConfig(
+                extract_citation_fields=True,
+                reference_kept_by_any_of=reference_kept_by_any_of,
+                fragment_link_doi=fragment_link_doi
+            )
+        )
+        fulltext_models_mock.segmentation_model_mock.update_label_by_layout_block(
+            ref_block, '<references>'
+        )
+        reference_segmenter_model_mock = fulltext_models_mock.reference_segmenter_model_mock
+        reference_segmenter_model_mock.update_label_by_layout_block(label_block, '<label>')
+        reference_segmenter_model_mock.update_label_by_layout_block(ref_title_block, '<reference>')
+        reference_segmenter_model_mock.update_label_by_layout_block(fragment_block, '<reference>')
+        citation_model_mock = fulltext_models_mock.citation_model_mock
+        citation_model_mock.update_label_by_layout_block(ref_title_block, '<title>')
+        citation_model_mock.update_label_by_layout_block(fragment_block, '<publisher>')
+        layout_document = LayoutDocument(pages=[LayoutPage(
+            blocks=[ref_block],
+            links=[LayoutLink(
+                uri='https://doi.org/10.12345/fern.2001', coordinates_list=[COORDINATES_1]
+            )]
+        )])
+        semantic_document = fulltext_processor.get_semantic_document_for_layout_document(
+            layout_document=layout_document
+        )
+        assert [
+            [identifier.value for identifier in ref.iter_by_type(SemanticExternalIdentifier)]
+            for ref in semantic_document.iter_by_type_recursively(SemanticReference)
+        ] == expected_dois
+
     def test_should_extract_invalid_reference_from_document(
         self, fulltext_models_mock: MockFullTextModels
     ):
@@ -1441,3 +1497,106 @@ class TestFullTextProcessorAffiliation:
         assert get_cv_document_graphic_provider_mock.call_args[1]['page_numbers'] == [
             _coordinates.page_number
         ]
+
+
+FERN_DOI = '10.12345/fern.2001'
+
+
+def _raw_reference(text: str, y: float, label: str = '') -> SemanticRawReference:
+    block = _get_layout_block_for_text(text, COORDINATES_1._replace(y=y))
+    raw_reference = SemanticRawReference([SemanticRawReferenceText(layout_block=block)])
+    if label:
+        raw_reference.add_content(SemanticLabel(layout_block=LayoutBlock.for_text(label)))
+    return raw_reference
+
+
+def _dois(ref: SemanticReference) -> List[str]:
+    return [
+        str(identifier.value) for identifier in ref.iter_by_type(SemanticExternalIdentifier)
+    ]
+
+
+class TestFullTextProcessorFragmentLinkDoiConfig:
+    def test_should_refuse_an_unknown_place_for_a_link_doi(self):
+        with pytest.raises(ValueError, match='own-reference'):
+            FullTextProcessor(
+                MockFullTextModels(),
+                FullTextProcessorConfig(fragment_link_doi='own-reference')
+            )
+
+
+class TestGiveFragmentLinkDoisToPreviousReferences:
+    FRAGMENT_LINKS = [LayoutLink(
+        uri=f'https://doi.org/{FERN_DOI}', coordinates_list=[COORDINATES_1._replace(y=300)]
+    )]
+
+    def test_should_give_the_doi_to_the_reference_just_before(self):
+        previous = SemanticReference()
+        give_fragment_link_dois_to_previous_references([
+            (_raw_reference('Ferns of the north', y=100), previous),
+            (_raw_reference('Publisher Full Text', y=300), SemanticInvalidReference())
+        ], self.FRAGMENT_LINKS)
+        assert _dois(previous) == [FERN_DOI]
+
+    def test_should_not_give_the_doi_past_another_dropped_reference(self):
+        previous = SemanticReference()
+        give_fragment_link_dois_to_previous_references([
+            (_raw_reference('Ferns of the north', y=100), previous),
+            (_raw_reference('Page 12', y=200), SemanticInvalidReference()),
+            (_raw_reference('Publisher Full Text', y=300), SemanticInvalidReference())
+        ], self.FRAGMENT_LINKS)
+        assert not _dois(previous)
+
+    def test_should_give_the_doi_past_another_split_off_line(self):
+        previous = SemanticReference()
+        give_fragment_link_dois_to_previous_references([
+            (_raw_reference('Ferns of the north', y=100), previous),
+            (_raw_reference('PubMed Abstract', y=200), SemanticInvalidReference()),
+            (_raw_reference('Publisher Full Text', y=300), SemanticInvalidReference())
+        ], self.FRAGMENT_LINKS)
+        assert _dois(previous) == [FERN_DOI]
+
+    def test_should_not_give_the_doi_across_a_heading(self):
+        previous = SemanticReference()
+        give_fragment_link_dois_to_previous_references([
+            (_raw_reference('Ferns of the north', y=100), previous),
+            SemanticHeading(layout_block=LayoutBlock.for_text('Further reading')),
+            (_raw_reference('Publisher Full Text', y=300), SemanticInvalidReference())
+        ], self.FRAGMENT_LINKS)
+        assert not _dois(previous)
+
+    def test_should_give_the_doi_past_a_note(self):
+        previous = SemanticReference()
+        give_fragment_link_dois_to_previous_references([
+            (_raw_reference('Ferns of the north', y=100), previous),
+            SemanticNote(layout_block=LayoutBlock.for_text('Page 12'), note_type='other'),
+            (_raw_reference('Publisher Full Text', y=300), SemanticInvalidReference())
+        ], self.FRAGMENT_LINKS)
+        assert _dois(previous) == [FERN_DOI]
+
+    def test_should_keep_the_doi_the_previous_reference_has(self):
+        previous = SemanticReference([SemanticExternalIdentifier(
+            value='10.5678/moss',
+            external_identifier_type=SemanticExternalIdentifierTypes.DOI
+        )])
+        give_fragment_link_dois_to_previous_references([
+            (_raw_reference('Ferns of the north', y=100), previous),
+            (_raw_reference('Publisher Full Text', y=300), SemanticInvalidReference())
+        ], self.FRAGMENT_LINKS)
+        assert _dois(previous) == ['10.5678/moss']
+
+    def test_should_not_give_away_the_doi_of_a_reference_with_a_year(self):
+        previous = SemanticReference()
+        give_fragment_link_dois_to_previous_references([
+            (_raw_reference('Ferns of the north', y=100), previous),
+            (_raw_reference('Mossby B. 2020. Moss of the south', y=300), SemanticInvalidReference())
+        ], self.FRAGMENT_LINKS)
+        assert not _dois(previous)
+
+    def test_should_not_give_away_the_doi_of_a_numbered_reference(self):
+        previous = SemanticReference()
+        give_fragment_link_dois_to_previous_references([
+            (_raw_reference('Ferns of the north', y=100), previous),
+            (_raw_reference('Mossby of the south', y=300, label='2'), SemanticInvalidReference())
+        ], self.FRAGMENT_LINKS)
+        assert not _dois(previous)

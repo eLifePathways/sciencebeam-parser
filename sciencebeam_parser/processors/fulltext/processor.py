@@ -79,8 +79,14 @@ from sciencebeam_parser.models.fulltext.model import FullTextModel
 from sciencebeam_parser.models.figure.model import FigureModel
 from sciencebeam_parser.models.table.model import TableModel
 from sciencebeam_parser.models.reference_segmenter.model import ReferenceSegmenterModel
-from sciencebeam_parser.models.citation.links import set_reference_doi_from_links
 from sciencebeam_parser.models.citation.model import CitationModel
+from sciencebeam_parser.models.citation.extract import (
+    FragmentLinkDoi,
+    validate_fragment_link_doi
+)
+from sciencebeam_parser.processors.fulltext.reference_links import (
+    give_fragment_link_dois_to_previous_references
+)
 from sciencebeam_parser.processors.ref_matching import (
     ChainedContentIdMatcher,
     ContentIdMatcher,
@@ -164,6 +170,7 @@ class FullTextProcessor:
         self.app_features_context = app_features_context
         if not config:
             config = FullTextProcessorConfig()
+        validate_fragment_link_doi(config.fragment_link_doi, config.reference_kept_by_any_of)
         self.config = config
 
     @property
@@ -624,11 +631,11 @@ class FullTextProcessor:
         reference_list = SemanticReferenceList(list(semantic_content_iterable))
         semantic_document.back_section.add_content(reference_list)
 
-    def _iter_parse_semantic_references(
+    def _parse_semantic_references(
         self,
         semantic_raw_references: List[SemanticRawReference],
         links: Sequence[LayoutLink] = ()
-    ) -> Iterable[Union[SemanticReference, SemanticInvalidReference]]:
+    ) -> List[Union[SemanticReference, SemanticInvalidReference]]:
         layout_documents = [
             self.citation_model.get_layout_document_for_raw_reference(semantic_raw_reference)
             for semantic_raw_reference in semantic_raw_references
@@ -641,6 +648,7 @@ class FullTextProcessor:
             )
         )
         LOGGER.debug('labeled_layout_tokens_list: %r', labeled_layout_tokens_list)
+        refs: List[Union[SemanticReference, SemanticInvalidReference]] = []
         for labeled_layout_tokens, semantic_raw_reference in zip(
             labeled_layout_tokens_list, semantic_raw_references
         ):
@@ -649,7 +657,9 @@ class FullTextProcessor:
                 .iter_semantic_content_for_labeled_layout_tokens(
                     labeled_layout_tokens,
                     semantic_raw_reference=semantic_raw_reference,
-                    reference_kept_by_any_of=self.config.reference_kept_by_any_of
+                    reference_kept_by_any_of=self.config.reference_kept_by_any_of,
+                    links=links,
+                    fragment_link_doi=self.config.fragment_link_doi
                 )
             )
             ref: Optional[Union[SemanticReference, SemanticInvalidReference]] = None
@@ -658,11 +668,8 @@ class FullTextProcessor:
                     ref = semantic_content
             if ref is None:
                 raise AssertionError('no semantic reference extracted')
-            if isinstance(ref, SemanticReference):
-                set_reference_doi_from_links(
-                    ref, list(semantic_raw_reference.iter_tokens()), links
-                )
-            yield ref
+            refs.append(ref)
+        return refs
 
     def _extract_reference_fields_from_raw_references(
         self,
@@ -677,10 +684,10 @@ class FullTextProcessor:
             for reference_list in reference_lists
             for raw_reference in reference_list.iter_by_type(SemanticRawReference)
         ]
-        semantic_references = list(self._iter_parse_semantic_references(
+        semantic_references = self._parse_semantic_references(
             semantic_raw_references,
             links=links
-        ))
+        )
         LOGGER.debug('semantic_references: %r', semantic_references)
         semantic_reference_by_semantic_raw_reference_id = {
             id(semantic_raw_reference): semantic_reference
@@ -693,6 +700,18 @@ class FullTextProcessor:
             semantic_reference_by_semantic_raw_reference_id.keys()
         )
         for reference_list in reference_lists:
+            if self.config.fragment_link_doi != FragmentLinkDoi.OWN_REFERENCE:
+                give_fragment_link_dois_to_previous_references(
+                    [
+                        (semantic_content, semantic_reference_by_semantic_raw_reference_id[
+                            id(semantic_content)
+                        ])
+                        if isinstance(semantic_content, SemanticRawReference)
+                        else semantic_content
+                        for semantic_content in reference_list
+                    ],
+                    links
+                )
             updated_content: List[SemanticContentWrapper] = []
             for semantic_content in reference_list:
                 if isinstance(semantic_content, SemanticRawReference):

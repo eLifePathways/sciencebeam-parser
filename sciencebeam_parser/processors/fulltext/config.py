@@ -13,7 +13,9 @@ from sciencebeam_parser.models.header.extract import (
     DEFAULT_TITLES_MODE
 )
 from sciencebeam_parser.models.citation.extract import (
+    DEFAULT_FRAGMENT_LINK_DOI,
     DEFAULT_REFERENCE_KEPT_BY_ANY_OF,
+    validate_fragment_link_doi,
     validate_reference_field_names
 )
 from sciencebeam_parser.processors.graphic_matching import (
@@ -55,6 +57,7 @@ class FullTextProcessorConfig(NamedTuple):
     extract_citation_authors: bool = True
     extract_citation_editors: bool = False
     reference_kept_by_any_of: Sequence[str] = DEFAULT_REFERENCE_KEPT_BY_ANY_OF
+    fragment_link_doi: str = DEFAULT_FRAGMENT_LINK_DOI
     extract_figure_fields: bool = True
     extract_table_fields: bool = True
     merge_raw_authors: bool = False
@@ -83,6 +86,7 @@ class FullTextProcessorConfig(NamedTuple):
                 props['reference_kept_by_any_of']
             ))
         config = FullTextProcessorConfig()._replace(**props)
+        validate_fragment_link_doi(config.fragment_link_doi, config.reference_kept_by_any_of)
         for name, name_props in nested_props.items():
             if not name_props:
                 continue

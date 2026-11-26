@@ -132,6 +132,9 @@ processors:
     merge_raw_authors: false
     # A reference with none of these is dropped.
     reference_kept_by_any_of: [title, journal, book_title, authors, editors, identifier, url]
+    # Where a link's DOI goes when it is all a reference has.
+    # previous_reference or own_reference
+    fragment_link_doi: 'previous_reference'
     use_cv_model: false
     cv_render_dpi: 100
     use_ocr_model: false

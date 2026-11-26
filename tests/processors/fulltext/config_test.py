@@ -131,3 +131,24 @@ class TestNoiseFilterConfig:
             FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
                 'processors': {'fulltext': {'reference_kept_by_any_of': ['title', 'fern']}}
             }))
+
+    def test_should_read_where_a_link_doi_of_a_fragment_goes(self):
+        config = FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+            'processors': {'fulltext': {'fragment_link_doi': 'own_reference'}}
+        }))
+        assert config.fragment_link_doi == 'own_reference'
+
+    def test_should_refuse_an_unknown_place_for_a_link_doi_of_a_fragment(self):
+        with pytest.raises(ValueError, match='fern'):
+            FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+                'processors': {'fulltext': {'fragment_link_doi': 'fern'}}
+            }))
+
+    def test_should_refuse_own_reference_where_a_doi_keeps_no_reference(self):
+        with pytest.raises(ValueError, match='own_reference'):
+            FullTextProcessorConfig.from_app_config(app_config=AppConfig(props={
+                'processors': {'fulltext': {
+                    'fragment_link_doi': 'own_reference',
+                    'reference_kept_by_any_of': ['title']
+                }}
+            }))

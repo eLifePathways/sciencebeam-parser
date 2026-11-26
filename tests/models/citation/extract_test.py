@@ -1,6 +1,14 @@
 import logging
+from typing import List
 
-from sciencebeam_parser.document.layout_document import LayoutBlock
+import pytest
+
+from sciencebeam_parser.document.layout_document import (
+    LayoutBlock,
+    LayoutLine,
+    LayoutLink,
+    LayoutPageCoordinates
+)
 from sciencebeam_parser.document.semantic_document import (
     SemanticDate,
     SemanticExternalIdentifier,
@@ -82,6 +90,13 @@ class TestParsePubNum:
         assert external_identifier.external_identifier_type is None
         assert external_identifier.value == 'xyz'
 
+    def test_should_join_a_doi_broken_across_lines(self):
+        external_identifier = parse_pubnum(LayoutBlock(lines=[
+            LayoutLine.for_text('doi: 10.1234/fern.'),
+            LayoutLine.for_text('2001')
+        ]))
+        assert external_identifier.value == '10.1234/fern.2001'
+
     def test_should_detect_doi_with_label(self):
         external_identifier = parse_pubnum(LayoutBlock.for_text('doi: 10.1234/test'))
         assert external_identifier.external_identifier_type == SemanticExternalIdentifierTypes.DOI
@@ -91,6 +106,16 @@ class TestParsePubNum:
         external_identifier = parse_pubnum(LayoutBlock.for_text('10.1234/test'))
         assert external_identifier.external_identifier_type == SemanticExternalIdentifierTypes.DOI
         assert external_identifier.value == '10.1234/test'
+
+    def test_should_end_the_doi_before_a_further_link(self):
+        external_identifier = parse_pubnum(
+            LayoutBlock.for_text('doi: 10.1234/fern http://ferns.test/map')
+        )
+        assert external_identifier.value == '10.1234/fern'
+
+    def test_should_drop_a_closing_bracket_after_the_doi(self):
+        external_identifier = parse_pubnum(LayoutBlock.for_text('(doi: 10.1234/fern)'))
+        assert external_identifier.value == '10.1234/fern'
 
     def test_should_detect_pmid_with_pmid_colon_label(self):
         external_identifier = parse_pubnum(LayoutBlock.for_text('PMID: 1234567'))
@@ -316,6 +341,37 @@ class TestReferenceSegmenterSemanticExtractor:
             ], reference_kept_by_any_of=GROBID_REFERENCE_FIELDS)
         ))
         assert isinstance(ref, SemanticReference)
+
+    @pytest.mark.parametrize('kept_by_any_of,expected_type,expected_dois', [
+        (['title', 'doi'], SemanticReference, ['10.12345/fern.2001']),
+        (['title'], SemanticInvalidReference, [])
+    ])
+    def test_should_keep_a_link_doi_on_its_own_reference_where_a_doi_keeps_one(
+        self,
+        kept_by_any_of: List[str],
+        expected_type: type,
+        expected_dois: List[str]
+    ):
+        coordinates = LayoutPageCoordinates(x=10, y=10, width=100, height=10)
+        fragment_block = LayoutBlock.for_text('Publisher Full Text', coordinates=coordinates)
+        ref = next(iter(
+            CitationSemanticExtractor().iter_semantic_content_for_entity_blocks(
+                [('<publisher>', fragment_block)],
+                semantic_raw_reference=SemanticRawReference([
+                    SemanticRawReferenceText(layout_block=fragment_block)
+                ]),
+                reference_kept_by_any_of=kept_by_any_of,
+                links=[LayoutLink(
+                    uri='https://doi.org/10.12345/fern.2001', coordinates_list=[coordinates]
+                )],
+                fragment_link_doi='own_reference'
+            )
+        ))
+        assert isinstance(ref, expected_type)
+        assert isinstance(ref, (SemanticReference, SemanticInvalidReference))
+        assert [
+            identifier.value for identifier in ref.iter_by_type(SemanticExternalIdentifier)
+        ] == expected_dois
 
     def test_should_accept_reference_with_only_a_collaboration_among_grobid_fields(self):
         ref = next(iter(
