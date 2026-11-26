@@ -72,6 +72,29 @@ class TestGetDocumentWords:
         ])])
         assert get_document_words(document).words == {'the', 'cepção', 'of', 'colour'}
 
+    def test_should_leave_out_the_second_part_of_a_word_broken_in_capitals(self):
+        assert get_document_words(_document('A STUDY OF PER-', 'CEPÇÃO')).words == {
+            'a', 'study', 'of'
+        }
+
+    def test_should_collect_a_word_with_a_soft_hyphen_inside_it(self):
+        assert get_document_words(_document('their per\u00adcepção')).words == {
+            'their', 'percepção'
+        }
+
+    def test_should_compare_words_by_case_folding(self):
+        assert get_document_words(_document('die Straße')).words == {'die', 'strasse'}
+
+    def test_should_not_collect_a_word_around_a_superscript_hyphen(self):
+        line = _line('Cl-ions')
+        line = LayoutLine(tokens=[
+            token._replace(font=LayoutFont(font_id='sup', is_superscript=True))
+            if token.text == '-' else token
+            for token in line.tokens
+        ])
+        document = LayoutDocument(pages=[LayoutPage(blocks=[LayoutBlock(lines=[line])])])
+        assert get_document_words(document).hyphenated_words == set()
+
     def test_should_collect_a_word_with_combining_accents_in_composed_form(self):
         assert get_document_words(_document('percepc\u0327a\u0303o')).words == {'percepção'}
 

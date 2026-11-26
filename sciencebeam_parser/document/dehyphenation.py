@@ -37,16 +37,24 @@ class DocumentWords(NamedTuple):
 EMPTY_DOCUMENT_WORDS = DocumentWords(words=frozenset(), hyphenated_words=frozenset())
 
 
+def _get_composed_text(text: str) -> str:
+    return unicodedata.normalize('NFC', text.replace(SOFT_HYPHEN, ''))
+
+
 def _is_word(text: str) -> bool:
-    return unicodedata.normalize('NFC', text).isalpha()
+    return _get_composed_text(text).isalpha()
 
 
 def _is_word_part(text: str) -> bool:
-    return unicodedata.normalize('NFC', text).isalnum()
+    return _get_composed_text(text).isalnum()
 
 
 def _get_word_key(text: str) -> str:
-    return unicodedata.normalize('NFC', text).lower()
+    return _get_composed_text(text).casefold()
+
+
+def _is_continuation_in_the_case_of(prefix: str, continuation: str) -> bool:
+    return continuation.islower() or (prefix.isupper() and continuation.isupper())
 
 
 def _is_hyphen_on_the_line(token: LayoutToken) -> bool:
@@ -78,7 +86,7 @@ def _get_hyphenated_words_in_line(tokens: Sequence[LayoutToken]) -> List[str]:
     return [
         _get_word_key(f'{before.text}-{after.text}')
         for before, hyphen, after in zip(tokens, tokens[1:], tokens[2:])
-        if hyphen.text == HYPHEN
+        if _is_hyphen_on_the_line(hyphen)
         and not before.whitespace
         and not hyphen.whitespace
         and _is_word_part(before.text)
@@ -89,19 +97,18 @@ def _get_hyphenated_words_in_line(tokens: Sequence[LayoutToken]) -> List[str]:
 def _iter_unbroken_words_in_block(layout_block: LayoutBlock) -> Iterable[str]:
     """The words of a block, leaving out the parts of a word broken at a line end."""
     lines = [line.tokens for line in layout_block.lines if line.tokens]
-    broken_word_token_count_by_line = [
-        (1 if tokens[-1].text.endswith(SOFT_HYPHEN) else 2)
-        if _get_broken_word_prefix(tokens) is not None else 0
-        for tokens in lines
-    ]
+    prefixes = [_get_broken_word_prefix(tokens) for tokens in lines]
     for index, tokens in enumerate(lines):
-        starts_with_continuation = (
-            index > 0
-            and broken_word_token_count_by_line[index - 1] > 0
-            and tokens[0].text.islower()
+        previous_prefix = prefixes[index - 1] if index > 0 else None
+        starts_with_continuation = previous_prefix is not None and _is_continuation_in_the_case_of(
+            previous_prefix, tokens[0].text
         )
         unbroken_start = 1 if starts_with_continuation else 0
-        unbroken_end = len(tokens) - broken_word_token_count_by_line[index]
+        unbroken_end = len(tokens) - (
+            0 if prefixes[index] is None
+            else 1 if tokens[-1].text.endswith(SOFT_HYPHEN)
+            else 2
+        )
         for token in tokens[unbroken_start:unbroken_end]:
             if _is_word(token.text):
                 yield _get_word_key(token.text)
@@ -142,12 +149,9 @@ def _should_remove_hyphen_by_document(
     """True or False where the document sets the joined or the hyphenated word, else None."""
     if _get_word_key(f'{prefix}-{continuation}') in document_words.hyphenated_words:
         return False
-    is_in_the_case_of_a_word = continuation.islower() or (
-        prefix.isupper() and continuation.isupper()
-    )
     if (
         _is_word(continuation)
-        and is_in_the_case_of_a_word
+        and _is_continuation_in_the_case_of(prefix, continuation)
         and _get_word_key(prefix + continuation) in document_words.words
     ):
         return True
