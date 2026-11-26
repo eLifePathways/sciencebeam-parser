@@ -195,6 +195,24 @@ class TestParseAltoRoot:
             for line in layout_document.iter_all_lines()
         ] == [1]
 
+    def test_should_number_lines_in_document_order(self):
+        layout_document = parse_alto_root(ALTO_E.alto(ALTO_E.Layout(
+            ALTO_E.Page(ALTO_E.PrintSpace(
+                ALTO_E.TextBlock(
+                    ALTO_E.TextLine(ALTO_E.String(CONTENT=TOKEN_1)),
+                    ALTO_E.TextLine(ALTO_E.String(CONTENT=TOKEN_2))
+                ),
+                ALTO_E.TextBlock(ALTO_E.TextLine(ALTO_E.String(CONTENT=TOKEN_1)))
+            )),
+            ALTO_E.Page(ALTO_E.PrintSpace(
+                ALTO_E.TextBlock(ALTO_E.TextLine(ALTO_E.String(CONTENT=TOKEN_2)))
+            ))
+        )))
+        assert [
+            line.tokens[0].line_meta.document_line_index
+            for line in layout_document.iter_all_lines()
+        ] == [0, 1, 2, 3]
+
     def test_should_parse_simple_document(self):
         layout_document = parse_alto_root(ALTO_E.alto(
             ALTO_E.Styles(

@@ -6,6 +6,7 @@ from sciencebeam_parser.document.layout_document import (
     LayoutBlock,
     LayoutDocument,
     LayoutLine,
+    LayoutLineMeta,
     LayoutPage,
     LayoutPageCoordinates,
     LayoutPageMeta,
@@ -25,6 +26,7 @@ from sciencebeam_parser.models.data import (
     get_block_status_with_blockend_for_single_token,
     get_block_status_with_blockstart_for_single_token,
     get_grobid_header_block_status,
+    get_grobid_citation_token_spans,
     get_grobid_header_line_status,
     get_line_status_with_lineend_for_single_token,
     get_line_status_with_linestart_for_single_token,
@@ -842,3 +844,43 @@ class TestIterModelDataForLayoutDocumentPositionFeatures:
         )
         rows = list(gen.iter_model_data_for_layout_document(LayoutDocument(pages=[page])))
         assert rows[0].data_line.split()[0] == '0'
+
+
+def _line(
+    texts: List[str], document_line_index: int, block_id: int = 1, page_number: int = 1
+) -> LayoutLine:
+    meta = LayoutLineMeta(
+        page_meta=LayoutPageMeta(page_number=page_number),
+        block_id=block_id,
+        document_line_index=document_line_index
+    )
+    return LayoutLine(tokens=[
+        LayoutToken(text, whitespace=' ', line_meta=meta) for text in texts
+    ])
+
+
+class TestGetGrobidCitationTokenSpans:
+    def test_should_count_a_space_after_each_word_and_a_line_break_after_a_line(self):
+        assert get_grobid_citation_token_spans([
+            _line(['Ferns', 'of'], 0), _line(['the', 'north'], 1)
+        ]) == [2, 3, 2, 2]
+
+    def test_should_count_no_space_after_a_word_ending_in_a_hyphen(self):
+        assert get_grobid_citation_token_spans([
+            _line(['Fern', '-'], 0), _line(['ley'], 1)
+        ]) == [2, 2, 2]
+
+    def test_should_count_another_line_break_ending_a_block(self):
+        assert get_grobid_citation_token_spans([
+            _line(['Ferns'], 0, block_id=1), _line(['Mossby'], 1, block_id=2)
+        ]) == [4, 2]
+
+    def test_should_count_another_two_line_breaks_ending_a_page(self):
+        assert get_grobid_citation_token_spans([
+            _line(['Ferns'], 0, page_number=1), _line(['Mossby'], 1, page_number=2)
+        ]) == [5, 2]
+
+    def test_should_count_one_line_break_where_lines_between_were_left_out(self):
+        assert get_grobid_citation_token_spans([
+            _line(['Ferns'], 0, page_number=1), _line(['Mossby'], 5, page_number=2)
+        ]) == [3, 2]

@@ -121,6 +121,8 @@ class LayoutLineMeta(NamedTuple):
     """The block the line was set in, which survives tokens being regrouped."""
     preceding_empty_block_count: int = 0
     """Text blocks with no text before this line's block in the document."""
+    document_line_index: int = -1
+    """The line's place in the document, which says whether two lines are adjacent."""
 
 
 DEFAULT_LAYOUT_LINE_META = LayoutLineMeta()
