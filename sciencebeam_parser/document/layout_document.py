@@ -101,6 +101,8 @@ def get_merged_coordinates_list(
 class LayoutPageMeta(NamedTuple):
     page_number: int = 0
     coordinates: Optional[LayoutPageCoordinates] = None
+    empty_block_count: int = 0
+    """Text blocks the page sets with no text, which GROBID still counts as a line break each."""
 
     @staticmethod
     def for_coordinates(coordinates: LayoutPageCoordinates) -> 'LayoutPageMeta':
@@ -117,6 +119,8 @@ class LayoutLineMeta(NamedTuple):
     """The whole line, where it is known: the training TEI parser reads it."""
     block_id: int = -1
     """The block the line was set in, which survives tokens being regrouped."""
+    preceding_empty_block_count: int = 0
+    """Text blocks with no text before this line's block in the document."""
 
 
 DEFAULT_LAYOUT_LINE_META = LayoutLineMeta()

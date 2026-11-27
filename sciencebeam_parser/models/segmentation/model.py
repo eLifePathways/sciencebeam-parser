@@ -1,6 +1,7 @@
 import logging
 
 from sciencebeam_parser.models.data import (
+    DEFAULT_FEATURE_FLAVOUR,
     DocumentFeaturesContext
 )
 from sciencebeam_parser.models.segmentation.data import SegmentationDataGenerator
@@ -23,7 +24,8 @@ class SegmentationModel(Model):
             document_features_context=document_features_context,
             use_first_token_of_block=(
                 self.model_config.get('use_first_token_of_block', True)
-            )
+            ),
+            feature_flavour=self.model_config.get('feature_flavour', DEFAULT_FEATURE_FLAVOUR)
         )
 
     def get_tei_training_data_generator(self) -> SegmentationTeiTrainingDataGenerator:

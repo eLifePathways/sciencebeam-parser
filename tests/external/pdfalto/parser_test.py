@@ -180,6 +180,21 @@ class TestAltoParser:
 
 
 class TestParseAltoRoot:
+    def test_should_count_the_blocks_set_with_no_text(self):
+        layout_document = parse_alto_root(ALTO_E.alto(ALTO_E.Layout(
+            ALTO_E.Page(ALTO_E.PrintSpace(
+                ALTO_E.TextBlock(),
+                ALTO_E.TextBlock(ALTO_E.TextLine(ALTO_E.String(CONTENT=TOKEN_1))),
+                ALTO_E.TextBlock()
+            ))
+        )))
+        page = layout_document.pages[0]
+        assert page.meta.empty_block_count == 2
+        assert [
+            line.tokens[0].line_meta.preceding_empty_block_count
+            for line in layout_document.iter_all_lines()
+        ] == [1]
+
     def test_should_parse_simple_document(self):
         layout_document = parse_alto_root(ALTO_E.alto(
             ALTO_E.Styles(

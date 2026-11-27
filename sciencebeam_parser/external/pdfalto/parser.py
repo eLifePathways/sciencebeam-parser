@@ -1,5 +1,6 @@
 import logging
 from collections import defaultdict
+from itertools import accumulate
 from typing import Dict, List, Sequence
 
 from lxml import etree
@@ -30,6 +31,10 @@ ALTO_NS_MAP = {
 
 def alto_xpath(parent: etree.ElementBase, xpath: str) -> List[etree.ElementBase]:
     return parent.xpath(xpath, namespaces=ALTO_NS_MAP)
+
+
+def _is_empty_block(block_node: etree.ElementBase) -> bool:
+    return not alto_xpath(block_node, './/alto:String')
 
 
 class AltoParser:
@@ -79,7 +84,8 @@ class AltoParser:
         line_node: etree.ElementBase,
         page_number: int,
         page_meta: LayoutPageMeta,
-        block_id: int = -1
+        block_id: int = -1,
+        preceding_empty_block_count: int = 0
     ) -> LayoutLine:
         return LayoutLine(tokens=[
             self.parse_token(
@@ -88,7 +94,8 @@ class AltoParser:
                 layout_line_meta=LayoutLineMeta(
                     line_id=id(line_node),
                     page_meta=page_meta,
-                    block_id=block_id
+                    block_id=block_id,
+                    preceding_empty_block_count=preceding_empty_block_count
                 )
             )
             for token_node in alto_xpath(line_node, './/alto:String')
@@ -98,14 +105,16 @@ class AltoParser:
         self,
         block_node: etree.ElementBase,
         page_number: int,
-        page_meta: LayoutPageMeta
+        page_meta: LayoutPageMeta,
+        preceding_empty_block_count: int = 0
     ) -> LayoutBlock:
         return LayoutBlock(lines=[
             self.parse_line(
                 line_node,
                 page_number=page_number,
                 page_meta=page_meta,
-                block_id=id(block_node)
+                block_id=id(block_node),
+                preceding_empty_block_count=preceding_empty_block_count
             )
             for line_node in alto_xpath(block_node, './/alto:TextLine[alto:String]')
         ])
@@ -127,7 +136,8 @@ class AltoParser:
     def parse_page(
         self,
         page_node: etree.ElementBase,
-        page_index: int
+        page_index: int,
+        empty_blocks_before_page: int = 0
     ) -> LayoutPage:
         page_number_str = page_node.attrib.get('PHYSICAL_IMG_NR')
         page_number = int(page_number_str) if page_number_str else 1 + page_index
@@ -144,15 +154,28 @@ class AltoParser:
             if width_str and height_str
             else None
         )
+        block_nodes = alto_xpath(page_node, './/alto:TextBlock')
+        empty_block_flags = [_is_empty_block(block_node) for block_node in block_nodes]
+        preceding_empty_block_counts = accumulate(
+            empty_block_flags, initial=empty_blocks_before_page
+        )
         page_meta = LayoutPageMeta(
             page_number=page_number,
-            coordinates=coordinates
+            coordinates=coordinates,
+            empty_block_count=sum(empty_block_flags)
         )
         return LayoutPage(
             meta=page_meta,
             blocks=[
-                self.parse_block(block_node, page_number=page_number, page_meta=page_meta)
-                for block_node in alto_xpath(page_node, './/alto:TextBlock')
+                self.parse_block(
+                    block_node,
+                    page_number=page_number,
+                    page_meta=page_meta,
+                    preceding_empty_block_count=preceding_empty_block_count
+                )
+                for block_node, preceding_empty_block_count in zip(
+                    block_nodes, preceding_empty_block_counts
+                )
             ],
             graphics=[
                 self.parse_graphic(graphic_node, page_number=page_number, page_meta=page_meta)
@@ -184,10 +207,17 @@ class AltoParser:
 
     def parse_root(self, root: etree.ElementBase) -> LayoutDocument:
         self.font_by_id_map = self.parse_font_by_id_map(root)
-        return LayoutDocument(pages=[
-            self.parse_page(page_node, page_index=page_index)
-            for page_index, page_node in enumerate(alto_xpath(root, './/alto:Page'))
-        ])
+        pages: List[LayoutPage] = []
+        empty_blocks_before_page = 0
+        for page_index, page_node in enumerate(alto_xpath(root, './/alto:Page')):
+            page = self.parse_page(
+                page_node,
+                page_index=page_index,
+                empty_blocks_before_page=empty_blocks_before_page
+            )
+            pages.append(page)
+            empty_blocks_before_page += page.meta.empty_block_count
+        return LayoutDocument(pages=pages)
 
 
 def parse_alto_root(root: etree.ElementBase) -> LayoutDocument:

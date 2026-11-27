@@ -8,13 +8,18 @@ from sciencebeam_parser.document.layout_document import (
     LayoutDocument,
     LayoutGraphic,
     LayoutLine,
+    LayoutLineMeta,
     LayoutPage,
     LayoutPageCoordinates,
     LayoutPageMeta,
     LayoutToken
 )
 
-from sciencebeam_parser.models.data import DEFAULT_DOCUMENT_FEATURES_CONTEXT
+from sciencebeam_parser.models.data import (
+    DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+    FEATURE_FLAVOUR_GROBID,
+    FEATURE_FLAVOUR_SCIENCEBEAM
+)
 from sciencebeam_parser.models.segmentation.data import (
     VECTOR_GRAPHIC_TYPE,
     SegmentationLineFeatures,
@@ -525,6 +530,27 @@ class TestSegmentationLineFeaturesProviderVectorAround:
         features = list(_iter_line_features(features_provider, doc))
         assert features[0].get_str_is_vector_around() == '0'
 
+    @pytest.mark.parametrize('feature_flavour,expected', [
+        (FEATURE_FLAVOUR_GROBID, '1'),
+        (FEATURE_FLAVOUR_SCIENCEBEAM, '0')
+    ])
+    def test_graphic_without_size_counts_at_the_page_corner_as_grobid(
+        self, feature_flavour: str, expected: str
+    ):
+        block_coords = LayoutPageCoordinates(x=50, y=60, width=200, height=20, page_number=1)
+        graphic = LayoutGraphic(
+            coordinates=LayoutPageCoordinates(x=0, y=0, width=0, height=0, page_number=1),
+            graphic_type=VECTOR_GRAPHIC_TYPE
+        )
+        doc = self._make_doc_with_block_and_graphics(block_coords, [graphic])
+        features_provider = SegmentationLineFeaturesProvider(
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            use_first_token_of_block=False,
+            feature_flavour=feature_flavour
+        )
+        features = list(_iter_line_features(features_provider, doc))
+        assert features[0].get_str_is_vector_around() == expected
+
     def test_graphic_without_coordinates_is_ignored(self, features_provider):
         block_coords = LayoutPageCoordinates(x=50, y=200, width=200, height=20, page_number=1)
         graphic = LayoutGraphic(coordinates=None, graphic_type=VECTOR_GRAPHIC_TYPE)
@@ -549,3 +575,44 @@ class TestSegmentationLineFeaturesProviderVectorAround:
         ])
         features = list(_iter_line_features(features_provider, doc))
         assert all(f.get_str_is_vector_around() == '1' for f in features)
+
+
+def _get_document_with_empty_blocks_before_the_second_block(
+    empty_block_count: int
+) -> LayoutDocument:
+    page_meta = LayoutPageMeta(page_number=1, empty_block_count=empty_block_count)
+    return LayoutDocument(pages=[LayoutPage(meta=page_meta, blocks=[
+        LayoutBlock(lines=[LayoutLine([LayoutToken('Ferns', line_meta=LayoutLineMeta(
+            page_meta=page_meta
+        ))])]),
+        LayoutBlock(lines=[LayoutLine([LayoutToken('Mossby', line_meta=LayoutLineMeta(
+            page_meta=page_meta, preceding_empty_block_count=empty_block_count
+        ))])])
+    ])])
+
+
+class TestSegmentationPositionWithEmptyBlocks:
+    @pytest.mark.parametrize('feature_flavour,expected_offset', [
+        (FEATURE_FLAVOUR_GROBID, 10),
+        (FEATURE_FLAVOUR_SCIENCEBEAM, 0)
+    ])
+    def test_should_count_each_empty_block_before_a_block_as_grobid(
+        self, feature_flavour: str, expected_offset: int
+    ):
+        features_provider = SegmentationLineFeaturesProvider(
+            document_features_context=DEFAULT_DOCUMENT_FEATURES_CONTEXT,
+            use_first_token_of_block=False,
+            feature_flavour=feature_flavour
+        )
+        layout_document = _get_document_with_empty_blocks_before_the_second_block(10)
+        first_block_token_count = count_block_tokens_like_grobid(
+            layout_document.pages[0].blocks[0].lines
+        )
+        positions = [
+            (features.document_token_index, features.page_token_index)
+            for features in _iter_line_features(features_provider, layout_document)
+        ]
+        assert positions[1] == (
+            first_block_token_count + expected_offset,
+            first_block_token_count + expected_offset
+        )

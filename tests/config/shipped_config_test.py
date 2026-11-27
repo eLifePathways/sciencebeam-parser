@@ -89,7 +89,7 @@ HUB_PROFILE = 'delft_hub'
 HUB_PROFILE_BASE = 'grobid_crf_0_9_0'
 
 # The models whose features `feature_flavour` selects, and where the ones GROBID trained live
-FEATURE_FLAVOUR_MODEL_NAMES = ('header', 'reference_segmenter', 'citation')
+FEATURE_FLAVOUR_MODEL_NAMES = ('segmentation', 'header', 'reference_segmenter', 'citation')
 GROBID_TRAINED_PATH_PREFIXES = (
     'https://github.com/kermitt2/grobid/',
     'hf://sciencialab/'

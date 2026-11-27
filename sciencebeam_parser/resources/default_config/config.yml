@@ -195,6 +195,7 @@ sequence_model_profiles:
     segmentation:
       path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/biorxiv-grobid/2021-05-11-delft-grobid-segmentation-biorxiv-10k-auto-v0.0.23-train-1966-e133.tar.gz'
       use_first_token_of_block: false
+      feature_flavour: 'sciencebeam'
     header:
       path: 'https://github.com/eLifePathways/sciencebeam-models/releases/download/v0.0.1/2020-10-04-delft-grobid-header-biorxiv-no-word-embedding.tar.gz'
       feature_flavour: 'sciencebeam'
@@ -223,6 +224,7 @@ sequence_model_profiles:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/segmentation'
       engine: 'wapiti'
       use_first_token_of_block: true
+      feature_flavour: 'grobid'
     header:
       path: 'https://github.com/kermitt2/grobid/raw/0.9.0/grobid-home/models/header'
       engine: 'wapiti'
@@ -306,11 +308,13 @@ sequence_model_profiles:
     segmentation:
       path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/08e5e4a5e6080e6e1874ef6ab4dc8cca7ceac181/segmentation/wapiti/2026-10-06_wapiti_grobid_090_scielo_preprints_ore'
       engine: 'wapiti'
+      feature_flavour: 'sciencebeam'
   delft_seg_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     segmentation:
       path: 'https://huggingface.co/elifepathways/sciencebeam-sequence-models/resolve/eb37314ac4f24d0147406eaef94279b6a35d8e44/segmentation/delft/2026-10-16_CustomBidLSTM_CRF_grobid_090_scielo_preprints_ore_b50_flex_line_text'
       engine: 'delft'
+      feature_flavour: 'sciencebeam'
   delft_header_scielo_preprints_ore:
     extends: grobid_crf_0_9_0
     header:
