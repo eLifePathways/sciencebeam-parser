@@ -4,6 +4,7 @@ import math
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from itertools import accumulate
 from typing import (
     AbstractSet,
     Callable,
@@ -14,6 +15,7 @@ from typing import (
     List,
     NamedTuple,
     Optional,
+    Sequence,
     TypeVar
 )
 
@@ -21,7 +23,12 @@ from lxml import etree
 
 from sciencebeam_parser.lookup import TextLookUp
 from sciencebeam_parser.lookup.phrase_match import SequencePhraseMatch
-from sciencebeam_parser.document.layout_document import LayoutDocument, LayoutToken, LayoutLine
+from sciencebeam_parser.document.layout_document import (
+    LayoutDocument,
+    LayoutLine,
+    LayoutLineMeta,
+    LayoutToken
+)
 from sciencebeam_parser.external.pdfalto.parser import parse_alto_root
 
 
@@ -81,9 +88,54 @@ def _get_identifier_token_indices(tokens: List[LayoutToken]) -> FrozenSet[int]:
     return _get_pattern_token_indices(tokens, _DOI_PATTERN, required_substring='10.')
 
 
-def _get_sentence_token_span(token: LayoutToken, is_counted_line_end: bool) -> int:
-    """Positions the token takes: itself, its whitespace and a line break after it."""
-    return 1 + (1 if token.whitespace else 0) + (1 if is_counted_line_end else 0)
+def _get_sentence_token_span(token: LayoutToken) -> int:
+    """Positions the token takes: itself and its whitespace."""
+    return 1 + (1 if token.whitespace else 0)
+
+
+def _get_grobid_line_break_count(line_meta: LayoutLineMeta, next_line_meta: LayoutLineMeta) -> int:
+    """GROBID's line breaks after a line: one, one more ending a block and one more a page.
+
+    Only where the next line follows it in the document: GROBID joins the pieces of a
+    section labelled apart with nothing of the text between them.
+    """
+    if (
+        line_meta.document_line_index >= 0
+        and next_line_meta.document_line_index != line_meta.document_line_index + 1
+    ):
+        return 1
+    is_new_page = line_meta.page_meta.page_number != next_line_meta.page_meta.page_number
+    is_new_block = is_new_page or line_meta.block_id != next_line_meta.block_id
+    return 1 + (1 if is_new_block else 0) + (1 if is_new_page else 0)
+
+
+def _get_grobid_token_span(token: LayoutToken) -> int:
+    """Positions the token takes: itself and a space, unless it ends in "-"."""
+    return 1 + (1 if token.whitespace and not token.text.endswith('-') else 0)
+
+
+def _get_grobid_line_token_spans(
+    line: LayoutLine,
+    next_line: Optional[LayoutLine]
+) -> List[int]:
+    """Positions each token of the line takes, with the line breaks after its last."""
+    token_spans = [_get_grobid_token_span(token) for token in line.tokens]
+    if not token_spans or next_line is None or not next_line.tokens:
+        return token_spans
+    line_break_count = _get_grobid_line_break_count(
+        line.tokens[-1].line_meta, next_line.tokens[0].line_meta
+    )
+    return [*token_spans[:-1], token_spans[-1] + line_break_count]
+
+
+def get_grobid_citation_token_spans(lines: Sequence[LayoutLine]) -> List[int]:
+    """Positions each token takes in GROBID's citation input, as its PDF reader writes it."""
+    next_lines: List[Optional[LayoutLine]] = [*lines[1:], None]
+    return [
+        span
+        for line, next_line in zip(lines, next_lines)
+        for span in _get_grobid_line_token_spans(line, next_line)
+    ]
 
 
 def _get_phrase_match_token_indices(
@@ -1100,13 +1152,16 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         max_grobid_line_length = max(grobid_line_length_by_line_id.values())
         all_tokens = list(layout_document.iter_all_tokens())
         count_line_breaks = self._grobid_citation_features
-        sentence_token_spans = [
-            _get_sentence_token_span(
-                token, count_line_breaks and index == len(line.tokens) - 1
-            )
-            for line in layout_document.iter_all_lines()
-            for index, token in enumerate(line.tokens)
-        ]
+        sentence_token_spans = (
+            get_grobid_citation_token_spans(list(layout_document.iter_all_lines()))
+            if count_line_breaks
+            else [
+                _get_sentence_token_span(token)
+                for line in layout_document.iter_all_lines()
+                for token in line.tokens
+            ]
+        )
+        sentence_token_indices = list(accumulate(sentence_token_spans, initial=0))
         sentence_token_count = (
             sum(sentence_token_spans[:-1]) + 1 if count_line_breaks
             else sum(sentence_token_spans)
@@ -1141,7 +1196,6 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
         document_char_count = sum(len(t.text) for t in all_tokens)
         document_char_index = 0
         document_token_index = 0
-        sentence_token_index = 0
         for page in layout_document.pages:
             page_height = (
                 page.meta.coordinates.height
@@ -1176,7 +1230,9 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                                 document_features_context=self.document_features_context,
                                 token_index=token_index,
                                 token_count=token_count,
-                                sentence_token_index=sentence_token_index,
+                                sentence_token_index=(
+                                    sentence_token_indices[document_token_index]
+                                ),
                                 sentence_token_count=sentence_token_count,
                                 line_index=line_index,
                                 line_count=line_count,
@@ -1215,8 +1271,5 @@ class ContextAwareLayoutTokenModelDataGenerator(ModelDataGenerator):
                         # GROBID double-counts each space: space token contributes len(' ')+1 = 2.
                         if token.whitespace:
                             grobid_nn += 2 * len(token.whitespace)
-                        sentence_token_index += _get_sentence_token_span(
-                            token, count_line_breaks and token_index == token_count - 1
-                        )
                         document_char_index += len(token.text)
                         document_token_index += 1

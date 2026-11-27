@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 from itertools import accumulate
-from typing import Dict, List, Sequence
+from typing import Dict, Iterable, List, Sequence
 
 from lxml import etree
 
@@ -85,19 +85,18 @@ class AltoParser:
         page_number: int,
         page_meta: LayoutPageMeta,
         block_id: int = -1,
-        preceding_empty_block_count: int = 0
+        preceding_empty_block_count: int = 0,
+        document_line_index: int = -1
     ) -> LayoutLine:
+        line_meta = LayoutLineMeta(
+            line_id=id(line_node),
+            page_meta=page_meta,
+            block_id=block_id,
+            preceding_empty_block_count=preceding_empty_block_count,
+            document_line_index=document_line_index
+        )
         return LayoutLine(tokens=[
-            self.parse_token(
-                token_node,
-                page_number=page_number,
-                layout_line_meta=LayoutLineMeta(
-                    line_id=id(line_node),
-                    page_meta=page_meta,
-                    block_id=block_id,
-                    preceding_empty_block_count=preceding_empty_block_count
-                )
-            )
+            self.parse_token(token_node, page_number=page_number, layout_line_meta=line_meta)
             for token_node in alto_xpath(line_node, './/alto:String')
         ])
 
@@ -106,7 +105,8 @@ class AltoParser:
         block_node: etree.ElementBase,
         page_number: int,
         page_meta: LayoutPageMeta,
-        preceding_empty_block_count: int = 0
+        preceding_empty_block_count: int = 0,
+        first_line_index: int = 0
     ) -> LayoutBlock:
         return LayoutBlock(lines=[
             self.parse_line(
@@ -114,10 +114,38 @@ class AltoParser:
                 page_number=page_number,
                 page_meta=page_meta,
                 block_id=id(block_node),
-                preceding_empty_block_count=preceding_empty_block_count
+                preceding_empty_block_count=preceding_empty_block_count,
+                document_line_index=document_line_index
             )
-            for line_node in alto_xpath(block_node, './/alto:TextLine[alto:String]')
+            for document_line_index, line_node in enumerate(
+                alto_xpath(block_node, './/alto:TextLine[alto:String]'),
+                start=first_line_index
+            )
         ])
+
+    def parse_blocks(
+        self,
+        block_nodes: Sequence[etree.ElementBase],
+        page_number: int,
+        page_meta: LayoutPageMeta,
+        preceding_empty_block_counts: Iterable[int],
+        first_line_index: int
+    ) -> List[LayoutBlock]:
+        blocks: List[LayoutBlock] = []
+        block_first_line_index = first_line_index
+        for block_node, preceding_empty_block_count in zip(
+            block_nodes, preceding_empty_block_counts
+        ):
+            block = self.parse_block(
+                block_node,
+                page_number=page_number,
+                page_meta=page_meta,
+                preceding_empty_block_count=preceding_empty_block_count,
+                first_line_index=block_first_line_index
+            )
+            blocks.append(block)
+            block_first_line_index += len(block.lines)
+        return blocks
 
     def parse_graphic(
         self,
@@ -137,7 +165,8 @@ class AltoParser:
         self,
         page_node: etree.ElementBase,
         page_index: int,
-        empty_blocks_before_page: int = 0
+        empty_blocks_before_page: int = 0,
+        first_line_index: int = 0
     ) -> LayoutPage:
         page_number_str = page_node.attrib.get('PHYSICAL_IMG_NR')
         page_number = int(page_number_str) if page_number_str else 1 + page_index
@@ -156,27 +185,23 @@ class AltoParser:
         )
         block_nodes = alto_xpath(page_node, './/alto:TextBlock')
         empty_block_flags = [_is_empty_block(block_node) for block_node in block_nodes]
-        preceding_empty_block_counts = accumulate(
-            empty_block_flags, initial=empty_blocks_before_page
-        )
         page_meta = LayoutPageMeta(
             page_number=page_number,
             coordinates=coordinates,
             empty_block_count=sum(empty_block_flags)
         )
+        blocks = self.parse_blocks(
+            block_nodes,
+            page_number=page_number,
+            page_meta=page_meta,
+            preceding_empty_block_counts=accumulate(
+                empty_block_flags, initial=empty_blocks_before_page
+            ),
+            first_line_index=first_line_index
+        )
         return LayoutPage(
             meta=page_meta,
-            blocks=[
-                self.parse_block(
-                    block_node,
-                    page_number=page_number,
-                    page_meta=page_meta,
-                    preceding_empty_block_count=preceding_empty_block_count
-                )
-                for block_node, preceding_empty_block_count in zip(
-                    block_nodes, preceding_empty_block_counts
-                )
-            ],
+            blocks=blocks,
             graphics=[
                 self.parse_graphic(graphic_node, page_number=page_number, page_meta=page_meta)
                 for graphic_node in alto_xpath(page_node, './/alto:Illustration')
@@ -209,14 +234,17 @@ class AltoParser:
         self.font_by_id_map = self.parse_font_by_id_map(root)
         pages: List[LayoutPage] = []
         empty_blocks_before_page = 0
+        page_first_line_index = 0
         for page_index, page_node in enumerate(alto_xpath(root, './/alto:Page')):
             page = self.parse_page(
                 page_node,
                 page_index=page_index,
-                empty_blocks_before_page=empty_blocks_before_page
+                empty_blocks_before_page=empty_blocks_before_page,
+                first_line_index=page_first_line_index
             )
             pages.append(page)
             empty_blocks_before_page += page.meta.empty_block_count
+            page_first_line_index += sum(len(block.lines) for block in page.blocks)
         return LayoutDocument(pages=pages)
 
 
