@@ -4097,7 +4097,11 @@ class LayoutDocumentJatsAligner:
                 and fv.sub_field_name is None
                 # The fields a document printed in two languages prints twice,
                 # which is where a deposit's order and the page's come apart.
-                and fv.field_name in _ANCHOR_FIELDS
+                # A reference comes apart from it for another reason: a list
+                # set in columns is handed over a column at a time, so the page
+                # reads a later run of entries before an earlier one, and the
+                # entries the order drops are a whole run of the list.
+                and (fv.field_name in _ANCHOR_FIELDS or _is_reference_parent(fv))
                 and value_index in expected_places.dropped
             ):
                 dropped_at = expected_places.dropped[value_index]
