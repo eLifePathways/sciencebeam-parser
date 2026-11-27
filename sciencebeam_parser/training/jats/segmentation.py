@@ -1020,6 +1020,26 @@ _PUBLICATION_DATE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# A date with its month spelled out, as a journal sets the dates of record.
+_SPELLED_DATE_PATTERN = (
+    r'\d{1,2}(?:\s*(?:st|nd|rd|th))?\s*(?:de\s+)?[^\W\d_]{3,12}\.?\s*,?\s*'
+    r'(?:de\s+)?\d{4}'
+)
+
+# What a journal prints under its list to say when it had the article: one
+# clause for each date and nothing else on the line, which is what tells it
+# from a sentence that happens to end in a year.
+_SUBMISSION_HISTORY_PATTERN = re.compile(
+    r'^(?:[^0-9]{0,40}'
+    r'(?:recebido|recebida|aprovado|aprovada|aceito|aceita|submetido|revisado'
+    r'|enviado|apresentado|apresentada|recibido|aceptado|presentado'
+    r'|received|accepted|approved|submitted|posted|revised|reviewed'
+    r'|published)\b'
+    r'[^0-9]{0,40}(?:' + _SPELLED_DATE_PATTERN + r'|' + _PRINTED_DATE_PATTERN + r')'
+    r'[^0-9A-Za-z]{0,6}){2,4}\s*$',
+    re.IGNORECASE,
+)
+
 # The deposit page states the dates as its own, and a page number is structure.
 _LABELS_A_DATE_DOES_NOT_TAKE = frozenset({SEG_COVER, SEG_PAGE})
 
@@ -1544,6 +1564,12 @@ def _is_printed_before(
     return one[1] < other[1]
 
 
+def _is_filled_by_the_reference_list(block: List[Tuple[int, _SegLine]]) -> bool:
+    """Whether what the block has placed so far is the reference list and nothing else."""
+    placed = {seg_line.seg_label for _, seg_line in block if seg_line.seg_label}
+    return placed == {SEG_REFERENCES}
+
+
 def _claim_the_column_the_reference_list_runs_into(
     seg_lines: List[_SegLine]
 ) -> None:
@@ -1563,6 +1589,8 @@ def _claim_the_column_the_reference_list_runs_into(
     the first column of the page to past the list beside it, so its last cell
     alone is printed after the list although the row is not; and a block the
     article's own text fills is the article's, whatever is left over in it.
+    A block the list itself fills is the list's by that same reading, however
+    few of its lines are left over.
     """
     opens_by_page: Dict[int, Tuple[Tuple[float, float], int]] = {}
     for index, seg_line in enumerate(seg_lines):
@@ -1584,7 +1612,10 @@ def _claim_the_column_the_reference_list_runs_into(
         unclaimed = [
             seg_line for _, seg_line in block if seg_line.seg_label is None
         ]
-        if len(unclaimed) * 2 <= len(block):
+        if (
+            len(unclaimed) * 2 <= len(block)
+            and not _is_filled_by_the_reference_list(block)
+        ):
             continue
         page_numbers = [_get_page_number(seg_line) for _, seg_line in block]
         positions = [_get_line_position(seg_line) for _, seg_line in block]
@@ -1827,6 +1858,9 @@ def _claim_the_declarations_the_article_closes_with(
         if (
             _is_grounded_in(seg_line, annotated, _DECLARED_REGION_FIELDS)
             or seg_line.seg_label in {SEG_REVIEW, SEG_COVER}
+            # The people a journal credits are not what the article declares,
+            # and the heading over them ends the declaration above it.
+            or any(pattern.match(seg_line.text) for pattern, _ in _CREDIT_LABELS)
         ):
             label = None
             continue
@@ -3659,6 +3693,10 @@ def _extend_region_to_page_end(
                 break
             if seg_line.text in running or _is_valid_page_number_candidate(seg_line.text):
                 continue
+            if _SUBMISSION_HISTORY_PATTERN.match(seg_line.text):
+                # When the journal had the article is the article's own record,
+                # not more of the region printed above it.
+                break
             seg_line.seg_label = label
 
 

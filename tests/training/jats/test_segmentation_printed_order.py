@@ -10,6 +10,7 @@ from sciencebeam_parser.training.jats.field_vocab import JatsFieldNames
 from sciencebeam_parser.training.jats.segmentation import (
     SEG_BODY,
     SEG_FRONT,
+    SEG_REFERENCES,
     get_lines_in_printed_order,
 )
 
@@ -314,3 +315,60 @@ class TestAFloatCaptionHandedOverAfterTheList:
     def test_the_caption_is_not_an_entry_of_the_list(self):
         doc, annotated, caption = self._make_doc()
         assert derive_labels(doc, annotated)[id(caption)] == SEG_BODY
+
+
+class TestTheEntryLeftOverInTheColumnTheListRunsInto:
+    """A journal breaks an entry of its reference list across the two columns
+    its list is set in, and the deposit states that entry in a form nothing on
+    the page matches, so the lines it carries into the second column are left
+    over in a column the list otherwise fills."""
+
+    def _make_doc(self):
+        heading = make_line('Conclusion', y=88.0, x=40.0)
+        body = [
+            make_line('The', 'argument', f'runs{index}', 'here',
+                      y=100.0 + 12 * index, x=40.0)
+            for index in range(4)
+        ]
+        left_over = [
+            make_line('and', 'the', f'bed{index}', 'of', 'the', 'marsh.',
+                      y=100.0 + 12 * index, x=320.0, page_number=2)
+            for index in range(2)
+        ]
+        carried = [
+            make_line('Egret', 'A.', f'Wading{index}', 'in', 'the', 'reeds.',
+                      y=124.0 + 12 * index, x=320.0, page_number=2)
+            for index in range(3)
+        ]
+        opening = [
+            make_line('Bittern', 'B.', f'Counting{index}', 'herons.',
+                      y=100.0 + 12 * index, x=40.0, page_number=2)
+            for index in range(3)
+        ]
+        doc = LayoutDocument(pages=[
+            LayoutPage(
+                blocks=[LayoutBlock(lines=[heading] + body)],
+                meta=make_page_meta(1),
+            ),
+            LayoutPage(
+                blocks=[
+                    LayoutBlock(lines=left_over + carried),
+                    LayoutBlock(lines=opening),
+                ],
+                meta=make_page_meta(2),
+            ),
+        ])
+        order = list(doc.iter_all_lines())
+        fields = {
+            order.index(line): JatsFieldNames.BODY_SECTION_PARAGRAPH
+            for line in body
+        }
+        fields[order.index(heading)] = JatsFieldNames.BODY_SECTION_TITLE
+        for line in carried + opening:
+            fields[order.index(line)] = JatsFieldNames.REFERENCE
+        return doc, annotate(doc, fields), left_over
+
+    def test_the_lines_left_over_in_the_column_are_the_list_too(self):
+        doc, annotated, left_over = self._make_doc()
+        labels = derive_labels(doc, annotated)
+        assert [labels[id(line)] for line in left_over] == [SEG_REFERENCES] * 2

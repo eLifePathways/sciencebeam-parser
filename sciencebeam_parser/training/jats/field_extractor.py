@@ -99,7 +99,15 @@ def _reference_parent_text(ref_el: etree._Element) -> str:
     threshold and causing the entire reference to go unmatched.  DOI text is
     also excluded here — it is handled by the dedicated REFERENCE_DOI
     sub-field match, so the parent only needs the bibliographic prose.
+
+    A deposit that carries both a `<mixed-citation>` and an `<element-citation>`
+    states the same reference twice, once as the page sets it and once tagged
+    part by part.  The printed form is the one the page can match, and taking
+    both doubles the needle against the text it is looked for in.
     """
+    mixed = ref_el.find('.//mixed-citation')
+    if mixed is not None and ref_el.find('.//element-citation') is not None:
+        ref_el = mixed
     parts: List[str] = []
     for child in ref_el.iter():
         tag = child.tag
